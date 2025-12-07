@@ -60,9 +60,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
-def run_server() -> None:
+def setup_server() -> ThreadedHTTPServer:
     PORT = 443
     logging.debug(f"running http proxy server on :{PORT}")
     httpd = ThreadedHTTPServer(("", PORT), ProxyHandler)
@@ -71,12 +72,8 @@ def run_server() -> None:
     context.load_cert_chain("resources/cert.pem", "resources/key.pem")
     httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
 
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        httpd.shutdown()
-        httpd.server_close()
+    return httpd
 
 
 if __name__ == "__main__":
-    run_server()
+    setup_server().serve_forever()

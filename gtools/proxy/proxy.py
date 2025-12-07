@@ -43,7 +43,7 @@ class Proxy:
         self.redirecting: bool = False
         self.running = True
 
-        self._event_queue: Queue[ProxyEvent] = Queue()
+        self._event_queue: Queue[ProxyEvent | None] = Queue()
         self._worker_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._should_reconnect = threading.Event()
@@ -153,8 +153,13 @@ class Proxy:
                 self.proxy_client.poll()
 
     def _worker(self) -> None:
+        self.logger.debug("starting packet worker thread")
         while not self._stop_event.is_set():
             proxy_event = self._event_queue.get()
+            if proxy_event is None:
+                self._event_queue.task_done()
+                continue
+
             event = proxy_event.inner
 
             if proxy_event.src == From.CLIENT:
@@ -175,10 +180,12 @@ class Proxy:
 
             self._event_queue.task_done()
 
+        self.logger.debug("packet worker thread exited")
+
     def run(self) -> None:
         self.logger.info("proxy running")
         if self._worker_thread is None:
-            self._worker_thread = threading.Thread(target=self._worker, daemon=True)
+            self._worker_thread = threading.Thread(target=self._worker)
             self._worker_thread.start()
 
         try:
@@ -239,3 +246,5 @@ class Proxy:
             self.proxy_client.destroy()
 
             self._stop_event.set()
+            self._event_queue.put(None)
+            self._worker_thread.join()

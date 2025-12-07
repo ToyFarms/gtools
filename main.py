@@ -8,8 +8,14 @@ from gtools.proxy.proxy import Proxy
 
 
 def run_proxy() -> None:
-    threading.Thread(target=lambda: login.run_server(), daemon=True).start()
+    server = login.setup_server()
+    t = threading.Thread(target=lambda: server.serve_forever())
+    t.start()
     Proxy().run()
+
+    server.shutdown()
+    server.server_close()
+    t.join()
 
 
 if __name__ == "__main__":
