@@ -1,4 +1,6 @@
 from enum import Enum, auto
+from queue import Empty, Queue
+import threading
 import time
 import traceback
 from typing import Generator, Literal, NamedTuple, cast
@@ -16,8 +18,8 @@ from thirdparty.hexdump import hexdump
 
 
 class From(Enum):
-    Server = auto()
-    Client = auto()
+    SERVER = auto()
+    CLIENT = auto()
 
 
 class ProxyEvent(NamedTuple):
@@ -37,6 +39,11 @@ class Proxy:
         self.server_data: UpdateServerData | None = None
         self.redirecting: bool = False
         self.running = True
+
+        self._event_queue: Queue[ProxyEvent] = Queue()
+        self._worker_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._should_reconnect = threading.Event()
 
         listen(UpdateServerData)(lambda ch, ev: self._on_server_data(ch, ev))
 
@@ -99,7 +106,7 @@ class Proxy:
     def _handle(
         self,
         data: bytes,
-        src: Literal["proxy_server", "proxy_client"],
+        src: From,
         flags: ENetPacketFlag,
     ) -> None:
         pkt = NetPacket.deserialize(data)
@@ -130,13 +137,40 @@ class Proxy:
 
                 return
 
-        if src == "proxy_server":
+        if src == From.CLIENT:
             self._handle_client_to_server(data, pkt, flags)
-        elif src == "proxy_client":
+        elif src == From.SERVER:
             self._handle_server_to_client(data, pkt, flags)
+
+    def _worker(self) -> None:
+        while not self._stop_event.is_set():
+            proxy_event = self._event_queue.get()
+            event = proxy_event.inner
+
+            if proxy_event.src == From.CLIENT:
+                print("from gt client:")
+            elif proxy_event.src == From.SERVER:
+                print("from gt server:")
+                if event.type == ENetEventType.DISCONNECT:
+                    self._should_reconnect.set()
+
+            print(f"\t{ENetEventType(event.type)!r}")
+            if event.type == ENetEventType.RECEIVE and event.packet.data:
+                self._dump_packet(event.packet.data)
+                self._handle(
+                    event.packet.data,
+                    proxy_event.src,
+                    event.packet.flags,
+                )
+
+            self._event_queue.task_done()
 
     def run(self) -> None:
         print("proxy running")
+        if self._worker_thread is None:
+            self._worker_thread = threading.Thread(target=self._worker, daemon=True)
+            self._worker_thread.start()
+
         try:
             while True:
                 # while not self.running:
@@ -160,44 +194,29 @@ class Proxy:
                 )
                 print("connected! now polling for events")
 
+                MAX_POLL_MS = 100
+
                 while True:
-                    while pserver_event := self.proxy_server.poll():
-                        print("from gt client:")
-                        print(f"\t{ENetEventType(pserver_event.type)!r}")
+                    start = time.perf_counter()
+                    while (event := self.proxy_server.poll()) and (
+                        (time.perf_counter() - start) * 1000.0 < MAX_POLL_MS
+                    ):
+                        self._event_queue.put(ProxyEvent(event, From.CLIENT))
 
-                        if (
-                            pserver_event.type == ENetEventType.RECEIVE
-                            and pserver_event.packet.data
-                        ):
-                            self._dump_packet(pserver_event.packet.data)
-                            self._handle(
-                                pserver_event.packet.data,
-                                "proxy_server",
-                                pserver_event.packet.flags,
-                            )
+                    start = time.perf_counter()
+                    while (event := self.proxy_client.poll())  and (
+                        (time.perf_counter() - start) * 1000.0 < MAX_POLL_MS
+                    ):
+                        self._event_queue.put(ProxyEvent(event, From.SERVER))
 
-                    should_break = False
-
-                    while pclient_event := self.proxy_client.poll():
-                        print("from gt server:")
-                        print(f"\t{ENetEventType(pclient_event.type)!r}")
-
-                        if (
-                            pclient_event.type == ENetEventType.RECEIVE
-                            and pclient_event.packet.data
-                        ):
-                            self._dump_packet(pclient_event.packet.data)
-                            self._handle(
-                                pclient_event.packet.data,
-                                "proxy_client",
-                                pclient_event.packet.flags,
-                            )
-
-                        if pclient_event.type == ENetEventType.DISCONNECT:
-                            should_break = True
-
-                    if should_break:
+                    if self._should_reconnect.is_set():
+                        self._should_reconnect.clear()
                         break
+
+                with self._event_queue.mutex:
+                    self._event_queue.queue.clear()
+                    self._event_queue.unfinished_tasks = 0
+                    self._event_queue.all_tasks_done.notify_all()
 
         except (InterruptedError, KeyboardInterrupt):
             pass
@@ -210,3 +229,5 @@ class Proxy:
 
             self.proxy_server.destroy()
             self.proxy_client.destroy()
+
+            self._stop_event.set()
