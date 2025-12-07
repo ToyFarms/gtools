@@ -1,0 +1,3 @@
+[submodule "thirdparty/enet/enet"]
+	path = thirdparty/enet/enet
+	url = https://github.com/ToyFarms/enet
