@@ -129,16 +129,7 @@ class Proxy:
                 src_.disconnect_now()
         if pkt.type == NetType.GAME_MESSAGE:
             if pkt.game_message["action", 1] == b"quit":
-                self.proxy_client.disconnect()
-                self.proxy_server.disconnect()
-
-                self.logger.debug("waiting for proxy_server to disconnect...")
-                while self.proxy_server.peer:
-                    self.proxy_server.poll()
-                self.logger.debug("waiting for proxy_client to disconnect...")
-                while self.proxy_client.peer:
-                    self.proxy_client.poll()
-
+                self.disconnect_all()
                 self.running = False
 
                 return
@@ -147,6 +138,19 @@ class Proxy:
             self._handle_client_to_server(data, pkt, flags)
         elif src == From.SERVER:
             self._handle_server_to_client(data, pkt, flags)
+
+    def disconnect_all(self) -> None:
+        self.proxy_client.disconnect()
+        self.proxy_server.disconnect()
+
+        if self.proxy_server.peer:
+            self.logger.debug("waiting for proxy_server to disconnect...")
+            while self.proxy_server.peer:
+                self.proxy_server.poll()
+        if self.proxy_client.peer:
+            self.logger.debug("waiting for proxy_client to disconnect...")
+            while self.proxy_client.peer:
+                self.proxy_client.poll()
 
     def _worker(self) -> None:
         while not self._stop_event.is_set():
@@ -181,8 +185,8 @@ class Proxy:
             while True:
                 if not self.server_data:
                     self.logger.info("waiting for server_data...")
-                while not self.server_data:
-                    time.sleep(0.16)
+                    while not self.server_data:
+                        time.sleep(0.16)
 
                 self.logger.info("waiting for growtopia to connect...")
                 while not self.proxy_server.peer:
@@ -213,6 +217,7 @@ class Proxy:
                         self._event_queue.put(ProxyEvent(event, From.SERVER))
 
                     if self._should_reconnect.is_set():
+                        self.disconnect_all()
                         self._should_reconnect.clear()
                         break
 
