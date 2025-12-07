@@ -1,7 +1,7 @@
 import ctypes
+from ctypes import POINTER, _Pointer
 from dataclasses import dataclass
 import logging
-from types import GenericAlias
 
 from thirdparty.enet.bindings import (
     ENetAddress,
@@ -10,6 +10,7 @@ from thirdparty.enet.bindings import (
     ENetPacket,
     ENetPacketFlag,
     ENetPeer,
+    byref,
     enet_address_set_host,
     enet_host_connect,
     enet_host_destroy,
@@ -23,20 +24,6 @@ from thirdparty.enet.bindings import (
 )
 
 
-class POINTER[T](ctypes._Pointer):
-    class _GenericAlias(GenericAlias):
-        def __repr__(self) -> str:
-            val = super().__repr__()
-            ibra = val.find("[")
-            idot = val.rfind(".", 0, ibra)
-            return f"{val[:idot+1]}POINTER{val[ibra:]}"
-
-    def __class_getitem__(cls, *args) -> _GenericAlias:
-        ptrtype = ctypes.POINTER(*args)
-        alias = POINTER._GenericAlias(ptrtype, *args)
-        return alias
-
-
 @dataclass
 class PyENetPacket:
     data: bytes | None
@@ -46,7 +33,7 @@ class PyENetPacket:
 @dataclass
 class PyENetEvent:
     type: ENetEventType
-    peer: POINTER[ENetPeer]
+    peer: _Pointer[ENetPeer]
     packet: PyENetPacket
 
     @classmethod
@@ -54,8 +41,8 @@ class PyENetEvent:
         data: bytes | None = None
         flags = ENetPacketFlag(0)
         if event.type == ENetEventType.RECEIVE:
-            packet = ctypes.cast(event.packet, ctypes.POINTER(ENetPacket)).contents
-            data = ctypes.string_at(packet.data, packet.dataLength)
+            packet = ctypes.cast(event.packet, POINTER(ENetPacket)).contents
+            data = ctypes.string_at(packet.data, int(packet.dataLength))
             flags = ENetPacketFlag(packet.flags)
             enet_packet_destroy(event.packet)
 
@@ -67,9 +54,9 @@ class PyENetEvent:
 
 
 class ENetPeerBase:
-    host: ctypes.c_void_p
+    host: ctypes.c_void_p | None
     addr: ENetAddress | None
-    peer: POINTER[ENetPeer] | None
+    peer: _Pointer[ENetPeer] | None
     logger = logging.getLogger("enet_peer")
 
     def connect(self, host: str, port: int) -> None:
@@ -80,9 +67,9 @@ class ENetPeerBase:
             return
 
         self.addr = ENetAddress(port=port)
-        enet_address_set_host(ctypes.byref(self.addr), host.encode())
+        enet_address_set_host(byref(self.addr), host.encode())
 
-        self.peer = enet_host_connect(self.host, ctypes.byref(self.addr), 2, 0)
+        self.peer = enet_host_connect(self.host, byref(self.addr), 2, 0)
         enet_peer_timeout(self.peer, 0, 0, 60000)
 
     def disconnect(self) -> None:
@@ -105,7 +92,8 @@ class ENetPeerBase:
         if not self.peer:
             return
 
-        pkt = enet_packet_create(data, len(data), flags)
+        buf = ctypes.create_string_buffer(data)
+        pkt = enet_packet_create(ctypes.cast(buf, ctypes.c_void_p), len(data), flags)
         enet_peer_send(self.peer, 0, pkt)
 
     def destroy(self) -> None:
@@ -116,7 +104,7 @@ class ENetPeerBase:
 
     def poll(self) -> PyENetEvent | None:
         event = ENetEvent()
-        if enet_host_service(self.host, ctypes.byref(event), 16) > 0:
+        if enet_host_service(self.host, byref(event), 16) > 0:
             if event.type == ENetEventType.CONNECT:
                 return PyENetEvent.new(event)
             elif event.type == ENetEventType.RECEIVE:

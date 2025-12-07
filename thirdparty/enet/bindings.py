@@ -1,9 +1,9 @@
-from __future__ import annotations
-
 import ctypes
+from ctypes import _Pointer
 from enum import IntEnum, IntFlag
 from pathlib import Path
 from sys import platform
+from typing import cast
 
 if platform == "linux" or platform == "linux2":
     lib_name = "libenet.so"
@@ -15,6 +15,13 @@ else:
     raise RuntimeError(f"unhandled platform: {platform}")
 
 enet = ctypes.CDLL(Path(__file__).parent / "enet" / lib_name)
+
+
+class __Pointer[T](_Pointer): ...
+
+
+def byref[T: ctypes.Structure](val: T, offset: int = 0) -> _Pointer[T]:
+    return cast(__Pointer[T], ctypes.byref(val, offset))
 
 
 class ENetAddress(ctypes.Structure):
@@ -52,14 +59,19 @@ class ENetPacketFlag(IntFlag):
 
 
 class ENetPacket(ctypes.Structure):
-    _fields_ = [
-        ("referenceCount", ctypes.c_size_t),
-        ("flags", ctypes.c_uint32),  # ENetPacketFlag
-        ("data", ctypes.POINTER(ctypes.c_uint8)),
-        ("dataLength", ctypes.c_size_t),
-        ("freeCallback", ctypes.c_void_p),  # ENetPacketFreeCallback (function pointer)
-        ("userData", ctypes.c_void_p),
-    ]
+    pass
+
+
+ENetPacketFreeCallback = ctypes.CFUNCTYPE(None, ctypes.POINTER(ENetPacket))
+
+ENetPacket._fields_ = [
+    ("referenceCount", ctypes.c_size_t),
+    ("flags", ctypes.c_uint32),  # ENetPacketFlag
+    ("data", ctypes.POINTER(ctypes.c_uint8)),
+    ("dataLength", ctypes.c_size_t),
+    ("freeCallback", ENetPacketFreeCallback),
+    ("userData", ctypes.c_void_p),
+]
 
 
 class ENetListNode(ctypes.Structure):
@@ -200,16 +212,20 @@ enet_initialize.restype = ctypes.c_int
 
 enet_host_create = enet.enet_host_create
 enet_host_create.argtypes = [
-    ctypes.c_void_p,
-    ctypes.c_int,
-    ctypes.c_int,
+    ctypes.POINTER(ENetAddress),
+    ctypes.c_size_t,
+    ctypes.c_size_t,
     ctypes.c_int,
     ctypes.c_int,
 ]
 enet_host_create.restype = ctypes.c_void_p
 
 enet_host_service = enet.enet_host_service
-enet_host_service.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+enet_host_service.argtypes = [
+    ctypes.c_void_p,
+    ctypes.POINTER(ENetEvent),
+    ctypes.c_uint32,
+]
 enet_host_service.restype = ctypes.c_int
 
 enet_address_set_host = enet.enet_address_set_host
@@ -223,8 +239,8 @@ enet_address_set_host_ip.restype = ctypes.c_int
 enet_host_connect = enet.enet_host_connect
 enet_host_connect.argtypes = [
     ctypes.c_void_p,
-    ctypes.c_void_p,
-    ctypes.c_int,
+    ctypes.POINTER(ENetAddress),
+    ctypes.c_size_t,
     ctypes.c_uint32,
 ]
 enet_host_connect.restype = ctypes.POINTER(ENetPeer)
@@ -251,10 +267,10 @@ enet_host_flush.restype = None
 
 enet_host_destroy = enet.enet_host_destroy
 enet_host_destroy.argtypes = [ctypes.c_void_p]
-enet_host_destroy.restype = ctypes.c_int
+enet_host_destroy.restype = None
 
 enet_packet_destroy = enet.enet_packet_destroy
-enet_packet_destroy.argtypes = [ctypes.c_void_p]
+enet_packet_destroy.argtypes = [ctypes.POINTER(ENetPacket)]
 enet_packet_destroy.restype = None
 
 enet_peer_send = enet.enet_peer_send

@@ -1,8 +1,8 @@
-import ctypes
 from gtools.proxy.enet import ENetPeerBase, PyENetEvent
 from thirdparty.enet.bindings import (
     ENetAddress,
     ENetEventType,
+    byref,
     enet_address_set_host,
     enet_host_compress_with_range_coder,
     enet_host_create,
@@ -15,10 +15,10 @@ from thirdparty.enet.bindings import (
 class ProxyServer(ENetPeerBase):
     def __init__(self, host: str, port: int) -> None:
         self.addr = ENetAddress(port=port)
-        enet_address_set_host(ctypes.byref(self.addr), host.encode())
+        enet_address_set_host(byref(self.addr), host.encode())
 
         self.peer = None
-        self.host = enet_host_create(ctypes.byref(self.addr), 1, 2, 0, 0)
+        self.host = enet_host_create(byref(self.addr), 1, 2, 0, 0)
         if not self.host:
             raise RuntimeError("host is null")
         enet_host_compress_with_range_coder(self.host)
