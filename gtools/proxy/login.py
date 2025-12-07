@@ -1,6 +1,7 @@
 from http.server import BaseHTTPRequestHandler
 import http.client
 
+import logging
 import socketserver
 import ssl
 
@@ -11,8 +12,7 @@ from gtools.proxy.setting import _setting
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        print("GET")
+    logger = logging.getLogger("http_proxy")
 
     def do_POST(self):
         if self.path != "/growtopia/server_data.php":
@@ -22,8 +22,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
 
         headers = {k: v for k, v in self.headers.items()}
-        print(headers)
-        print(body)
+        self.logger.debug(f"from: {self.client_address}")
+        self.logger.debug(headers)
+        self.logger.debug(body)
 
         context = ssl.create_default_context()
         context.check_hostname = False
@@ -62,7 +63,9 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 def run_server() -> None:
-    httpd = ThreadedHTTPServer(("", 443), ProxyHandler)
+    PORT = 443
+    logging.debug(f"running http proxy server on :{PORT}")
+    httpd = ThreadedHTTPServer(("", PORT), ProxyHandler)
 
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain("resources/cert.pem", "resources/key.pem")

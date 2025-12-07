@@ -1,4 +1,5 @@
 import argparse
+import logging
 import threading
 
 from gtools.core.utils.network import is_up, resolve_doh
@@ -14,11 +15,16 @@ def run_proxy() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("-v", action="store_true")
+
     subparser = parser.add_subparsers(dest="cmd")
     subparser.add_parser("proxy")
     subparser.add_parser("test")
 
     args = parser.parse_args()
+
+    if args.v:
+        logging.basicConfig(level=logging.DEBUG)
 
     if args.cmd == "test":
         for host in ("www.growtopia1.com", "www.growtopia2.com"):

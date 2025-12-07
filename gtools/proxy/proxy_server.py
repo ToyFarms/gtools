@@ -28,12 +28,12 @@ class ProxyServer(ENetPeerBase):
         event = super().poll()
         if event:
             if event.type == ENetEventType.CONNECT:
-                print("growtopia client connected")
+                self.logger.debug("growtopia client connected")
                 self.peer = event.peer
             elif event.type == ENetEventType.RECEIVE:
                 pass
             elif event.type == ENetEventType.DISCONNECT:
-                print("growtopia client disconnected")
+                self.logger.debug("growtopia client disconnected")
                 self.peer = None
 
         return event

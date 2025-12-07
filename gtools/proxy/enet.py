@@ -1,5 +1,6 @@
 import ctypes
 from dataclasses import dataclass
+import logging
 from types import GenericAlias
 
 from thirdparty.enet.bindings import (
@@ -68,10 +69,13 @@ class ENetPeerBase:
     host: ctypes.c_void_p
     addr: ENetAddress | None
     peer: POINTER[ENetPeer] | None
+    logger = logging.getLogger("enet_peer")
 
     def connect(self, host: str, port: int) -> None:
         if self.peer:
-            print(f"attempting to connect to {host}:{port}, but peer still connected")
+            self.logger.warning(
+                f"attempting to connect to {host}:{port}, but peer still connected"
+            )
             return
 
         self.addr = ENetAddress(port=port)
