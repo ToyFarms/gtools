@@ -1,9 +1,9 @@
 from enum import Enum, auto
-from queue import Empty, Queue
+from queue import Queue
 import threading
 import time
 import traceback
-from typing import Generator, Literal, NamedTuple, cast
+from typing import Generator, NamedTuple, cast
 from gtools.core.eventbus import listen
 from gtools.core.growtopia.packet import NetPacket, NetType, TankType
 from gtools.core.growtopia.strkv import StrKV
@@ -173,9 +173,6 @@ class Proxy:
 
         try:
             while True:
-                # while not self.running:
-                #     time.sleep(0.16)
-
                 if not self.server_data:
                     print("waiting for server_data...")
                 while not self.server_data:
