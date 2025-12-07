@@ -19,6 +19,7 @@ from thirdparty.enet.bindings import (
     enet_peer_disconnect,
     enet_peer_disconnect_now,
     enet_peer_send,
+    enet_peer_timeout,
 )
 
 
@@ -82,6 +83,7 @@ class ENetPeerBase:
         enet_address_set_host(ctypes.byref(self.addr), host.encode())
 
         self.peer = enet_host_connect(self.host, ctypes.byref(self.addr), 2, 0)
+        enet_peer_timeout(self.peer, 0, 0, 60000)
 
     def disconnect(self) -> None:
         if not self.peer:

@@ -276,3 +276,12 @@ enet_peer_disconnect.restype = None
 enet_peer_disconnect_now = enet.enet_peer_disconnect_now
 enet_peer_disconnect_now.argtypes = [ctypes.POINTER(ENetPeer), ctypes.c_uint32]
 enet_peer_disconnect_now.restype = None
+
+enet_peer_timeout = enet.enet_peer_timeout
+enet_peer_timeout.argtypes = [
+    ctypes.POINTER(ENetPeer),
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+]
+enet_peer_timeout.restype = None
