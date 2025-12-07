@@ -1,0 +1,7 @@
+minimal usage:
+
+to test connectivity:
+$ python main.py test
+
+to run the proxy:
+$ python main.py proxy
