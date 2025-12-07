@@ -9,6 +9,7 @@ from gtools.core.eventbus import listen
 from gtools.core.growtopia.packet import NetPacket, NetType, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
+from gtools.core.utils.block_sigint import block_sigint
 from gtools.proxy.enet import PyENetEvent
 from gtools.proxy.event import UpdateServerData
 from gtools.proxy.proxy_client import ProxyClient
@@ -239,12 +240,13 @@ class Proxy:
             traceback.print_exc()
             self.logger.error(f"failed: {e}")
         finally:
-            self.proxy_server.disconnect_now()
-            self.proxy_client.disconnect_now()
+            with block_sigint():
+                self.proxy_server.disconnect_now()
+                self.proxy_client.disconnect_now()
 
-            self.proxy_server.destroy()
-            self.proxy_client.destroy()
+                self.proxy_server.destroy()
+                self.proxy_client.destroy()
 
-            self._stop_event.set()
-            self._event_queue.put(None)
-            self._worker_thread.join()
+                self._stop_event.set()
+                self._event_queue.put(None)
+                self._worker_thread.join()

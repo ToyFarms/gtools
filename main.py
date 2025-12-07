@@ -2,6 +2,7 @@ import argparse
 import logging
 import threading
 
+from gtools.core.utils.block_sigint import block_sigint
 from gtools.core.utils.network import is_up, resolve_doh
 from gtools.proxy import login
 from gtools.proxy.proxy import Proxy
@@ -13,9 +14,10 @@ def run_proxy() -> None:
     t.start()
     Proxy().run()
 
-    server.shutdown()
-    server.server_close()
-    t.join()
+    with block_sigint():
+        server.shutdown()
+        server.server_close()
+        t.join()
 
 
 if __name__ == "__main__":
