@@ -525,7 +525,7 @@ ENetHost._fields_ = [
     ("bufferCount", ctypes.c_size_t),
     ("checksum", ENetChecksumCallback),  # callback the user can set to enable packet checksums for this host
     ("compressor", ENetCompressor),
-    ("packetData", (ctypes.c_uint8 * 2) * ENET_PROTOCOL_MAXIMUM_MTU),
+    ("packetData", (ctypes.c_uint8 * ENET_PROTOCOL_MAXIMUM_MTU) * 2),
     ("receivedAddress", ENetAddress),
     ("receivedData", ctypes.POINTER(ctypes.c_uint8)),
     ("receivedDataLength", ctypes.c_size_t),
