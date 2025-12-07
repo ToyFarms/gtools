@@ -1,10 +1,11 @@
 from __future__ import annotations
 import ctypes
-from enum import IntEnum, IntFlag
+from enum import Enum, IntEnum, IntFlag
 from ctypes import (
     _Pointer,
     Array,
     Structure,
+    Union,
 )
 from typing import Literal, Protocol
 
@@ -91,7 +92,7 @@ class ENetChannel(Structure):
 
 class ENetPeer(Structure):
     dispatchList: ENetListNode
-    host: c_void_p
+    host: _Pointer[ENetHost]
     outgoingPeerID: c_uint16
     incomingPeerID: c_uint16
     connectID: c_uint32
@@ -158,6 +159,276 @@ class ENetEvent(Structure):
     data: c_uint32
     packet: _Pointer[ENetPacket]
 
+ENET_PROTOCOL_MINIMUM_MTU = Literal[576]
+ENET_PROTOCOL_MAXIMUM_MTU = Literal[4096]
+ENET_PROTOCOL_MAXIMUM_PACKET_COMMANDS = Literal[32]
+ENET_PROTOCOL_MINIMUM_WINDOW_SIZE = Literal[4096]
+ENET_PROTOCOL_MAXIMUM_WINDOW_SIZE = Literal[65536]
+ENET_PROTOCOL_MINIMUM_CHANNEL_COUNT = Literal[1]
+ENET_PROTOCOL_MAXIMUM_CHANNEL_COUNT = Literal[255]
+ENET_PROTOCOL_MAXIMUM_PEER_ID = Literal[0xFFF]
+ENET_PROTOCOL_MAXIMUM_FRAGMENT_COUNT = Literal[1024 * 1024]
+
+ENET_PROTOCOL_COMMAND_NONE = Literal[0]
+ENET_PROTOCOL_COMMAND_ACKNOWLEDGE = Literal[1]
+ENET_PROTOCOL_COMMAND_CONNECT = Literal[2]
+ENET_PROTOCOL_COMMAND_VERIFY_CONNECT = Literal[3]
+ENET_PROTOCOL_COMMAND_DISCONNECT = Literal[4]
+ENET_PROTOCOL_COMMAND_PING = Literal[5]
+ENET_PROTOCOL_COMMAND_SEND_RELIABLE = Literal[6]
+ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE = Literal[7]
+ENET_PROTOCOL_COMMAND_SEND_FRAGMENT = Literal[8]
+ENET_PROTOCOL_COMMAND_SEND_UNSEQUENCED = Literal[9]
+ENET_PROTOCOL_COMMAND_BANDWIDTH_LIMIT = Literal[10]
+ENET_PROTOCOL_COMMAND_THROTTLE_CONFIGURE = Literal[11]
+ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE_FRAGMENT = Literal[12]
+ENET_PROTOCOL_COMMAND_COUNT = Literal[13]
+ENET_PROTOCOL_COMMAND_MASK = Literal[0x0F]
+
+ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE = Literal[128]  # 1 << 7
+ENET_PROTOCOL_COMMAND_FLAG_UNSEQUENCED = Literal[64]  # 1 << 6
+ENET_PROTOCOL_HEADER_FLAG_COMPRESSED = Literal[16384]  # 1 << 14
+ENET_PROTOCOL_HEADER_FLAG_SENT_TIME = Literal[32768]  # 1 << 15
+ENET_PROTOCOL_HEADER_FLAG_MASK = ENET_PROTOCOL_HEADER_FLAG_COMPRESSED | ENET_PROTOCOL_HEADER_FLAG_SENT_TIME
+ENET_PROTOCOL_HEADER_SESSION_MASK = Literal[12288]  # 3 << 12
+ENET_PROTOCOL_HEADER_SESSION_SHIFT = Literal[12]
+
+ENetSocket = c_int
+
+class _ENetSocks5Ipv4InnerStruct(Structure):
+    part4: c_uint8
+    part3: c_uint8
+    part2: c_uint8
+    part1: c_uint8
+
+class _ENetSocks5Ipv4Union(Union):
+    addr: c_uint32
+    parts: STATIC_ARRAY[c_uint8, Literal[4]]
+    s: _ENetSocks5Ipv4InnerStruct
+
+class ENetSocks5Ipv4(Structure):
+    u: _ENetSocks5Ipv4Union
+    port: c_uint16
+
+class ENetSocks5Header(Structure):
+    reserved: c_uint16
+    fragment: c_uint8
+    addressType: c_uint8
+    ipv4: ENetSocks5Ipv4
+
+class ENetSocks5Authentication(Structure):
+    username: c_char_p
+    password: c_char_p
+
+class ENetSocks5Info(Structure):
+    ip: c_char_p
+    port: c_uint16
+    auth: ENetSocks5Authentication
+
+class ENetSocks5State(Enum):
+    ENET_SOCKS5_STATE_NONE = 0
+    ENET_SOCKS5_STATE_SEND_AUTH_REQUEST = 1
+    ENET_SOCKS5_STATE_RECEIVE_AUTH_RESPONSE = 2
+    ENET_SOCKS5_STATE_SEND_AUTH_REQUEST_USERNAME = 3
+    ENET_SOCKS5_STATE_RECEIVE_AUTH_RESPONSE_USERNAME = 4
+    ENET_SOCKS5_STATE_SEND_REQUEST = 5
+    ENET_SOCKS5_STATE_RECEIVE_RESPONSE = 6
+    ENET_SOCKS5_STATE_CONNECTION_FAILED = 7
+    ENET_SOCKS5_STATE_CONNECTED = 8
+
+class ENetProtocolHeader(Structure):
+    peerID: c_uint16
+    sentTime: c_uint16
+
+class ENetNewProtocolHeader(Structure):
+    integrity: STATIC_ARRAY[c_uint16, Literal[3]]
+    peerID: c_uint16
+    sentTime: c_uint16
+
+class ENetProtocolCommandHeader(Structure):
+    command: c_uint8
+    channelID: c_uint8
+    reliableSequenceNumber: c_uint16
+
+class ENetProtocolAcknowledge(Structure):
+    header: ENetProtocolCommandHeader
+    receivedReliableSequenceNumber: c_uint16
+    receivedSentTime: c_uint16
+
+class ENetProtocolConnect(Structure):
+    header: ENetProtocolCommandHeader
+    outgoingPeerID: c_uint16
+    incomingSessionID: c_uint8
+    outgoingSessionID: c_uint8
+    mtu: c_uint32
+    windowSize: c_uint32
+    channelCount: c_uint32
+    incomingBandwidth: c_uint32
+    outgoingBandwidth: c_uint32
+    packetThrottleInterval: c_uint32
+    packetThrottleAcceleration: c_uint32
+    packetThrottleDeceleration: c_uint32
+    connectID: c_uint32
+    data: c_uint32
+
+class ENetProtocolVerifyConnect(Structure):
+    header: ENetProtocolCommandHeader
+    outgoingPeerID: c_uint16
+    incomingSessionID: c_uint8
+    outgoingSessionID: c_uint8
+    mtu: c_uint32
+    windowSize: c_uint32
+    channelCount: c_uint32
+    incomingBandwidth: c_uint32
+    outgoingBandwidth: c_uint32
+    packetThrottleInterval: c_uint32
+    packetThrottleAcceleration: c_uint32
+    packetThrottleDeceleration: c_uint32
+    connectID: c_uint32
+
+class ENetProtocolBandwidthLimit(Structure):
+    header: ENetProtocolCommandHeader
+    incomingBandwidth: c_uint32
+    outgoingBandwidth: c_uint32
+
+class ENetProtocolThrottleConfigure(Structure):
+    header: ENetProtocolCommandHeader
+    packetThrottleInterval: c_uint32
+    packetThrottleAcceleration: c_uint32
+    packetThrottleDeceleration: c_uint32
+
+class ENetProtocolDisconnect(Structure):
+    header: ENetProtocolCommandHeader
+    data: c_uint32
+
+class ENetProtocolPing(Structure):
+    header: ENetProtocolCommandHeader
+
+class ENetProtocolSendReliable(Structure):
+    header: ENetProtocolCommandHeader
+    dataLength: c_uint16
+
+class ENetProtocolSendUnreliable(Structure):
+    header: ENetProtocolCommandHeader
+    unreliableSequenceNumber: c_uint16
+    dataLength: c_uint16
+
+class ENetProtocolSendUnsequenced(Structure):
+    header: ENetProtocolCommandHeader
+    unsequencedGroup: c_uint16
+    dataLength: c_uint16
+
+class ENetProtocolSendFragment(Structure):
+    header: ENetProtocolCommandHeader
+    startSequenceNumber: c_uint16
+    dataLength: c_uint16
+    fragmentCount: c_uint32
+    fragmentNumber: c_uint32
+    totalLength: c_uint32
+    fragmentOffset: c_uint32
+
+class ENetProtocol(Union):
+    header: ENetProtocolCommandHeader
+    acknowledge: ENetProtocolAcknowledge
+    connect: ENetProtocolConnect
+    verifyConnect: ENetProtocolVerifyConnect
+    disconnect: ENetProtocolDisconnect
+    ping: ENetProtocolPing
+    sendReliable: ENetProtocolSendReliable
+    sendUnreliable: ENetProtocolSendUnreliable
+    sendUnsequenced: ENetProtocolSendUnsequenced
+    sendFragment: ENetProtocolSendFragment
+    bandwidthLimit: ENetProtocolBandwidthLimit
+    throttleConfigure: ENetProtocolThrottleConfigure
+
+class ENetBuffer(Structure):
+    data: c_void_p
+    dataLength: c_size_t
+
+ENET_BUFFER_MAXIMUM = Literal[65]
+
+class ENetChecksumCallback(Protocol):
+    def __call__(self, buffer: _Pointer[ENetBuffer], bufferCount: c_size_t) -> c_uint32: ...
+
+class CompressorCompressCallback(Protocol):
+    def __call__(
+        self,
+        context: c_void_p,
+        inBuffers: _Pointer[ENetBuffer],
+        inBufferCount: c_size_t,
+        inLimit: c_size_t,
+        outData: _Pointer[ctypes.c_uint8],
+        outLimit: c_size_t,
+    ) -> c_size_t: ...
+
+class CompressorDecompressCallback(Protocol):
+    def __call__(
+        self,
+        context: c_void_p,
+        inData: _Pointer[ctypes.c_uint8],
+        inLimit: c_size_t,
+        outData: _Pointer[ctypes.c_uint8],
+        outLimit: c_size_t,
+    ) -> c_size_t: ...
+
+class CompressorDestroyCallback(Protocol):
+    def __call__(self, context: c_void_p) -> None: ...
+
+class ENetInterceptCallback(Protocol):
+    def __call__(self, host: _Pointer[ENetHost], event: _Pointer[ENetEvent]) -> c_int: ...
+
+class ENetCompressor(Structure):
+    context: c_void_p
+    compress: CompressorCompressCallback
+    decompress: CompressorDecompressCallback
+    destroy: CompressorDestroyCallback
+
+class ENetHost(Structure):
+    socket: ENetSocket
+    proxySocket: ENetSocket
+    address: ENetAddress
+    proxyAddress: ENetAddress
+    proxyHeader: ENetSocks5Header
+    proxyInfo: ENetSocks5Info
+    proxyState: c_int  # ENetSocks5State
+    incomingBandwidth: c_uint32
+    outgoingBandwidth: c_uint32
+    bandwidthThrottleEpoch: c_uint32
+    mtu: c_uint32
+    randomSeed: c_uint32
+    recalculateBandwidthLimits: c_int
+    peers: _Pointer[ENetPeer]
+    peerCount: c_size_t
+    channelLimit: c_size_t
+    serviceTime: c_uint32
+    dispatchQueue: ENetList
+    totalQueued: c_uint32
+    packetSize: c_size_t
+    headerFlags: c_uint16
+    commands: STATIC_ARRAY[ENetProtocol, ENET_PROTOCOL_MAXIMUM_PACKET_COMMANDS]
+    commandCount: c_size_t
+    buffers: STATIC_ARRAY[ENetBuffer, ENET_BUFFER_MAXIMUM]
+    bufferCount: c_size_t
+    checksum: ENetChecksumCallback
+    compressor: ENetCompressor
+    packetData: STATIC_ARRAY[STATIC_ARRAY[c_uint8, Literal[2]], Literal[ENET_PROTOCOL_MAXIMUM_MTU]]
+    receivedAddress: ENetAddress
+    receivedData: _Pointer[ctypes.c_uint8]
+    receivedDataLength: c_size_t
+    totalSentData: c_uint32
+    totalSentPackets: c_uint32
+    totalReceivedData: c_uint32
+    totalReceivedPackets: c_uint32
+    intercept: ENetInterceptCallback
+    connectedPeers: c_size_t
+    bandwidthLimitedPeers: c_size_t
+    duplicatePeers: c_size_t
+    maximumPacketSize: c_size_t
+    maximumWaitingData: c_size_t
+    usingNewPacket: c_int
+    usingNewPacketForServer: c_int
+    usingProxy: c_int
+
 def enet_initialize() -> c_int: ...
 def enet_host_create(
     address: _Pointer[ENetAddress],
@@ -165,10 +436,8 @@ def enet_host_create(
     channelLimit: c_size_t,
     incomingBandwidth: c_int,
     outgoingBandwidth: c_int,
-) -> c_void_p: ...
-def enet_host_service(
-    host: c_void_p, event: _Pointer[ENetEvent], timeout: c_uint32
-) -> c_int: ...
+) -> _Pointer[ENetHost]: ...
+def enet_host_service(host: _Pointer[ENetHost], event: _Pointer[ENetEvent], timeout: c_uint32) -> c_int: ...
 def enet_address_set_host(
     address: _Pointer[ENetAddress],
     hostName: c_char_p,
@@ -178,17 +447,17 @@ def enet_address_set_host_ip(
     hostName: c_char_p,
 ) -> c_int: ...
 def enet_host_connect(
-    host: c_void_p,
+    host: _Pointer[ENetHost],
     address: _Pointer[ENetAddress],
     channelCount: c_size_t,
     data: c_uint32,
 ) -> _Pointer[ENetPeer]: ...
-def enet_host_use_new_packet(host: c_void_p) -> None: ...
-def enet_host_use_new_packet_for_server(host: c_void_p) -> None: ...
-def enet_host_use_crc32(host: c_void_p) -> None: ...
-def enet_host_compress_with_range_coder(host: c_void_p) -> c_int: ...
-def enet_host_flush(host: c_void_p) -> None: ...
-def enet_host_destroy(host: c_void_p) -> None: ...
+def enet_host_use_new_packet(host: _Pointer[ENetHost]) -> None: ...
+def enet_host_use_new_packet_for_server(host: _Pointer[ENetHost]) -> None: ...
+def enet_host_use_crc32(host: _Pointer[ENetHost]) -> None: ...
+def enet_host_compress_with_range_coder(host: _Pointer[ENetHost]) -> c_int: ...
+def enet_host_flush(host: _Pointer[ENetHost]) -> None: ...
+def enet_host_destroy(host: _Pointer[ENetHost]) -> None: ...
 def enet_packet_destroy(packet: _Pointer[ENetPacket]) -> None: ...
 def enet_peer_send(
     peer: _Pointer[ENetPeer],

@@ -1,2 +1,5 @@
 [tools.pyright]
 include = "gtools"
+
+[tool.black]
+line-length = 180
