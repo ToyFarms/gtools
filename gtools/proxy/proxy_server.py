@@ -8,7 +8,6 @@ from thirdparty.enet.bindings import (
     enet_host_create,
     enet_host_use_crc32,
     enet_host_use_new_packet_for_server,
-    enet_peer_timeout,
 )
 
 
@@ -31,7 +30,6 @@ class ProxyServer(ENetPeerBase):
             if event.type == ENetEventType.CONNECT:
                 self.logger.debug("growtopia client connected")
                 self.peer = event.peer
-                enet_peer_timeout(self.peer, 0, 0, 60000)
             elif event.type == ENetEventType.RECEIVE:
                 pass
             elif event.type == ENetEventType.DISCONNECT:

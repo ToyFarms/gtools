@@ -21,7 +21,6 @@ from thirdparty.enet.bindings import (
     enet_peer_disconnect,
     enet_peer_disconnect_now,
     enet_peer_send,
-    enet_peer_timeout,
 )
 
 
@@ -62,16 +61,13 @@ class ENetPeerBase:
 
     def connect(self, host: str, port: int) -> None:
         if self.peer:
-            self.logger.warning(
-                f"attempting to connect to {host}:{port}, but peer still connected"
-            )
+            self.logger.warning(f"attempting to connect to {host}:{port}, but peer still connected")
             return
 
         self.addr = ENetAddress(port=port)
         enet_address_set_host(byref(self.addr), host.encode())
 
         self.peer = enet_host_connect(self.host, byref(self.addr), 2, 0)
-        enet_peer_timeout(self.peer, 0, 0, 60000)
 
     def disconnect(self) -> None:
         if not self.peer:
@@ -87,9 +83,7 @@ class ENetPeerBase:
         enet_peer_disconnect_now(self.peer, 0)
         self.peer = None
 
-    def send(
-        self, data: bytes, flags: ENetPacketFlag = ENetPacketFlag.RELIABLE
-    ) -> None:
+    def send(self, data: bytes, flags: ENetPacketFlag = ENetPacketFlag.RELIABLE) -> None:
         if not self.peer:
             return
 
