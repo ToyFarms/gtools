@@ -7,6 +7,7 @@ from thirdparty.enet.bindings import (
     ENetAddress,
     ENetEvent,
     ENetEventType,
+    ENetHost,
     ENetPacket,
     ENetPacketFlag,
     ENetPeer,
@@ -54,7 +55,7 @@ class PyENetEvent:
 
 
 class ENetPeerBase:
-    host: ctypes.c_void_p | None
+    host: _Pointer[ENetHost]
     addr: ENetAddress | None
     peer: _Pointer[ENetPeer] | None
     logger = logging.getLogger("enet_peer")
