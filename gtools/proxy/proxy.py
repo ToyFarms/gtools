@@ -34,9 +34,7 @@ class Proxy:
 
     def __init__(self) -> None:
         self.proxy_server = ProxyServer(_setting.proxy_server, _setting.proxy_port)
-        self.logger.info(
-            f"proxy server listening on {_setting.proxy_server}:{_setting.proxy_port}"
-        )
+        self.logger.info(f"proxy server listening on {_setting.proxy_server}:{_setting.proxy_port}")
         self.proxy_client = ProxyClient()
         self.logger.debug("proxy client initialized")
 
@@ -90,9 +88,7 @@ class Proxy:
                         server=server_data[0, 0].decode(),
                         port=port,
                     )
-                    self.logger.info(
-                        f"redirecting to {self.server_data.server}:{self.server_data.port}"
-                    )
+                    self.logger.info(f"redirecting to {self.server_data.server}:{self.server_data.port}")
 
                     server_data[0, 0] = _setting.proxy_server
                     v[1] = Variant.vint(_setting.proxy_port)
@@ -170,6 +166,10 @@ class Proxy:
                 if event.type == ENetEventType.DISCONNECT:
                     self._should_reconnect.set()
 
+            # TODO: this is a hotpath, and i need to be able to keep up with a lot of traffic.
+            # in the other hand, i want to be able to have an extension (talking through redis)
+            # to be able to decide to forward, modify, or cancel a packet
+
             self.logger.debug(f"\t{ENetEventType(event.type)!r}")
             if event.type == ENetEventType.RECEIVE and event.packet.data:
                 self._dump_packet(event.packet.data)
@@ -201,27 +201,19 @@ class Proxy:
                     self.proxy_server.poll()
                     time.sleep(0.16)
 
-                self.logger.info(
-                    f"proxy_client connecting to {self.server_data.server}:{self.server_data.port}"
-                )
-                self.proxy_client.connect(
-                    self.server_data.server, self.server_data.port
-                )
+                self.logger.info(f"proxy_client connecting to {self.server_data.server}:{self.server_data.port}")
+                self.proxy_client.connect(self.server_data.server, self.server_data.port)
                 self.logger.info("connected! now polling for events")
 
                 MAX_POLL_MS = 100
 
                 while True:
                     start = time.perf_counter()
-                    while (event := self.proxy_server.poll()) and (
-                        (time.perf_counter() - start) * 1000.0 < MAX_POLL_MS
-                    ):
+                    while (event := self.proxy_server.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
                         self._event_queue.put(ProxyEvent(event, From.CLIENT))
 
                     start = time.perf_counter()
-                    while (event := self.proxy_client.poll()) and (
-                        (time.perf_counter() - start) * 1000.0 < MAX_POLL_MS
-                    ):
+                    while (event := self.proxy_client.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
                         self._event_queue.put(ProxyEvent(event, From.SERVER))
 
                     if self._should_reconnect.is_set():

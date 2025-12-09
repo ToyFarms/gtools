@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package gtools.proxy.extension;
+import "growtopia.proto";
+
+message Packet {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_HANDSHAKE = 1;
+    TYPE_CAPABILITY_REQUEST = 2;
+    TYPE_CAPABILITY_RESPONSE = 3;
+    TYPE_DISCONNECT = 4;
+    TYPE_EVENT = 5;
+    TYPE_FORWARD = 6;
+    TYPE_CANCEL = 7;
+  }
+
+  Type type = 1;
+  oneof payload {
+    Handshake handshake = 2;
+    CapabilityRequest capability_request = 3;
+    CapabilityResponse capability_response = 4;
+    Disconnect disconnect = 5;
+    Event event = 6;
+    Forward forward = 7;
+    Cancel cancel = 8;
+  }
+}
+
+message Handshake {
+  string name = 2;
+}
+
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_MODIFY = 1;
+  CAPABILITY_CANCEL = 2;
+  CAPABILITY_LISTEN = 3;
+}
+
+message CapabilityRequest {}
+
+message CapabilityResponse {
+  repeated Capability capability = 1;
+  repeated growtopia.Interest interest = 2;
+}
+
+message Disconnect {}
+
+message Event {}
+
+message Forward {}
+
+message Cancel {}

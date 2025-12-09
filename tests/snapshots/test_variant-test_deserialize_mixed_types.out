@@ -1,0 +1,1 @@
+"Variant([Variant.vfloat(1.5), Variant.vstr(b'test'), Variant.vvec2(2.0, 3.0), Variant.vvec3(4.0, 5.0, 6.0), Variant.vuint(42), Variant.vint(-99)])"

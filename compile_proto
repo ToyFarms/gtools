@@ -1,0 +1,9 @@
+#!/usr/bin/bash
+
+set -xe
+
+# protoc -Igtools/proxy/extension/proto_src --python_out=gtools/proxy/extension/proto --pyi_out=gtools/proxy/extension/proto $(find gtools/proxy/extension/proto_src/*.proto)
+
+mkdir -p gtools/protogen
+protoc -Igtools/proto --python_out=gtools/protogen --pyi_out=gtools/protogen $(find gtools/proto/*.proto)
+fix-protobuf-imports gtools/protogen

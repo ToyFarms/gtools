@@ -1,4 +1,4 @@
-from typing import Any, SupportsBytes, cast, overload
+from typing import Any, Sequence, SupportsBytes, cast, overload
 from gtools.core.protocol import Serializable
 
 
@@ -24,15 +24,15 @@ def _val(key: KValue) -> bytes:
         return key
 
 
-def _vals(keys: list[KValue]) -> list[bytes]:
+def _vals(keys: Sequence[KValue]) -> list[bytes]:
     return [_val(key) for key in keys]
 
 
 class StrKV(Serializable):
-    def __init__(self, data: list[list[bytes]] = [], delim: str = "|") -> None:
-        self.data = data
+    def __init__(self, data: list[list[bytes]] | None = None, delim: str = "|") -> None:
+        self.data = data if data else []
         self.delim = delim
-        self._index_lookup: dict[bytes, int] = {v[0]: k for k, v in enumerate(data)}
+        self._index_lookup: dict[bytes, int] = {v[0]: k for k, v in enumerate(self.data)}
 
     @overload
     def __getitem__(self, key: int | str | bytes) -> list[bytes]: ...
@@ -56,13 +56,13 @@ class StrKV(Serializable):
 
             index = row_key if isinstance(row_key, int) else self._index_lookup[row_key]
             return self.data[index][col]
+        else:
+            raise KeyError(f"unknown key type: {key}")
 
     @overload
-    def __setitem__(self, key: int | str | bytes, value: list[KValue]) -> None: ...
+    def __setitem__(self, key: int | str | bytes, value: Sequence[KValue]) -> None: ...
     @overload
-    def __setitem__(
-        self, key: tuple[int | str | bytes, int], value: KValue
-    ) -> None: ...
+    def __setitem__(self, key: tuple[int | str | bytes, int], value: KValue) -> None: ...
 
     def __setitem__(
         self,
@@ -86,7 +86,9 @@ class StrKV(Serializable):
             index = row_key if isinstance(row_key, int) else self._index_lookup[row_key]
             self.data[index][col] = _val(value)
 
-    def append(self, row: list[KValue]) -> None:
+    def append(self, row: Sequence[KValue]) -> None:
+        if not row:
+            raise ValueError("row cannot be empty")
         self.data.append(_vals(row))
         self._index_lookup = {v[0]: k for k, v in enumerate(self.data)}
 

@@ -184,8 +184,6 @@ class TankPacket(Serializable):
         )
         if self.extended_data:
             buf.extend(self.extended_data)
-        else:
-            buf.extend(b"\x00")
 
         return bytes(buf)
 
@@ -203,14 +201,12 @@ class TankPacket(Serializable):
 
         extended_size = values[-1]
         if extended_size != len(extended_data):
-            msg = f"extended data size does not match (in the packet: {extended_size}, actual: {len(extended_data)})"
+            msg = f"extended data size does not match (in the packet: {extended_size}, actual: {len(extended_data)}): {values}"
             if mode == "strict":
                 raise RuntimeError(msg)
             else:
                 if len(extended_data) > extended_size:
-                    cls.logger.debug(
-                        f"truncating extended data ({len(extended_data)} to {extended_size})"
-                    )
+                    cls.logger.debug(f"truncating extended data ({len(extended_data)} to {extended_size})")
                     extended_data = extended_data[:extended_size]
 
             cls.logger.warning(msg)
@@ -235,20 +231,20 @@ class NetPacket(Serializable):
         return struct.pack("<I", self.type.value) + self.data.serialize() + b"\x00"
 
     @classmethod
-    def deserialize(cls, data: bytes) -> "NetPacket":
+    def deserialize(cls, data: bytes, mode: Literal["strict", "relaxed"] = "relaxed") -> "NetPacket":
         type = NetType(struct.unpack("<I", data[:4])[0])
 
         pkt = data[4:-1]
         match type:
+            case NetType.UNKNOWN:
+                raise TypeError(f"got unknown type: {data}")
             case NetType.SERVER_HELLO:
                 pkt = EmptyPacket()
             case NetType.TANK_PACKET:
-                pkt = TankPacket.deserialize(pkt)
+                pkt = TankPacket.deserialize(pkt, mode)
             case NetType.GAME_MESSAGE | NetType.GENERIC_TEXT | NetType.TRACK:
                 pkt = StrKV.deserialize(pkt)
-            case (
-                NetType.ERROR | NetType.CLIENT_LOG_REQUEST | NetType.CLIENT_LOG_RESPONSE
-            ):
+            case NetType.ERROR | NetType.CLIENT_LOG_REQUEST | NetType.CLIENT_LOG_RESPONSE:
                 pkt = EmptyPacket()
             case _:
                 raise RuntimeError(f"type not handled: {type!r}")

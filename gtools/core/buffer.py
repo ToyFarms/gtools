@@ -1,5 +1,4 @@
 import struct
-from typing import Iterable
 
 BytesLike = bytes | bytearray
 

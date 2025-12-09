@@ -3,8 +3,6 @@ from gtools.core.buffer import Buffer
 from dataclasses import dataclass
 from enum import IntEnum
 
-from gtools.core.growtopia.packet import NetPacket, NetType, TankPacket, TankFlags
-
 
 class Kind(IntEnum):
     FLOAT = 1
@@ -69,7 +67,7 @@ class Variant:
     Type = vfloat | vstr | vvec2 | vvec3 | vuint | vint
 
     def __init__(self, values: list[Type] | None = None) -> None:
-        self._values: list[Variant.Type] = list(values) if values else []
+        self._values: list[Variant.Type] = values if values else []
 
     def __len__(self) -> int:
         return len(self._values)
@@ -85,12 +83,8 @@ class Variant:
         def _check_kind(self, v: "Variant.Type", idx: int | None = None) -> None:
             if v.kind != self._kind:
                 if idx is None:
-                    raise TypeError(
-                        f"element kind {v.kind!r} != expected {self._kind!r}"
-                    )
-                raise TypeError(
-                    f"element at index {idx} is {v.kind!r}, expected {self._kind!r}"
-                )
+                    raise TypeError(f"element kind {v.kind!r} != expected {self._kind!r}")
+                raise TypeError(f"element at index {idx} is {v.kind!r}, expected {self._kind!r}")
 
         @overload
         def __getitem__(self, idx: int) -> T: ...
@@ -194,20 +188,13 @@ class Variant:
             elif kind == Kind.VEC2:
                 out.append(Variant.vvec2(value=(s.read_f32(), s.read_f32())))
             elif kind == Kind.VEC3:
-                out.append(
-                    Variant.vvec3(value=(s.read_f32(), s.read_f32(), s.read_f32()))
-                )
+                out.append(Variant.vvec3(value=(s.read_f32(), s.read_f32(), s.read_f32())))
             elif kind == Kind.UNSIGNED:
                 out.append(Variant.vuint(value=s.read_u32()))
             elif kind == Kind.SIGNED:
                 out.append(Variant.vint(value=s.read_i32()))
 
         return cls(out)
-
-    def to_net_packet(self) -> NetPacket:
-        tank = TankPacket(flags=TankFlags.EXTENDED)
-        tank.extended_data = self.serialize()
-        return NetPacket(NetType.TANK_PACKET, tank)
 
     def __repr__(self) -> str:
         vals = ", ".join(repr(v) for v in self._values)
@@ -226,7 +213,3 @@ if __name__ == "__main__":
 
     print(var.as_float[1])
     print(var.as_string[0])
-
-    print(NetPacket.deserialize(var.to_net_packet().serialize()).serialize())
-    a = b"\x02\x00\x02\x13\x00\x00\x00OnSendSeedDiaryData\x01\x02\x0e\x00\x00\x00\x02\x00\x04\x00\x0e\x00\x14\x00d\x00r\x01\xe8\n"
-    print(Variant.deserialize(a))
