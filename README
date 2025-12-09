@@ -1,7 +1,12 @@
-minimal usage:
+usage:
 
 to test connectivity:
 $ python main.py test
 
 to run the proxy:
 $ python main.py proxy
+
+to run the test
+$ pytest -vv
+
+set the environment variable `UPDATE=1` if you want to re-record the test output
