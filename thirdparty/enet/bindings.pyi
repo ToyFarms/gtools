@@ -19,7 +19,8 @@ c_uint16 = int
 c_uint32 = int
 c_void_p = ctypes.c_void_p | None
 
-def byref[T: Structure](val: T, offset: int = 0) -> _Pointer[T]: ...
+class Pointer[T](_Pointer): ...
+def byref[T: Structure](val: T, offset: int = 0) -> Pointer[T]: ...
 
 class ENetAddress(Structure):
     host: c_uint32
@@ -33,6 +34,7 @@ class ENetEventType(IntEnum):
     DISCONNECT_TIMEOUT = 4
 
 class ENetPacketFlag(IntFlag):
+    NONE = 0
     # packet must be received by the target peer and resend attempts should be
     # made until the packet is delivered
     RELIABLE = 1 << 0
@@ -51,19 +53,19 @@ class ENetPacketFlag(IntFlag):
     SENT = 1 << 8
 
 class ENetPacketFreeCallback(Protocol):
-    def __call__(self, pkt: _Pointer[ENetPacket]) -> None: ...
+    def __call__(self, pkt: Pointer[ENetPacket]) -> None: ...
 
 class ENetPacket(Structure):
     referenceCount: c_size_t
     flags: c_uint32  # ENetPacketFlag
-    data: _Pointer[ctypes.c_uint8]
+    data: Pointer[ctypes.c_uint8]
     dataLength: c_size_t
     freeCallback: ENetPacketFreeCallback
     userData: c_void_p
 
 class ENetListNode(Structure):
-    next: _Pointer[ENetListNode]
-    previous: _Pointer[ENetListNode]
+    next: Pointer[ENetListNode]
+    previous: Pointer[ENetListNode]
 
 class ENetList(Structure):
     sentinel: ENetListNode
@@ -92,7 +94,7 @@ class ENetChannel(Structure):
 
 class ENetPeer(Structure):
     dispatchList: ENetListNode
-    host: _Pointer[ENetHost]
+    host: Pointer[ENetHost]
     outgoingPeerID: c_uint16
     incomingPeerID: c_uint16
     connectID: c_uint32
@@ -101,7 +103,7 @@ class ENetPeer(Structure):
     address: ENetAddress  # Internet address of the peer
     data: c_void_p  # Application private data,   may be freely modified
     state: c_int  # EnetPeerState
-    channels: _Pointer[ENetChannel]
+    channels: Pointer[ENetChannel]
     channelCount: c_size_t  # Number of channels allocated for communication with peer
     incomingBandwidth: c_uint32  # Downstream bandwidth of the client in bytes/second
     outgoingBandwidth: c_uint32  # Upstream bandwidth of the client in bytes/second
@@ -154,10 +156,10 @@ class ENetPeer(Structure):
 
 class ENetEvent(Structure):
     type: c_int  # ENetEventType
-    peer: _Pointer[ENetPeer]
+    peer: Pointer[ENetPeer]
     channelID: c_uint8
     data: c_uint32
-    packet: _Pointer[ENetPacket]
+    packet: Pointer[ENetPacket]
 
 ENET_PROTOCOL_MINIMUM_MTU = Literal[576]
 ENET_PROTOCOL_MAXIMUM_MTU = Literal[4096]
@@ -348,16 +350,16 @@ class ENetBuffer(Structure):
 ENET_BUFFER_MAXIMUM = Literal[65]
 
 class ENetChecksumCallback(Protocol):
-    def __call__(self, buffer: _Pointer[ENetBuffer], bufferCount: c_size_t) -> c_uint32: ...
+    def __call__(self, buffer: Pointer[ENetBuffer], bufferCount: c_size_t) -> c_uint32: ...
 
 class CompressorCompressCallback(Protocol):
     def __call__(
         self,
         context: c_void_p,
-        inBuffers: _Pointer[ENetBuffer],
+        inBuffers: Pointer[ENetBuffer],
         inBufferCount: c_size_t,
         inLimit: c_size_t,
-        outData: _Pointer[ctypes.c_uint8],
+        outData: Pointer[ctypes.c_uint8],
         outLimit: c_size_t,
     ) -> c_size_t: ...
 
@@ -365,9 +367,9 @@ class CompressorDecompressCallback(Protocol):
     def __call__(
         self,
         context: c_void_p,
-        inData: _Pointer[ctypes.c_uint8],
+        inData: Pointer[ctypes.c_uint8],
         inLimit: c_size_t,
-        outData: _Pointer[ctypes.c_uint8],
+        outData: Pointer[ctypes.c_uint8],
         outLimit: c_size_t,
     ) -> c_size_t: ...
 
@@ -375,7 +377,7 @@ class CompressorDestroyCallback(Protocol):
     def __call__(self, context: c_void_p) -> None: ...
 
 class ENetInterceptCallback(Protocol):
-    def __call__(self, host: _Pointer[ENetHost], event: _Pointer[ENetEvent]) -> c_int: ...
+    def __call__(self, host: Pointer[ENetHost], event: Pointer[ENetEvent]) -> c_int: ...
 
 class ENetCompressor(Structure):
     context: c_void_p
@@ -397,7 +399,7 @@ class ENetHost(Structure):
     mtu: c_uint32
     randomSeed: c_uint32
     recalculateBandwidthLimits: c_int
-    peers: _Pointer[ENetPeer]
+    peers: Pointer[ENetPeer]
     peerCount: c_size_t
     channelLimit: c_size_t
     serviceTime: c_uint32
@@ -413,7 +415,7 @@ class ENetHost(Structure):
     compressor: ENetCompressor
     packetData: STATIC_ARRAY[STATIC_ARRAY[c_uint8, Literal[2]], Literal[ENET_PROTOCOL_MAXIMUM_MTU]]
     receivedAddress: ENetAddress
-    receivedData: _Pointer[ctypes.c_uint8]
+    receivedData: Pointer[ctypes.c_uint8]
     receivedDataLength: c_size_t
     totalSentData: c_uint32
     totalSentPackets: c_uint32
@@ -431,48 +433,48 @@ class ENetHost(Structure):
 
 def enet_initialize() -> c_int: ...
 def enet_host_create(
-    address: _Pointer[ENetAddress],
+    address: Pointer[ENetAddress],
     peerCount: c_size_t,
     channelLimit: c_size_t,
     incomingBandwidth: c_int,
     outgoingBandwidth: c_int,
-) -> _Pointer[ENetHost]: ...
-def enet_host_service(host: _Pointer[ENetHost], event: _Pointer[ENetEvent], timeout: c_uint32) -> c_int: ...
+) -> Pointer[ENetHost]: ...
+def enet_host_service(host: Pointer[ENetHost], event: Pointer[ENetEvent], timeout: c_uint32) -> c_int: ...
 def enet_address_set_host(
-    address: _Pointer[ENetAddress],
+    address: Pointer[ENetAddress],
     hostName: c_char_p,
 ) -> c_int: ...
 def enet_address_set_host_ip(
-    address: _Pointer[ENetAddress],
+    address: Pointer[ENetAddress],
     hostName: c_char_p,
 ) -> c_int: ...
 def enet_host_connect(
-    host: _Pointer[ENetHost],
-    address: _Pointer[ENetAddress],
+    host: Pointer[ENetHost],
+    address: Pointer[ENetAddress],
     channelCount: c_size_t,
     data: c_uint32,
-) -> _Pointer[ENetPeer]: ...
-def enet_host_use_new_packet(host: _Pointer[ENetHost]) -> None: ...
-def enet_host_use_new_packet_for_server(host: _Pointer[ENetHost]) -> None: ...
-def enet_host_use_crc32(host: _Pointer[ENetHost]) -> None: ...
-def enet_host_compress_with_range_coder(host: _Pointer[ENetHost]) -> c_int: ...
-def enet_host_flush(host: _Pointer[ENetHost]) -> None: ...
-def enet_host_destroy(host: _Pointer[ENetHost]) -> None: ...
-def enet_packet_destroy(packet: _Pointer[ENetPacket]) -> None: ...
+) -> Pointer[ENetPeer]: ...
+def enet_host_use_new_packet(host: Pointer[ENetHost]) -> None: ...
+def enet_host_use_new_packet_for_server(host: Pointer[ENetHost]) -> None: ...
+def enet_host_use_crc32(host: Pointer[ENetHost]) -> None: ...
+def enet_host_compress_with_range_coder(host: Pointer[ENetHost]) -> c_int: ...
+def enet_host_flush(host: Pointer[ENetHost]) -> None: ...
+def enet_host_destroy(host: Pointer[ENetHost]) -> None: ...
+def enet_packet_destroy(packet: Pointer[ENetPacket]) -> None: ...
 def enet_peer_send(
-    peer: _Pointer[ENetPeer],
+    peer: Pointer[ENetPeer],
     channelID: c_uint8,
-    packet: _Pointer[ENetPacket],
+    packet: Pointer[ENetPacket],
 ) -> c_int: ...
 def enet_packet_create(
     data: c_void_p,
     dataLength: c_size_t,
     flags: c_uint32,
-) -> _Pointer[ENetPacket]: ...
-def enet_peer_disconnect(peer: _Pointer[ENetPeer], data: c_uint32) -> None: ...
-def enet_peer_disconnect_now(peer: _Pointer[ENetPeer], data: c_uint32) -> None: ...
+) -> Pointer[ENetPacket]: ...
+def enet_peer_disconnect(peer: Pointer[ENetPeer], data: c_uint32) -> None: ...
+def enet_peer_disconnect_now(peer: Pointer[ENetPeer], data: c_uint32) -> None: ...
 def enet_peer_timeout(
-    peer: _Pointer[ENetPeer],
+    peer: Pointer[ENetPeer],
     timeoutLimit: c_uint32,
     timeoutMinimum: c_uint32,
     timeoutMaximum: c_uint32,

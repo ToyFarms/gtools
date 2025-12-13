@@ -1,6 +1,6 @@
 import discord
 
-type SnowflakeTime = discord.Object
+SnowflakeTime = discord.Object
 
 
 class HistoryFetcher:

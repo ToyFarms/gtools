@@ -1,5 +1,5 @@
 import ctypes
-from ctypes import POINTER, _Pointer
+from ctypes import POINTER
 from dataclasses import dataclass
 import logging
 
@@ -11,6 +11,7 @@ from thirdparty.enet.bindings import (
     ENetPacket,
     ENetPacketFlag,
     ENetPeer,
+    Pointer,
     byref,
     enet_address_set_host,
     enet_host_connect,
@@ -33,7 +34,7 @@ class PyENetPacket:
 @dataclass
 class PyENetEvent:
     type: ENetEventType
-    peer: _Pointer[ENetPeer]
+    peer: Pointer[ENetPeer]
     packet: PyENetPacket
 
     @classmethod
@@ -54,9 +55,9 @@ class PyENetEvent:
 
 
 class ENetPeerBase:
-    host: _Pointer[ENetHost]
+    host: Pointer[ENetHost]
     addr: ENetAddress | None
-    peer: _Pointer[ENetPeer] | None
+    peer: Pointer[ENetPeer] | None
     logger = logging.getLogger("enet_peer")
 
     def connect(self, host: str, port: int) -> None:

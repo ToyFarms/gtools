@@ -10,8 +10,10 @@ from gtools.core.growtopia.packet import NetPacket, NetType, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.utils.block_sigint import block_sigint
+from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT
 from gtools.proxy.enet import PyENetEvent
 from gtools.proxy.event import UpdateServerData
+from gtools.proxy.extension.broker import Broker, PacketCallback
 from gtools.proxy.proxy_client import ProxyClient
 from gtools.proxy.proxy_server import ProxyServer
 from gtools.proxy.setting import _setting
@@ -46,6 +48,8 @@ class Proxy:
         self._worker_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._should_reconnect = threading.Event()
+        self.broker = Broker()
+        self.broker.start()
 
         listen(UpdateServerData)(lambda ch, ev: self._on_server_data(ch, ev))
 
@@ -59,7 +63,7 @@ class Proxy:
             return
 
         dump = cast(Generator[str, None, None], hexdump(data, result="generator"))
-        self.logger.debug(f"\t{'\n\t'.join(dump)}")
+        self.logger.debug(f"HEXDUMP: \n\t{'\n\t'.join(dump)}")
         self.logger.debug(f"\t{data}")
 
     def _handle_client_to_server(
@@ -113,7 +117,25 @@ class Proxy:
         flags: ENetPacketFlag,
     ) -> None:
         pkt = NetPacket.deserialize(data)
-        self.logger.debug(f"{pkt!r}")
+
+        res = self.broker.process_event(
+            pkt,
+            data,
+            DIRECTION_CLIENT_TO_SERVER if src == From.CLIENT else DIRECTION_SERVER_TO_CLIENT,
+            callback=PacketCallback(
+                send_to_server=lambda data: self._handle_client_to_server(data, NetPacket.deserialize(data), ENetPacketFlag(0)),
+                send_to_client=lambda data: self._handle_server_to_client(data, NetPacket.deserialize(data), ENetPacketFlag(0)),
+            ),
+        )
+        if res:
+            # separating packet and data is dangerous
+            # i really spent 3 hours debugging nothing just because i update the packet and not the data
+            # ideally the packet store the serialized bytes too, so i can reference it from those
+            pkt = res[0]
+            data = pkt.serialize()
+            src = From.CLIENT if res[1] == DIRECTION_CLIENT_TO_SERVER else From.SERVER if res[1] == DIRECTION_SERVER_TO_CLIENT else src
+
+        self.logger.debug(f"{pkt!r} {src.name}")
         if pkt.type == NetType.TANK_PACKET:
             if pkt.tank.type in (
                 TankType.APP_CHECK_RESPONSE,
@@ -160,15 +182,12 @@ class Proxy:
             event = proxy_event.inner
 
             if proxy_event.src == From.CLIENT:
-                self.logger.debug("from gt client:")
+                self.logger.debug(f"from gt client ({event.packet.flags!r}):")
             elif proxy_event.src == From.SERVER:
-                self.logger.debug("from gt server:")
-                if event.type == ENetEventType.DISCONNECT:
-                    self._should_reconnect.set()
+                self.logger.debug(f"from gt server ({event.packet.flags!r}):")
 
-            # TODO: this is a hotpath, and i need to be able to keep up with a lot of traffic.
-            # in the other hand, i want to be able to have an extension (talking through redis)
-            # to be able to decide to forward, modify, or cancel a packet
+            if event.type == ENetEventType.DISCONNECT:
+                self._should_reconnect.set()
 
             self.logger.debug(f"\t{ENetEventType(event.type)!r}")
             if event.type == ENetEventType.RECEIVE and event.packet.data:
@@ -233,6 +252,8 @@ class Proxy:
             self.logger.error(f"failed: {e}")
         finally:
             with block_sigint():
+                self.broker.stop()
+
                 self.proxy_server.disconnect_now()
                 self.proxy_client.disconnect_now()
 
@@ -242,3 +263,4 @@ class Proxy:
                 self._stop_event.set()
                 self._event_queue.put(None)
                 self._worker_thread.join()
+
