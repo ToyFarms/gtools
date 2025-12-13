@@ -230,6 +230,8 @@ class Packet(_message.Message):
         TYPE_FORWARD: _ClassVar[Packet.Type]
         TYPE_FORWARD_NOT_MODIFIED: _ClassVar[Packet.Type]
         TYPE_CANCEL: _ClassVar[Packet.Type]
+        TYPE_COMPLETE: _ClassVar[Packet.Type]
+        TYPE_PUSH: _ClassVar[Packet.Type]
     TYPE_UNSPECIFIED: Packet.Type
     TYPE_HANDSHAKE: Packet.Type
     TYPE_HANDSHAKE_ACK: Packet.Type
@@ -241,6 +243,8 @@ class Packet(_message.Message):
     TYPE_FORWARD: Packet.Type
     TYPE_FORWARD_NOT_MODIFIED: Packet.Type
     TYPE_CANCEL: Packet.Type
+    TYPE_COMPLETE: Packet.Type
+    TYPE_PUSH: Packet.Type
     TYPE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_ACK_FIELD_NUMBER: _ClassVar[int]
@@ -252,6 +256,8 @@ class Packet(_message.Message):
     FORWARD_FIELD_NUMBER: _ClassVar[int]
     FORWARD_NOT_MODIFIED_FIELD_NUMBER: _ClassVar[int]
     CANCEL_FIELD_NUMBER: _ClassVar[int]
+    COMPLETE_FIELD_NUMBER: _ClassVar[int]
+    PUSH_FIELD_NUMBER: _ClassVar[int]
     type: Packet.Type
     handshake: Handshake
     handshake_ack: HandshakeAck
@@ -263,7 +269,9 @@ class Packet(_message.Message):
     forward: Forward
     forward_not_modified: ForwardNotModified
     cancel: Cancel
-    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., event: _Optional[_Union[Event, _Mapping]] = ..., forward: _Optional[_Union[Forward, _Mapping]] = ..., forward_not_modified: _Optional[_Union[ForwardNotModified, _Mapping]] = ..., cancel: _Optional[_Union[Cancel, _Mapping]] = ...) -> None: ...
+    complete: Complete
+    push: Push
+    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., event: _Optional[_Union[Event, _Mapping]] = ..., forward: _Optional[_Union[Forward, _Mapping]] = ..., forward_not_modified: _Optional[_Union[ForwardNotModified, _Mapping]] = ..., cancel: _Optional[_Union[Cancel, _Mapping]] = ..., complete: _Optional[_Union[Complete, _Mapping]] = ..., push: _Optional[_Union[Push, _Mapping]] = ...) -> None: ...
 
 class Handshake(_message.Message):
     __slots__ = ()
@@ -308,22 +316,38 @@ class Forward(_message.Message):
     CHAIN_ID_FIELD_NUMBER: _ClassVar[int]
     BUF_FIELD_NUMBER: _ClassVar[int]
     DIRECTION_FIELD_NUMBER: _ClassVar[int]
+    ENET_FLAGS_FIELD_NUMBER: _ClassVar[int]
     chain_id: bytes
     buf: bytes
     direction: Direction
-    def __init__(self, chain_id: _Optional[bytes] = ..., buf: _Optional[bytes] = ..., direction: _Optional[_Union[Direction, str]] = ...) -> None: ...
+    enet_flags: int
+    def __init__(self, chain_id: _Optional[bytes] = ..., buf: _Optional[bytes] = ..., direction: _Optional[_Union[Direction, str]] = ..., enet_flags: _Optional[int] = ...) -> None: ...
 
 class ForwardNotModified(_message.Message):
     __slots__ = ()
     CHAIN_ID_FIELD_NUMBER: _ClassVar[int]
+    ENET_FLAGS_FIELD_NUMBER: _ClassVar[int]
     chain_id: bytes
-    def __init__(self, chain_id: _Optional[bytes] = ...) -> None: ...
+    enet_flags: int
+    def __init__(self, chain_id: _Optional[bytes] = ..., enet_flags: _Optional[int] = ...) -> None: ...
 
 class Cancel(_message.Message):
     __slots__ = ()
     CHAIN_ID_FIELD_NUMBER: _ClassVar[int]
     chain_id: bytes
     def __init__(self, chain_id: _Optional[bytes] = ...) -> None: ...
+
+class Complete(_message.Message):
+    __slots__ = ()
+    CHAIN_ID_FIELD_NUMBER: _ClassVar[int]
+    chain_id: bytes
+    def __init__(self, chain_id: _Optional[bytes] = ...) -> None: ...
+
+class Push(_message.Message):
+    __slots__ = ()
+    PACKETS_FIELD_NUMBER: _ClassVar[int]
+    packets: _containers.RepeatedCompositeFieldContainer[Packet]
+    def __init__(self, packets: _Optional[_Iterable[_Union[Packet, _Mapping]]] = ...) -> None: ...
 
 class Interest(_message.Message):
     __slots__ = ()

@@ -24,6 +24,8 @@ from gtools.protogen.extension_pb2 import (
     WhereOp,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
+    Complete,
+    Push,
 )
 
 
@@ -283,33 +285,41 @@ class PacketCallback:
 
 
 class PendingChain:
-    def __init__(self, id: bytes, chain: deque[Client], data: bytes, direction: Direction) -> None:
+    def __init__(self, id: bytes, chain: deque[Client], data: bytes, direction: Direction, enet_flags: int = 0) -> None:
         self.id = id
         self.chain = chain
         self.processed_chain: dict[bytes, int] = {}  # ext_id: interest hash
         self.direction = direction
         self.data = data
+        self.enet_flags = enet_flags
         self.finished_event = threading.Event()
+        self.cancelled = False
 
     def __repr__(self) -> str:
         return f"PendingChain(size={len(self.chain)}, processed={self.processed_chain}, data={self.data}), finished={self.finished_event.is_set()}"
 
 
 class PendingPacket:
-    def __init__(self, data: bytes, direction: Direction, callback: PacketCallback) -> None:
+    def __init__(self, data: bytes, direction: Direction, callback: PacketCallback, enet_flags: int = 0) -> None:
         self.data = data
         self.direction = direction
         self.callback = callback
+        self.enet_flags = enet_flags
 
 
 class Broker:
     logger = logging.getLogger("broker")
 
-    def __init__(self, addr: str = "tcp://127.0.0.1:6712") -> None:
+    def __init__(self, addr: str = "tcp://127.0.0.1:6712", push_addr: str = "tcp://127.0.0.1:6713") -> None:
         self._context = zmq.Context()
         self._socket = self._context.socket(zmq.ROUTER)
         self._socket.setsockopt(zmq.LINGER, 0)
         self._socket.bind(addr)
+
+        # PUB socket for extensions to push multiple packets
+        self._push_socket = self._context.socket(zmq.PUB)
+        self._push_socket.setsockopt(zmq.LINGER, 0)
+        self._push_socket.bind(push_addr)
 
         self._extension_mgr = ExtensionManager()
         self._pending_chain: dict[bytes, PendingChain] = {}
@@ -358,11 +368,26 @@ class Broker:
 
         self.logger.debug(f"   send \x1b[32m-->>\x1b[0m target={extension}: \x1b[32m>>\x1b[0m{pkt!r}\x1b[32m>>\x1b[0m")
         try:
-            if self._socket.poll(100, zmq.POLLOUT):
-                self._socket.send_multipart((extension, pkt.SerializeToString()))
+            self._socket.send_multipart((extension, pkt.SerializeToString()), zmq.NOBLOCK)
+        except zmq.error.Again:
+            pass
         except zmq.error.ZMQError as e:
             if not self._stop_event.is_set():
                 self.logger.debug(f"Send error: {e}")
+
+    def push_to_proxy(self, packets: list[Packet]) -> None:
+        """Push multiple packets to the proxy via PUB socket."""
+        if self._stop_event.is_set():
+            return
+
+        push_pkt = Packet(type=Packet.TYPE_PUSH, push=Push(packets=packets))
+        self.logger.debug(f"pushing {len(packets)} packets to proxy")
+        try:
+            if self._push_socket.poll(100, zmq.POLLOUT):
+                self._push_socket.send(push_pkt.SerializeToString())
+        except zmq.error.ZMQError as e:
+            if not self._stop_event.is_set():
+                self.logger.debug(f"push error: {e}")
 
     _PACKET_TO_INTEREST_TYPE: dict[NetType | TankType, InterestType] = {
         NetType.SERVER_HELLO: InterestType.INTEREST_SERVER_HELLO,
@@ -469,7 +494,7 @@ class Broker:
 
     # TODO: i dont like you have to handle 2 case: blocking and non blocking, separately, everywhere
     # it'd be nice if the api can be unified
-    def process_event(self, pkt: NetPacket, raw: bytes, direction: Direction, callback: PacketCallback | None = None) -> tuple[NetPacket, Direction] | None:
+    def process_event(self, pkt: NetPacket, raw: bytes, direction: Direction, enet_flags: int = 0, callback: PacketCallback | None = None) -> tuple[NetPacket, Direction] | None:
         chain: deque[Client] = deque()
 
         for client in self._get_interested_extension(pkt, raw, direction):
@@ -487,13 +512,13 @@ class Broker:
                     ),
                 )
                 if callback:
-                    self._pending_packet[pkt_id] = PendingPacket(raw, direction, callback)
+                    self._pending_packet[pkt_id] = PendingPacket(raw, direction, callback, enet_flags)
             else:
                 chain.append(client)
 
         if chain:
             chain_id = random.randbytes(16)
-            pending = PendingChain(chain_id, chain, raw, direction)
+            pending = PendingChain(chain_id, chain, raw, direction, enet_flags)
             pending.processed_chain[chain[0].ext.id] = hash_interest(chain[0].interest)
             self._pending_chain[chain_id] = pending
             self._send(
@@ -508,9 +533,23 @@ class Broker:
                 ),
             )
 
-            self._pending_chain[chain_id].finished_event.wait()
-            finished = self._pending_chain.pop(chain_id)
-            return (NetPacket.deserialize(finished.data), finished.direction)
+            # Wait for the chain to finish but avoid deadlock by using a timeout.
+            # If the chain does not finish within the timeout, remove it and
+            # return None to indicate processing did not complete.
+            PENDING_CHAIN_TIMEOUT = 2.0
+            finished_event = self._pending_chain[chain_id].finished_event
+            finished = None
+            if finished_event.wait(PENDING_CHAIN_TIMEOUT):
+                finished = self._pending_chain.pop(chain_id)
+                return (NetPacket.deserialize(finished.data), finished.direction)
+            else:
+                # cleanup stale pending chain
+                try:
+                    self._pending_chain.pop(chain_id, None)
+                except Exception:
+                    pass
+                self.logger.warning(f"pending chain {chain_id!r} timed out")
+                return None
 
     def start(self, block: bool = False) -> None:
         if block:
@@ -625,8 +664,23 @@ class Broker:
 
                             del self._pending_packet[pkt.forward_not_modified.chain_id]
                     case Packet.TYPE_CANCEL:
-                        # not implemented
-                        pass
+                        # Cancel a pending chain or pending non-blocking packet.
+                        # If a chain exists, mark it cancelled and finish it immediately
+                        # so that blocking callers receive None. If a pending non-blocking
+                        # packet exists, drop it and do not invoke callbacks.
+                        cid = pkt.cancel.chain_id
+                        if (chain := self._pending_chain.get(cid)) is not None:
+                            chain.cancelled = True
+                            chain.finished_event.set()
+                        elif (pending := self._pending_packet.get(cid)) is not None:
+                            # drop pending packet without invoking callbacks
+                            del self._pending_packet[cid]
+                    case Packet.TYPE_COMPLETE:
+                        # Explicitly complete a pending chain.
+                        # This allows extensions to signal completion without sending FORWARD/FORWARD_NOT_MODIFIED.
+                        cid = pkt.complete.chain_id
+                        if (chain := self._pending_chain.get(cid)) is not None:
+                            chain.finished_event.set()
         except (KeyboardInterrupt, InterruptedError):
             pass
         except zmq.error.ZMQError as e:

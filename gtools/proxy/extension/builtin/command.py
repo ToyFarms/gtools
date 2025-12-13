@@ -13,6 +13,8 @@ from gtools.core.growtopia.packet import NetPacket
 
 
 class CommandExtension(Extension):
+    """Extension to log and forward generic text packets."""
+
     def __init__(self) -> None:
         logging.basicConfig(level=logging.DEBUG)
 
@@ -29,12 +31,14 @@ class CommandExtension(Extension):
         )
 
     def process(self, event: Event) -> Packet | None:
+        """Process generic text packets by logging them."""
         pkt = NetPacket.deserialize(event.buf)
-        print(pkt.generic_text)
+        print(f"Command: {pkt.generic_text}")
 
-        return Packet(type=Packet.TYPE_FORWARD_NOT_MODIFIED)
+        return self.forward_not_modified()
 
     def destroy(self) -> None:
+        """Clean up extension resources."""
         pass
 
 

@@ -17,9 +17,10 @@ from gtools.core.growtopia.strkv import StrKV
 
 
 class FastDropExtension(Extension):
-    """
-    the goal is to intercept dialog request from the server, and instead of letting the client
-    handle it. we immediately response with a fabricated packet
+    """Intercept dialog requests and fabricate responses to enable fast drop.
+    
+    Instead of letting the client handle dialog requests, this extension
+    immediately responds with a fabricated packet to enable fast dropping items.
     """
 
     def __init__(self) -> None:
@@ -39,41 +40,34 @@ class FastDropExtension(Extension):
         )
 
     def process(self, event: Event) -> Packet | None:
+        """Process dialog requests and fabricate drop responses."""
         match event.id or 0:  # id is optional
             case 0:
                 pkt = NetPacket.deserialize(event.buf)
                 var = Variant.deserialize(pkt.tank.extended_data)
                 if b"How many to drop" not in var.as_string[1]:
-                    return Packet(type=Packet.TYPE_FORWARD_NOT_MODIFIED)  # basically just says "act like this extension never existed and just move on the chain"
+                    return self.forward_not_modified()
 
                 kv = StrKV.deserialize(var.as_string[1])
 
-                # request
-                # Variant([Variant.vstr(b'OnDialogRequest'), Variant.vstr(b'set_default_color|`o\nadd_label_with_icon|big|`wDrop Sign``|left|20|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||3|5|\nembed_data|itemID|20\nend_dialog|drop_item|Cancel|OK|\n')])
-
-                # response payload
-                # \x02\x00\x00\x00action|dialog_return\ndialog_name|drop_item\nitemID|4|\ncount|8\n\x00
-
+                # Fabricate drop dialog response
                 res = StrKV().with_trailing_newline()
                 res["action", 1] = b"dialog_return"
                 res["dialog_name", 1] = b"drop_item"
                 res["itemID", 1] = [kv["embed_data", 2], b""]
                 res["count", 1] = kv["add_text_input", 3]
 
-                # never think the extension is at the end of the chain
-                # always design as if other extension will build upon your response
-                return Packet(
-                    type=Packet.TYPE_FORWARD,  # forward will look for extension that are interested with the new parameter, if none then the chain is complete
-                    forward=Forward(
-                        buf=NetPacket(
-                            NetType.GENERIC_TEXT,
-                            data=res,
-                        ).serialize(),
-                        direction=DIRECTION_CLIENT_TO_SERVER,  # direction will determine where the packet will be sent to (client/server), if none use the original direction
-                    ),
+                # Forward the fabricated response for further processing
+                return self.forward(
+                    buf=NetPacket(
+                        NetType.GENERIC_TEXT,
+                        data=res,
+                    ).serialize(),
+                    direction=DIRECTION_CLIENT_TO_SERVER,
                 )
             case _:
-                return Packet(type=Packet.TYPE_FORWARD_NOT_MODIFIED)
+                return self.forward_not_modified()
+
 
     # this will be called when the extension is disconnected
     # of course it can be reconnected, so think of this as clearing session data

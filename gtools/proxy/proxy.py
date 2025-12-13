@@ -1,16 +1,17 @@
-from enum import Enum, auto
 import logging
+from enum import Enum, auto
 from queue import Queue
 import threading
 import time
 import traceback
 from typing import Generator, NamedTuple, cast
+import zmq
 from gtools.core.eventbus import listen
 from gtools.core.growtopia.packet import NetPacket, NetType, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.utils.block_sigint import block_sigint
-from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT
+from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT, Packet
 from gtools.proxy.enet import PyENetEvent
 from gtools.proxy.event import UpdateServerData
 from gtools.proxy.extension.broker import Broker, PacketCallback
@@ -46,10 +47,17 @@ class Proxy:
 
         self._event_queue: Queue[ProxyEvent | None] = Queue()
         self._worker_thread: threading.Thread | None = None
+        self._pull_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._should_reconnect = threading.Event()
         self.broker = Broker()
         self.broker.start()
+
+        # Setup ZMQ SUB socket to listen to broker's push channel
+        self._zmq_context = zmq.Context()
+        self._zmq_sub = self._zmq_context.socket(zmq.SUB)
+        self._zmq_sub.setsockopt(zmq.SUBSCRIBE, b"")
+        self._zmq_sub.connect("tcp://127.0.0.1:6713")
 
         listen(UpdateServerData)(lambda ch, ev: self._on_server_data(ch, ev))
 
@@ -122,6 +130,7 @@ class Proxy:
             pkt,
             data,
             DIRECTION_CLIENT_TO_SERVER if src == From.CLIENT else DIRECTION_SERVER_TO_CLIENT,
+            enet_flags=int(flags),
             callback=PacketCallback(
                 send_to_server=lambda data: self._handle_client_to_server(data, NetPacket.deserialize(data), ENetPacketFlag(0)),
                 send_to_client=lambda data: self._handle_server_to_client(data, NetPacket.deserialize(data), ENetPacketFlag(0)),
@@ -171,6 +180,35 @@ class Proxy:
             while self.proxy_client.peer:
                 self.proxy_client.poll()
 
+    def _pull_broker_packets(self) -> None:
+        """Continuously pull packets from broker's push channel."""
+        self.logger.debug("starting broker pull thread")
+        while not self._stop_event.is_set():
+            try:
+                if self._zmq_sub.poll(100, zmq.POLLIN):
+                    data = self._zmq_sub.recv(zmq.NOBLOCK)
+                    push_pkt = Packet()
+                    push_pkt.ParseFromString(data)
+                    
+                    if push_pkt.type == Packet.TYPE_PUSH:
+                        for pkt in push_pkt.push.packets:
+                            if pkt.type == Packet.TYPE_FORWARD:
+                                direction = pkt.forward.direction
+                                enet_flags = ENetPacketFlag(pkt.forward.enet_flags or 0)
+                                src = From.CLIENT if direction == DIRECTION_CLIENT_TO_SERVER else From.SERVER
+                                
+                                if direction == DIRECTION_CLIENT_TO_SERVER:
+                                    self._handle_client_to_server(pkt.forward.buf, NetPacket.deserialize(pkt.forward.buf), enet_flags)
+                                elif direction == DIRECTION_SERVER_TO_CLIENT:
+                                    self._handle_server_to_client(pkt.forward.buf, NetPacket.deserialize(pkt.forward.buf), enet_flags)
+            except zmq.error.Again:
+                pass
+            except Exception as e:
+                if not self._stop_event.is_set():
+                    self.logger.debug(f"pull error: {e}")
+        
+        self.logger.debug("broker pull thread exited")
+
     def _worker(self) -> None:
         self.logger.debug("starting packet worker thread")
         while not self._stop_event.is_set():
@@ -207,6 +245,12 @@ class Proxy:
         if self._worker_thread is None:
             self._worker_thread = threading.Thread(target=self._worker)
             self._worker_thread.start()
+        
+        # Start pull thread for broker packets
+        if self._pull_thread is None:
+            self._pull_thread = threading.Thread(target=self._pull_broker_packets)
+            self._pull_thread.daemon = True
+            self._pull_thread.start()
 
         try:
             while True:
@@ -252,6 +296,13 @@ class Proxy:
             self.logger.error(f"failed: {e}")
         finally:
             with block_sigint():
+                # Close ZMQ resources
+                try:
+                    self._zmq_sub.close()
+                    self._zmq_context.term()
+                except Exception as e:
+                    self.logger.debug(f"ZMQ cleanup error: {e}")
+                
                 self.broker.stop()
 
                 self.proxy_server.disconnect_now()
@@ -262,5 +313,8 @@ class Proxy:
 
                 self._stop_event.set()
                 self._event_queue.put(None)
-                self._worker_thread.join()
+                if self._worker_thread:
+                    self._worker_thread.join()
+                if self._pull_thread:
+                    self._pull_thread.join(timeout=5)
 

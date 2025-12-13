@@ -15,6 +15,8 @@ message Packet {
     TYPE_FORWARD = 8;
     TYPE_FORWARD_NOT_MODIFIED = 9;
     TYPE_CANCEL = 10;
+    TYPE_COMPLETE = 11;
+    TYPE_PUSH = 12;
   }
 
   Type type = 1;
@@ -29,6 +31,8 @@ message Packet {
     Forward forward = 9;
     ForwardNotModified forward_not_modified = 10;
     Cancel cancel = 11;
+    Complete complete = 12;
+    Push push = 13;
   }
 }
 
@@ -59,14 +63,24 @@ message Forward {
   optional bytes chain_id = 1;
   bytes buf = 2;
   optional Direction direction = 3;
+  optional int32 enet_flags = 4;
 }
 
 message ForwardNotModified {
   bytes chain_id = 1;
+  optional int32 enet_flags = 2;
 }
 
 message Cancel {
   bytes chain_id = 1;
+}
+
+message Complete {
+  bytes chain_id = 1;
+}
+
+message Push {
+  repeated Packet packets = 1;
 }
 
 enum InterestType {

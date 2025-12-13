@@ -8,11 +8,17 @@ import time
 from zmq.utils.monitor import recv_monitor_message
 
 from gtools.protogen.extension_pb2 import (
+    DIRECTION_UNSPECIFIED,
     CapabilityResponse,
+    Direction,
     Event,
     ForwardNotModified,
     Packet,
     Interest,
+    Forward,
+    Cancel,
+    Complete,
+    Push,
 )
 
 
@@ -106,6 +112,22 @@ class Extension(ABC):
 
     def _connect(self) -> None:
         self._socket.connect(self._broker_addr)
+
+    def forward(self, buf: bytes, direction: Direction | None = None) -> Packet:
+        """Create a FORWARD packet with modified data."""
+        return Packet(type=Packet.TYPE_FORWARD, forward=Forward(buf=buf, direction=direction or DIRECTION_UNSPECIFIED))
+
+    def forward_not_modified(self) -> Packet:
+        """Create a FORWARD_NOT_MODIFIED packet."""
+        return Packet(type=Packet.TYPE_FORWARD_NOT_MODIFIED, forward_not_modified=ForwardNotModified())
+
+    def cancel(self, chain_id: bytes | None = None) -> Packet:
+        """Create a CANCEL packet to drop the chain."""
+        return Packet(type=Packet.TYPE_CANCEL, cancel=Cancel(chain_id=chain_id or b""))
+
+    def complete(self, chain_id: bytes | None = None) -> Packet:
+        """Create a COMPLETE packet to explicitly finish the chain."""
+        return Packet(type=Packet.TYPE_COMPLETE, complete=Complete(chain_id=chain_id or b""))
 
     # TODO: the extension should be able to send more than one packet in one process
     @abstractmethod
