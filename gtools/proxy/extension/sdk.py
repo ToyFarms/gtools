@@ -1,154 +1,259 @@
-r"""
-extension runs in a different process
-it will extend the functionality of the main app and allows for uninterrupted
-development integration, aka you don't have to restart shit.
-
-the main purpose of extension is listen on event, then decide to either:
-- forward
-    process the packet as you like, then forward to the next extension, or just return
-    if you think no extension should modify the packet further.
-- cancel
-    return nothing
-
-it will talk using zeromq, thats it really
-
-main -> ext_1 -> ext_2 -> ext_3 -> ext_4 -\
-  \--------------------------------------/
-                        complete chain
-
-main -> ext_1 -> ext_2 -> ext_3 -\ ext_4
-  \------------------------------/
-                        ext_3 decides to return
-
-main -> ext_1 -> ext_2 -> ext_3 -x ext_4
-                        ext_3 decides to cancel
-
-setup:
-the main orchestrator will query every every extension for capabilities, it is:
-- modify
-- cancel
-- listen
-- priority
-
-listen capabilities will allow the extension to bypass the chain entirely,
-listen extension is read-only.
-
-      /-> ext_6 (listen)
-     |/-> ext_5 (listen)
-main +--> ext_1 -> ext_2 -> ext_3 -> ext_4 -\
-  \-----------------------------------------/
-
-when the extension reply with the requested capabilities,
-main will send a unique id for this extension and will start sending state packet.
-
-state packet will include the list of host and their id sorted by their priority,
-and is updated if there is a new extension joining. the first host is always main
-
-so the way you determine the next extension is through this state packet,
-you find your host, and i+1 is the next destination.
-
-the packet will hold a unique id, if the extension wants to return or cancel,
-you need to send the packet or cancel packet to the first host with the unique id.
-
-actually scrap that, the above is for p2p. using a router is simpler.
-this means the extension doesnt have to track all the extension (the orchestrator will handle it)
-every packet will need 1 extra hop through the orchestrator (router)
-
-    /-------------c-------------\
-   /----------b---------\        \
-  /------a------\        \        \
-main -> ext_1 -\ ext_2 -\ ext_3 -\ ext_4 -\
-  \-----a------/        |        |        |
-   \----------b---------/        |        |
-    \--------------c-------------/        |
-     \------------------d-----------------/
-"""
-
+from abc import ABC, abstractmethod
 import argparse
+import threading
+import traceback
 import zmq
 import logging
+import time
+from zmq.utils.monitor import recv_monitor_message
 
-from gtools.protogen.extension_pb2 import CAPABILITY_LISTEN, Capability, CapabilityResponse, Disconnect, Handshake, Packet
-from gtools.protogen.growtopia_pb2 import (
-    DTYPE_I32,
-    DTYPE_U32,
-    INTEREST_PEER_CONNECT,
-    INTEREST_PEER_DISCONNECT,
-    INTEREST_TANK_PACKET,
-    WHERE_OP_EQ,
-    WHERE_OP_GT,
+from gtools.protogen.extension_pb2 import (
+    CapabilityResponse,
+    Event,
+    ForwardNotModified,
+    Packet,
     Interest,
-    InterestTankPacket,
-    WhereSpecifier,
 )
 
 
-class Extension:
+class ThreadEvent:
+    def __init__(self) -> None:
+        self._flag = False
+        self._cond = threading.Condition()
+
+    def set(self) -> None:
+        with self._cond:
+            self._flag = True
+            self._cond.notify_all()
+
+    def is_set(self) -> bool:
+        with self._cond:
+            return self._flag
+
+    def clear(self) -> None:
+        with self._cond:
+            self._flag = False
+            self._cond.notify_all()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        with self._cond:
+            return self._cond.wait_for(lambda: self._flag, timeout)
+
+    def unwait(self, timeout=None) -> bool:
+        with self._cond:
+            return self._cond.wait_for(lambda: not self._flag, timeout)
+
+
+class Extension(ABC):
     logger = logging.getLogger("extension")
 
-    def __init__(self, name: str, capability: list[Capability], interest: list[Interest], broker_addr: str = "tcp://127.0.0.1:6712") -> None:
-        self.name = name.encode()
-        self.capability = capability
-        self.interest = interest
-        self.broker_addr = broker_addr
+    def __init__(self, name: str, interest: list[Interest], broker_addr: str = "tcp://127.0.0.1:6712") -> None:
+        self._name = name.encode()
+        self._interest = interest
+        self._broker_addr = broker_addr
 
-        self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.DEALER)
-        self.socket.setsockopt(zmq.IDENTITY, self.name)
+        self._context = zmq.Context()
+        self._socket = self._context.socket(zmq.DEALER)
+        self._socket.setsockopt(zmq.IDENTITY, self._name)
+        self._socket.setsockopt(zmq.LINGER, 0)
 
-        self._connect()
-        self._start()
+        self._worker_thread_id: threading.Thread | None = None
+        self._monitor_thread_id: threading.Thread | None = None
+        self._stop_event = ThreadEvent()
+
+        self.connected = ThreadEvent()
 
     def _send(self, pkt: Packet) -> None:
-        self.logger.debug(f"send {pkt!r}")
-        self.socket.send(pkt.SerializeToString())
+        if self._stop_event.is_set():
+            return
 
-    def _recv(self, expected: Packet.Type | None = None) -> Packet:
-        data = self.socket.recv()
+        self.logger.debug(f"   send \x1b[31m-->>\x1b[0m \x1b[31m>>\x1b[0m{pkt!r}\x1b[31m>>\x1b[0m")
+        try:
+            if self._socket.poll(100, zmq.POLLOUT):
+                self._socket.send(pkt.SerializeToString(), zmq.NOBLOCK)
+        except zmq.error.ZMQError as e:
+            if not self._stop_event.is_set():
+                self.logger.debug(f"send error: {e}")
+
+    def _recv(self, expected: Packet.Type | None = None) -> Packet | None:
+        if self._stop_event.is_set():
+            return None
+
+        try:
+            events = self._socket.poll(100, zmq.POLLIN)
+
+            if events == 0:
+                return None
+
+            data = self._socket.recv(zmq.NOBLOCK)
+        except zmq.error.Again:
+            return None
+        except zmq.error.ZMQError as e:
+            if self._stop_event.is_set():
+                return None
+            self.logger.debug(f"recv error: {e}")
+            return None
+
         pkt = Packet()
         pkt.ParseFromString(data)
 
         if expected and pkt.type != expected:
             raise TypeError(f"expected type {expected!r} got {pkt.type!r}")
 
-        self.logger.debug(f"recv {pkt!r}")
+        self.logger.debug(f"\x1b[32m<<--\x1b[0m recv    \x1b[32m<<\x1b[0m{pkt!r}\x1b[32m<<\x1b[0m")
 
         return pkt
 
-    def disconnect(self) -> None:
-        self._send(Packet(type=Packet.TYPE_DISCONNECT, disconnect=Disconnect()))
-        self.context.destroy()
-
     def _connect(self) -> None:
-        self.socket.connect(self.broker_addr)
+        self._socket.connect(self._broker_addr)
 
-        self._send(Packet(type=Packet.TYPE_HANDSHAKE, handshake=Handshake()))
-        self._recv(Packet.TYPE_CAPABILITY_REQUEST)
-        self._send(
-            Packet(
-                type=Packet.TYPE_CAPABILITY_RESPONSE,
-                capability_response=CapabilityResponse(
-                    capability=self.capability,
-                    interest=self.interest,
-                ),
-            )
-        )
+    # TODO: the extension should be able to send more than one packet in one process
+    @abstractmethod
+    def process(self, event: Event) -> Packet | None: ...
 
-    def _start(self) -> None:
+    @abstractmethod
+    def destroy(self) -> None: ...
+
+    def start(self, block: bool = False) -> None:
+        self._monitor_thread_id = threading.Thread(target=self._monitor_thread, daemon=True)
+        self._monitor_thread_id.start()
+
+        self._connect()
+
+        if block:
+            try:
+                self._worker_thread()
+            except (KeyboardInterrupt, InterruptedError):
+                pass
+            finally:
+                self.stop()
+        else:
+            self._worker_thread_id = threading.Thread(target=self._worker_thread, daemon=False)
+            self._worker_thread_id.start()
+
+    def stop(self) -> None:
+        if self._stop_event.is_set():
+            return
+
+        self.logger.debug("stopping extension...")
+
         try:
-            while True:
+            self._send(Packet(type=Packet.TYPE_DISCONNECT))
+        except Exception:
+            pass
+
+        self._stop_event.set()
+        # self.connected.clear()
+
+        try:
+            self._socket.close()
+        except Exception as e:
+            self.logger.debug(f"socket close error: {e}")
+
+        if self._worker_thread_id and self._worker_thread_id.is_alive():
+            self._worker_thread_id.join(timeout=2.0)
+            if self._worker_thread_id.is_alive():
+                self.logger.warning("main thread did not stop in time")
+
+        if self._monitor_thread_id and self._monitor_thread_id.is_alive():
+            self._monitor_thread_id.join(timeout=0.5)
+
+        try:
+            self._context.term()
+        except Exception as e:
+            self.logger.debug(f"context term error: {e}")
+
+        self.logger.debug("extension stopped")
+
+    def _monitor_thread(self) -> None:
+        mon = None
+        try:
+            mon = self._socket.get_monitor_socket()
+
+            if not mon:
+                return
+
+            while not self._stop_event.is_set():
+                try:
+                    if mon.poll(100):
+                        evt = recv_monitor_message(mon, zmq.NOBLOCK)
+                        if evt and evt["event"] == zmq.EVENT_CONNECTED:
+                            self._send(Packet(type=Packet.TYPE_HANDSHAKE))
+                        elif evt["event"] in (zmq.EVENT_DISCONNECTED, zmq.EVENT_MONITOR_STOPPED):
+                            self.connected.clear()
+                except zmq.error.Again:
+                    continue
+                except zmq.error.ZMQError:
+                    break
+        except Exception as e:
+            self.logger.debug(f"monitor thread error: {e}")
+        finally:
+            if mon:
+                try:
+                    mon.close()
+                except:
+                    pass
+
+    def _worker_thread(self) -> None:
+        try:
+            while not self._stop_event.is_set():
                 pkt = self._recv()
+
+                if pkt is None:
+                    if self._stop_event.is_set():
+                        break
+
+                    continue
+
                 match pkt.type:
                     case Packet.TYPE_EVENT:
+                        try:
+                            response = self.process(pkt.event)
+                        except:
+                            traceback.print_exc()
+                            response = Packet(
+                                type=Packet.TYPE_FORWARD_NOT_MODIFIED,
+                                forward_not_modified=ForwardNotModified(chain_id=pkt.event.chain_id),
+                            )
+
+                        if response:
+                            if response.type == Packet.TYPE_FORWARD:
+                                response.forward.chain_id = pkt.event.chain_id
+                            elif response.type == Packet.TYPE_FORWARD_NOT_MODIFIED:
+                                response.forward_not_modified.chain_id = pkt.event.chain_id
+                            else:
+                                raise NotImplementedError(f"response type {response.type} not handled")
+                            self._send(response)
+                    case Packet.TYPE_CONNECTED:
+                        self.connected.set()
+                    case Packet.TYPE_DISCONNECT:
                         pass
+                    case Packet.TYPE_HANDSHAKE_ACK:
+                        pass
+                    case Packet.TYPE_CAPABILITY_REQUEST:
+                        self._send(
+                            Packet(
+                                type=Packet.TYPE_CAPABILITY_RESPONSE,
+                                capability_response=CapabilityResponse(
+                                    interest=self._interest,
+                                ),
+                            )
+                        )
+        except zmq.error.ZMQError as e:
+            if not self._stop_event.is_set():
+                self.logger.debug(f"ZMQ error in main loop: {e}")
         finally:
-            self.disconnect()
+            # self.connected.clear()
+            self.logger.debug("worker thread exiting")
 
 
 if __name__ == "__main__":
     from gtools.proxy.extension.broker import Broker
     import logging
     import time
+    from gtools.proxy.extension.builtin.fast_drop import FastDropExtension
+    from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT
+    from gtools.core.growtopia.packet import NetPacket
 
     logging.basicConfig(level=logging.DEBUG)
 
@@ -158,32 +263,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.broker:
-        Broker()
+        b = Broker()
+        time.sleep(5)
+        buf = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd2\x00\x00\x00\x02\x00\x02\x0f\x00\x00\x00OnDialogRequest\x01\x02\xb6\x00\x00\x00set_default_color|`o\nadd_label_with_icon|big|`wDrop Lava``|left|4|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||8|5|\nembed_data|itemID|4\nend_dialog|drop_item|Cancel|OK|\n\x00"
+        pkt = NetPacket.deserialize(buf)
+        b.process_event(pkt, buf, DIRECTION_SERVER_TO_CLIENT)
     else:
-        Extension(
-            f"test-{time.time_ns()}",
-            [CAPABILITY_LISTEN],
-            [
-                Interest(interest=INTEREST_PEER_CONNECT, priority=-100),
-                Interest(interest=INTEREST_PEER_DISCONNECT, priority=-100),
-                Interest(
-                    interest=INTEREST_TANK_PACKET,
-                    tank_packet=InterestTankPacket(
-                        where=[
-                            WhereSpecifier(field="net_id", type=DTYPE_I32, op=WHERE_OP_EQ, i32=2),
-                            WhereSpecifier(field="jump_count", type=DTYPE_U32, op=WHERE_OP_GT, u32=20),
-                        ]
-                    ),
-                    priority=9999,
-                ),
-                Interest(
-                    interest=INTEREST_TANK_PACKET,
-                    tank_packet=InterestTankPacket(
-                        where=[
-                            WhereSpecifier(field="net_id", type=DTYPE_I32, op=WHERE_OP_EQ, i32=-1),
-                        ]
-                    ),
-                    priority=9999,
-                ),
-            ],
-        )
+        FastDropExtension()

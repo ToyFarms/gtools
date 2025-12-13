@@ -17,11 +17,11 @@ else:
 enet = ctypes.CDLL(Path(__file__).parent / "enet" / lib_name)
 
 
-class __Pointer[T](_Pointer): ...
+class Pointer[T](_Pointer): ...
 
 
-def byref[T: ctypes.Structure](val: T, offset: int = 0) -> _Pointer[T]:
-    return cast(__Pointer[T], ctypes.byref(val, offset))
+def byref[T: ctypes.Structure](val: T, offset: int = 0) -> Pointer[T]:
+    return cast(Pointer[T], ctypes.byref(val, offset))
 
 
 class ENetAddress(ctypes.Structure):
@@ -40,6 +40,7 @@ class ENetEventType(IntEnum):
 
 
 class ENetPacketFlag(IntFlag):
+    NONE = 0
     # packet must be received by the target peer and resend attempts should be
     # made until the packet is delivered
     RELIABLE = 1 << 0

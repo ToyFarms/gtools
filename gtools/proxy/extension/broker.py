@@ -1,22 +1,64 @@
 from bisect import insort
-from collections import defaultdict
+from collections import defaultdict, deque
+import itertools
 import logging
+import random
+import re
 import threading
-from typing import Iterator
+from typing import Any, Callable, Iterator
 import zmq
+import xxhash
 
-from gtools.protogen.extension_pb2 import Capability, CapabilityRequest, Packet
-from gtools.protogen.growtopia_pb2 import Interest, InterestType
+from gtools.core.growtopia.packet import NetPacket, NetType, TankPacket, TankType
+from gtools.core.growtopia.variant import Variant
+from gtools.protogen.extension_pb2 import (
+    BLOCKING_MODE_BLOCK,
+    BLOCKING_MODE_SEND_AND_FORGET,
+    CapabilityRequest,
+    Direction,
+    Event,
+    Packet,
+    Interest,
+    InterestType,
+    TankField,
+    WhereOp,
+    DIRECTION_CLIENT_TO_SERVER,
+    DIRECTION_SERVER_TO_CLIENT,
+)
 
 
+def hash_interest(interest: Interest) -> int:
+    h = xxhash.xxh3_64()
+    h.update(interest.interest.to_bytes())
+    if interest.priority:
+        h.update(interest.priority.to_bytes())
+    h.update(interest.blocking_mode.to_bytes())
+    if interest.direction:
+        h.update(interest.direction.to_bytes())
+    if interest.id:
+        h.update(interest.id.to_bytes())
+
+    return h.intdigest()
+
+
+# extension represent the extension as a whole
+# client represent the extension as a function/endpoint (a single interest)
 class Extension:
-    def __init__(self, id: bytes, capability: list[Capability], interest: list[Interest]) -> None:
+    def __init__(self, id: bytes, interest: list[Interest]) -> None:
         self.id = id
-        self.capability = capability
         self.interest = interest
 
-    def is_interested(self) -> None:
-        pass
+
+class Client:
+    def __init__(self, ext: Extension, interest: Interest) -> None:
+        self.ext = ext
+        self.interest = interest
+
+    def __eq__(self, value: object, /) -> bool:
+        if not isinstance(value, Client):
+            return False
+
+        return self.ext == value.ext and self.interest == value.interest
 
 
 class ExtensionManager:
@@ -25,7 +67,7 @@ class ExtensionManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._extensions: dict[bytes, Extension] = {}
-        self._interest_map: defaultdict[InterestType, list[tuple[Extension, int]]] = defaultdict(list)
+        self._interest_map: defaultdict[InterestType, list[Client]] = defaultdict(list)
 
     def add_extension(self, extension: Extension) -> None:
         with self._lock:
@@ -34,7 +76,7 @@ class ExtensionManager:
             self._extensions[extension.id] = extension
             for interest in extension.interest:
                 ent = self._interest_map[interest.interest]
-                insort(ent, (extension, interest.priority), key=lambda x: x[1])
+                insort(ent, Client(extension, interest), key=lambda x: x.interest.priority)
 
     def remove_extension(self, id: bytes) -> None:
         with self._lock:
@@ -45,72 +87,550 @@ class ExtensionManager:
             extension = self._extensions[id]
             for interest in extension.interest:
                 ent = self._interest_map[interest.interest]
-                ent.remove((extension, interest.priority))
+                ent.remove(Client(extension, interest))
 
             del self._extensions[id]
 
-    def get_interested_extension(self, interest: InterestType) -> Iterator[Extension]:
-        for extension, _ in self._interest_map[interest]:
-            yield extension
+    _TANK_FIELD_ACCESSOR: dict[TankField, Callable[[TankPacket], object]] = {
+        TankField.TANK_FIELD_TYPE: lambda pkt: pkt.type,
+        TankField.TANK_FIELD_OBJECT_TYPE: lambda pkt: pkt.object_type,
+        TankField.TANK_FIELD_JUMP_COUNT: lambda pkt: pkt.jump_count,
+        TankField.TANK_FIELD_ANIMATION_TYPE: lambda pkt: pkt.animation_type,
+        TankField.TANK_FIELD_NET_ID: lambda pkt: pkt.net_id,
+        TankField.TANK_FIELD_TARGET_NET_ID: lambda pkt: pkt.target_net_id,
+        TankField.TANK_FIELD_FLAGS: lambda pkt: pkt.flags,
+        TankField.TANK_FIELD_FLOAT_VAR: lambda pkt: pkt.float_var,
+        TankField.TANK_FIELD_VALUE: lambda pkt: pkt.value,
+        TankField.TANK_FIELD_VECTOR_X: lambda pkt: pkt.vector_x,
+        TankField.TANK_FIELD_VECTOR_Y: lambda pkt: pkt.vector_y,
+        TankField.TANK_FIELD_VECTOR_X2: lambda pkt: pkt.vector_x2,
+        TankField.TANK_FIELD_VECTOR_Y2: lambda pkt: pkt.vector_y2,
+        TankField.TANK_FIELD_PARTICLE_ROTATION: lambda pkt: pkt.particle_rotation,
+        TankField.TANK_FIELD_INT_X: lambda pkt: pkt.int_x,
+        TankField.TANK_FIELD_INT_Y: lambda pkt: pkt.int_y,
+        TankField.TANK_FIELD_EXTENDED_LEN: lambda pkt: pkt.extended_len,
+    }
+
+    _OP_EVALUATE: dict[WhereOp, Callable[[Any, Any], bool]] = {
+        WhereOp.WHERE_OP_EQ: lambda lval, rval: lval == rval,
+        WhereOp.WHERE_OP_EQ_EPS: lambda lval, rval: (lval - rval) < 0.01,
+        WhereOp.WHERE_OP_NEQ: lambda lval, rval: lval != rval,
+        WhereOp.WHERE_OP_GT: lambda lval, rval: lval > rval,
+        WhereOp.WHERE_OP_GTE: lambda lval, rval: lval >= rval,
+        WhereOp.WHERE_OP_LT: lambda lval, rval: lval < rval,
+        WhereOp.WHERE_OP_LTE: lambda lval, rval: lval <= rval,
+    }
+
+    def get_interested_extension(self, interest_type: InterestType, pkt: NetPacket, raw: bytes, direction: Direction) -> Iterator[Client]:
+        for client in self._interest_map[interest_type]:
+            interest = client.interest
+
+            matches: list[bool] = []
+
+            if f := client.interest.WhichOneof("payload"):
+                matches.append(getattr(interest, f) is not None)
+            matches.append(interest.direction == direction)
+
+            matched = True
+            match interest.interest:
+                case InterestType.INTEREST_PEER_CONNECT:
+                    raise NotImplementedError("INTEREST_PEER_CONNECT")
+                case InterestType.INTEREST_PEER_DISCONNECT:
+                    raise NotImplementedError("INTEREST_PEER_DISCONNECT")
+                case InterestType.INTEREST_SERVER_HELLO:
+                    raise NotImplementedError("INTEREST_SERVER_HELLO")
+                case InterestType.INTEREST_GENERIC_TEXT:
+                    if interest.generic_text.regex:
+                        matched = bool(re.match(interest.generic_text.regex, raw))
+                case InterestType.INTEREST_GAME_MESSAGE:
+                    if interest.game_message.action:
+                        matched = interest.game_message.action == pkt.game_message["action", 1]
+                case InterestType.INTEREST_TANK_PACKET:
+                    for clause in interest.tank_packet.where:
+                        matched = self._OP_EVALUATE[clause.op](self._TANK_FIELD_ACCESSOR[clause.field](pkt.tank), getattr(clause, clause.WhichOneof("rvalue")))
+
+                        if matched:
+                            break
+                case InterestType.INTEREST_ERROR:
+                    raise NotImplementedError("INTEREST_ERROR")
+                case InterestType.INTEREST_TRACK:
+                    raise NotImplementedError("INTEREST_TRACK")
+                case InterestType.INTEREST_CLIENT_LOG_REQUEST:
+                    raise NotImplementedError("INTEREST_CLIENT_LOG_REQUEST")
+                case InterestType.INTEREST_CLIENT_LOG_RESPONSE:
+                    raise NotImplementedError("INTEREST_CLIENT_LOG_RESPONSE")
+
+            if pkt.type == NetType.TANK_PACKET and interest.interest != InterestType.INTEREST_TANK_PACKET:
+                match interest.interest:
+                    case InterestType.INTEREST_STATE:
+                        raise NotImplementedError("NTEREST_STATE")
+                    case InterestType.INTEREST_CALL_FUNCTION:
+                        matched = interest.call_function.fn_name == Variant.get(pkt.tank.extended_data, 0).value
+                    case InterestType.INTEREST_UPDATE_STATUS:
+                        raise NotImplementedError("INTEREST_UPDATE_STATUS")
+                    case InterestType.INTEREST_TILE_CHANGE_REQUEST:
+                        raise NotImplementedError("INTEREST_TILE_CHANGE_REQUEST")
+                    case InterestType.INTEREST_SEND_MAP_DATA:
+                        raise NotImplementedError("INTEREST_SEND_MAP_DATA")
+                    case InterestType.INTEREST_SEND_TILE_UPDATE_DATA:
+                        raise NotImplementedError("INTEREST_SEND_TILE_UPDATE_DATA")
+                    case InterestType.INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE:
+                        raise NotImplementedError("INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE")
+                    case InterestType.INTEREST_TILE_ACTIVATE_REQUEST:
+                        raise NotImplementedError("INTEREST_TILE_ACTIVATE_REQUEST")
+                    case InterestType.INTEREST_TILE_APPLY_DAMAGE:
+                        raise NotImplementedError("INTEREST_TILE_APPLY_DAMAGE")
+                    case InterestType.INTEREST_SEND_INVENTORY_STATE:
+                        raise NotImplementedError("INTEREST_SEND_INVENTORY_STATE")
+                    case InterestType.INTEREST_ITEM_ACTIVATE_REQUEST:
+                        raise NotImplementedError("INTEREST_ITEM_ACTIVATE_REQUEST")
+                    case InterestType.INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST:
+                        raise NotImplementedError("INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST")
+                    case InterestType.INTEREST_SEND_TILE_TREE_STATE:
+                        raise NotImplementedError("INTEREST_SEND_TILE_TREE_STATE")
+                    case InterestType.INTEREST_MODIFY_ITEM_INVENTORY:
+                        raise NotImplementedError("INTEREST_MODIFY_ITEM_INVENTORY")
+                    case InterestType.INTEREST_ITEM_CHANGE_OBJECT:
+                        raise NotImplementedError("INTEREST_ITEM_CHANGE_OBJECT")
+                    case InterestType.INTEREST_SEND_LOCK:
+                        raise NotImplementedError("INTEREST_SEND_LOCK")
+                    case InterestType.INTEREST_SEND_ITEM_DATABASE_DATA:
+                        raise NotImplementedError("INTEREST_SEND_ITEM_DATABASE_DATA")
+                    case InterestType.INTEREST_SEND_PARTICLE_EFFECT:
+                        raise NotImplementedError("INTEREST_SEND_PARTICLE_EFFECT")
+                    case InterestType.INTEREST_SET_ICON_STATE:
+                        raise NotImplementedError("INTEREST_SET_ICON_STATE")
+                    case InterestType.INTEREST_ITEM_EFFECT:
+                        raise NotImplementedError("INTEREST_ITEM_EFFECT")
+                    case InterestType.INTEREST_SET_CHARACTER_STATE:
+                        raise NotImplementedError("INTEREST_SET_CHARACTER_STATE")
+                    case InterestType.INTEREST_PING_REPLY:
+                        raise NotImplementedError("INTEREST_PING_REPLY")
+                    case InterestType.INTEREST_PING_REQUEST:
+                        raise NotImplementedError("INTEREST_PING_REQUEST")
+                    case InterestType.INTEREST_GOT_PUNCHED:
+                        raise NotImplementedError("INTEREST_GOT_PUNCHED")
+                    case InterestType.INTEREST_APP_CHECK_RESPONSE:
+                        raise NotImplementedError("INTEREST_APP_CHECK_RESPONSE")
+                    case InterestType.INTEREST_APP_INTEGRITY_FAIL:
+                        raise NotImplementedError("INTEREST_APP_INTEGRITY_FAIL")
+                    case InterestType.INTEREST_DISCONNECT:
+                        raise NotImplementedError("INTEREST_DISCONNECT")
+                    case InterestType.INTEREST_BATTLE_JOIN:
+                        raise NotImplementedError("INTEREST_BATTLE_JOIN")
+                    case InterestType.INTEREST_BATTLE_EVENT:
+                        raise NotImplementedError("INTEREST_BATTLE_EVENT")
+                    case InterestType.INTEREST_USE_DOOR:
+                        raise NotImplementedError("INTEREST_USE_DOOR")
+                    case InterestType.INTEREST_SEND_PARENTAL:
+                        raise NotImplementedError("INTEREST_SEND_PARENTAL")
+                    case InterestType.INTEREST_GONE_FISHIN:
+                        raise NotImplementedError("INTEREST_GONE_FISHIN")
+                    case InterestType.INTEREST_STEAM:
+                        raise NotImplementedError("INTEREST_STEAM")
+                    case InterestType.INTEREST_PET_BATTLE:
+                        raise NotImplementedError("INTEREST_PET_BATTLE")
+                    case InterestType.INTEREST_NPC:
+                        raise NotImplementedError("INTEREST_NPC")
+                    case InterestType.INTEREST_SPECIAL:
+                        raise NotImplementedError("INTEREST_SPECIAL")
+                    case InterestType.INTEREST_SEND_PARTICLE_EFFECT_V2:
+                        raise NotImplementedError("INTEREST_SEND_PARTICLE_EFFECT_V2")
+                    case InterestType.INTEREST_ACTIVATE_ARROW_TO_ITEM:
+                        raise NotImplementedError("INTEREST_ACTIVATE_ARROW_TO_ITEM")
+                    case InterestType.INTEREST_SELECT_TILE_INDEX:
+                        raise NotImplementedError("INTEREST_SELECT_TILE_INDEX")
+                    case InterestType.INTEREST_SEND_PLAYER_TRIBUTE_DATA:
+                        raise NotImplementedError("INTEREST_SEND_PLAYER_TRIBUTE_DATA")
+                    case InterestType.INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY:
+                        raise NotImplementedError("INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY")
+                    case InterestType.INTEREST_PVE_NPC:
+                        raise NotImplementedError("INTEREST_PVE_NPC")
+                    case InterestType.INTEREST_PVP_CARD_BATTLE:
+                        raise NotImplementedError("INTEREST_PVP_CARD_BATTLE")
+                    case InterestType.INTEREST_PVE_APPLY_PLAYER_DAMAGE:
+                        raise NotImplementedError("INTEREST_PVE_APPLY_PLAYER_DAMAGE")
+                    case InterestType.INTEREST_PVE_NPC_POSITION_UPDATE:
+                        raise NotImplementedError("INTEREST_PVE_NPC_POSITION_UPDATE")
+                    case InterestType.INTEREST_SET_EXTRA_MODS:
+                        raise NotImplementedError("INTEREST_SET_EXTRA_MODS")
+                    case InterestType.INTEREST_ON_STEP_TILE_MOD:
+                        raise NotImplementedError("INTEREST_ON_STEP_TILE_MOD")
+                    case InterestType.INTEREST_UNSPECIFIED:
+                        raise NotImplementedError("INTEREST_UNSPECIFIED")
+            matches.append(matched)
+
+            if all(matches):
+                yield client
 
     def get_extension(self, id: bytes) -> Extension:
         return self._extensions[id]
+
+    def get_all_extension(self) -> list[Extension]:
+        return list(self._extensions.values())
+
+
+class PacketCallback:
+    def __init__(
+        self,
+        send_to_server: Callable[[bytes], Any] | None = None,
+        send_to_client: Callable[[bytes], Any] | None = None,
+        any: Callable[[bytes], Any] | None = None,
+    ) -> None:
+        self.send_to_server = send_to_server
+        self.send_to_client = send_to_client
+        self.any = any
+
+
+class PendingChain:
+    def __init__(self, id: bytes, chain: deque[Client], data: bytes, direction: Direction) -> None:
+        self.id = id
+        self.chain = chain
+        self.processed_chain: dict[bytes, int] = {}  # ext_id: interest hash
+        self.direction = direction
+        self.data = data
+        self.finished_event = threading.Event()
+
+    def __repr__(self) -> str:
+        return f"PendingChain(size={len(self.chain)}, processed={self.processed_chain}, data={self.data}), finished={self.finished_event.is_set()}"
+
+
+class PendingPacket:
+    def __init__(self, data: bytes, direction: Direction, callback: PacketCallback) -> None:
+        self.data = data
+        self.direction = direction
+        self.callback = callback
 
 
 class Broker:
     logger = logging.getLogger("broker")
 
     def __init__(self, addr: str = "tcp://127.0.0.1:6712") -> None:
-        self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.ROUTER)
-        self.socket.bind(addr)
+        self._context = zmq.Context()
+        self._socket = self._context.socket(zmq.ROUTER)
+        self._socket.setsockopt(zmq.LINGER, 0)
+        self._socket.bind(addr)
+
+        self._extension_mgr = ExtensionManager()
+        self._pending_chain: dict[bytes, PendingChain] = {}
+        self._pending_packet: dict[bytes, PendingPacket] = {}
 
         self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
-        if self._thread is None:
-            self._thread = threading.Thread(target=lambda: self._worker())
-            self._thread.start()
+        self._worker_thread_id: threading.Thread | None = None
 
-        self.extension_mgr = ExtensionManager()
+    def _recv(self) -> tuple[bytes, Packet | None]:
+        if self._stop_event.is_set():
+            return b"", None
 
-    def _recv(self) -> tuple[bytes, Packet]:
-        extension, data = self.socket.recv_multipart()
+        try:
+            events = self._socket.poll(100, zmq.POLLIN)
+
+            if events == 0:
+                return b"", None
+
+            id, data = self._socket.recv_multipart(zmq.NOBLOCK)
+        except zmq.error.Again:
+            return b"", None
+        except zmq.error.ZMQError as e:
+            if self._stop_event.is_set():
+                return b"", None
+            self.logger.debug(f"Recv error: {e}")
+            return b"", None
+
         pkt = Packet()
         pkt.ParseFromString(data)
 
-        self.logger.debug(f"recv {extension}: {pkt!r}")
+        self.logger.debug(f"\x1b[31m<<--\x1b[0m recv    \x1b[31m<<\x1b[0m{pkt!r}\x1b[31m<<\x1b[0m")
 
-        return extension, pkt
+        return id, pkt
+
+    def broadcast(self, pkt: Packet) -> None:
+        for ext in self._extension_mgr.get_all_extension():
+            try:
+                self._send(ext.id, pkt)
+            except Exception as e:
+                self.logger.error(f"failed to send packet to {ext.id}: {e}")
+                continue
 
     def _send(self, extension: bytes, pkt: Packet) -> None:
-        self.logger.debug(f"send {extension}: {pkt!r}")
-        self.socket.send_multipart((extension, pkt.SerializeToString()))
+        if self._stop_event.is_set():
+            return
 
-    # @overload
-    # def _broadcast(self, pkt: Packet) -> None: ...
-    # @overload
-    # def _broadcast(self, pkt: Callable[[bytes], None]) -> None: ...
+        self.logger.debug(f"   send \x1b[32m-->>\x1b[0m target={extension}: \x1b[32m>>\x1b[0m{pkt!r}\x1b[32m>>\x1b[0m")
+        try:
+            if self._socket.poll(100, zmq.POLLOUT):
+                self._socket.send_multipart((extension, pkt.SerializeToString()))
+        except zmq.error.ZMQError as e:
+            if not self._stop_event.is_set():
+                self.logger.debug(f"Send error: {e}")
 
-    # def _broadcast(self, pkt: Packet | Callable[[bytes], None]) -> None:
-    #     for extension in self.extension_mgr.keys():
-    #         if isinstance(pkt, Packet):
-    #             self._send(extension, pkt)
-    #         else:
-    #             pkt(extension)
+    _PACKET_TO_INTEREST_TYPE: dict[NetType | TankType, InterestType] = {
+        NetType.SERVER_HELLO: InterestType.INTEREST_SERVER_HELLO,
+        NetType.GENERIC_TEXT: InterestType.INTEREST_GENERIC_TEXT,
+        NetType.GAME_MESSAGE: InterestType.INTEREST_GAME_MESSAGE,
+        NetType.TANK_PACKET: InterestType.INTEREST_TANK_PACKET,
+        NetType.ERROR: InterestType.INTEREST_ERROR,
+        NetType.TRACK: InterestType.INTEREST_TRACK,
+        NetType.CLIENT_LOG_REQUEST: InterestType.INTEREST_CLIENT_LOG_REQUEST,
+        NetType.CLIENT_LOG_RESPONSE: InterestType.INTEREST_CLIENT_LOG_RESPONSE,
+    }
+    _PACKET_TO_INTEREST_TYPE2: dict[NetType | TankType, InterestType] = {
+        TankType.STATE: InterestType.INTEREST_STATE,
+        TankType.CALL_FUNCTION: InterestType.INTEREST_CALL_FUNCTION,
+        TankType.UPDATE_STATUS: InterestType.INTEREST_UPDATE_STATUS,
+        TankType.TILE_CHANGE_REQUEST: InterestType.INTEREST_TILE_CHANGE_REQUEST,
+        TankType.SEND_MAP_DATA: InterestType.INTEREST_SEND_MAP_DATA,
+        TankType.SEND_TILE_UPDATE_DATA: InterestType.INTEREST_SEND_TILE_UPDATE_DATA,
+        TankType.SEND_TILE_UPDATE_DATA_MULTIPLE: InterestType.INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE,
+        TankType.TILE_ACTIVATE_REQUEST: InterestType.INTEREST_TILE_ACTIVATE_REQUEST,
+        TankType.TILE_APPLY_DAMAGE: InterestType.INTEREST_TILE_APPLY_DAMAGE,
+        TankType.SEND_INVENTORY_STATE: InterestType.INTEREST_SEND_INVENTORY_STATE,
+        TankType.ITEM_ACTIVATE_REQUEST: InterestType.INTEREST_ITEM_ACTIVATE_REQUEST,
+        TankType.ITEM_ACTIVATE_OBJECT_REQUEST: InterestType.INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST,
+        TankType.SEND_TILE_TREE_STATE: InterestType.INTEREST_SEND_TILE_TREE_STATE,
+        TankType.MODIFY_ITEM_INVENTORY: InterestType.INTEREST_MODIFY_ITEM_INVENTORY,
+        TankType.ITEM_CHANGE_OBJECT: InterestType.INTEREST_ITEM_CHANGE_OBJECT,
+        TankType.SEND_LOCK: InterestType.INTEREST_SEND_LOCK,
+        TankType.SEND_ITEM_DATABASE_DATA: InterestType.INTEREST_SEND_ITEM_DATABASE_DATA,
+        TankType.SEND_PARTICLE_EFFECT: InterestType.INTEREST_SEND_PARTICLE_EFFECT,
+        TankType.SET_ICON_STATE: InterestType.INTEREST_SET_ICON_STATE,
+        TankType.ITEM_EFFECT: InterestType.INTEREST_ITEM_EFFECT,
+        TankType.SET_CHARACTER_STATE: InterestType.INTEREST_SET_CHARACTER_STATE,
+        TankType.PING_REPLY: InterestType.INTEREST_PING_REPLY,
+        TankType.PING_REQUEST: InterestType.INTEREST_PING_REQUEST,
+        TankType.GOT_PUNCHED: InterestType.INTEREST_GOT_PUNCHED,
+        TankType.APP_CHECK_RESPONSE: InterestType.INTEREST_APP_CHECK_RESPONSE,
+        TankType.APP_INTEGRITY_FAIL: InterestType.INTEREST_APP_INTEGRITY_FAIL,
+        TankType.DISCONNECT: InterestType.INTEREST_DISCONNECT,
+        TankType.BATTLE_JOIN: InterestType.INTEREST_BATTLE_JOIN,
+        TankType.BATTLE_EVENT: InterestType.INTEREST_BATTLE_EVENT,
+        TankType.USE_DOOR: InterestType.INTEREST_USE_DOOR,
+        TankType.SEND_PARENTAL: InterestType.INTEREST_SEND_PARENTAL,
+        TankType.GONE_FISHIN: InterestType.INTEREST_GONE_FISHIN,
+        TankType.STEAM: InterestType.INTEREST_STEAM,
+        TankType.PET_BATTLE: InterestType.INTEREST_PET_BATTLE,
+        TankType.NPC: InterestType.INTEREST_NPC,
+        TankType.SPECIAL: InterestType.INTEREST_SPECIAL,
+        TankType.SEND_PARTICLE_EFFECT_V2: InterestType.INTEREST_SEND_PARTICLE_EFFECT_V2,
+        TankType.ACTIVATE_ARROW_TO_ITEM: InterestType.INTEREST_ACTIVATE_ARROW_TO_ITEM,
+        TankType.SELECT_TILE_INDEX: InterestType.INTEREST_SELECT_TILE_INDEX,
+        TankType.SEND_PLAYER_TRIBUTE_DATA: InterestType.INTEREST_SEND_PLAYER_TRIBUTE_DATA,
+        TankType.FTUE_SET_ITEM_TO_QUICK_INVENTORY: InterestType.INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY,
+        TankType.PVE_NPC: InterestType.INTEREST_PVE_NPC,
+        TankType.PVP_CARD_BATTLE: InterestType.INTEREST_PVP_CARD_BATTLE,
+        TankType.PVE_APPLY_PLAYER_DAMAGE: InterestType.INTEREST_PVE_APPLY_PLAYER_DAMAGE,
+        TankType.PVE_NPC_POSITION_UPDATE: InterestType.INTEREST_PVE_NPC_POSITION_UPDATE,
+        TankType.SET_EXTRA_MODS: InterestType.INTEREST_SET_EXTRA_MODS,
+        TankType.ON_STEP_TILE_MOD: InterestType.INTEREST_ON_STEP_TILE_MOD,
+    }
 
-    def _worker(self) -> None:
-        while not self._stop_event.is_set():
-            id, pkt = self._recv()
-            match pkt.type:
-                case Packet.TYPE_HANDSHAKE:
-                    self._send(id, Packet(type=Packet.TYPE_CAPABILITY_REQUEST, capability_request=CapabilityRequest()))
-                case Packet.TYPE_CAPABILITY_RESPONSE:
-                    self.extension_mgr.add_extension(
-                        Extension(
-                            id=id,
-                            capability=list(pkt.capability_response.capability),
-                            interest=list(pkt.capability_response.interest),
+    # NOTE: i hate how i need netpacket to build the chain,
+    # i might switch to zero-copy library like cap n proto
+    # so i dont have to (de)serialize all over the place.
+
+    # or not.. i couldnt make pycapnp deserialize packet
+    # maybe using python is a mistake
+
+    def _get_interested_extension(self, pkt: NetPacket, raw: bytes, direction: Direction) -> Iterator[Client]:
+        # TODO: handle "super" packet, basically like netpacket shuold match any kind of packet
+        interest_type = self._PACKET_TO_INTEREST_TYPE[pkt.type]
+        interest_type2: list[Client] = []
+        if pkt.type == NetType.TANK_PACKET:
+            interest_type2.extend(
+                self._extension_mgr.get_interested_extension(
+                    self._PACKET_TO_INTEREST_TYPE2[pkt.tank.type],
+                    pkt,
+                    raw,
+                    direction,
+                )
+            )
+
+        for client in itertools.chain(
+            self._extension_mgr.get_interested_extension(interest_type, pkt, raw, direction),
+            interest_type2,
+        ):
+            yield client
+
+    def _build_chain(
+        self,
+        pkt: NetPacket,
+        raw: bytes,
+        direction: Direction,
+        out: deque[Client],
+        pred: Callable[[Extension, Interest], bool] | None = None,
+    ) -> None:
+        for client in self._get_interested_extension(pkt, raw, direction):
+            if client.interest.blocking_mode == BLOCKING_MODE_BLOCK:
+                if pred and pred(client.ext, client.interest):
+                    out.append(client)
+
+    # TODO: i didnt think zmq had all the stuff behind the scene before i implemented them myself.
+    # might want to utilize that instead for performance
+
+    # TODO: i dont like you have to handle 2 case: blocking and non blocking, separately, everywhere
+    # it'd be nice if the api can be unified
+    def process_event(self, pkt: NetPacket, raw: bytes, direction: Direction, callback: PacketCallback | None = None) -> tuple[NetPacket, Direction] | None:
+        chain: deque[Client] = deque()
+
+        for client in self._get_interested_extension(pkt, raw, direction):
+            if client.interest.blocking_mode == BLOCKING_MODE_SEND_AND_FORGET:
+                pkt_id = random.randbytes(16)
+                self._send(
+                    client.ext.id,
+                    Packet(
+                        type=Packet.TYPE_EVENT,
+                        event=Event(
+                            chain_id=pkt_id,
+                            id=client.interest.id,
+                            buf=raw,
                         ),
-                    )
-                case Packet.TYPE_DISCONNECT:
-                    self.extension_mgr.remove_extension(id)
+                    ),
+                )
+                if callback:
+                    self._pending_packet[pkt_id] = PendingPacket(raw, direction, callback)
+            else:
+                chain.append(client)
+
+        if chain:
+            chain_id = random.randbytes(16)
+            pending = PendingChain(chain_id, chain, raw, direction)
+            pending.processed_chain[chain[0].ext.id] = hash_interest(chain[0].interest)
+            self._pending_chain[chain_id] = pending
+            self._send(
+                chain[0].ext.id,
+                Packet(
+                    type=Packet.TYPE_EVENT,
+                    event=Event(
+                        chain_id=chain_id,
+                        id=chain[0].interest.id,
+                        buf=raw,
+                    ),
+                ),
+            )
+
+            self._pending_chain[chain_id].finished_event.wait()
+            finished = self._pending_chain.pop(chain_id)
+            return (NetPacket.deserialize(finished.data), finished.direction)
+
+    def start(self, block: bool = False) -> None:
+        if block:
+            self._worker_thread()
+        else:
+            self._worker_thread_id = threading.Thread(target=lambda: self._worker_thread())
+            self._worker_thread_id.start()
+
+    def stop(self) -> None:
+        if self._stop_event.is_set():
+            return
+
+        self.logger.debug("stopping extension...")
+
+        self.broadcast(Packet(type=Packet.TYPE_DISCONNECT))
+        self._stop_event.set()
+
+        if self._worker_thread_id and self._worker_thread_id.is_alive():
+            self._worker_thread_id.join(timeout=2.0)
+            self.logger.debug("worker thread exited")
+
+        try:
+            self.logger.debug("closing zmq context")
+            # self._context.term()
+            self._context.destroy(linger=0)
+        except Exception as e:
+            self.logger.debug(f"context term error: {e}")
+
+        self.logger.debug("broker has stopped")
+
+    def _forward(self, chain: PendingChain, new_data: bytes, new_direction: Direction) -> None:
+        chain.direction = new_direction
+        chain.data = new_data
+        chain.chain.clear()
+        self._build_chain(
+            NetPacket.deserialize(new_data),
+            new_data,
+            new_direction,
+            chain.chain,
+            pred=lambda ext, interest: not bool(chain and (ext.id in chain.processed_chain and chain.processed_chain[ext.id] == hash_interest(interest))),
+        )
+        if len(chain.chain) == 0:
+            chain.finished_event.set()
+        else:
+            next_client = chain.chain.popleft()
+            chain.processed_chain[next_client.ext.id] = hash_interest(next_client.interest)
+            self._send(
+                next_client.ext.id,
+                Packet(
+                    type=Packet.TYPE_EVENT,
+                    event=Event(chain_id=chain.id, buf=new_data, id=next_client.interest.id),
+                ),
+            )
+
+    def _worker_thread(self) -> None:
+        try:
+            while not self._stop_event.is_set():
+                id, pkt = self._recv()
+                if pkt is None:
+                    if self._stop_event.is_set():
+                        break
+                    continue
+                print(pkt)
+
+                match pkt.type:
+                    case Packet.TYPE_HANDSHAKE:
+                        self._send(id, Packet(type=Packet.TYPE_HANDSHAKE_ACK))
+                        self._send(id, Packet(type=Packet.TYPE_CAPABILITY_REQUEST, capability_request=CapabilityRequest()))
+                    case Packet.TYPE_CAPABILITY_RESPONSE:
+                        self._extension_mgr.add_extension(
+                            Extension(
+                                id=id,
+                                interest=list(pkt.capability_response.interest),
+                            ),
+                        )
+                        self._send(id, Packet(type=Packet.TYPE_CONNECTED))
+                    case Packet.TYPE_DISCONNECT:
+                        self._extension_mgr.remove_extension(id)
+                    case Packet.TYPE_FORWARD:
+                        """
+                        first check if the packet is in the pending chain or not
+                        if it is, then we should rebuild the chain
+                        if it is not, then we check the pending packet (that means the packet is non blocking)
+                        after rebuilding the chain, we should filter out any extension that
+                        has its id in the processed list AND the interest hash is matching
+                        if the interest hash is not matching, that means the interest is changed,
+                        and is interpreted as a new interest
+                        """
+                        if (chain := self._pending_chain.get(pkt.forward.chain_id)) is not None:
+                            self._forward(chain, pkt.forward.buf, pkt.forward.direction)
+                        elif (pending := self._pending_packet.get(pkt.forward.chain_id)) is not None:
+                            if pkt.forward.direction == DIRECTION_CLIENT_TO_SERVER and pending.callback.send_to_server:
+                                pending.callback.send_to_server(pkt.forward.buf)
+                            elif pkt.forward.direction == DIRECTION_SERVER_TO_CLIENT and pending.callback.send_to_client:
+                                pending.callback.send_to_client(pkt.forward.buf)
+
+                            if pending.callback.any:
+                                pending.callback.any(pkt.forward.buf)
+
+                            del self._pending_packet[pkt.forward.chain_id]
+                    case Packet.TYPE_FORWARD_NOT_MODIFIED:
+                        if (chain := self._pending_chain.get(pkt.forward_not_modified.chain_id)) is not None:
+                            self._forward(chain, chain.data, chain.direction)
+                        elif (pending := self._pending_packet.get(pkt.forward_not_modified.chain_id)) is not None:
+                            if pending.direction == DIRECTION_CLIENT_TO_SERVER and pending.callback.send_to_server:
+                                pending.callback.send_to_server(pending.data)
+                            elif pending.direction == DIRECTION_SERVER_TO_CLIENT and pending.callback.send_to_client:
+                                pending.callback.send_to_client(pending.data)
+
+                            if pending.callback.any:
+                                pending.callback.any(pending.data)
+
+                            del self._pending_packet[pkt.forward_not_modified.chain_id]
+                    case Packet.TYPE_CANCEL:
+                        # not implemented
+                        pass
+        except (KeyboardInterrupt, InterruptedError):
+            pass
+        except zmq.error.ZMQError as e:
+            if not self._stop_event.is_set():
+                self.logger.debug(f"ZMQ error in main loop: {e}")
+        finally:
+            self.logger.debug("worker thread exiting")

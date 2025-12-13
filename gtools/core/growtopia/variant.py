@@ -196,6 +196,30 @@ class Variant:
 
         return cls(out)
 
+    @staticmethod
+    def get(data: bytes, idx: int) -> "Variant.Type":
+        s = Buffer(data, endian="<")
+        count = s.read_u8()
+        for i in range(count):
+            _ = s.read_u8()
+            kind = Kind(s.read_u8())
+
+            if i == idx:
+                if kind == Kind.FLOAT:
+                    return Variant.vfloat(value=s.read_f32())
+                elif kind == Kind.STRING:
+                    return Variant.vstr(value=s.read_pascal_bytes("I"))
+                elif kind == Kind.VEC2:
+                    return Variant.vvec2(value=(s.read_f32(), s.read_f32()))
+                elif kind == Kind.VEC3:
+                    return Variant.vvec3(value=(s.read_f32(), s.read_f32(), s.read_f32()))
+                elif kind == Kind.UNSIGNED:
+                    return Variant.vuint(value=s.read_u32())
+                elif kind == Kind.SIGNED:
+                    return Variant.vint(value=s.read_i32())
+
+        raise ValueError(f"invalid index: {idx} (len={count})")
+
     def __repr__(self) -> str:
         vals = ", ".join(repr(v) for v in self._values)
         return f"Variant([{vals}])"

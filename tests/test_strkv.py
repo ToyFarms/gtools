@@ -100,6 +100,41 @@ def test_getitem_out_of_range_raises() -> None:
         _ = kv[10]
 
 
+def test_setitem_by_int_index_list_value() -> None:
+    kv = StrKV([[b""]])
+    kv[0, 0] = [b"test", 123]
+
+    assert kv.data[0] == [b"test", b"123"]
+    verify(repr(kv))
+
+
+def test_setitem_by_int_index_list_value_many() -> None:
+    kv = StrKV([[b""]])
+    kv[0, 0] = [b"test", 123] * 20
+
+    assert kv.data[0] == [b"test", b"123"] * 20
+    verify(repr(kv))
+
+
+def test_setitem_by_bytes_index_list_value() -> None:
+    kv = StrKV([[b""]])
+    kv[b"test", 1] = [b"test2", 123]
+
+    assert kv[b"test"] == [b"test", b"test2", b"123"]
+    assert b"test" in kv._index_lookup
+    verify(repr(kv))
+
+
+def test_setitem_replace_key_by_bytes_index_list_value() -> None:
+    kv = StrKV([[b""]])
+    kv[b"test", 0] = [b"test2", 123]
+
+    assert kv[b"test2"] == [b"test2", b"123"]
+    assert b"test2" in kv._index_lookup
+    assert b"test" not in kv._index_lookup
+    verify(repr(kv))
+
+
 def test_setitem_by_int_index() -> None:
     kv = StrKV([[b"key1", b"val1"]])
     kv[0] = ["key2", "val2"]
@@ -162,6 +197,30 @@ def test_setitem_rebuilds_index() -> None:
     kv[0] = ["newkey", "val1"]
     assert b"newkey" in kv._index_lookup
     assert b"key1" not in kv._index_lookup
+    verify(repr(kv))
+
+
+def test_setitem_str_key_from_empty() -> None:
+    kv = StrKV()
+    kv["test", 1] = 123
+
+    assert b"test" in kv._index_lookup
+    assert kv["test", 1] == b"123"
+    verify(repr(kv))
+
+
+def test_setitem_int_key_from_empty() -> None:
+    kv = StrKV()
+    with pytest.raises(IndexError):
+        kv[0, 1] = 123
+
+
+def test_setitem_int_key() -> None:
+    kv = StrKV([[b"untouched", b"should_change"]])
+    kv[0, 1] = 123
+
+    assert kv[0, 0] == b"untouched"
+    assert kv[0, 1] == b"123"
     verify(repr(kv))
 
 

@@ -1,6 +1,7 @@
 from enum import IntEnum, IntFlag
 import logging
 import struct
+import time
 from typing import Literal, cast
 
 from gtools.core.growtopia.strkv import StrKV
@@ -221,6 +222,9 @@ class EmptyPacket(Serializable):
     def serialize(self) -> bytes:
         return b""
 
+    def __repr__(self) -> str:
+        return "<Empty>"
+
 
 class NetPacket(Serializable):
     def __init__(self, type: NetType, data: Serializable) -> None:
@@ -280,8 +284,6 @@ class NetPacket(Serializable):
 
 
 if __name__ == "__main__":
-    import binascii
-
     samples = [
         # "02000000616374696f6e7c696e7075740a7c746578747c61776a6961776a69646f61d5",
         # "02000000616374696f6e7c696e7075740a7c746578747c647700",
@@ -296,7 +298,11 @@ if __name__ == "__main__":
         b"\x04\x00\x00\x00\x00\x00\x00\x00@\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x008E\x00\x00!C\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00"
     ]
 
+    n = 1_000_000
+    start = time.perf_counter()
     for sample in samples:
-        pkt = NetPacket.deserialize(sample)
-        print(pkt)
-        print(pkt.serialize())
+        for _ in range(n):
+            NetPacket.deserialize(sample)
+
+    elapsed = time.perf_counter() - start
+    print(f"taking {elapsed}s {elapsed / n * 1000000000:.3f}ns / call")
