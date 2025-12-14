@@ -1,15 +1,10 @@
 import binascii
-import hashlib
 from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, TankFlags, TankPacket, TankType
 import pytest
 import struct
 
 from gtools.core.growtopia.strkv import StrKV
 from tests import verify
-
-
-def make_hash(b: str | bytes) -> str:
-    return hashlib.md5(b.encode() if isinstance(b, str) else b).hexdigest()
 
 
 def _pkt_size() -> int:
@@ -277,14 +272,14 @@ def test_sample_roundtrip() -> None:
         b"03000000616374696f6e7c7175697400",
     ]
 
-    for sample in samples:
+    for i, sample in enumerate(samples):
         sample = binascii.unhexlify(sample)
         data = sample
         for _ in range(10):
             pkt = NetPacket.deserialize(data)
             data = pkt.serialize()
 
-        verify(data, key=make_hash(data))
+        verify(data, key=i)
         assert data[:-1] == sample[:-1]
 
 
@@ -433,7 +428,7 @@ def test_tankpacket_with_various_flags() -> None:
     for flags in flags_list:
         pkt.flags = flags
         serialized = pkt.serialize()
-        verify(serialized, key=make_hash(flags.__repr__()))
+        verify(serialized, key=flags)
         parsed = TankPacket.deserialize(serialized)
         assert parsed.flags == flags
 
@@ -465,10 +460,10 @@ def test_tankpacket_extended_data_variations() -> None:
         b"C" * 1024,
         b"\x00\xff\xaa",
     ]
-    for ext in extended_datas:
+    for i, ext in enumerate(extended_datas):
         pkt.extended_data = ext
         serialized = pkt.serialize()
-        verify(serialized, key=make_hash(ext))
+        verify(serialized, key=i)
         parsed = TankPacket.deserialize(serialized)
         assert parsed.extended_data == ext
 
@@ -498,13 +493,13 @@ def test_netpacket_more_samples_roundtrip() -> None:
         b"08000000",
         b"04000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
     ]
-    for sample in samples:
+    for i, sample in enumerate(samples):
         sample = binascii.unhexlify(sample)
         data = sample
         for _ in range(5):
             pkt = NetPacket.deserialize(data)
             data = pkt.serialize()
-        verify(data, key=make_hash(sample))
+        verify(data, key=i)
 
 
 def test_strkv_access_and_modification() -> None:
@@ -527,7 +522,7 @@ def test_netpacket_with_strkv_roundtrip() -> None:
         parsed = NetPacket.deserialize(raw)
         assert parsed.type == net_type
         assert isinstance(parsed.data, StrKV)
-        assert parsed.data.data == kv.data
+        assert parsed.data._data == kv._data
 
 
 def test_empty_packet_variations() -> None:

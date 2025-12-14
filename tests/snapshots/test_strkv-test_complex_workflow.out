@@ -1,1 +1,1 @@
-"{'user1|alice|admin', 'user2|bob|moderator', 'user3|charlie|guest'}"
+"{user1|alice|admin\\nuser2|bob|moderator\\nuser3|charlie|guest}"

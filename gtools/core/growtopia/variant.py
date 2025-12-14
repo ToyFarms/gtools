@@ -197,6 +197,7 @@ class Variant:
         return cls(out)
 
     @staticmethod
+    # TODO: this is incorrect
     def get(data: bytes, idx: int) -> "Variant.Type":
         s = Buffer(data, endian="<")
         count = s.read_u8()

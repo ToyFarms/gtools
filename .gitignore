@@ -2,3 +2,5 @@ test.bin
 __pycache__/
 .vscode
 cachegrind.out
+.coverage*
+!.coveragerc
