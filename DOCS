@@ -1,0 +1,309 @@
+* growtopia login flow (not account login)
+
+host: www.growtopia1.com, www.growtopia2.com
+endpoint: /growtopia/server_data.php
+
+1. growtopia requests https://www.growtopia1.com/growtopia/server_data.php
+    header:
+        {'Host': 'www.growtopia1.com', 'User-Agent': 'UbiServices_SDK_2022.Release.9_PC64_ansi_static', 'Accept': '*/*', 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': '36'}
+    body:
+        version=5.38&platform=0&protocol=219
+
+2. hosts configuration routes that endpoint to our local https server
+3. intercept the response
+    server|237.12.15.2\nport|17033\nloginurl|login.growtopiagame.com\ntype|1\nbeta_server|grow-main-test.growtopiagame.com\nbeta_loginurl|grow-main-test.growtopiagame.com\nbeta_port|56999\nbeta_type|1\nbeta2_server|grow-release-test.growtopiagame.com\nbeta2_loginurl|grow-release-test.growtopiagame.com\nbeta2_port|36999\nbeta2_type|1\nbeta3_server|grow-live-test.growtopiagame.com\nbeta3_loginurl|grow-live-test.growtopiagame.com\nbeta3_port|46999\nbeta3_type|1\ntype2|1\n#maint|Server is under maintenance. We will be back online shortly. Thank you for your patience!\nmeta|VOZ5jj5wgJAHsPD9EIBYrWFWJwQ4jmm4g55rtFxrBUY=\nRTENDMARKERBS1001
+
+4. change the server host and port to our local enet server, send back the modified response
+
+* enet
+
+for server (that the gt client connects to), use,
+    range coder
+    crc32 checksum
+    new packet for server
+
+    listen on port with ENET_HOST_ANY (0)
+    1 peer count (unless you want to multibox)
+    2 channel (tr/tx)
+
+for client (that connects to the real gt server), use,
+    range coder
+    crc32 checksum
+    new packet
+
+    create host with null address
+
+    1 peer count
+    2 channel
+
+* proxy tick
+
+wait until server data exists
+wait until gt client connects
+connect to gt server
+start polling both server and client
+
+if either client or server disconnects,
+    disconnect from both
+    back to waiting server data
+
+if packet is receive and packet is tank and tank type is disconnect,
+    disconnect the source (whoever sent that packet)
+    forward it to the destination
+
+# TODO: figure out why it randomly disconnects in a crowded world
+# TODO: item database update flow
+
+* packet type:
+
+Net Packet,
+    SERVER_HELLO        = 1
+    GENERIC_TEXT        = 2
+    GAME_MESSAGE        = 3
+    TANK_PACKET         = 4
+    ERROR               = 5
+    TRACK               = 6
+    CLIENT_LOG_REQUEST  = 7
+    CLIENT_LOG_RESPONSE = 8
+
+Tank Packet,
+    STATE                            = 0
+    CALL_FUNCTION                    = 1
+    UPDATE_STATUS                    = 2
+    TILE_CHANGE_REQUEST              = 3
+    SEND_MAP_DATA                    = 4
+    SEND_TILE_UPDATE_DATA            = 5
+    SEND_TILE_UPDATE_DATA_MULTIPLE   = 6
+    TILE_ACTIVATE_REQUEST            = 7
+    TILE_APPLY_DAMAGE                = 8
+    SEND_INVENTORY_STATE             = 9
+    ITEM_ACTIVATE_REQUEST            = 10
+    ITEM_ACTIVATE_OBJECT_REQUEST     = 11
+    SEND_TILE_TREE_STATE             = 12
+    MODIFY_ITEM_INVENTORY            = 13
+    ITEM_CHANGE_OBJECT               = 14
+    SEND_LOCK                        = 15
+    SEND_ITEM_DATABASE_DATA          = 16
+    SEND_PARTICLE_EFFECT             = 17
+    SET_ICON_STATE                   = 18
+    ITEM_EFFECT                      = 19
+    SET_CHARACTER_STATE              = 20
+    PING_REPLY                       = 21
+    PING_REQUEST                     = 22
+    GOT_PUNCHED                      = 23
+    APP_CHECK_RESPONSE               = 24
+    APP_INTEGRITY_FAIL               = 25
+    DISCONNECT                       = 26
+    BATTLE_JOIN                      = 27
+    BATTLE_EVENT                     = 28
+    USE_DOOR                         = 29
+    SEND_PARENTAL                    = 30
+    GONE_FISHIN                      = 31
+    STEAM                            = 32
+    PET_BATTLE                       = 33
+    NPC                              = 34
+    SPECIAL                          = 35
+    SEND_PARTICLE_EFFECT_V2          = 36
+    ACTIVATE_ARROW_TO_ITEM           = 37
+    SELECT_TILE_INDEX                = 38
+    SEND_PLAYER_TRIBUTE_DATA         = 39
+    FTUE_SET_ITEM_TO_QUICK_INVENTORY = 40
+    PVE_NPC                          = 41
+    PVP_CARD_BATTLE                  = 42
+    PVE_APPLY_PLAYER_DAMAGE          = 43
+    PVE_NPC_POSITION_UPDATE          = 44
+    SET_EXTRA_MODS                   = 45
+    ON_STEP_TILE_MOD                 = 46
+
+Tank Flags,
+    WALK                 = 1 << 0
+    UNK2                 = 1 << 1
+    SPAWN_RELATED        = 1 << 2
+    EXTENDED             = 1 << 3
+    FACING_LEFT          = 1 << 4
+    STANDING             = 1 << 5
+    FIRE_DAMAGE          = 1 << 6
+    JUMP                 = 1 << 7
+    GOT_KILLED           = 1 << 8
+    PUNCH                = 1 << 9
+    PLACE                = 1 << 10
+    TILE_CHANGE          = 1 << 11
+    GOT_PUNCHED          = 1 << 12
+    RESPAWN              = 1 << 13
+    OBJECT_COLLECT       = 1 << 14
+    TRAMPOLINE           = 1 << 15
+    DAMAGE               = 1 << 16
+    SLIDE                = 1 << 17
+    PARASOL              = 1 << 18
+    UNK_GRAVITY_RELATED  = 1 << 19
+    SWIM                 = 1 << 20
+    WALL_HANG            = 1 << 21
+    POWER_UP_PUNCH_START = 1 << 22
+    POWER_UP_PUNCH_END   = 1 << 23
+    UNK_TILE_CHANGE      = 1 << 24
+    HAY_CART_RELATED     = 1 << 25
+    ACID_RELATED_DAMAGE  = 1 << 26
+    UNK3                 = 1 << 27
+    ACID_DAMAGE          = 1 << 28
+
+* packet structure:
+
+byte order is little endian
+
+every packet is a net packet,
+    [type:u32, payload:[u8, ...], gibberish:u8]
+net packet always contain 1 extra byte at the end, you can safely discard it.
+
+payload is determiend through the type,
+    SERVER_HELLO        (1): empty,       [\x01\x00\x00\x00\x00]
+    GENERIC_TEXT        (2): strkv,       [\x02\x00\x00\x00[strkv]\x00]
+    GAME_MESSAGE        (3): strkv,       [\x03\x00\x00\x00[strkv]\x00]
+    TANK_PACKET         (4): tank packet, [\x04\x00\x00\x00[tank packet]\x00]
+    ERROR               (5): empty,       [\x05\x00\x00\x00\x00]
+    TRACK               (6): strkv,       [\x06\x00\x00\x00[strkv]\x00]
+    CLIENT_LOG_REQUEST  (7): empty,       [\x07\x00\x00\x00\x00]
+    CLIENT_LOG_RESPONSE (8): empty,       [\x08\x00\x00\x00\x00]
+
+tank packet,
+    [
+        type             :u8 (tank type),
+        object_type      :u8,
+        jump_count       :u8,
+        animation_type   :u8
+        net_id           :u32,
+        target_net_id    :u32
+        flags            :u32 (tank flags),
+        float_var        :f32,
+        value            :u32,
+        vector_x         :f32,
+        vector_y         :f32,
+        vector_x2        :f32,
+        vector_y2        :f32,
+        particle_rotation:f32,
+        int_x            :i32,
+        int_y            :i32,
+        extended_len     :u32,
+        extended_data    :[u8, ..., extended_len]
+    ]
+
+payload is determiend through the type,
+    STATE                            (0 ): your character state [\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \xd3D\x00\x80@D\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00]
+                                         : TankPacket(
+                                                type=<TankType.STATE: 0>,
+                                                object_type=0,
+                                                jump_count=0,
+                                                animation_type=0,
+                                                net_id=0,
+                                                target_net_id=0,
+                                                flags=<TankFlags.FACING_LEFT|STANDING: 48>,
+                                                float_var=0.0,
+                                                value=0,
+                                                vector_x=1689.0,
+                                                vector_y=770.0,
+                                                vector_x2=0.0,
+                                                vector_y2=0.0,
+                                                particle_rotation=0.0,
+                                                int_x=-1,
+                                                int_y=-1,
+                                                extended_len=0,
+                                                extended_data=b'',
+                                         )
+    CALL_FUNCTION                    (1 ): variant [\x04\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\xfa\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\x01\x00\x02\x15\x00\x00\x00OnClearItemTransforms\x00]
+                                         : TankPacket(
+                                             type=<TankType.CALL_FUNCTION: 1>,
+                                             object_type=0,
+                                             jump_count=0,
+                                             animation_type=0,
+                                             net_id=1,
+                                             target_net_id=0,
+                                             flags=<TankFlags.EXTENDED: 8>,
+                                             float_var=0.0,
+                                             value=250,
+                                             vector_x=0.0,
+                                             vector_y=0.0,
+                                             vector_x2=0.0,
+                                             vector_y2=0.0,
+                                             particle_rotation=0.0,
+                                             int_x=0,
+                                             int_y=0,
+                                             extended_len=28,
+                                             extended_data=b'\x01\x00\x02\x15\x00\x00\x00OnClearItemTransforms',
+                                         )
+    UPDATE_STATUS                    (2 ): 
+    TILE_CHANGE_REQUEST              (3 ): 
+    SEND_MAP_DATA                    (4 ): 
+    SEND_TILE_UPDATE_DATA            (5 ): 
+    SEND_TILE_UPDATE_DATA_MULTIPLE   (6 ): 
+    TILE_ACTIVATE_REQUEST            (7 ): 
+    TILE_APPLY_DAMAGE                (8 ): 
+    SEND_INVENTORY_STATE             (9 ): 
+    ITEM_ACTIVATE_REQUEST            (10): 
+    ITEM_ACTIVATE_OBJECT_REQUEST     (11): 
+    SEND_TILE_TREE_STATE             (12): 
+    MODIFY_ITEM_INVENTORY            (13): 
+    ITEM_CHANGE_OBJECT               (14): 
+    SEND_LOCK                        (15): 
+    SEND_ITEM_DATABASE_DATA          (16): 
+    SEND_PARTICLE_EFFECT             (17): 
+    SET_ICON_STATE                   (18): 
+    ITEM_EFFECT                      (19): 
+    SET_CHARACTER_STATE              (20): 
+    PING_REPLY                       (21): 
+    PING_REQUEST                     (22): 
+    GOT_PUNCHED                      (23): 
+    APP_CHECK_RESPONSE               (24): 
+    APP_INTEGRITY_FAIL               (25): 
+    DISCONNECT                       (26): 
+    BATTLE_JOIN                      (27): 
+    BATTLE_EVENT                     (28): 
+    USE_DOOR                         (29): 
+    SEND_PARENTAL                    (30): 
+    GONE_FISHIN                      (31): 
+    STEAM                            (32): 
+    PET_BATTLE                       (33): 
+    NPC                              (34): 
+    SPECIAL                          (35): 
+    SEND_PARTICLE_EFFECT_V2          (36): 
+    ACTIVATE_ARROW_TO_ITEM           (37): 
+    SELECT_TILE_INDEX                (38): 
+    SEND_PLAYER_TRIBUTE_DATA         (39): 
+    FTUE_SET_ITEM_TO_QUICK_INVENTORY (40): 
+    PVE_NPC                          (41): 
+    PVP_CARD_BATTLE                  (42): 
+    PVE_APPLY_PLAYER_DAMAGE          (43): 
+    PVE_NPC_POSITION_UPDATE          (44): 
+    SET_EXTRA_MODS                   (45): 
+    ON_STEP_TILE_MOD                 (46): 
+
+* data types
+
+strkv, basically a table,
+    eventType|0\neventName|102_PLAYER.AUTHENTICATION\nAuthenticated|1\nAuthentication_error|0\nDevice_Id|^^\nGrow_Id|130179494\nName|^^mapqweufha\nWorldlock_balance|0\n
+
+    eventType|0\n
+    eventName|102_PLAYER.AUTHENTICATION\n
+    Authenticated|1\n
+    Authentication_error|0\n
+    Device_Id|^^\n
+    Grow_Id|130179494\n
+    Name|^^mapqweufha\n
+    Worldlock_balance|0\n
+
+    each row is separated by a newline
+    each cell is separated by a pipe
+
+    no escaping, just dont use newline and pipe in the string
+
+variant, a list with mixed data type,
+    variant kind:
+        FLOAT    = 1 (f32)
+        STRING   = 2 ([length:u16, str:[u8, ..., length]])
+        VEC2     = 3 (f32, f32)
+        VEC3     = 4 (f32, f32, f32)
+        UNSIGNED = 5 (u32)
+        SIGNED   = 9 (i32)
+
+
+    \x02\x00\x02\x04\x00\x00\x00Test\x01\x01\xa4p\x9d?
+    [\x02][\x00\x02 \x04\x00\x00\x00Test][\x01\x01 \xa4p\x9d?]
+    [count:u8, items:[index:u8, kind:u8, data: [u8, ...], ..., count]]
