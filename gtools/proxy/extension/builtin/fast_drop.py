@@ -54,11 +54,11 @@ class FastDropExtension(Extension):
                 # response payload
                 # \x02\x00\x00\x00action|dialog_return\ndialog_name|drop_item\nitemID|4|\ncount|8\n\x00
 
-                res = StrKV().with_trailing_newline()
-                res["action", 1] = b"dialog_return"
-                res["dialog_name", 1] = b"drop_item"
-                res["itemID", 1] = [kv["embed_data", 2], b""]
-                res["count", 1] = kv["add_text_input", 3]
+                res = StrKV()
+                res[b"action"] = b"dialog_return"
+                res[b"dialog_name"] = b"drop_item"
+                res[b"itemID"] = kv.relative[b"itemID", 1], b""
+                res[b"count"] = kv.relative[b"count", 2]
 
                 # never think the extension is at the end of the chain
                 # always design as if other extension will build upon your response
