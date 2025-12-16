@@ -17,7 +17,7 @@ $ python script.py test -r
 NOTE: set the environment variable `UPDATE=1` if you want to re-record the test output
 
 to compile protobuf:
-$ python compile-proto
+$ python script.py compile-proto
 
 extension:
 
