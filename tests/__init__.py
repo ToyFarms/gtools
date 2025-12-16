@@ -1,3 +1,4 @@
+from functools import wraps
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,19 @@ class SupportsStr(Protocol):
 
 
 def verify(data: str | bytes | object, *, key: SupportsStr = "", name: SupportsStr | None = None) -> None:
+    frame = inspect.currentframe().f_back  # pyright: ignore
+    assert frame
+
+    seen = frame.f_locals.get("_only_once_called")
+    if seen is None:
+        seen = set()
+        frame.f_locals["_only_once_called"] = seen
+
+    if key in seen:
+        raise RuntimeError("verify() collision, use a unique key to avoid this")
+
+    seen.add(key)
+
     frame = inspect.stack()[1]
     caller = frame.function if not name else str(name)
 
@@ -33,4 +47,4 @@ def verify(data: str | bytes | object, *, key: SupportsStr = "", name: SupportsS
         return
 
     expected = snapshot_file.read_text(encoding="utf-8")
-    assert data == expected, f"snapshot mismatch {data=} != {expected=}"
+    assert data == expected, f"snapshot mismatch {data=} != {expected=} ({output_file}, {snapshot_file})"

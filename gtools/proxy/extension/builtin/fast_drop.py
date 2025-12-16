@@ -4,11 +4,9 @@ from gtools.protogen.extension_pb2 import (
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
     INTEREST_CALL_FUNCTION,
-    Event,
-    Forward,
     Interest,
     InterestCallFunction,
-    Packet,
+    PendingPacket,
 )
 from gtools.proxy.extension.sdk import Extension
 from gtools.core.growtopia.packet import NetPacket, NetType
@@ -38,21 +36,15 @@ class FastDropExtension(Extension):
             ],
         )
 
-    def process(self, event: Event) -> Packet | None:
-        match event.id or 0:  # id is optional
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        match event.interest_id or 0:  # id is optional
             case 0:
                 pkt = NetPacket.deserialize(event.buf)
                 var = Variant.deserialize(pkt.tank.extended_data)
                 if b"How many to drop" not in var.as_string[1]:
-                    return Packet(type=Packet.TYPE_FORWARD_NOT_MODIFIED)  # basically just says "act like this extension never existed and just move on the chain"
+                    return  # return nothing to say do nothing and forward it as is
 
                 kv = StrKV.deserialize(var.as_string[1])
-
-                # request
-                # Variant([Variant.vstr(b'OnDialogRequest'), Variant.vstr(b'set_default_color|`o\nadd_label_with_icon|big|`wDrop Sign``|left|20|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||3|5|\nembed_data|itemID|20\nend_dialog|drop_item|Cancel|OK|\n')])
-
-                # response payload
-                # \x02\x00\x00\x00action|dialog_return\ndialog_name|drop_item\nitemID|4|\ncount|8\n\x00
 
                 res = StrKV()
                 res[b"action"] = b"dialog_return"
@@ -60,20 +52,14 @@ class FastDropExtension(Extension):
                 res[b"itemID"] = kv.relative[b"itemID", 1], b""
                 res[b"count"] = kv.relative[b"count", 2]
 
+                res_pkt = NetPacket(NetType.GENERIC_TEXT, data=res)
+
                 # never think the extension is at the end of the chain
                 # always design as if other extension will build upon your response
-                return Packet(
-                    type=Packet.TYPE_FORWARD,  # forward will look for extension that are interested with the new parameter, if none then the chain is complete
-                    forward=Forward(
-                        buf=NetPacket(
-                            NetType.GENERIC_TEXT,
-                            data=res,
-                        ).serialize(),
-                        direction=DIRECTION_CLIENT_TO_SERVER,  # direction will determine where the packet will be sent to (client/server), if none use the original direction
-                    ),
+                return self.forward(  # forward will look for extension that are interested with the new parameter, if none then the chain is complete
+                    buf=res_pkt.serialize(),
+                    direction=DIRECTION_CLIENT_TO_SERVER,  # direction will determine where the packet will be sent to (client/server), if none use the original direction,
                 )
-            case _:
-                return Packet(type=Packet.TYPE_FORWARD_NOT_MODIFIED)
 
     # this will be called when the extension is disconnected
     # of course it can be reconnected, so think of this as clearing session data

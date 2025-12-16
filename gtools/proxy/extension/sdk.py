@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import argparse
 import threading
 import traceback
 import zmq
@@ -7,41 +6,17 @@ import logging
 import time
 from zmq.utils.monitor import recv_monitor_message
 
+from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
+    DIRECTION_UNSPECIFIED,
     CapabilityResponse,
-    Event,
-    ForwardNotModified,
+    Direction,
     Packet,
     Interest,
+    PendingPacket,
 )
-
-
-class ThreadEvent:
-    def __init__(self) -> None:
-        self._flag = False
-        self._cond = threading.Condition()
-
-    def set(self) -> None:
-        with self._cond:
-            self._flag = True
-            self._cond.notify_all()
-
-    def is_set(self) -> bool:
-        with self._cond:
-            return self._flag
-
-    def clear(self) -> None:
-        with self._cond:
-            self._flag = False
-            self._cond.notify_all()
-
-    def wait(self, timeout: float | None = None) -> bool:
-        with self._cond:
-            return self._cond.wait_for(lambda: self._flag, timeout)
-
-    def unwait(self, timeout=None) -> bool:
-        with self._cond:
-            return self._cond.wait_for(lambda: not self._flag, timeout)
+from gtools.proxy.extension.common import Waitable
+from thirdparty.enet.bindings import ENetPacketFlag
 
 
 class Extension(ABC):
@@ -59,12 +34,12 @@ class Extension(ABC):
 
         self._worker_thread_id: threading.Thread | None = None
         self._monitor_thread_id: threading.Thread | None = None
-        self._stop_event = ThreadEvent()
 
-        self.connected = ThreadEvent()
+        self._stop_event: Waitable[bool] = Waitable(False)
+        self.connected: Waitable[bool] = Waitable(False)
 
     def _send(self, pkt: Packet) -> None:
-        if self._stop_event.is_set():
+        if self._stop_event.get():
             return
 
         self.logger.debug(f"   send \x1b[31m-->>\x1b[0m \x1b[31m>>\x1b[0m{pkt!r}\x1b[31m>>\x1b[0m")
@@ -72,11 +47,11 @@ class Extension(ABC):
             if self._socket.poll(100, zmq.POLLOUT):
                 self._socket.send(pkt.SerializeToString(), zmq.NOBLOCK)
         except zmq.error.ZMQError as e:
-            if not self._stop_event.is_set():
+            if not self._stop_event.get():
                 self.logger.debug(f"send error: {e}")
 
     def _recv(self, expected: Packet.Type | None = None) -> Packet | None:
-        if self._stop_event.is_set():
+        if self._stop_event.get():
             return None
 
         try:
@@ -89,7 +64,7 @@ class Extension(ABC):
         except zmq.error.Again:
             return None
         except zmq.error.ZMQError as e:
-            if self._stop_event.is_set():
+            if self._stop_event.get():
                 return None
             self.logger.debug(f"recv error: {e}")
             return None
@@ -109,12 +84,12 @@ class Extension(ABC):
 
     # TODO: the extension should be able to send more than one packet in one process
     @abstractmethod
-    def process(self, event: Event) -> Packet | None: ...
+    def process(self, event: PendingPacket) -> PendingPacket | None: ...
 
     @abstractmethod
     def destroy(self) -> None: ...
 
-    def start(self, block: bool = False) -> None:
+    def start(self, block: bool = False) -> Waitable[bool]:
         self._monitor_thread_id = threading.Thread(target=self._monitor_thread, daemon=True)
         self._monitor_thread_id.start()
 
@@ -131,9 +106,11 @@ class Extension(ABC):
             self._worker_thread_id = threading.Thread(target=self._worker_thread, daemon=False)
             self._worker_thread_id.start()
 
-    def stop(self) -> None:
-        if self._stop_event.is_set():
-            return
+        return self.connected
+
+    def stop(self) -> Waitable[bool]:
+        if self._stop_event.get():
+            return self.connected
 
         self.logger.debug("stopping extension...")
 
@@ -142,8 +119,7 @@ class Extension(ABC):
         except Exception:
             pass
 
-        self._stop_event.set()
-        # self.connected.clear()
+        self._stop_event.set(True)
 
         try:
             self._socket.close()
@@ -165,6 +141,8 @@ class Extension(ABC):
 
         self.logger.debug("extension stopped")
 
+        return self.connected
+
     def _monitor_thread(self) -> None:
         mon = None
         try:
@@ -173,14 +151,14 @@ class Extension(ABC):
             if not mon:
                 return
 
-            while not self._stop_event.is_set():
+            while not self._stop_event.get():
                 try:
                     if mon.poll(100):
                         evt = recv_monitor_message(mon, zmq.NOBLOCK)
                         if evt and evt["event"] == zmq.EVENT_CONNECTED:
                             self._send(Packet(type=Packet.TYPE_HANDSHAKE))
                         elif evt["event"] in (zmq.EVENT_DISCONNECTED, zmq.EVENT_MONITOR_STOPPED):
-                            self.connected.clear()
+                            self.connected.set(False)
                 except zmq.error.Again:
                     continue
                 except zmq.error.ZMQError:
@@ -194,38 +172,59 @@ class Extension(ABC):
                 except:
                     pass
 
+    def forward(self, buf: bytes, direction: Direction = DIRECTION_UNSPECIFIED, flags: ENetPacketFlag = ENetPacketFlag.NONE) -> PendingPacket:
+        return PendingPacket(
+            op=PendingPacket.OP_FORWARD,
+            buf=buf,
+            direction=direction,
+            packet_flags=int(flags),
+        )
+
+    def pass_to_next(self) -> PendingPacket:
+        return PendingPacket(op=PendingPacket.OP_PASS)
+
+    def cancel(self) -> PendingPacket:
+        return PendingPacket(op=PendingPacket.OP_CANCEL)
+
+    def finish(self) -> PendingPacket:
+        return PendingPacket(op=PendingPacket.OP_FINISH)
+
     def _worker_thread(self) -> None:
         try:
-            while not self._stop_event.is_set():
+            while not self._stop_event.get():
                 pkt = self._recv()
 
                 if pkt is None:
-                    if self._stop_event.is_set():
+                    if self._stop_event.get():
                         break
 
                     continue
 
                 match pkt.type:
-                    case Packet.TYPE_EVENT:
+                    case Packet.TYPE_PENDING_PACKET:
+                        start = time.perf_counter_ns()
+                        response: PendingPacket | None = None
+
                         try:
-                            response = self.process(pkt.event)
+                            response = self.process(pkt.pending_packet)
                         except:
                             traceback.print_exc()
-                            response = Packet(
-                                type=Packet.TYPE_FORWARD_NOT_MODIFIED,
-                                forward_not_modified=ForwardNotModified(chain_id=pkt.event.chain_id),
-                            )
 
-                        if response:
-                            if response.type == Packet.TYPE_FORWARD:
-                                response.forward.chain_id = pkt.event.chain_id
-                            elif response.type == Packet.TYPE_FORWARD_NOT_MODIFIED:
-                                response.forward_not_modified.chain_id = pkt.event.chain_id
-                            else:
-                                raise NotImplementedError(f"response type {response.type} not handled")
-                            self._send(response)
+                        if not response:
+                            response = self.pass_to_next()
+
+                        response.packet_id = pkt.pending_packet.packet_id
+                        if response.direction == DIRECTION_UNSPECIFIED:
+                            response.direction = pkt.pending_packet.direction
+                        if response.packet_flags == ENetPacketFlag.NONE:
+                            response.packet_flags = pkt.pending_packet.packet_flags
+                        response.rtt_ns = pkt.pending_packet.rtt_ns
+                        response.hit_count = pkt.pending_packet.hit_count + 1
+                        if PERF:
+                            self.logger.debug(f"extension processing time: {(time.perf_counter_ns() - start) / 1e6}us")
+                        self._send(Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=response))
                     case Packet.TYPE_CONNECTED:
-                        self.connected.set()
+                        self.connected.set(True)
                     case Packet.TYPE_DISCONNECT:
                         pass
                     case Packet.TYPE_HANDSHAKE_ACK:
@@ -240,33 +239,8 @@ class Extension(ABC):
                             )
                         )
         except zmq.error.ZMQError as e:
-            if not self._stop_event.is_set():
+            if not self._stop_event.get():
                 self.logger.debug(f"ZMQ error in main loop: {e}")
         finally:
-            # self.connected.clear()
             self.logger.debug("worker thread exiting")
 
-
-if __name__ == "__main__":
-    from gtools.proxy.extension.broker import Broker
-    import logging
-    import time
-    from gtools.proxy.extension.builtin.fast_drop import FastDropExtension
-    from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT
-    from gtools.core.growtopia.packet import NetPacket
-
-    logging.basicConfig(level=logging.DEBUG)
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--broker", action="store_true")
-
-    args = parser.parse_args()
-
-    if args.broker:
-        b = Broker()
-        time.sleep(5)
-        buf = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd2\x00\x00\x00\x02\x00\x02\x0f\x00\x00\x00OnDialogRequest\x01\x02\xb6\x00\x00\x00set_default_color|`o\nadd_label_with_icon|big|`wDrop Lava``|left|4|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||8|5|\nembed_data|itemID|4\nend_dialog|drop_item|Cancel|OK|\n\x00"
-        pkt = NetPacket.deserialize(buf)
-        b.process_event(pkt, buf, DIRECTION_SERVER_TO_CLIENT)
-    else:
-        FastDropExtension()

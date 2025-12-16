@@ -5,33 +5,37 @@ import logging
 import random
 import re
 import threading
+import time
 from typing import Any, Callable, Iterator
 import zmq
 import xxhash
 
 from gtools.core.growtopia.packet import NetPacket, NetType, TankPacket, TankType
 from gtools.core.growtopia.variant import Variant
+from gtools.flags import PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     BLOCKING_MODE_SEND_AND_FORGET,
     CapabilityRequest,
     Direction,
-    Event,
     Packet,
     Interest,
     InterestType,
+    PendingPacket,
     TankField,
     WhereOp,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
 )
+from gtools.proxy.extension.common import Waitable
+from thirdparty.enet.bindings import ENetPacketFlag
 
 
 def hash_interest(interest: Interest) -> int:
     h = xxhash.xxh3_64()
     h.update(interest.interest.to_bytes())
     if interest.priority:
-        h.update(interest.priority.to_bytes())
+        h.update(interest.priority.to_bytes(signed=True))
     h.update(interest.blocking_mode.to_bytes())
     if interest.direction:
         h.update(interest.direction.to_bytes())
@@ -48,11 +52,17 @@ class Extension:
         self.id = id
         self.interest = interest
 
+    def __repr__(self) -> str:
+        return f"Extension(id={self.id}, interest({len(self.interest)})={list(map(hash_interest, self.interest))})"
+
 
 class Client:
     def __init__(self, ext: Extension, interest: Interest) -> None:
         self.ext = ext
         self.interest = interest
+
+    def __repr__(self) -> str:
+        return f"Client(priority={self.interest.priority}, ext={self.ext!r}, interest={hash_interest(self.interest)})"
 
     def __eq__(self, value: object, /) -> bool:
         if not isinstance(value, Client):
@@ -76,7 +86,7 @@ class ExtensionManager:
             self._extensions[extension.id] = extension
             for interest in extension.interest:
                 ent = self._interest_map[interest.interest]
-                insort(ent, Client(extension, interest), key=lambda x: x.interest.priority)
+                insort(ent, Client(extension, interest), key=lambda x: -x.interest.priority)
 
     def remove_extension(self, id: bytes) -> None:
         with self._lock:
@@ -113,7 +123,7 @@ class ExtensionManager:
 
     _OP_EVALUATE: dict[WhereOp, Callable[[Any, Any], bool]] = {
         WhereOp.WHERE_OP_EQ: lambda lval, rval: lval == rval,
-        WhereOp.WHERE_OP_EQ_EPS: lambda lval, rval: (lval - rval) < 0.01,
+        WhereOp.WHERE_OP_EQ_EPS: lambda lval, rval: abs(lval - rval) < 0.01,
         WhereOp.WHERE_OP_NEQ: lambda lval, rval: lval != rval,
         WhereOp.WHERE_OP_GT: lambda lval, rval: lval > rval,
         WhereOp.WHERE_OP_GTE: lambda lval, rval: lval >= rval,
@@ -147,10 +157,10 @@ class ExtensionManager:
                         matched = interest.game_message.action == pkt.game_message["action", 1]
                 case InterestType.INTEREST_TANK_PACKET:
                     for clause in interest.tank_packet.where:
-                        matched = self._OP_EVALUATE[clause.op](self._TANK_FIELD_ACCESSOR[clause.field](pkt.tank), getattr(clause, clause.WhichOneof("rvalue")))
-
-                        if matched:
+                        if not self._OP_EVALUATE[clause.op](self._TANK_FIELD_ACCESSOR[clause.field](pkt.tank), getattr(clause, clause.WhichOneof("rvalue"))):
+                            matched = False
                             break
+
                 case InterestType.INTEREST_ERROR:
                     raise NotImplementedError("INTEREST_ERROR")
                 case InterestType.INTEREST_TRACK:
@@ -165,7 +175,8 @@ class ExtensionManager:
                     case InterestType.INTEREST_STATE:
                         raise NotImplementedError("NTEREST_STATE")
                     case InterestType.INTEREST_CALL_FUNCTION:
-                        matched = interest.call_function.fn_name == Variant.get(pkt.tank.extended_data, 0).value
+                        if interest.call_function.fn_name:
+                            matched = interest.call_function.fn_name == Variant.get(pkt.tank.extended_data, 0).value
                     case InterestType.INTEREST_UPDATE_STATUS:
                         raise NotImplementedError("INTEREST_UPDATE_STATUS")
                     case InterestType.INTEREST_TILE_CHANGE_REQUEST:
@@ -283,22 +294,21 @@ class PacketCallback:
 
 
 class PendingChain:
-    def __init__(self, id: bytes, chain: deque[Client], data: bytes, direction: Direction) -> None:
+    def __init__(self, id: bytes, chain: deque[Client], current: PendingPacket) -> None:
         self.id = id
         self.chain = chain
         self.processed_chain: dict[bytes, int] = {}  # ext_id: interest hash
-        self.direction = direction
-        self.data = data
         self.finished_event = threading.Event()
+        self.current = current
+        self.cancelled = False
 
     def __repr__(self) -> str:
-        return f"PendingChain(size={len(self.chain)}, processed={self.processed_chain}, data={self.data}), finished={self.finished_event.is_set()}"
+        return f"PendingChain(size={len(self.chain)}, chain={self.chain}, processed={self.processed_chain}, pkt={self.current!r}), finished={self.finished_event.is_set()}"
 
 
-class PendingPacket:
-    def __init__(self, data: bytes, direction: Direction, callback: PacketCallback) -> None:
-        self.data = data
-        self.direction = direction
+class _PendingPacket:
+    def __init__(self, callback: PacketCallback, current: PendingPacket) -> None:
+        self.current = current
         self.callback = callback
 
 
@@ -313,10 +323,11 @@ class Broker:
 
         self._extension_mgr = ExtensionManager()
         self._pending_chain: dict[bytes, PendingChain] = {}
-        self._pending_packet: dict[bytes, PendingPacket] = {}
+        self._pending_packet: dict[bytes, _PendingPacket] = {}
 
         self._stop_event = threading.Event()
         self._worker_thread_id: threading.Thread | None = None
+        self.extension_len: Waitable[int] = Waitable(0)
 
     def _recv(self) -> tuple[bytes, Packet | None]:
         if self._stop_event.is_set():
@@ -424,13 +435,6 @@ class Broker:
         TankType.ON_STEP_TILE_MOD: InterestType.INTEREST_ON_STEP_TILE_MOD,
     }
 
-    # NOTE: i hate how i need netpacket to build the chain,
-    # i might switch to zero-copy library like cap n proto
-    # so i dont have to (de)serialize all over the place.
-
-    # or not.. i couldnt make pycapnp deserialize packet
-    # maybe using python is a mistake
-
     def _get_interested_extension(self, pkt: NetPacket, raw: bytes, direction: Direction) -> Iterator[Client]:
         # TODO: handle "super" packet, basically like netpacket shuold match any kind of packet
         interest_type = self._PACKET_TO_INTEREST_TYPE[pkt.type]
@@ -462,55 +466,71 @@ class Broker:
         for client in self._get_interested_extension(pkt, raw, direction):
             if client.interest.blocking_mode == BLOCKING_MODE_BLOCK:
                 if pred and pred(client.ext, client.interest):
+                    if TRACE:
+                        print(f"interested for {pkt}:\n\t{client.ext.id}\n\t{repr(client.interest).replace('\n', '\n\t')}")
                     out.append(client)
+
+    def _utob(self, i: int) -> bytes:
+        return i.to_bytes((i.bit_length() + 7) // 8)
 
     # TODO: i didnt think zmq had all the stuff behind the scene before i implemented them myself.
     # might want to utilize that instead for performance
 
-    # TODO: i dont like you have to handle 2 case: blocking and non blocking, separately, everywhere
-    # it'd be nice if the api can be unified
-    def process_event(self, pkt: NetPacket, raw: bytes, direction: Direction, callback: PacketCallback | None = None) -> tuple[NetPacket, Direction] | None:
+    def process_event(self, pkt: NetPacket, raw: bytes, direction: Direction, flags: ENetPacketFlag, callback: PacketCallback | None = None) -> tuple[PendingPacket, bool] | None:
+        start = time.perf_counter_ns()
         chain: deque[Client] = deque()
-
         for client in self._get_interested_extension(pkt, raw, direction):
             if client.interest.blocking_mode == BLOCKING_MODE_SEND_AND_FORGET:
                 pkt_id = random.randbytes(16)
+                pending_pkt = PendingPacket(
+                    op=PendingPacket.OP_FORWARD,
+                    packet_id=pkt_id,
+                    buf=raw,
+                    direction=direction,
+                    packet_flags=int(flags),
+                    rtt_ns=self._utob(time.perf_counter_ns()),
+                    interest_id=client.interest.id,
+                )
                 self._send(
                     client.ext.id,
-                    Packet(
-                        type=Packet.TYPE_EVENT,
-                        event=Event(
-                            chain_id=pkt_id,
-                            id=client.interest.id,
-                            buf=raw,
-                        ),
-                    ),
+                    Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=pending_pkt),
                 )
                 if callback:
-                    self._pending_packet[pkt_id] = PendingPacket(raw, direction, callback)
+                    self._pending_packet[pkt_id] = _PendingPacket(
+                        callback,
+                        pending_pkt,
+                    )
             else:
                 chain.append(client)
 
         if chain:
             chain_id = random.randbytes(16)
-            pending = PendingChain(chain_id, chain, raw, direction)
+            pending_pkt = PendingPacket(
+                op=PendingPacket.OP_FORWARD,
+                packet_id=chain_id,
+                buf=raw,
+                direction=direction,
+                packet_flags=int(flags),
+                rtt_ns=self._utob(time.perf_counter_ns()),
+                interest_id=chain[0].interest.id,
+            )
+
+            pending = PendingChain(chain_id, chain, pending_pkt)
             pending.processed_chain[chain[0].ext.id] = hash_interest(chain[0].interest)
             self._pending_chain[chain_id] = pending
             self._send(
                 chain[0].ext.id,
-                Packet(
-                    type=Packet.TYPE_EVENT,
-                    event=Event(
-                        chain_id=chain_id,
-                        id=chain[0].interest.id,
-                        buf=raw,
-                    ),
-                ),
+                Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=pending_pkt),
             )
 
+            if PERF:
+                self.logger.debug(f"broker processing: {(time.perf_counter_ns() - start) / 1e6}us")
             self._pending_chain[chain_id].finished_event.wait()
             finished = self._pending_chain.pop(chain_id)
-            return (NetPacket.deserialize(finished.data), finished.direction)
+            finished.current.rtt_ns = self._utob(time.perf_counter_ns() - int.from_bytes(finished.current.rtt_ns))
+            if finished.cancelled:
+                pass
+            return finished.current, finished.cancelled
 
     def start(self, block: bool = False) -> None:
         if block:
@@ -541,14 +561,13 @@ class Broker:
 
         self.logger.debug("broker has stopped")
 
-    def _forward(self, chain: PendingChain, new_data: bytes, new_direction: Direction) -> None:
-        chain.direction = new_direction
-        chain.data = new_data
+    def _forward(self, chain: PendingChain, new_packet: PendingPacket) -> None:
+        chain.current = new_packet
         chain.chain.clear()
         self._build_chain(
-            NetPacket.deserialize(new_data),
-            new_data,
-            new_direction,
+            NetPacket.deserialize(new_packet.buf),
+            new_packet.buf,
+            new_packet.direction,
             chain.chain,
             pred=lambda ext, interest: not bool(chain and (ext.id in chain.processed_chain and chain.processed_chain[ext.id] == hash_interest(interest))),
         )
@@ -556,14 +575,61 @@ class Broker:
             chain.finished_event.set()
         else:
             next_client = chain.chain.popleft()
+            new_packet.interest_id = next_client.interest.id
             chain.processed_chain[next_client.ext.id] = hash_interest(next_client.interest)
             self._send(
                 next_client.ext.id,
                 Packet(
-                    type=Packet.TYPE_EVENT,
-                    event=Event(chain_id=chain.id, buf=new_data, id=next_client.interest.id),
+                    type=Packet.TYPE_PENDING_PACKET,
+                    pending_packet=new_packet,
                 ),
             )
+
+    def _finish(self, pending: _PendingPacket, new_packet: PendingPacket) -> None:
+        pending.current = new_packet
+        if pending.current.direction == DIRECTION_CLIENT_TO_SERVER and pending.callback.send_to_server:
+            pending.callback.send_to_server(pending.current.buf)
+        elif pending.current.direction == DIRECTION_SERVER_TO_CLIENT and pending.callback.send_to_client:
+            pending.callback.send_to_client(pending.current.buf)
+
+        if pending.callback.any:
+            pending.callback.any(pending.current.buf)
+
+        del self._pending_packet[pending.current.packet_id]
+
+    def _handle_packet(self, pkt: PendingPacket) -> None:
+        if (chain := self._pending_chain.get(pkt.packet_id)) is not None:
+            match pkt.op:
+                case PendingPacket.OP_FINISH:
+                    chain.current.hit_count = pkt.hit_count
+                    chain.finished_event.set()
+                case PendingPacket.OP_CANCEL:
+                    chain.current.hit_count = pkt.hit_count
+                    chain.cancelled = True
+                    chain.finished_event.set()
+                case PendingPacket.OP_FORWARD:
+                    self._forward(chain, pkt)
+                case PendingPacket.OP_PASS:
+                    chain.current.hit_count = pkt.hit_count
+                    self._forward(chain, chain.current)
+                    pass
+                case _:
+                    raise ValueError(f"invalid op: {pkt.op}")
+        elif (pending := self._pending_packet.pop(pkt.packet_id, None)) is not None:
+            match pkt.op:
+                case PendingPacket.OP_FINISH:
+                    self._finish(pending, pkt)
+                case PendingPacket.OP_CANCEL:
+                    pending.current.hit_count = pkt.hit_count
+                case PendingPacket.OP_FORWARD:
+                    self._finish(pending, pkt)
+                case PendingPacket.OP_PASS:
+                    pending.current.hit_count = pkt.hit_count
+                    self._finish(pending, pending.current)
+                case _:
+                    raise ValueError(f"invalid op: {pkt.op}")
+        else:
+            raise ValueError("invalid packet state")
 
     def _worker_thread(self) -> None:
         try:
@@ -573,7 +639,6 @@ class Broker:
                     if self._stop_event.is_set():
                         break
                     continue
-                print(pkt)
 
                 match pkt.type:
                     case Packet.TYPE_HANDSHAKE:
@@ -587,46 +652,18 @@ class Broker:
                             ),
                         )
                         self._send(id, Packet(type=Packet.TYPE_CONNECTED))
+                        self.extension_len.set(self.extension_len.get() + 1)
                     case Packet.TYPE_DISCONNECT:
                         self._extension_mgr.remove_extension(id)
-                    case Packet.TYPE_FORWARD:
-                        """
-                        first check if the packet is in the pending chain or not
-                        if it is, then we should rebuild the chain
-                        if it is not, then we check the pending packet (that means the packet is non blocking)
-                        after rebuilding the chain, we should filter out any extension that
-                        has its id in the processed list AND the interest hash is matching
-                        if the interest hash is not matching, that means the interest is changed,
-                        and is interpreted as a new interest
-                        """
-                        if (chain := self._pending_chain.get(pkt.forward.chain_id)) is not None:
-                            self._forward(chain, pkt.forward.buf, pkt.forward.direction)
-                        elif (pending := self._pending_packet.get(pkt.forward.chain_id)) is not None:
-                            if pkt.forward.direction == DIRECTION_CLIENT_TO_SERVER and pending.callback.send_to_server:
-                                pending.callback.send_to_server(pkt.forward.buf)
-                            elif pkt.forward.direction == DIRECTION_SERVER_TO_CLIENT and pending.callback.send_to_client:
-                                pending.callback.send_to_client(pkt.forward.buf)
-
-                            if pending.callback.any:
-                                pending.callback.any(pkt.forward.buf)
-
-                            del self._pending_packet[pkt.forward.chain_id]
-                    case Packet.TYPE_FORWARD_NOT_MODIFIED:
-                        if (chain := self._pending_chain.get(pkt.forward_not_modified.chain_id)) is not None:
-                            self._forward(chain, chain.data, chain.direction)
-                        elif (pending := self._pending_packet.get(pkt.forward_not_modified.chain_id)) is not None:
-                            if pending.direction == DIRECTION_CLIENT_TO_SERVER and pending.callback.send_to_server:
-                                pending.callback.send_to_server(pending.data)
-                            elif pending.direction == DIRECTION_SERVER_TO_CLIENT and pending.callback.send_to_client:
-                                pending.callback.send_to_client(pending.data)
-
-                            if pending.callback.any:
-                                pending.callback.any(pending.data)
-
-                            del self._pending_packet[pkt.forward_not_modified.chain_id]
-                    case Packet.TYPE_CANCEL:
-                        # not implemented
-                        pass
+                    case Packet.TYPE_PENDING_PACKET:
+                        if TRACE:
+                            print(f"recv from {id}: {pkt}")
+                            print(
+                                f"STATE (ext={len(self._extension_mgr._extensions)}, pending_chain={len(self._pending_chain)}, pending_packet={len(self._pending_packet)}):\n"
+                                f"\tchain={self._pending_chain}\n",
+                                f"\tpacket={self._pending_packet}\n",
+                            )
+                        self._handle_packet(pkt.pending_packet)
         except (KeyboardInterrupt, InterruptedError):
             pass
         except zmq.error.ZMQError as e:

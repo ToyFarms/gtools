@@ -2,19 +2,28 @@ import argparse
 import logging
 import os
 import signal
+import multiprocessing as mp
 import threading
 import time
 
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.utils.block_sigint import block_sigint
 from gtools.core.utils.network import is_up, resolve_doh
-from gtools.protogen.extension_pb2 import BLOCKING_MODE_BLOCK, DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT, DIRECTION_UNSPECIFIED, INTEREST_TANK_PACKET, Event, Forward, Interest, Packet
+from gtools.protogen.extension_pb2 import (
+    BLOCKING_MODE_BLOCK,
+    DIRECTION_SERVER_TO_CLIENT,
+    DIRECTION_UNSPECIFIED,
+    INTEREST_TANK_PACKET,
+    Interest,
+    PendingPacket,
+)
 from gtools.proxy import login
 from gtools.proxy.extension.broker import Broker
 from gtools.proxy.extension.builtin.fast_drop import FastDropExtension
 from gtools.proxy.extension.builtin.command import CommandExtension
 from gtools.proxy.extension.sdk import Extension
 from gtools.proxy.proxy import From, Proxy
+from thirdparty.enet.bindings import ENetPacketFlag
 
 
 def run_proxy() -> None:
@@ -50,6 +59,10 @@ def test_server() -> None:
         print("checking alternate host...")
 
 
+def _run(e: type[Extension], *args) -> None:
+    e(*args).start(block=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
@@ -66,11 +79,11 @@ if __name__ == "__main__":
         def __init__(self, name: str, priority: int) -> None:
             super().__init__(name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)])
 
-        def process(self, event: Event) -> Packet | None:
+        def process(self, event: PendingPacket) -> PendingPacket | None:
             p = NetPacket.deserialize(event.buf)
             p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0xFFFFFFFF
 
-            return Packet(type=Packet.TYPE_FORWARD, forward=Forward(buf=p.serialize()))
+            return self.forward(buf=p.serialize())
 
         def destroy(self) -> None:
             pass
@@ -85,45 +98,31 @@ if __name__ == "__main__":
     elif args.cmd == "ext_test":
         b = Broker()
         b.start()
-        pids = []
+        exts: list[mp.Process] = []
 
-        pid = os.fork()
-        if pid == 0:
-            e = FastDropExtension()
-            e.start(block=True)
-            exit(0)
-        elif pid > 0:
-            pids.append(pid)
-        else:
-            exit(1)
+        p = mp.Process(target=_run, args=[FastDropExtension])
+        p.start()
+        exts.append(p)
 
-        pid = os.fork()
-        if pid == 0:
-            e = CommandExtension()
-            e.start(block=True)
-            exit(0)
-        elif pid > 0:
-            pids.append(pid)
-        else:
-            exit(1)
+        b.extension_len.wait_for(lambda x: x == len(exts), 5)
 
-        time.sleep(0.5)
-
-        buf = b'\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd4\x00\x00\x00\x02\x00\x02\x0f\x00\x00\x00OnDialogRequest\x01\x02\xb8\x00\x00\x00set_default_color|`o\nadd_label_with_icon|big|`wDrop Sign``|left|20|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||3|5|\nembed_data|itemID|20\nend_dialog|drop_item|Cancel|OK|\n@'
+        buf = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd4\x00\x00\x00\x02\x00\x02\x0f\x00\x00\x00OnDialogRequest\x01\x02\xb8\x00\x00\x00set_default_color|`o\nadd_label_with_icon|big|`wDrop Sign``|left|20|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||3|5|\nembed_data|itemID|20\nend_dialog|drop_item|Cancel|OK|\n@"
         pkt = NetPacket.deserialize(buf)
         src = DIRECTION_SERVER_TO_CLIENT
+        flags = ENetPacketFlag.NONE
         print(pkt)
 
-        res = b.process_event(pkt, buf, src)
+        res = b.process_event(pkt, buf, src, flags)
+        assert res
 
-        if res:
-            pkt = res[0]
-            src = From.CLIENT if res[1] == DIRECTION_CLIENT_TO_SERVER else From.SERVER if res[1] == DIRECTION_SERVER_TO_CLIENT else src
+        processed, cancelled = res
 
-        print(pkt, src)
-        print(pkt.serialize())
+        print(processed, f"cancelled={cancelled}")
+        print(f"elapsed={int.from_bytes(processed.rtt_ns) / 1e6}us")
+        print(processed.buf)
 
-        for pid in pids:
-            os.kill(pid, signal.SIGINT)
+        for ext in exts:
+            ext.terminate()
+            ext.join()
 
         b.stop()
