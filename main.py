@@ -1,10 +1,7 @@
 import argparse
 import logging
-import os
-import signal
 import multiprocessing as mp
 import threading
-import time
 
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.utils.block_sigint import block_sigint
@@ -20,9 +17,8 @@ from gtools.protogen.extension_pb2 import (
 from gtools.proxy import login
 from gtools.proxy.extension.broker import Broker
 from gtools.proxy.extension.builtin.fast_drop import FastDropExtension
-from gtools.proxy.extension.builtin.command import CommandExtension
 from gtools.proxy.extension.sdk import Extension
-from gtools.proxy.proxy import From, Proxy
+from gtools.proxy.proxy import Proxy
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -69,9 +65,10 @@ if __name__ == "__main__":
     parser.add_argument("-v", action="store_true")
 
     subparser = parser.add_subparsers(dest="cmd")
-    subparser.add_parser("proxy")
 
-    ext = subparser.add_parser("ext_test")
+    subparser.add_parser("proxy")
+    subparser.add_parser("ext_test")
+    subparser.add_parser("test")
 
     args = parser.parse_args()
 

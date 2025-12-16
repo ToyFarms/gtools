@@ -122,20 +122,28 @@ class Proxy:
             pkt,
             data,
             DIRECTION_CLIENT_TO_SERVER if src == From.CLIENT else DIRECTION_SERVER_TO_CLIENT,
+            flags,
             callback=PacketCallback(
                 send_to_server=lambda data: self._handle_client_to_server(data, NetPacket.deserialize(data), ENetPacketFlag(0)),
                 send_to_client=lambda data: self._handle_server_to_client(data, NetPacket.deserialize(data), ENetPacketFlag(0)),
             ),
         )
+        modified = False
         if res:
-            # separating packet and data is dangerous
-            # i really spent 3 hours debugging nothing just because i update the packet and not the data
-            # ideally the packet store the serialized bytes too, so i can reference it from those
-            pkt = res[0]
-            data = pkt.serialize()
-            src = From.CLIENT if res[1] == DIRECTION_CLIENT_TO_SERVER else From.SERVER if res[1] == DIRECTION_SERVER_TO_CLIENT else src
+            processed, cancelled = res
+            if not cancelled:
+                self.logger.debug(f"[original] packet={pkt!r} flags={flags!r} from={src.name}")
+                pkt = NetPacket.deserialize(processed.buf)
+                data = processed.buf
+                dir = processed.direction
+                flags = ENetPacketFlag(processed.packet_flags)
+                src = From.CLIENT if dir == DIRECTION_CLIENT_TO_SERVER else From.SERVER if dir == DIRECTION_SERVER_TO_CLIENT else src
+                self.logger.debug(f"[{processed.packet_id}] processed packet: hit={processed.hit_count} rtt={int.from_bytes(processed.rtt_ns) / 1e6}us")
+                modified = True
+            else:
+                self.logger.debug(f"[{processed.packet_id}] packet process cancelled")
 
-        self.logger.debug(f"{pkt!r} {src.name}")
+        self.logger.debug(f"{'[modified] ' if modified else ''}packet={pkt!r} flags={flags!r} from={src.name}")
         if pkt.type == NetType.TANK_PACKET:
             if pkt.tank.type in (
                 TankType.APP_CHECK_RESPONSE,
@@ -263,4 +271,3 @@ class Proxy:
                 self._stop_event.set()
                 self._event_queue.put(None)
                 self._worker_thread.join()
-
