@@ -226,10 +226,7 @@ class Packet(_message.Message):
         TYPE_CAPABILITY_RESPONSE: _ClassVar[Packet.Type]
         TYPE_DISCONNECT: _ClassVar[Packet.Type]
         TYPE_CONNECTED: _ClassVar[Packet.Type]
-        TYPE_EVENT: _ClassVar[Packet.Type]
-        TYPE_FORWARD: _ClassVar[Packet.Type]
-        TYPE_FORWARD_NOT_MODIFIED: _ClassVar[Packet.Type]
-        TYPE_CANCEL: _ClassVar[Packet.Type]
+        TYPE_PENDING_PACKET: _ClassVar[Packet.Type]
     TYPE_UNSPECIFIED: Packet.Type
     TYPE_HANDSHAKE: Packet.Type
     TYPE_HANDSHAKE_ACK: Packet.Type
@@ -237,10 +234,7 @@ class Packet(_message.Message):
     TYPE_CAPABILITY_RESPONSE: Packet.Type
     TYPE_DISCONNECT: Packet.Type
     TYPE_CONNECTED: Packet.Type
-    TYPE_EVENT: Packet.Type
-    TYPE_FORWARD: Packet.Type
-    TYPE_FORWARD_NOT_MODIFIED: Packet.Type
-    TYPE_CANCEL: Packet.Type
+    TYPE_PENDING_PACKET: Packet.Type
     TYPE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_ACK_FIELD_NUMBER: _ClassVar[int]
@@ -248,10 +242,7 @@ class Packet(_message.Message):
     CAPABILITY_RESPONSE_FIELD_NUMBER: _ClassVar[int]
     DISCONNECT_FIELD_NUMBER: _ClassVar[int]
     CONNECTED_FIELD_NUMBER: _ClassVar[int]
-    EVENT_FIELD_NUMBER: _ClassVar[int]
-    FORWARD_FIELD_NUMBER: _ClassVar[int]
-    FORWARD_NOT_MODIFIED_FIELD_NUMBER: _ClassVar[int]
-    CANCEL_FIELD_NUMBER: _ClassVar[int]
+    PENDING_PACKET_FIELD_NUMBER: _ClassVar[int]
     type: Packet.Type
     handshake: Handshake
     handshake_ack: HandshakeAck
@@ -259,11 +250,8 @@ class Packet(_message.Message):
     capability_response: CapabilityResponse
     disconnect: Disconnect
     connected: Connected
-    event: Event
-    forward: Forward
-    forward_not_modified: ForwardNotModified
-    cancel: Cancel
-    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., event: _Optional[_Union[Event, _Mapping]] = ..., forward: _Optional[_Union[Forward, _Mapping]] = ..., forward_not_modified: _Optional[_Union[ForwardNotModified, _Mapping]] = ..., cancel: _Optional[_Union[Cancel, _Mapping]] = ...) -> None: ...
+    pending_packet: PendingPacket
+    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., pending_packet: _Optional[_Union[PendingPacket, _Mapping]] = ...) -> None: ...
 
 class Handshake(_message.Message):
     __slots__ = ()
@@ -293,37 +281,37 @@ class Connected(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
-class Event(_message.Message):
+class PendingPacket(_message.Message):
     __slots__ = ()
-    CHAIN_ID_FIELD_NUMBER: _ClassVar[int]
-    ID_FIELD_NUMBER: _ClassVar[int]
+    class Op(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        OP_UNSPECIFIED: _ClassVar[PendingPacket.Op]
+        OP_FINISH: _ClassVar[PendingPacket.Op]
+        OP_CANCEL: _ClassVar[PendingPacket.Op]
+        OP_FORWARD: _ClassVar[PendingPacket.Op]
+        OP_PASS: _ClassVar[PendingPacket.Op]
+    OP_UNSPECIFIED: PendingPacket.Op
+    OP_FINISH: PendingPacket.Op
+    OP_CANCEL: PendingPacket.Op
+    OP_FORWARD: PendingPacket.Op
+    OP_PASS: PendingPacket.Op
+    OP_FIELD_NUMBER: _ClassVar[int]
+    PACKET_ID_FIELD_NUMBER: _ClassVar[int]
     BUF_FIELD_NUMBER: _ClassVar[int]
-    chain_id: bytes
-    id: int
-    buf: bytes
-    def __init__(self, chain_id: _Optional[bytes] = ..., id: _Optional[int] = ..., buf: _Optional[bytes] = ...) -> None: ...
-
-class Forward(_message.Message):
-    __slots__ = ()
-    CHAIN_ID_FIELD_NUMBER: _ClassVar[int]
-    BUF_FIELD_NUMBER: _ClassVar[int]
+    PACKET_FLAGS_FIELD_NUMBER: _ClassVar[int]
     DIRECTION_FIELD_NUMBER: _ClassVar[int]
-    chain_id: bytes
+    HIT_COUNT_FIELD_NUMBER: _ClassVar[int]
+    RTT_NS_FIELD_NUMBER: _ClassVar[int]
+    INTEREST_ID_FIELD_NUMBER: _ClassVar[int]
+    op: PendingPacket.Op
+    packet_id: bytes
     buf: bytes
+    packet_flags: int
     direction: Direction
-    def __init__(self, chain_id: _Optional[bytes] = ..., buf: _Optional[bytes] = ..., direction: _Optional[_Union[Direction, str]] = ...) -> None: ...
-
-class ForwardNotModified(_message.Message):
-    __slots__ = ()
-    CHAIN_ID_FIELD_NUMBER: _ClassVar[int]
-    chain_id: bytes
-    def __init__(self, chain_id: _Optional[bytes] = ...) -> None: ...
-
-class Cancel(_message.Message):
-    __slots__ = ()
-    CHAIN_ID_FIELD_NUMBER: _ClassVar[int]
-    chain_id: bytes
-    def __init__(self, chain_id: _Optional[bytes] = ...) -> None: ...
+    hit_count: int
+    rtt_ns: bytes
+    interest_id: int
+    def __init__(self, op: _Optional[_Union[PendingPacket.Op, str]] = ..., packet_id: _Optional[bytes] = ..., buf: _Optional[bytes] = ..., packet_flags: _Optional[int] = ..., direction: _Optional[_Union[Direction, str]] = ..., hit_count: _Optional[int] = ..., rtt_ns: _Optional[bytes] = ..., interest_id: _Optional[int] = ...) -> None: ...
 
 class Interest(_message.Message):
     __slots__ = ()

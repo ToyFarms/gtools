@@ -3,10 +3,9 @@ from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_CLIENT_TO_SERVER,
     INTEREST_GENERIC_TEXT,
-    Event,
     Interest,
     InterestGenericText,
-    Packet,
+    PendingPacket,
 )
 from gtools.proxy.extension.sdk import Extension
 from gtools.core.growtopia.packet import NetPacket
@@ -28,11 +27,9 @@ class CommandExtension(Extension):
             ],
         )
 
-    def process(self, event: Event) -> Packet | None:
+    def process(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
         print(pkt.generic_text)
-
-        return Packet(type=Packet.TYPE_FORWARD_NOT_MODIFIED)
 
     def destroy(self) -> None:
         pass

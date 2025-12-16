@@ -33,13 +33,3 @@ simply ctrl+c, it will automatically unregister
 
 broker/extension is restart-resistant, meaning it will automatically recover if any of them goes down
 so you can safely interrupt to make some change
-
-TODO:
-gtools/proxy/extension/broker.py:435:        # TODO: handle "super" packet, basically like netpacket shuold match any kind of packet
-gtools/proxy/extension/broker.py:467:    # TODO: i didnt think zmq had all the stuff behind the scene before i implemented them myself.
-gtools/proxy/extension/broker.py:470:    # TODO: i dont like you have to handle 2 case: blocking and non blocking, separately, everywhere
-gtools/proxy/extension/sdk.py:110:    # TODO: the extension should be able to send more than one packet in one process
-gtools/core/growtopia/strkv.py:32:# TODO: dont overcomplicate simple thing please
-gtools/discord/messages.py:31:    # TODO: these async can cause some pretty heavy race condition, consider using a queue
-gtools/discord/messages.py:57:        # TODO: ensure all messages is flushed before cleaning up
-if possible, "handoff" proxy connection to another process so we can make change to the proxy code without reconnecting

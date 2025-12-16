@@ -18,7 +18,7 @@ def call(cmd: list[SupportsStr]) -> None:
     print(f"+ {' '.join(c)}")
     ret = subprocess.run(c, stdout=sys.stdout, stderr=sys.stderr)
     if ret.returncode != 0:
-        print(f"return code: {ret}")
+        print(f"\x1b[31mnon-zero return code\x1b[0m ({ret.returncode}) return code: {ret!r}")
 
 
 def capture_stdout(cmd: list[SupportsStr]) -> str:
@@ -26,7 +26,7 @@ def capture_stdout(cmd: list[SupportsStr]) -> str:
     print(f"+ {' '.join(c)}")
     ret = subprocess.run(c, capture_output=True)
     if ret.returncode != 0:
-        print(f"return code: {ret}")
+        print(f"\x1b[31mnon-zero return code\x1b[0m ({ret.returncode}) return code: {ret!r}")
 
     return ret.stdout.decode()
 
@@ -36,7 +36,7 @@ def capture_stderr(cmd: list[SupportsStr]) -> str:
     print(f"+ {' '.join(c)}")
     ret = subprocess.run(c, capture_output=True)
     if ret.returncode != 0:
-        print(f"return code: {ret}")
+        print(f"\x1b[31mnon-zero return code\x1b[0m ({ret.returncode}) return code: {ret!r}")
 
     return ret.stderr.decode()
 
