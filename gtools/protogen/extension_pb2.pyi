@@ -159,6 +159,7 @@ class Packet(_message.Message):
         TYPE_DISCONNECT: _ClassVar[Packet.Type]
         TYPE_CONNECTED: _ClassVar[Packet.Type]
         TYPE_PENDING_PACKET: _ClassVar[Packet.Type]
+        TYPE_PREPARED_PACKET: _ClassVar[Packet.Type]
     TYPE_UNSPECIFIED: Packet.Type
     TYPE_HANDSHAKE: Packet.Type
     TYPE_HANDSHAKE_ACK: Packet.Type
@@ -167,6 +168,7 @@ class Packet(_message.Message):
     TYPE_DISCONNECT: Packet.Type
     TYPE_CONNECTED: Packet.Type
     TYPE_PENDING_PACKET: Packet.Type
+    TYPE_PREPARED_PACKET: Packet.Type
     TYPE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_ACK_FIELD_NUMBER: _ClassVar[int]
@@ -175,6 +177,7 @@ class Packet(_message.Message):
     DISCONNECT_FIELD_NUMBER: _ClassVar[int]
     CONNECTED_FIELD_NUMBER: _ClassVar[int]
     PENDING_PACKET_FIELD_NUMBER: _ClassVar[int]
+    PREPARED_PACKET_FIELD_NUMBER: _ClassVar[int]
     type: Packet.Type
     handshake: Handshake
     handshake_ack: HandshakeAck
@@ -183,7 +186,8 @@ class Packet(_message.Message):
     disconnect: Disconnect
     connected: Connected
     pending_packet: PendingPacket
-    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., pending_packet: _Optional[_Union[PendingPacket, _Mapping]] = ...) -> None: ...
+    prepared_packet: PreparedPacket
+    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., pending_packet: _Optional[_Union[PendingPacket, _Mapping]] = ..., prepared_packet: _Optional[_Union[PreparedPacket, _Mapping]] = ...) -> None: ...
 
 class Handshake(_message.Message):
     __slots__ = ()
@@ -244,6 +248,16 @@ class PendingPacket(_message.Message):
     _rtt_ns: bytes
     interest_id: int
     def __init__(self, _op: _Optional[_Union[PendingPacket.Op, str]] = ..., _packet_id: _Optional[bytes] = ..., buf: _Optional[bytes] = ..., packet_flags: _Optional[int] = ..., direction: _Optional[_Union[Direction, str]] = ..., _hit_count: _Optional[int] = ..., _rtt_ns: _Optional[bytes] = ..., interest_id: _Optional[int] = ...) -> None: ...
+
+class PreparedPacket(_message.Message):
+    __slots__ = ()
+    BUF_FIELD_NUMBER: _ClassVar[int]
+    DIRECTION_FIELD_NUMBER: _ClassVar[int]
+    PACKET_FLAGS_FIELD_NUMBER: _ClassVar[int]
+    buf: bytes
+    direction: Direction
+    packet_flags: int
+    def __init__(self, buf: _Optional[bytes] = ..., direction: _Optional[_Union[Direction, str]] = ..., packet_flags: _Optional[int] = ...) -> None: ...
 
 class Interest(_message.Message):
     __slots__ = ()

@@ -8,40 +8,37 @@ import "op.proto";
 
 message Packet {
   enum Type {
-    TYPE_UNSPECIFIED                        = 0;
-    TYPE_HANDSHAKE                          = 1;
-    TYPE_HANDSHAKE_ACK                      = 2;
-    TYPE_CAPABILITY_REQUEST                 = 3;
-    TYPE_CAPABILITY_RESPONSE                = 4;
-    TYPE_DISCONNECT                         = 5;
-    TYPE_CONNECTED                          = 6;
-    TYPE_PENDING_PACKET                     = 7;
+    TYPE_UNSPECIFIED = 0;
+    TYPE_HANDSHAKE = 1;
+    TYPE_HANDSHAKE_ACK = 2;
+    TYPE_CAPABILITY_REQUEST = 3;
+    TYPE_CAPABILITY_RESPONSE = 4;
+    TYPE_DISCONNECT = 5;
+    TYPE_CONNECTED = 6;
+    TYPE_PENDING_PACKET = 7;
+    TYPE_PREPARED_PACKET = 8;
   }
 
-  Type type                                 = 1;
+  Type type = 1;
   oneof payload {
-    Handshake handshake                     = 2;
-    HandshakeAck handshake_ack              = 3;
-    CapabilityRequest capability_request    = 4;
-    CapabilityResponse capability_response  = 5;
-    Disconnect disconnect                   = 6;
-    Connected connected                     = 7;
-    PendingPacket pending_packet            = 8;
+    Handshake handshake = 2;
+    HandshakeAck handshake_ack = 3;
+    CapabilityRequest capability_request = 4;
+    CapabilityResponse capability_response = 5;
+    Disconnect disconnect = 6;
+    Connected connected = 7;
+    PendingPacket pending_packet = 8;
+    PreparedPacket prepared_packet = 9;
   }
 }
 
-message Handshake {
-  string name = 1;
-}
+message Handshake { string name = 1; }
 
-message HandshakeAck {
-}
+message HandshakeAck {}
 
 message CapabilityRequest {}
 
-message CapabilityResponse {
-  repeated Interest interest = 1;
-}
+message CapabilityResponse { repeated Interest interest = 1; }
 
 message Disconnect {}
 
@@ -50,165 +47,171 @@ message Connected {}
 message PendingPacket {
   enum Op {
     OP_UNSPECIFIED = 0;
-    OP_FINISH      = 1;
-    OP_CANCEL      = 2;
-    OP_FORWARD     = 3;
-    OP_PASS        = 4;
+    OP_FINISH = 1;
+    OP_CANCEL = 2;
+    OP_FORWARD = 3;
+    OP_PASS = 4;
   }
 
-  Op _op              = 1;
-  bytes _packet_id    = 2;
-  bytes buf           = 3;
+  Op _op = 1;
+  bytes _packet_id = 2;
+  bytes buf = 3;
   uint32 packet_flags = 4;
   Direction direction = 5;
-  uint32 _hit_count   = 6;
-  bytes _rtt_ns       = 7;
-  uint32 interest_id  = 8;
+  uint32 _hit_count = 6;
+  bytes _rtt_ns = 7;
+  uint32 interest_id = 8;
+}
+
+message PreparedPacket {
+  bytes buf = 1;
+  Direction direction = 2;
+  uint32 packet_flags = 3;
 }
 
 enum InterestType {
-  INTEREST_UNSPECIFIED                      = 0;
+  INTEREST_UNSPECIFIED = 0;
 
-  INTEREST_PEER_CONNECT                     = 1;
-  INTEREST_PEER_DISCONNECT                  = 2;
+  INTEREST_PEER_CONNECT = 1;
+  INTEREST_PEER_DISCONNECT = 2;
 
-  INTEREST_SERVER_HELLO                     = 3;
-  INTEREST_GENERIC_TEXT                     = 4;
-  INTEREST_GAME_MESSAGE                     = 5;
-  INTEREST_TANK_PACKET                      = 6;
-  INTEREST_ERROR                            = 7;
-  INTEREST_TRACK                            = 8;
-  INTEREST_CLIENT_LOG_REQUEST               = 9;
-  INTEREST_CLIENT_LOG_RESPONSE              = 10;
+  INTEREST_SERVER_HELLO = 3;
+  INTEREST_GENERIC_TEXT = 4;
+  INTEREST_GAME_MESSAGE = 5;
+  INTEREST_TANK_PACKET = 6;
+  INTEREST_ERROR = 7;
+  INTEREST_TRACK = 8;
+  INTEREST_CLIENT_LOG_REQUEST = 9;
+  INTEREST_CLIENT_LOG_RESPONSE = 10;
 
-  INTEREST_STATE                            = 11;
-  INTEREST_CALL_FUNCTION                    = 12;
-  INTEREST_UPDATE_STATUS                    = 13;
-  INTEREST_TILE_CHANGE_REQUEST              = 14;
-  INTEREST_SEND_MAP_DATA                    = 15;
-  INTEREST_SEND_TILE_UPDATE_DATA            = 16;
-  INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE   = 17;
-  INTEREST_TILE_ACTIVATE_REQUEST            = 18;
-  INTEREST_TILE_APPLY_DAMAGE                = 19;
-  INTEREST_SEND_INVENTORY_STATE             = 20;
-  INTEREST_ITEM_ACTIVATE_REQUEST            = 21;
-  INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST     = 22;
-  INTEREST_SEND_TILE_TREE_STATE             = 23;
-  INTEREST_MODIFY_ITEM_INVENTORY            = 24;
-  INTEREST_ITEM_CHANGE_OBJECT               = 25;
-  INTEREST_SEND_LOCK                        = 26;
-  INTEREST_SEND_ITEM_DATABASE_DATA          = 27;
-  INTEREST_SEND_PARTICLE_EFFECT             = 28;
-  INTEREST_SET_ICON_STATE                   = 29;
-  INTEREST_ITEM_EFFECT                      = 30;
-  INTEREST_SET_CHARACTER_STATE              = 31;
-  INTEREST_PING_REPLY                       = 32;
-  INTEREST_PING_REQUEST                     = 33;
-  INTEREST_GOT_PUNCHED                      = 34;
-  INTEREST_APP_CHECK_RESPONSE               = 35;
-  INTEREST_APP_INTEGRITY_FAIL               = 36;
-  INTEREST_DISCONNECT                       = 37;
-  INTEREST_BATTLE_JOIN                      = 38;
-  INTEREST_BATTLE_EVENT                     = 39;
-  INTEREST_USE_DOOR                         = 40;
-  INTEREST_SEND_PARENTAL                    = 41;
-  INTEREST_GONE_FISHIN                      = 42;
-  INTEREST_STEAM                            = 43;
-  INTEREST_PET_BATTLE                       = 44;
-  INTEREST_NPC                              = 45;
-  INTEREST_SPECIAL                          = 46;
-  INTEREST_SEND_PARTICLE_EFFECT_V2          = 47;
-  INTEREST_ACTIVATE_ARROW_TO_ITEM           = 48;
-  INTEREST_SELECT_TILE_INDEX                = 49;
-  INTEREST_SEND_PLAYER_TRIBUTE_DATA         = 50;
+  INTEREST_STATE = 11;
+  INTEREST_CALL_FUNCTION = 12;
+  INTEREST_UPDATE_STATUS = 13;
+  INTEREST_TILE_CHANGE_REQUEST = 14;
+  INTEREST_SEND_MAP_DATA = 15;
+  INTEREST_SEND_TILE_UPDATE_DATA = 16;
+  INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE = 17;
+  INTEREST_TILE_ACTIVATE_REQUEST = 18;
+  INTEREST_TILE_APPLY_DAMAGE = 19;
+  INTEREST_SEND_INVENTORY_STATE = 20;
+  INTEREST_ITEM_ACTIVATE_REQUEST = 21;
+  INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST = 22;
+  INTEREST_SEND_TILE_TREE_STATE = 23;
+  INTEREST_MODIFY_ITEM_INVENTORY = 24;
+  INTEREST_ITEM_CHANGE_OBJECT = 25;
+  INTEREST_SEND_LOCK = 26;
+  INTEREST_SEND_ITEM_DATABASE_DATA = 27;
+  INTEREST_SEND_PARTICLE_EFFECT = 28;
+  INTEREST_SET_ICON_STATE = 29;
+  INTEREST_ITEM_EFFECT = 30;
+  INTEREST_SET_CHARACTER_STATE = 31;
+  INTEREST_PING_REPLY = 32;
+  INTEREST_PING_REQUEST = 33;
+  INTEREST_GOT_PUNCHED = 34;
+  INTEREST_APP_CHECK_RESPONSE = 35;
+  INTEREST_APP_INTEGRITY_FAIL = 36;
+  INTEREST_DISCONNECT = 37;
+  INTEREST_BATTLE_JOIN = 38;
+  INTEREST_BATTLE_EVENT = 39;
+  INTEREST_USE_DOOR = 40;
+  INTEREST_SEND_PARENTAL = 41;
+  INTEREST_GONE_FISHIN = 42;
+  INTEREST_STEAM = 43;
+  INTEREST_PET_BATTLE = 44;
+  INTEREST_NPC = 45;
+  INTEREST_SPECIAL = 46;
+  INTEREST_SEND_PARTICLE_EFFECT_V2 = 47;
+  INTEREST_ACTIVATE_ARROW_TO_ITEM = 48;
+  INTEREST_SELECT_TILE_INDEX = 49;
+  INTEREST_SEND_PLAYER_TRIBUTE_DATA = 50;
   INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY = 51;
-  INTEREST_PVE_NPC                          = 52;
-  INTEREST_PVP_CARD_BATTLE                  = 53;
-  INTEREST_PVE_APPLY_PLAYER_DAMAGE          = 54;
-  INTEREST_PVE_NPC_POSITION_UPDATE          = 55;
-  INTEREST_SET_EXTRA_MODS                   = 56;
-  INTEREST_ON_STEP_TILE_MOD                 = 57;
+  INTEREST_PVE_NPC = 52;
+  INTEREST_PVP_CARD_BATTLE = 53;
+  INTEREST_PVE_APPLY_PLAYER_DAMAGE = 54;
+  INTEREST_PVE_NPC_POSITION_UPDATE = 55;
+  INTEREST_SET_EXTRA_MODS = 56;
+  INTEREST_ON_STEP_TILE_MOD = 57;
 }
 
 enum Direction {
-  DIRECTION_UNSPECIFIED      = 0;
+  DIRECTION_UNSPECIFIED = 0;
   DIRECTION_CLIENT_TO_SERVER = 1;
   DIRECTION_SERVER_TO_CLIENT = 2;
 }
 
 enum BlockingMode {
-  BLOCKING_MODE_UNSPECIFIED     = 0;
-  BLOCKING_MODE_BLOCK           = 1;
+  BLOCKING_MODE_UNSPECIFIED = 0;
+  BLOCKING_MODE_BLOCK = 1;
   BLOCKING_MODE_SEND_AND_FORGET = 2;
 }
 
 message Interest {
-  InterestType interest        = 1;
-  optional int32 priority      = 2;
-  BlockingMode blocking_mode   = 3;
+  InterestType interest = 1;
+  optional int32 priority = 2;
+  BlockingMode blocking_mode = 3;
   optional Direction direction = 4;
-  optional int32 id            = 5;
+  optional int32 id = 5;
 
   oneof payload {
-    InterestPeerConnect peer_connect                                     = 6;
-    InterestPeerDisconnect peer_disconnect                               = 7;
+    InterestPeerConnect peer_connect = 6;
+    InterestPeerDisconnect peer_disconnect = 7;
 
-    InterestServerHello server_hello                                     = 8;
-    InterestGenericText generic_text                                     = 9;
-    InterestGameMessage game_message                                     = 10;
-    InterestTankPacket tank_packet                                       = 11;
-    InterestError error                                                  = 12;
-    InterestTrack track                                                  = 13;
-    InterestClientLogRequest client_log_request                          = 14;
-    InterestClientLogResponse client_log_response                        = 15;
+    InterestServerHello server_hello = 8;
+    InterestGenericText generic_text = 9;
+    InterestGameMessage game_message = 10;
+    InterestTankPacket tank_packet = 11;
+    InterestError error = 12;
+    InterestTrack track = 13;
+    InterestClientLogRequest client_log_request = 14;
+    InterestClientLogResponse client_log_response = 15;
 
-    InterestState state                                                  = 16;
-    InterestCallFunction call_function                                   = 17;
-    InterestUpdateStatus update_status                                   = 18;
-    InterestTileChangeRequest tile_change_request                        = 19;
-    InterestSendMapData send_map_data                                    = 20;
-    InterestSendTileUpdateData send_tile_update_data                     = 21;
-    InterestSendTileUpdateDataMultiple send_tile_update_data_multiple    = 22;
-    InterestTileActivateRequest tile_activate_request                    = 23;
-    InterestTileApplyDamage tile_apply_damage                            = 24;
-    InterestSendInventoryState send_inventory_state                      = 25;
-    InterestItemActivateRequest item_activate_request                    = 26;
-    InterestItemActivateObjectRequest item_activate_object_request       = 27;
-    InterestSendTileTreeState send_tile_tree_state                       = 28;
-    InterestModifyItemInventory modify_item_inventory                    = 29;
-    InterestItemChangeObject item_change_object                          = 30;
-    InterestSendLock send_lock                                           = 31;
-    InterestSendItemDatabaseData send_item_database_data                 = 32;
-    InterestSendParticleEffect send_particle_effect                      = 33;
-    InterestSetIconState set_icon_state                                  = 34;
-    InterestItemEffect item_effect                                       = 35;
-    InterestSetCharacterState set_character_state                        = 36;
-    InterestPingReply ping_reply                                         = 37;
-    InterestPingRequest ping_request                                     = 38;
-    InterestGotPunched got_punched                                       = 39;
-    InterestAppCheckResponse app_check_response                          = 40;
-    InterestAppIntegrityFail app_integrity_fail                          = 41;
-    InterestDisconnect disconnect                                        = 42;
-    InterestBattleJoin battle_join                                       = 43;
-    InterestBattleEvent battle_event                                     = 44;
-    InterestUseDoor use_door                                             = 45;
-    InterestSendParental send_parental                                   = 46;
-    InterestGoneFishin gone_fishin                                       = 47;
-    InterestSteam steam                                                  = 48;
-    InterestPetBattle pet_battle                                         = 49;
-    InterestNpc npc                                                      = 50;
-    InterestSpecial special                                              = 51;
-    InterestSendParticleEffectV2 send_particle_effect_v2                 = 52;
-    InterestActivateArrowToItem activate_arrow_to_item                   = 53;
-    InterestSelectTileIndex select_tile_index                            = 54;
-    InterestSendPlayerTributeData send_player_tribute_data               = 55;
+    InterestState state = 16;
+    InterestCallFunction call_function = 17;
+    InterestUpdateStatus update_status = 18;
+    InterestTileChangeRequest tile_change_request = 19;
+    InterestSendMapData send_map_data = 20;
+    InterestSendTileUpdateData send_tile_update_data = 21;
+    InterestSendTileUpdateDataMultiple send_tile_update_data_multiple = 22;
+    InterestTileActivateRequest tile_activate_request = 23;
+    InterestTileApplyDamage tile_apply_damage = 24;
+    InterestSendInventoryState send_inventory_state = 25;
+    InterestItemActivateRequest item_activate_request = 26;
+    InterestItemActivateObjectRequest item_activate_object_request = 27;
+    InterestSendTileTreeState send_tile_tree_state = 28;
+    InterestModifyItemInventory modify_item_inventory = 29;
+    InterestItemChangeObject item_change_object = 30;
+    InterestSendLock send_lock = 31;
+    InterestSendItemDatabaseData send_item_database_data = 32;
+    InterestSendParticleEffect send_particle_effect = 33;
+    InterestSetIconState set_icon_state = 34;
+    InterestItemEffect item_effect = 35;
+    InterestSetCharacterState set_character_state = 36;
+    InterestPingReply ping_reply = 37;
+    InterestPingRequest ping_request = 38;
+    InterestGotPunched got_punched = 39;
+    InterestAppCheckResponse app_check_response = 40;
+    InterestAppIntegrityFail app_integrity_fail = 41;
+    InterestDisconnect disconnect = 42;
+    InterestBattleJoin battle_join = 43;
+    InterestBattleEvent battle_event = 44;
+    InterestUseDoor use_door = 45;
+    InterestSendParental send_parental = 46;
+    InterestGoneFishin gone_fishin = 47;
+    InterestSteam steam = 48;
+    InterestPetBattle pet_battle = 49;
+    InterestNpc npc = 50;
+    InterestSpecial special = 51;
+    InterestSendParticleEffectV2 send_particle_effect_v2 = 52;
+    InterestActivateArrowToItem activate_arrow_to_item = 53;
+    InterestSelectTileIndex select_tile_index = 54;
+    InterestSendPlayerTributeData send_player_tribute_data = 55;
     InterestFtueSetItemToQuickInventory ftue_set_item_to_quick_inventory = 56;
-    InterestPveNpc pve_npc                                               = 57;
-    InterestPvpCardBattle pvp_card_battle                                = 58;
-    InterestPveApplyPlayerDamage pve_apply_player_damage                 = 59;
-    InterestPveNpcPositionUpdate pve_npc_position_update                 = 60;
-    InterestSetExtraMods set_extra_mods                                  = 61;
-    InterestOnStepTileMod on_step_tile_mod                               = 62;
+    InterestPveNpc pve_npc = 57;
+    InterestPvpCardBattle pvp_card_battle = 58;
+    InterestPveApplyPlayerDamage pve_apply_player_damage = 59;
+    InterestPveNpcPositionUpdate pve_npc_position_update = 60;
+    InterestSetExtraMods set_extra_mods = 61;
+    InterestOnStepTileMod on_step_tile_mod = 62;
   }
 }
 
@@ -216,24 +219,16 @@ message InterestPeerConnect {}
 message InterestPeerDisconnect {}
 
 message InterestServerHello {}
-message InterestGenericText {
-  repeated gtools.op.BinOp where = 1;
-}
-message InterestGameMessage {
-  optional bytes action = 1;
-}
-message InterestTankPacket {
-  repeated gtools.op.BinOp where = 1;
-}
+message InterestGenericText { repeated gtools.op.BinOp where = 1; }
+message InterestGameMessage { optional bytes action = 1; }
+message InterestTankPacket { repeated gtools.op.BinOp where = 1; }
 message InterestError {}
 message InterestTrack {}
 message InterestClientLogRequest {}
 message InterestClientLogResponse {}
 
 message InterestState {}
-message InterestCallFunction {
-  optional bytes fn_name = 1;
-}
+message InterestCallFunction { optional bytes fn_name = 1; }
 message InterestUpdateStatus {}
 message InterestTileChangeRequest {}
 message InterestSendMapData {}

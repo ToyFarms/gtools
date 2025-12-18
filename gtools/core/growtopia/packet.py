@@ -7,7 +7,7 @@ from typing import Literal, cast
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.protocol import Serializable
-from gtools.protogen.extension_pb2 import Direction as DirectionProto, PendingPacket
+from gtools.protogen.extension_pb2 import Direction as DirectionProto, PendingPacket, PreparedPacket as PreparedPacketProto
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -108,7 +108,7 @@ class TankFlags(IntFlag):
 
 class TankPacket(Serializable):
     logger = logging.getLogger("tank_packet")
-    _FMT: str = "<BBBBIIIfIfffffiiI"
+    _FMT: str = "<BBBBIiIfIfffffiiI"
 
     def __init__(
         self,
@@ -323,8 +323,23 @@ class PreparedPacket:
     def from_pending(cls, pending: PendingPacket) -> "PreparedPacket":
         return cls(
             packet=pending.buf,
-            direction=PreparedPacket.Direction.from_proto(pending.direction),
+            direction=pending.direction,
             flags=ENetPacketFlag(pending.packet_flags),
+        )
+
+    @classmethod
+    def from_proto(cls, packet: PreparedPacketProto) -> "PreparedPacket":
+        return cls(
+            packet=packet.buf,
+            direction=packet.direction,
+            flags=ENetPacketFlag(packet.packet_flags),
+        )
+
+    def to_proto(self) -> PreparedPacketProto:
+        return PreparedPacketProto(
+            buf=self.as_raw,
+            direction=self.direction.value,
+            packet_flags=self.flags,
         )
 
     def __repr__(self) -> str:
