@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package gtools.op;
+
+import "google/protobuf/any.proto";
+
+enum Op {
+  OP_UNSPECIFIED = 0;
+  OP_EQ = 1;
+  OP_EQ_EPS = 2;
+  OP_NEQ = 3;
+  OP_GT = 4;
+  OP_GTE = 5;
+  OP_LT = 6;
+  OP_LTE = 7;
+}
+
+message BinOp {
+  google.protobuf.Any lvalue = 1;
+  Op op = 3;
+  oneof rvalue {
+    uint32 u32 = 4;
+    int32 i32 = 5;
+    float flt = 6;
+    string str = 7;
+    bytes buf = 8;
+  };
+}

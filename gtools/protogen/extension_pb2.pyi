@@ -1,3 +1,6 @@
+import tank_pb2 as _tank_pb2
+import strkv_pb2 as _strkv_pb2
+import op_pb2 as _op_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -79,46 +82,6 @@ class BlockingMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     BLOCKING_MODE_UNSPECIFIED: _ClassVar[BlockingMode]
     BLOCKING_MODE_BLOCK: _ClassVar[BlockingMode]
     BLOCKING_MODE_SEND_AND_FORGET: _ClassVar[BlockingMode]
-
-class WhereOp(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    WHERE_OP_UNSPECIFIED: _ClassVar[WhereOp]
-    WHERE_OP_EQ: _ClassVar[WhereOp]
-    WHERE_OP_EQ_EPS: _ClassVar[WhereOp]
-    WHERE_OP_NEQ: _ClassVar[WhereOp]
-    WHERE_OP_GT: _ClassVar[WhereOp]
-    WHERE_OP_GTE: _ClassVar[WhereOp]
-    WHERE_OP_LT: _ClassVar[WhereOp]
-    WHERE_OP_LTE: _ClassVar[WhereOp]
-
-class DType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    DTYPE_UNSPECIFIED: _ClassVar[DType]
-    DTYPE_U32: _ClassVar[DType]
-    DTYPE_I32: _ClassVar[DType]
-    DTYPE_FLT: _ClassVar[DType]
-    DTYPE_STR: _ClassVar[DType]
-
-class TankField(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    TANK_FIELD_UNSPECIFIED: _ClassVar[TankField]
-    TANK_FIELD_TYPE: _ClassVar[TankField]
-    TANK_FIELD_OBJECT_TYPE: _ClassVar[TankField]
-    TANK_FIELD_JUMP_COUNT: _ClassVar[TankField]
-    TANK_FIELD_ANIMATION_TYPE: _ClassVar[TankField]
-    TANK_FIELD_NET_ID: _ClassVar[TankField]
-    TANK_FIELD_TARGET_NET_ID: _ClassVar[TankField]
-    TANK_FIELD_FLAGS: _ClassVar[TankField]
-    TANK_FIELD_FLOAT_VAR: _ClassVar[TankField]
-    TANK_FIELD_VALUE: _ClassVar[TankField]
-    TANK_FIELD_VECTOR_X: _ClassVar[TankField]
-    TANK_FIELD_VECTOR_Y: _ClassVar[TankField]
-    TANK_FIELD_VECTOR_X2: _ClassVar[TankField]
-    TANK_FIELD_VECTOR_Y2: _ClassVar[TankField]
-    TANK_FIELD_PARTICLE_ROTATION: _ClassVar[TankField]
-    TANK_FIELD_INT_X: _ClassVar[TankField]
-    TANK_FIELD_INT_Y: _ClassVar[TankField]
-    TANK_FIELD_EXTENDED_LEN: _ClassVar[TankField]
 INTEREST_UNSPECIFIED: InterestType
 INTEREST_PEER_CONNECT: InterestType
 INTEREST_PEER_DISCONNECT: InterestType
@@ -183,37 +146,6 @@ DIRECTION_SERVER_TO_CLIENT: Direction
 BLOCKING_MODE_UNSPECIFIED: BlockingMode
 BLOCKING_MODE_BLOCK: BlockingMode
 BLOCKING_MODE_SEND_AND_FORGET: BlockingMode
-WHERE_OP_UNSPECIFIED: WhereOp
-WHERE_OP_EQ: WhereOp
-WHERE_OP_EQ_EPS: WhereOp
-WHERE_OP_NEQ: WhereOp
-WHERE_OP_GT: WhereOp
-WHERE_OP_GTE: WhereOp
-WHERE_OP_LT: WhereOp
-WHERE_OP_LTE: WhereOp
-DTYPE_UNSPECIFIED: DType
-DTYPE_U32: DType
-DTYPE_I32: DType
-DTYPE_FLT: DType
-DTYPE_STR: DType
-TANK_FIELD_UNSPECIFIED: TankField
-TANK_FIELD_TYPE: TankField
-TANK_FIELD_OBJECT_TYPE: TankField
-TANK_FIELD_JUMP_COUNT: TankField
-TANK_FIELD_ANIMATION_TYPE: TankField
-TANK_FIELD_NET_ID: TankField
-TANK_FIELD_TARGET_NET_ID: TankField
-TANK_FIELD_FLAGS: TankField
-TANK_FIELD_FLOAT_VAR: TankField
-TANK_FIELD_VALUE: TankField
-TANK_FIELD_VECTOR_X: TankField
-TANK_FIELD_VECTOR_Y: TankField
-TANK_FIELD_VECTOR_X2: TankField
-TANK_FIELD_VECTOR_Y2: TankField
-TANK_FIELD_PARTICLE_ROTATION: TankField
-TANK_FIELD_INT_X: TankField
-TANK_FIELD_INT_Y: TankField
-TANK_FIELD_EXTENDED_LEN: TankField
 
 class Packet(_message.Message):
     __slots__ = ()
@@ -441,24 +373,6 @@ class Interest(_message.Message):
     on_step_tile_mod: InterestOnStepTileMod
     def __init__(self, interest: _Optional[_Union[InterestType, str]] = ..., priority: _Optional[int] = ..., blocking_mode: _Optional[_Union[BlockingMode, str]] = ..., direction: _Optional[_Union[Direction, str]] = ..., id: _Optional[int] = ..., peer_connect: _Optional[_Union[InterestPeerConnect, _Mapping]] = ..., peer_disconnect: _Optional[_Union[InterestPeerDisconnect, _Mapping]] = ..., server_hello: _Optional[_Union[InterestServerHello, _Mapping]] = ..., generic_text: _Optional[_Union[InterestGenericText, _Mapping]] = ..., game_message: _Optional[_Union[InterestGameMessage, _Mapping]] = ..., tank_packet: _Optional[_Union[InterestTankPacket, _Mapping]] = ..., error: _Optional[_Union[InterestError, _Mapping]] = ..., track: _Optional[_Union[InterestTrack, _Mapping]] = ..., client_log_request: _Optional[_Union[InterestClientLogRequest, _Mapping]] = ..., client_log_response: _Optional[_Union[InterestClientLogResponse, _Mapping]] = ..., state: _Optional[_Union[InterestState, _Mapping]] = ..., call_function: _Optional[_Union[InterestCallFunction, _Mapping]] = ..., update_status: _Optional[_Union[InterestUpdateStatus, _Mapping]] = ..., tile_change_request: _Optional[_Union[InterestTileChangeRequest, _Mapping]] = ..., send_map_data: _Optional[_Union[InterestSendMapData, _Mapping]] = ..., send_tile_update_data: _Optional[_Union[InterestSendTileUpdateData, _Mapping]] = ..., send_tile_update_data_multiple: _Optional[_Union[InterestSendTileUpdateDataMultiple, _Mapping]] = ..., tile_activate_request: _Optional[_Union[InterestTileActivateRequest, _Mapping]] = ..., tile_apply_damage: _Optional[_Union[InterestTileApplyDamage, _Mapping]] = ..., send_inventory_state: _Optional[_Union[InterestSendInventoryState, _Mapping]] = ..., item_activate_request: _Optional[_Union[InterestItemActivateRequest, _Mapping]] = ..., item_activate_object_request: _Optional[_Union[InterestItemActivateObjectRequest, _Mapping]] = ..., send_tile_tree_state: _Optional[_Union[InterestSendTileTreeState, _Mapping]] = ..., modify_item_inventory: _Optional[_Union[InterestModifyItemInventory, _Mapping]] = ..., item_change_object: _Optional[_Union[InterestItemChangeObject, _Mapping]] = ..., send_lock: _Optional[_Union[InterestSendLock, _Mapping]] = ..., send_item_database_data: _Optional[_Union[InterestSendItemDatabaseData, _Mapping]] = ..., send_particle_effect: _Optional[_Union[InterestSendParticleEffect, _Mapping]] = ..., set_icon_state: _Optional[_Union[InterestSetIconState, _Mapping]] = ..., item_effect: _Optional[_Union[InterestItemEffect, _Mapping]] = ..., set_character_state: _Optional[_Union[InterestSetCharacterState, _Mapping]] = ..., ping_reply: _Optional[_Union[InterestPingReply, _Mapping]] = ..., ping_request: _Optional[_Union[InterestPingRequest, _Mapping]] = ..., got_punched: _Optional[_Union[InterestGotPunched, _Mapping]] = ..., app_check_response: _Optional[_Union[InterestAppCheckResponse, _Mapping]] = ..., app_integrity_fail: _Optional[_Union[InterestAppIntegrityFail, _Mapping]] = ..., disconnect: _Optional[_Union[InterestDisconnect, _Mapping]] = ..., battle_join: _Optional[_Union[InterestBattleJoin, _Mapping]] = ..., battle_event: _Optional[_Union[InterestBattleEvent, _Mapping]] = ..., use_door: _Optional[_Union[InterestUseDoor, _Mapping]] = ..., send_parental: _Optional[_Union[InterestSendParental, _Mapping]] = ..., gone_fishin: _Optional[_Union[InterestGoneFishin, _Mapping]] = ..., steam: _Optional[_Union[InterestSteam, _Mapping]] = ..., pet_battle: _Optional[_Union[InterestPetBattle, _Mapping]] = ..., npc: _Optional[_Union[InterestNpc, _Mapping]] = ..., special: _Optional[_Union[InterestSpecial, _Mapping]] = ..., send_particle_effect_v2: _Optional[_Union[InterestSendParticleEffectV2, _Mapping]] = ..., activate_arrow_to_item: _Optional[_Union[InterestActivateArrowToItem, _Mapping]] = ..., select_tile_index: _Optional[_Union[InterestSelectTileIndex, _Mapping]] = ..., send_player_tribute_data: _Optional[_Union[InterestSendPlayerTributeData, _Mapping]] = ..., ftue_set_item_to_quick_inventory: _Optional[_Union[InterestFtueSetItemToQuickInventory, _Mapping]] = ..., pve_npc: _Optional[_Union[InterestPveNpc, _Mapping]] = ..., pvp_card_battle: _Optional[_Union[InterestPvpCardBattle, _Mapping]] = ..., pve_apply_player_damage: _Optional[_Union[InterestPveApplyPlayerDamage, _Mapping]] = ..., pve_npc_position_update: _Optional[_Union[InterestPveNpcPositionUpdate, _Mapping]] = ..., set_extra_mods: _Optional[_Union[InterestSetExtraMods, _Mapping]] = ..., on_step_tile_mod: _Optional[_Union[InterestOnStepTileMod, _Mapping]] = ...) -> None: ...
 
-class TankWhereSpecifier(_message.Message):
-    __slots__ = ()
-    FIELD_FIELD_NUMBER: _ClassVar[int]
-    TYPE_FIELD_NUMBER: _ClassVar[int]
-    OP_FIELD_NUMBER: _ClassVar[int]
-    U32_FIELD_NUMBER: _ClassVar[int]
-    I32_FIELD_NUMBER: _ClassVar[int]
-    FLT_FIELD_NUMBER: _ClassVar[int]
-    STR_FIELD_NUMBER: _ClassVar[int]
-    field: TankField
-    type: DType
-    op: WhereOp
-    u32: int
-    i32: int
-    flt: float
-    str: str
-    def __init__(self, field: _Optional[_Union[TankField, str]] = ..., type: _Optional[_Union[DType, str]] = ..., op: _Optional[_Union[WhereOp, str]] = ..., u32: _Optional[int] = ..., i32: _Optional[int] = ..., flt: _Optional[float] = ..., str: _Optional[str] = ...) -> None: ...
-
 class InterestPeerConnect(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
@@ -473,9 +387,9 @@ class InterestServerHello(_message.Message):
 
 class InterestGenericText(_message.Message):
     __slots__ = ()
-    REGEX_FIELD_NUMBER: _ClassVar[int]
-    regex: bytes
-    def __init__(self, regex: _Optional[bytes] = ...) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestGameMessage(_message.Message):
     __slots__ = ()
@@ -486,8 +400,8 @@ class InterestGameMessage(_message.Message):
 class InterestTankPacket(_message.Message):
     __slots__ = ()
     WHERE_FIELD_NUMBER: _ClassVar[int]
-    where: _containers.RepeatedCompositeFieldContainer[TankWhereSpecifier]
-    def __init__(self, where: _Optional[_Iterable[_Union[TankWhereSpecifier, _Mapping]]] = ...) -> None: ...
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestError(_message.Message):
     __slots__ = ()

@@ -900,3 +900,11 @@ def test_serialization_roundtrip():
 
     assert s2[2, 0] == b"x"
     assert s2[2, 1] == b"y"
+
+def test_trailing_newline_preserved() -> None:
+    buf = b"action|dialog_return\ndialog_name|drop_item\n"
+    kv = StrKV.deserialize(buf)
+
+    assert kv._trailing_nl
+    assert kv.serialize() == buf
+    verify(kv.serialize())

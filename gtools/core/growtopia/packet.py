@@ -1,11 +1,14 @@
-from enum import IntEnum, IntFlag
+from enum import Enum, IntEnum, IntFlag, auto
 import logging
 import struct
 import time
 from typing import Literal, cast
 
 from gtools.core.growtopia.strkv import StrKV
+from gtools.core.growtopia.variant import Variant
 from gtools.core.protocol import Serializable
+from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_UNSPECIFIED, PendingPacket
+from thirdparty.enet.bindings import ENetPacketFlag
 
 
 class NetType(IntEnum):
@@ -144,8 +147,10 @@ class TankPacket(Serializable):
         self.particle_rotation = particle_rotation
         self.int_x = int_x
         self.int_y = int_y
-        self.extended_len = extended_len
+        if extended_len != 0 and extended_len != len(extended_data):
+            raise ValueError(f"extended_len ({extended_len}) supplied does not match extended_data actual length ({len(extended_data)}, {extended_data})")
         self._extended_data = extended_data
+        self.extended_len = len(extended_data)
 
     @property
     def extended_data(self) -> bytes:
@@ -215,7 +220,11 @@ class TankPacket(Serializable):
         return cls(*values, extended_data=extended_data)
 
     def __repr__(self) -> str:
-        return f"TankPacket(type={self.type!r}, object_type={self.object_type}, jump_count={self.jump_count}, animation_type={self.animation_type}, net_id={self.net_id}, target_net_id={self.target_net_id}, flags={self.flags!r}, float_var={self.float_var}, value={self.value}, vector_x={self.vector_x}, vector_y={self.vector_y}, vector_x2={self.vector_x2}, vector_y2={self.vector_y2}, particle_rotation={self.particle_rotation}, int_x={self.int_x}, int_y={self.int_y}, extended_len={self.extended_len}, extended_data={self.extended_data})"
+        extra = ""
+        if self.type == TankType.CALL_FUNCTION:
+            extra = f", __extra=Call({Variant.deserialize(self.extended_data)})"
+
+        return f"TankPacket(type={self.type!r}, object_type={self.object_type}, jump_count={self.jump_count}, animation_type={self.animation_type}, net_id={self.net_id}, target_net_id={self.target_net_id}, flags={self.flags!r}, float_var={self.float_var}, value={self.value}, vector_x={self.vector_x}, vector_y={self.vector_y}, vector_x2={self.vector_x2}, vector_y2={self.vector_y2}, particle_rotation={self.particle_rotation}, int_x={self.int_x}, int_y={self.int_y}, extended_len={self.extended_len}, extended_data={self.extended_data}{extra})"
 
 
 class EmptyPacket(Serializable):
@@ -281,6 +290,42 @@ class NetPacket(Serializable):
         if self.type is not NetType.TRACK:
             raise TypeError("not a track packet")
         return cast(StrKV, self.data)
+
+
+class PreparedPacket:
+    class Direction(Enum):
+        CLIENT_TO_SERVER = auto()
+        SERVER_TO_CLIENT = auto()
+
+    def __init__(self, packet: NetPacket | bytes, direction: Direction, flags: ENetPacketFlag) -> None:
+        if isinstance(packet, NetPacket):
+            self._packet = packet
+            self._packet_raw = packet.serialize()
+        else:
+            self._packet = NetPacket.deserialize(packet)
+            self._packet_raw = packet
+
+        self.direction = direction
+        self.flags = flags
+
+    @property
+    def as_packet(self) -> NetPacket:
+        return self._packet
+
+    @property
+    def as_raw(self) -> bytes:
+        return self._packet_raw
+
+    @classmethod
+    def from_pending(cls, pending: PendingPacket) -> "PreparedPacket":
+        if pending.direction == DIRECTION_UNSPECIFIED:
+            raise ValueError(f"unspecified direction: {pending}")
+
+        return cls(
+            packet=pending.buf,
+            direction=PreparedPacket.Direction.CLIENT_TO_SERVER if pending.direction == DIRECTION_CLIENT_TO_SERVER else PreparedPacket.Direction.SERVER_TO_CLIENT,
+            flags=ENetPacketFlag(pending.packet_flags),
+        )
 
 
 if __name__ == "__main__":

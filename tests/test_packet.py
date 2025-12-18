@@ -1,10 +1,13 @@
 import binascii
-from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, TankFlags, TankPacket, TankType
+import time
+from gtools.core.growtopia.create import chat, chat_seq, console_message
+from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 import pytest
 import struct
 
 from gtools.core.growtopia.strkv import StrKV
 from tests import verify
+from thirdparty.enet.bindings import ENetPacketFlag
 
 
 def _pkt_size() -> int:
@@ -577,3 +580,176 @@ def test_netpacket_property_accessors() -> None:
     assert isinstance(strkv_net.game_message, StrKV)
     with pytest.raises(TypeError):
         _ = strkv_net.tank
+
+
+def test_create_console_message() -> None:
+    msg = b"`3Today is Farmer Day!`` Your first Farming quest will give 1 `2Growtoken`` and all Farmer quests will give 25% bonus points!"
+
+    expected = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9a\x00\x00\x00\x02\x00\x02\x10\x00\x00\x00OnConsoleMessage\x01\x02}\x00\x00\x00`3Today is Farmer Day!`` Your first Farming quest will give 1 `2Growtoken`` and all Farmer quests will give 25% bonus points!\x00"
+
+    pkt = console_message(msg).serialize()
+    assert pkt == expected
+    verify(pkt)
+
+
+def test_create_chat() -> None:
+    text = b"lol"
+    expected = b"\x02\x00\x00\x00action|input\n|text|lol\x00"
+
+    pkt = chat(text).serialize()
+    assert pkt == expected
+    verify(pkt)
+
+
+def test_create_seq_realtime() -> None:
+    text = b"smaller text"
+
+    expected = iter(
+        [
+            b"\x04\x00\x00\x00\x12\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            b"\x04\x00\x00\x00\x12\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            b"\x02\x00\x00\x00action|input\n|text|smaller text\x00",
+        ]
+    )
+
+    seq = chat_seq(text, 1)
+    print(seq._seq)
+
+    seq.verify()  # single thread
+    pkt = seq.next()
+    assert pkt.verified
+    assert pkt.pkt.as_raw == next(expected)
+    assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
+    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    verify(pkt.pkt.as_raw, key=1)
+
+    start = time.monotonic()
+    # in another part of the code
+    while True:
+        seq.verify()
+
+        # this would not be here if its not a single thread
+        if (pkt := seq.next()).verified:
+            break
+
+        time.sleep(0.1)
+
+    assert pkt.verified
+    assert pkt.pkt.as_raw == next(expected)
+    assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
+    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    elapsed = time.monotonic() - start
+    assert 0.5 < elapsed < 2
+    verify(pkt.pkt.as_raw, key=2)
+
+    seq.verify()  # single thread
+    pkt = seq.next()
+    assert pkt.verified
+    assert pkt.pkt.as_raw == next(expected)
+    assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
+    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    verify(pkt.pkt.as_raw, key=3)
+
+
+def test_create_seq_delay_range() -> None:
+    text = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam"
+
+    expected = iter(
+        [
+            b"\x04\x00\x00\x00\x12\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            b"\x04\x00\x00\x00\x12\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            b"\x02\x00\x00\x00action|input\n|text|Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam\x00",
+        ]
+    )
+
+    delay = (1.0, 2.0)
+
+    seq = chat_seq(text, 1, delay)
+    print(seq._seq)
+
+    seq.verify()  # single thread
+    pkt = seq.next()
+    assert pkt.verified
+    assert pkt.pkt.as_raw == next(expected)
+    assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
+    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    verify(pkt.pkt.as_raw, key=1)
+
+    start = time.monotonic()
+    # in another part of the code
+    while True:
+        seq.verify()
+
+        # this would not be here if its not a single thread
+        if (pkt := seq.next()).verified:
+            break
+
+        time.sleep(0.1)
+
+    assert pkt.verified
+    assert pkt.pkt.as_raw == next(expected)
+    assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
+    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    elapsed = time.monotonic() - start
+    assert delay[0] <= elapsed <= delay[1]
+    verify(pkt.pkt.as_raw, key=2)
+
+    seq.verify()  # single thread
+    pkt = seq.next()
+    assert pkt.verified
+    assert pkt.pkt.as_raw == next(expected)
+    assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
+    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    verify(pkt.pkt.as_raw, key=3)
+
+
+def test_create_seq_delay_const() -> None:
+    text = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam"
+
+    expected = iter(
+        [
+            b"\x04\x00\x00\x00\x12\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            b"\x04\x00\x00\x00\x12\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            b"\x02\x00\x00\x00action|input\n|text|Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam\x00",
+        ]
+    )
+
+    delay = 1.0
+
+    seq = chat_seq(text, 1, delay)
+    print(seq._seq)
+
+    seq.verify()  # single thread
+    pkt = seq.next()
+    assert pkt.verified
+    assert pkt.pkt.as_raw == next(expected)
+    assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
+    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    verify(pkt.pkt.as_raw, key=1)
+
+    start = time.monotonic()
+    # in another part of the code
+    while True:
+        seq.verify()
+
+        # this would not be here if its not a single thread
+        if (pkt := seq.next()).verified:
+            break
+
+        time.sleep(0.1)
+
+    assert pkt.verified
+    assert pkt.pkt.as_raw == next(expected)
+    assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
+    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    elapsed = time.monotonic() - start
+    assert delay - 0.1 < elapsed < delay + 0.1
+    verify(pkt.pkt.as_raw, key=2)
+
+    seq.verify()  # single thread
+    pkt = seq.next()
+    assert pkt.verified
+    assert pkt.pkt.as_raw == next(expected)
+    assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
+    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    verify(pkt.pkt.as_raw, key=3)

@@ -3,30 +3,33 @@ from collections import defaultdict, deque
 import itertools
 import logging
 import random
-import re
 import threading
 import time
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, cast
 import zmq
 import xxhash
 
 from gtools.core.growtopia.packet import NetPacket, NetType, TankPacket, TankType
+from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.flags import PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     BLOCKING_MODE_SEND_AND_FORGET,
+    DIRECTION_UNSPECIFIED,
+    INTEREST_UNSPECIFIED,
     CapabilityRequest,
     Direction,
     Packet,
     Interest,
     InterestType,
     PendingPacket,
-    TankField,
-    WhereOp,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
 )
+from gtools.protogen.op_pb2 import Op
+from gtools.protogen.strkv_pb2 import FindCol, FindRow, Query
+from gtools.protogen.tank_pb2 import Field
 from gtools.proxy.extension.common import Waitable
 from thirdparty.enet.bindings import ENetPacketFlag
 
@@ -101,34 +104,34 @@ class ExtensionManager:
 
             del self._extensions[id]
 
-    _TANK_FIELD_ACCESSOR: dict[TankField, Callable[[TankPacket], object]] = {
-        TankField.TANK_FIELD_TYPE: lambda pkt: pkt.type,
-        TankField.TANK_FIELD_OBJECT_TYPE: lambda pkt: pkt.object_type,
-        TankField.TANK_FIELD_JUMP_COUNT: lambda pkt: pkt.jump_count,
-        TankField.TANK_FIELD_ANIMATION_TYPE: lambda pkt: pkt.animation_type,
-        TankField.TANK_FIELD_NET_ID: lambda pkt: pkt.net_id,
-        TankField.TANK_FIELD_TARGET_NET_ID: lambda pkt: pkt.target_net_id,
-        TankField.TANK_FIELD_FLAGS: lambda pkt: pkt.flags,
-        TankField.TANK_FIELD_FLOAT_VAR: lambda pkt: pkt.float_var,
-        TankField.TANK_FIELD_VALUE: lambda pkt: pkt.value,
-        TankField.TANK_FIELD_VECTOR_X: lambda pkt: pkt.vector_x,
-        TankField.TANK_FIELD_VECTOR_Y: lambda pkt: pkt.vector_y,
-        TankField.TANK_FIELD_VECTOR_X2: lambda pkt: pkt.vector_x2,
-        TankField.TANK_FIELD_VECTOR_Y2: lambda pkt: pkt.vector_y2,
-        TankField.TANK_FIELD_PARTICLE_ROTATION: lambda pkt: pkt.particle_rotation,
-        TankField.TANK_FIELD_INT_X: lambda pkt: pkt.int_x,
-        TankField.TANK_FIELD_INT_Y: lambda pkt: pkt.int_y,
-        TankField.TANK_FIELD_EXTENDED_LEN: lambda pkt: pkt.extended_len,
+    _TANK_FIELD_ACCESSOR: dict[Field, Callable[[TankPacket], object]] = {
+        Field.TANK_FIELD_TYPE: lambda pkt: pkt.type,
+        Field.TANK_FIELD_OBJECT_TYPE: lambda pkt: pkt.object_type,
+        Field.TANK_FIELD_JUMP_COUNT: lambda pkt: pkt.jump_count,
+        Field.TANK_FIELD_ANIMATION_TYPE: lambda pkt: pkt.animation_type,
+        Field.TANK_FIELD_NET_ID: lambda pkt: pkt.net_id,
+        Field.TANK_FIELD_TARGET_NET_ID: lambda pkt: pkt.target_net_id,
+        Field.TANK_FIELD_FLAGS: lambda pkt: pkt.flags,
+        Field.TANK_FIELD_FLOAT_VAR: lambda pkt: pkt.float_var,
+        Field.TANK_FIELD_VALUE: lambda pkt: pkt.value,
+        Field.TANK_FIELD_VECTOR_X: lambda pkt: pkt.vector_x,
+        Field.TANK_FIELD_VECTOR_Y: lambda pkt: pkt.vector_y,
+        Field.TANK_FIELD_VECTOR_X2: lambda pkt: pkt.vector_x2,
+        Field.TANK_FIELD_VECTOR_Y2: lambda pkt: pkt.vector_y2,
+        Field.TANK_FIELD_PARTICLE_ROTATION: lambda pkt: pkt.particle_rotation,
+        Field.TANK_FIELD_INT_X: lambda pkt: pkt.int_x,
+        Field.TANK_FIELD_INT_Y: lambda pkt: pkt.int_y,
+        Field.TANK_FIELD_EXTENDED_LEN: lambda pkt: pkt.extended_len,
     }
 
-    _OP_EVALUATE: dict[WhereOp, Callable[[Any, Any], bool]] = {
-        WhereOp.WHERE_OP_EQ: lambda lval, rval: lval == rval,
-        WhereOp.WHERE_OP_EQ_EPS: lambda lval, rval: abs(lval - rval) < 0.01,
-        WhereOp.WHERE_OP_NEQ: lambda lval, rval: lval != rval,
-        WhereOp.WHERE_OP_GT: lambda lval, rval: lval > rval,
-        WhereOp.WHERE_OP_GTE: lambda lval, rval: lval >= rval,
-        WhereOp.WHERE_OP_LT: lambda lval, rval: lval < rval,
-        WhereOp.WHERE_OP_LTE: lambda lval, rval: lval <= rval,
+    _OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
+        Op.OP_EQ: lambda lval, rval: lval == rval,
+        Op.OP_EQ_EPS: lambda lval, rval: abs(lval - rval) < 0.01,
+        Op.OP_NEQ: lambda lval, rval: lval != rval,
+        Op.OP_GT: lambda lval, rval: lval > rval,
+        Op.OP_GTE: lambda lval, rval: lval >= rval,
+        Op.OP_LT: lambda lval, rval: lval < rval,
+        Op.OP_LTE: lambda lval, rval: lval <= rval,
     }
 
     def get_interested_extension(self, interest_type: InterestType, pkt: NetPacket, raw: bytes, direction: Direction) -> Iterator[Client]:
@@ -139,7 +142,9 @@ class ExtensionManager:
 
             if f := client.interest.WhichOneof("payload"):
                 matches.append(getattr(interest, f) is not None)
-            matches.append(interest.direction == direction)
+
+            if interest.direction != DIRECTION_UNSPECIFIED:
+                matches.append(interest.direction == direction)
 
             matched = True
             match interest.interest:
@@ -150,14 +155,51 @@ class ExtensionManager:
                 case InterestType.INTEREST_SERVER_HELLO:
                     raise NotImplementedError("INTEREST_SERVER_HELLO")
                 case InterestType.INTEREST_GENERIC_TEXT:
-                    if interest.generic_text.regex:
-                        matched = bool(re.match(interest.generic_text.regex, raw))
+                    for clause in interest.generic_text.where:
+                        should_break = False
+                        lvalue = Query()
+                        if not clause.lvalue.Unpack(lvalue):
+                            raise TypeError("strkv lvalue expects a query type")
+
+                        for find in lvalue.where:
+                            _GET_ROW: dict[FindRow.Method, Callable[[StrKV, Any], list[bytes]]] = {
+                                FindRow.KEY: lambda strkv, k: list(strkv[k]),
+                                FindRow.KEY_ANY: lambda strkv, k: list(strkv.find[k]),
+                                FindRow.INDEX: lambda strkv, k: list(strkv[k]),
+                            }
+                            _GET_COL: dict[tuple[FindRow.Method, FindCol.Method], Callable[[StrKV, Any, Any], bytes]] = {
+                                (FindRow.KEY, FindCol.ABSOLUTE): lambda strkv, k1, k2: bytes(strkv[k1, k2]),
+                                (FindRow.KEY, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
+                                (FindRow.KEY_ANY, FindCol.ABSOLUTE): lambda strkv, k1, k2: cast(bytes, strkv.find[k1, k2]),
+                                (FindRow.KEY_ANY, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
+                                (FindRow.INDEX, FindCol.ABSOLUTE): lambda strkv, k1, k2: bytes(strkv[k1, k2]),
+                                (FindRow.INDEX, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
+                            }
+                            if find.HasField("col"):
+                                col = _GET_COL[find.row.method, find.col.method](pkt.generic_text, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
+                                if not self._OP_EVALUATE[clause.op](col, getattr(clause, clause.WhichOneof("rvalue"))):
+                                    matched = False
+                                    should_break = True
+                                    break
+                            else:
+                                row = _GET_ROW[find.row.method](pkt.generic_text, getattr(find.row, find.row.WhichOneof("m")))
+                                if not self._OP_EVALUATE[clause.op](row, getattr(clause, clause.WhichOneof("rvalue"))):
+                                    matched = False
+                                    should_break = True
+                                    break
+
+                        if should_break:
+                            break
                 case InterestType.INTEREST_GAME_MESSAGE:
                     if interest.game_message.action:
                         matched = interest.game_message.action == pkt.game_message["action", 1]
                 case InterestType.INTEREST_TANK_PACKET:
                     for clause in interest.tank_packet.where:
-                        if not self._OP_EVALUATE[clause.op](self._TANK_FIELD_ACCESSOR[clause.field](pkt.tank), getattr(clause, clause.WhichOneof("rvalue"))):
+                        lvalue = Field()
+                        if not clause.lvalue.Unpack(lvalue):
+                            raise TypeError("tank lvalue expects a field type")
+
+                        if not self._OP_EVALUATE[clause.op](self._TANK_FIELD_ACCESSOR[lvalue](pkt.tank), getattr(clause, clause.WhichOneof("rvalue"))):
                             matched = False
                             break
 
@@ -173,7 +215,7 @@ class ExtensionManager:
             if pkt.type == NetType.TANK_PACKET and interest.interest != InterestType.INTEREST_TANK_PACKET:
                 match interest.interest:
                     case InterestType.INTEREST_STATE:
-                        raise NotImplementedError("NTEREST_STATE")
+                        raise NotImplementedError("INTEREST_STATE")
                     case InterestType.INTEREST_CALL_FUNCTION:
                         if interest.call_function.fn_name:
                             matched = interest.call_function.fn_name == Variant.get(pkt.tank.extended_data, 0).value
@@ -476,6 +518,7 @@ class Broker:
     # TODO: i didnt think zmq had all the stuff behind the scene before i implemented them myself.
     # might want to utilize that instead for performance
 
+    # TODO: change this parameter to use PreparedPacket
     def process_event(self, pkt: NetPacket, raw: bytes, direction: Direction, flags: ENetPacketFlag, callback: PacketCallback | None = None) -> tuple[PendingPacket, bool] | None:
         start = time.perf_counter_ns()
         chain: deque[Client] = deque()
@@ -528,8 +571,6 @@ class Broker:
             self._pending_chain[chain_id].finished_event.wait()
             finished = self._pending_chain.pop(chain_id)
             finished.current.rtt_ns = self._utob(time.perf_counter_ns() - int.from_bytes(finished.current.rtt_ns))
-            if finished.cancelled:
-                pass
             return finished.current, finished.cancelled
 
     def start(self, block: bool = False) -> None:
@@ -601,7 +642,7 @@ class Broker:
         if (chain := self._pending_chain.get(pkt.packet_id)) is not None:
             match pkt.op:
                 case PendingPacket.OP_FINISH:
-                    chain.current.hit_count = pkt.hit_count
+                    chain.current = pkt
                     chain.finished_event.set()
                 case PendingPacket.OP_CANCEL:
                     chain.current.hit_count = pkt.hit_count

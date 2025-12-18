@@ -2,6 +2,10 @@ syntax = "proto3";
 
 package gtools.proxy.extension;
 
+import "tank.proto";
+import "strkv.proto";
+import "op.proto";
+
 message Packet {
   enum Type {
     TYPE_UNSPECIFIED                        = 0;
@@ -208,70 +212,18 @@ message Interest {
   }
 }
 
-enum WhereOp {
-  WHERE_OP_UNSPECIFIED = 0;
-  WHERE_OP_EQ          = 1;
-  WHERE_OP_EQ_EPS      = 2;
-  WHERE_OP_NEQ         = 3;
-  WHERE_OP_GT          = 4;
-  WHERE_OP_GTE         = 5;
-  WHERE_OP_LT          = 6;
-  WHERE_OP_LTE         = 7;
-}
-
-enum DType {
-  DTYPE_UNSPECIFIED = 0;
-  DTYPE_U32         = 1;
-  DTYPE_I32         = 2;
-  DTYPE_FLT         = 3;
-  DTYPE_STR         = 4;
-}
-
-enum TankField {
-  TANK_FIELD_UNSPECIFIED       = 0;
-  TANK_FIELD_TYPE              = 1;
-  TANK_FIELD_OBJECT_TYPE       = 2;
-  TANK_FIELD_JUMP_COUNT        = 3;
-  TANK_FIELD_ANIMATION_TYPE    = 4;
-  TANK_FIELD_NET_ID            = 5;
-  TANK_FIELD_TARGET_NET_ID     = 6;
-  TANK_FIELD_FLAGS             = 7;
-  TANK_FIELD_FLOAT_VAR         = 8;
-  TANK_FIELD_VALUE             = 9;
-  TANK_FIELD_VECTOR_X          = 10;
-  TANK_FIELD_VECTOR_Y          = 11;
-  TANK_FIELD_VECTOR_X2         = 12;
-  TANK_FIELD_VECTOR_Y2         = 13;
-  TANK_FIELD_PARTICLE_ROTATION = 14;
-  TANK_FIELD_INT_X             = 15;
-  TANK_FIELD_INT_Y             = 16;
-  TANK_FIELD_EXTENDED_LEN      = 17;
-}
-
-message TankWhereSpecifier {
-  TankField field = 1;
-  DType type      = 2;
-  WhereOp op      = 3;
-  oneof rvalue {
-    uint32 u32    = 4;
-    int32 i32     = 5;
-    float flt     = 6;
-    string str    = 7;
-  }
-}
-
 message InterestPeerConnect {}
 message InterestPeerDisconnect {}
 
 message InterestServerHello {}
 message InterestGenericText {
-  optional bytes regex = 1;
+  repeated gtools.op.BinOp where = 1;
 }
 message InterestGameMessage {
   optional bytes action = 1;
 }
 message InterestTankPacket {
-  repeated TankWhereSpecifier where = 1;
+  repeated gtools.op.BinOp where = 1;
 }
 message InterestError {}
 message InterestTrack {}
