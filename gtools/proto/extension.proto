@@ -56,13 +56,13 @@ message PendingPacket {
     OP_PASS        = 4;
   }
 
-  Op op               = 1;
-  bytes packet_id     = 2;
+  Op _op              = 1;
+  bytes _packet_id    = 2;
   bytes buf           = 3;
   uint32 packet_flags = 4;
   Direction direction = 5;
-  uint32 hit_count    = 6;
-  bytes rtt_ns        = 7;
+  uint32 _hit_count   = 6;
+  bytes _rtt_ns       = 7;
   uint32 interest_id  = 8;
 }
 

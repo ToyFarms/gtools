@@ -111,10 +111,10 @@ class Proxy:
             if not cancelled:
                 self.logger.debug(f"[original] packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
                 pkt = PreparedPacket.from_pending(processed)
-                self.logger.debug(f"[{processed.packet_id}] processed packet: hit={processed.hit_count} rtt={int.from_bytes(processed.rtt_ns) / 1e6}us")
+                self.logger.debug(f"[{processed._packet_id}] processed packet: hit={processed._hit_count} rtt={int.from_bytes(processed._rtt_ns) / 1e6}us")
                 modified = True
             else:
-                self.logger.debug(f"[{processed.packet_id}] packet process cancelled")
+                self.logger.debug(f"[{processed._packet_id}] packet process cancelled")
 
         self.logger.debug(f"{'[modified] ' if modified else ''}packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
         if pkt.as_net.type == NetType.TANK_PACKET:
