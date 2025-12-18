@@ -172,6 +172,7 @@ class Extension(ABC):
                 except:
                     pass
 
+    # TODO: rather than accepting individual parameter, just accept the whole PendingPacket
     def forward(self, buf: bytes, direction: Direction = DIRECTION_UNSPECIFIED, flags: ENetPacketFlag = ENetPacketFlag.NONE) -> PendingPacket:
         return PendingPacket(
             op=PendingPacket.OP_FORWARD,
@@ -186,8 +187,13 @@ class Extension(ABC):
     def cancel(self) -> PendingPacket:
         return PendingPacket(op=PendingPacket.OP_CANCEL)
 
-    def finish(self) -> PendingPacket:
-        return PendingPacket(op=PendingPacket.OP_FINISH)
+    def finish(self, buf: bytes, direction: Direction = DIRECTION_UNSPECIFIED, flags: ENetPacketFlag = ENetPacketFlag.NONE) -> PendingPacket:
+        return PendingPacket(
+            op=PendingPacket.OP_FINISH,
+            buf=buf,
+            direction=direction,
+            packet_flags=int(flags),
+        )
 
     def _worker_thread(self) -> None:
         try:

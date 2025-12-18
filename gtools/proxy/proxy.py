@@ -51,6 +51,9 @@ class Proxy:
         self.broker = Broker()
         self.broker.start()
 
+        self._last_event_time = -1
+        self._event_elapsed = -1.0
+
         listen(UpdateServerData)(lambda ch, ev: self._on_server_data(ch, ev))
 
     def _on_server_data(self, _channel: str, event: UpdateServerData) -> None:
@@ -62,9 +65,10 @@ class Proxy:
         if self.logger.level > logging.DEBUG:
             return
 
-        dump = cast(Generator[str, None, None], hexdump(data, result="generator"))
-        self.logger.debug(f"HEXDUMP: \n\t{'\n\t'.join(dump)}")
-        self.logger.debug(f"\t{data}")
+        if self.logger.isEnabledFor(logging.DEBUG):
+            dump = cast(Generator[str, None, None], hexdump(data, result="generator"))
+            self.logger.debug(f"HEXDUMP: \n\t{'\n\t'.join(dump)}")
+            self.logger.debug(f"\t{data}")
 
     def _handle_client_to_server(
         self,
@@ -187,25 +191,29 @@ class Proxy:
                 self._event_queue.task_done()
                 continue
 
+            self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
             event = proxy_event.inner
 
             if proxy_event.src == From.CLIENT:
-                self.logger.debug(f"from gt client ({event.packet.flags!r}):")
+                self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({event.packet.flags!r}):")
             elif proxy_event.src == From.SERVER:
-                self.logger.debug(f"from gt server ({event.packet.flags!r}):")
+                self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({event.packet.flags!r}):")
 
             if event.type == ENetEventType.DISCONNECT:
                 self._should_reconnect.set()
 
             self.logger.debug(f"\t{ENetEventType(event.type)!r}")
             if event.type == ENetEventType.RECEIVE and event.packet.data:
-                self._dump_packet(event.packet.data)
                 self._handle(
                     event.packet.data,
                     proxy_event.src,
                     event.packet.flags,
                 )
+                self._dump_packet(event.packet.data)
 
+            print()
+
+            self._last_event_time = time.monotonic()
             self._event_queue.task_done()
 
         self.logger.debug("packet worker thread exited")

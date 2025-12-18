@@ -46,7 +46,7 @@ class FastDropExtension(Extension):
 
                 kv = StrKV.deserialize(var.as_string[1])
 
-                res = StrKV()
+                res = StrKV().with_trailing_newline()
                 res[b"action"] = b"dialog_return"
                 res[b"dialog_name"] = b"drop_item"
                 res[b"itemID"] = kv.relative[b"itemID", 1], b""

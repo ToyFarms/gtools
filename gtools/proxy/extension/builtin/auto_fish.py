@@ -1,0 +1,31 @@
+import logging
+from gtools.protogen.extension_pb2 import (
+    BLOCKING_MODE_BLOCK,
+    DIRECTION_CLIENT_TO_SERVER,
+    INTEREST_GENERIC_TEXT,
+    Interest,
+    InterestGenericText,
+    PendingPacket,
+)
+from gtools.proxy.extension.sdk import Extension
+from gtools.core.growtopia.packet import NetPacket
+
+
+class AutoFishExtension(Extension):
+    def __init__(self) -> None:
+        logging.basicConfig(level=logging.DEBUG)
+
+        super().__init__(
+            name="auto_fish",
+            interest=[],
+        )
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        pass
+
+    def destroy(self) -> None:
+        pass
+
+
+if __name__ == "__main__":
+    AutoFishExtension().start(block=True)

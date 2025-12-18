@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package gtools.strkv.query;
+
+
+message FindRow {
+  enum Method {
+    UNSPECIFIED = 0;
+    KEY = 1;
+    KEY_ANY = 2;
+    INDEX = 3;
+  }
+
+  Method method = 1;
+  oneof m {
+    bytes key = 2;
+    int32 index = 4;
+  }
+}
+
+message FindCol {
+  enum Method {
+    UNSPECIFIED = 0;
+    ABSOLUTE = 1;
+    RELATIVE = 2;
+  }
+
+  Method method = 1;
+  int32 index = 2;
+}
+
+message Clause {
+  FindRow row = 1;
+  optional FindCol col = 2;
+
+}
+
+message Query {
+  repeated Clause where = 1;
+}

@@ -481,83 +481,22 @@ class StrKV:
         if not data:
             return cls()
 
+        if nl := data.endswith(b"\n"):
+            data = data.rstrip(b"\n")
+
         _data: list[list[bytes]] = []
-        for line in data.rstrip(b"\n").split(b"\n"):
+        for line in data.split(b"\n"):
             if line:
                 _data.append(line.split(b"|"))
 
-        return cls(_data)
+        return cls(_data).with_trailing_newline(nl)
 
-    def with_trailing_newline(self) -> "StrKV":
-        self._trailing_nl = True
+    def with_trailing_newline(self, v: bool = True) -> "StrKV":
+        self._trailing_nl = v
         return self
 
     def serialize(self) -> bytes:
         return b"\n".join(b"|".join(row) for row in self._data) + (b"\n" if self._trailing_nl else b"")
 
-    def _hexrepr(self) -> str:
-        pass
-
     def __repr__(self) -> str:
         return f"{{{'\\n'.join(f'{x}' for x in ('|'.join(cell.decode('utf-8', 'backslashreplace') for cell in row) for row in self._data))}}}"
-
-
-if __name__ == "__main__":
-    # sample = b"action|input|test|123\ntext|awjiawjidoa\xd5\n|test|123\n"
-    # kv = StrKV.deserialize(sample)
-    #
-    # print(kv)
-    # print(kv[0, 1])
-    #
-    # kv[0, 1] = b"modified"
-    # print(kv)
-    #
-    # kv[1] = [b"i dont know", b"test", b"09128"]
-    # print(kv)
-    #
-    # kv[-1, 0] = b"test"
-    # print(kv)
-    #
-    # kv[-1].append(b"object")
-    # print(kv[-1])
-    # print(kv)
-    #
-    # kv[-2, 0] = b"first"
-    # print(kv)
-    #
-    # print(kv.serialize())
-    #
-    # a = StrKV.deserialize(b"test|123")
-    # a.set[b"test"] = b"another"
-    # print(a)
-    #
-    # a.set[0] = 123
-    # print(a)
-    #
-    # a.append(["new", "row no", 999999])
-    # print(a)
-
-    # res = b"server|127.0.0.1\nport|16999\nloginurl|login.growtopiagame.com\ntype|1\nbeta_server|grow-main-test.growtopiagame.com\nbeta_loginurl|grow-main-test.growtopiagame.com\nbeta_port|56999\nbeta_type|1\nbeta2_server|grow-release-test.growtopiagame.com\nbeta2_loginurl|grow-release-test.growtopiagame.com\nbeta2_port|36999\nbeta2_type|1\nbeta3_server|grow-live-test.growtopiagame.com\nbeta3_loginurl|grow-live-test.growtopiagame.com\nbeta3_port|46999\nbeta3_type|1\ntype2|1\n#maint|Server is under maintenance. We will be back online shortly. Thank you for your patience!\nmeta|VOZ5jj5wgJAHsPD9EIBYrWFWJwQ4jmm4g55rtFxrBUY=\nRTENDMARKERBS1001"
-
-    # kv = StrKV.deserialize(res)
-    # print(kv["server", 1])
-    # print(kv["port", 1])
-
-    # kv["server", 1] = "test"
-
-    # print(kv["server", 1])
-
-    from gtools.core.growtopia.packet import NetPacket
-    from gtools.core.growtopia.variant import Variant
-
-    a = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd4\x00\x00\x00\x02\x00\x02\x0f\x00\x00\x00OnDialogRequest\x01\x02\xb8\x00\x00\x00set_default_color|`o\nadd_label_with_icon|big|`wDrop Sign``|left|20|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||3|5|\nembed_data|itemID|20\nend_dialog|drop_item|Cancel|OK|\n "
-    p = Variant.deserialize(NetPacket.deserialize(a).tank.extended_data)
-    kv = StrKV.deserialize(p.as_string[1])
-
-    res = StrKV()
-    res["action"] = "dialog_return"
-    res["dialog_name"] = "drop_item"
-    res["itemID"] = kv.relative["itemID", 1], ""
-    res["count"] = kv.relative["count", 2]
-
-    print(res.serialize())
