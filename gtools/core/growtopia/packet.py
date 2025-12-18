@@ -1,4 +1,4 @@
-from enum import Enum, IntEnum, IntFlag, auto
+from enum import Enum, IntEnum, IntFlag
 import logging
 import struct
 import time
@@ -7,7 +7,7 @@ from typing import Literal, cast
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.protocol import Serializable
-from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_UNSPECIFIED, PendingPacket
+from gtools.protogen.extension_pb2 import Direction as DirectionProto, PendingPacket
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -259,8 +259,6 @@ class NetPacket(Serializable):
                 pkt = StrKV.deserialize(pkt)
             case NetType.ERROR | NetType.CLIENT_LOG_REQUEST | NetType.CLIENT_LOG_RESPONSE:
                 pkt = EmptyPacket()
-            case _:
-                raise RuntimeError(f"type not handled: {type!r}")
 
         return cls(type, pkt)
 
@@ -294,10 +292,15 @@ class NetPacket(Serializable):
 
 class PreparedPacket:
     class Direction(Enum):
-        CLIENT_TO_SERVER = auto()
-        SERVER_TO_CLIENT = auto()
+        CLIENT_TO_SERVER = DirectionProto.DIRECTION_CLIENT_TO_SERVER
+        SERVER_TO_CLIENT = DirectionProto.DIRECTION_SERVER_TO_CLIENT
+        UNSPECIFIED = DirectionProto.DIRECTION_UNSPECIFIED
 
-    def __init__(self, packet: NetPacket | bytes, direction: Direction, flags: ENetPacketFlag) -> None:
+        @classmethod
+        def from_proto(cls, dir: DirectionProto) -> "PreparedPacket.Direction":
+            return cls(dir)
+
+    def __init__(self, packet: NetPacket | bytes, direction: "PreparedPacket.Direction | DirectionProto", flags: ENetPacketFlag) -> None:
         if isinstance(packet, NetPacket):
             self._packet = packet
             self._packet_raw = packet.serialize()
@@ -305,11 +308,11 @@ class PreparedPacket:
             self._packet = NetPacket.deserialize(packet)
             self._packet_raw = packet
 
-        self.direction = direction
+        self.direction = direction if isinstance(direction, PreparedPacket.Direction) else PreparedPacket.Direction.from_proto(direction)
         self.flags = flags
 
     @property
-    def as_packet(self) -> NetPacket:
+    def as_net(self) -> NetPacket:
         return self._packet
 
     @property
@@ -318,14 +321,14 @@ class PreparedPacket:
 
     @classmethod
     def from_pending(cls, pending: PendingPacket) -> "PreparedPacket":
-        if pending.direction == DIRECTION_UNSPECIFIED:
-            raise ValueError(f"unspecified direction: {pending}")
-
         return cls(
             packet=pending.buf,
-            direction=PreparedPacket.Direction.CLIENT_TO_SERVER if pending.direction == DIRECTION_CLIENT_TO_SERVER else PreparedPacket.Direction.SERVER_TO_CLIENT,
+            direction=PreparedPacket.Direction.from_proto(pending.direction),
             flags=ENetPacketFlag(pending.packet_flags),
         )
+
+    def __repr__(self) -> str:
+        return f"packet={self.as_net}, raw={self.as_raw}, direction={self.direction}, flags={self.flags}"
 
 
 if __name__ == "__main__":

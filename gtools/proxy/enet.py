@@ -106,4 +106,5 @@ class ENetPeerBase:
             elif event.type == ENetEventType.RECEIVE:
                 return PyENetEvent.new(event)
             elif event.type == ENetEventType.DISCONNECT:
+                self.peer = None
                 return PyENetEvent.new(event)

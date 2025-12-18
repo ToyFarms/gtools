@@ -9,7 +9,7 @@ from typing import Any, Callable, Iterator, cast
 import zmq
 import xxhash
 
-from gtools.core.growtopia.packet import NetPacket, NetType, TankPacket, TankType
+from gtools.core.growtopia.packet import NetType, PreparedPacket, TankPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.flags import PERF, TRACE
@@ -17,9 +17,7 @@ from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_UNSPECIFIED,
-    INTEREST_UNSPECIFIED,
     CapabilityRequest,
-    Direction,
     Packet,
     Interest,
     InterestType,
@@ -31,7 +29,6 @@ from gtools.protogen.op_pb2 import Op
 from gtools.protogen.strkv_pb2 import FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field
 from gtools.proxy.extension.common import Waitable
-from thirdparty.enet.bindings import ENetPacketFlag
 
 
 def hash_interest(interest: Interest) -> int:
@@ -134,17 +131,17 @@ class ExtensionManager:
         Op.OP_LTE: lambda lval, rval: lval <= rval,
     }
 
-    def get_interested_extension(self, interest_type: InterestType, pkt: NetPacket, raw: bytes, direction: Direction) -> Iterator[Client]:
+    def get_interested_extension(self, interest_type: InterestType, pkt: PreparedPacket) -> Iterator[Client]:
         for client in self._interest_map[interest_type]:
             interest = client.interest
 
-            matches: list[bool] = []
+            matches: dict[str, bool] = {}
 
             if f := client.interest.WhichOneof("payload"):
-                matches.append(getattr(interest, f) is not None)
+                matches["has_interest"] = getattr(interest, f) is not None
 
             if interest.direction != DIRECTION_UNSPECIFIED:
-                matches.append(interest.direction == direction)
+                matches["same_direction"] = interest.direction == pkt.direction.value
 
             matched = True
             match interest.interest:
@@ -176,13 +173,13 @@ class ExtensionManager:
                                 (FindRow.INDEX, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
                             }
                             if find.HasField("col"):
-                                col = _GET_COL[find.row.method, find.col.method](pkt.generic_text, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
+                                col = _GET_COL[find.row.method, find.col.method](pkt.as_net.generic_text, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
                                 if not self._OP_EVALUATE[clause.op](col, getattr(clause, clause.WhichOneof("rvalue"))):
                                     matched = False
                                     should_break = True
                                     break
                             else:
-                                row = _GET_ROW[find.row.method](pkt.generic_text, getattr(find.row, find.row.WhichOneof("m")))
+                                row = _GET_ROW[find.row.method](pkt.as_net.generic_text, getattr(find.row, find.row.WhichOneof("m")))
                                 if not self._OP_EVALUATE[clause.op](row, getattr(clause, clause.WhichOneof("rvalue"))):
                                     matched = False
                                     should_break = True
@@ -192,14 +189,14 @@ class ExtensionManager:
                             break
                 case InterestType.INTEREST_GAME_MESSAGE:
                     if interest.game_message.action:
-                        matched = interest.game_message.action == pkt.game_message["action", 1]
+                        matched = interest.game_message.action == pkt.as_net.game_message["action", 1]
                 case InterestType.INTEREST_TANK_PACKET:
                     for clause in interest.tank_packet.where:
                         lvalue = Field()
                         if not clause.lvalue.Unpack(lvalue):
                             raise TypeError("tank lvalue expects a field type")
 
-                        if not self._OP_EVALUATE[clause.op](self._TANK_FIELD_ACCESSOR[lvalue](pkt.tank), getattr(clause, clause.WhichOneof("rvalue"))):
+                        if not self._OP_EVALUATE[clause.op](self._TANK_FIELD_ACCESSOR[lvalue](pkt.as_net.tank), getattr(clause, clause.WhichOneof("rvalue"))):
                             matched = False
                             break
 
@@ -212,13 +209,13 @@ class ExtensionManager:
                 case InterestType.INTEREST_CLIENT_LOG_RESPONSE:
                     raise NotImplementedError("INTEREST_CLIENT_LOG_RESPONSE")
 
-            if pkt.type == NetType.TANK_PACKET and interest.interest != InterestType.INTEREST_TANK_PACKET:
+            if pkt.as_net.type == NetType.TANK_PACKET and interest.interest != InterestType.INTEREST_TANK_PACKET:
                 match interest.interest:
                     case InterestType.INTEREST_STATE:
                         raise NotImplementedError("INTEREST_STATE")
                     case InterestType.INTEREST_CALL_FUNCTION:
                         if interest.call_function.fn_name:
-                            matched = interest.call_function.fn_name == Variant.get(pkt.tank.extended_data, 0).value
+                            matched = interest.call_function.fn_name == Variant.get(pkt.as_net.tank.extended_data, 0).value
                     case InterestType.INTEREST_UPDATE_STATUS:
                         raise NotImplementedError("INTEREST_UPDATE_STATUS")
                     case InterestType.INTEREST_TILE_CHANGE_REQUEST:
@@ -311,9 +308,10 @@ class ExtensionManager:
                         raise NotImplementedError("INTEREST_ON_STEP_TILE_MOD")
                     case InterestType.INTEREST_UNSPECIFIED:
                         raise NotImplementedError("INTEREST_UNSPECIFIED")
-            matches.append(matched)
+            matches["interest_matched"] = matched
 
-            if all(matches):
+            self.logger.debug(f"{matches=} for {interest_type} in {client.interest}")
+            if all(matches.values()):
                 yield client
 
     def get_extension(self, id: bytes) -> Extension:
@@ -326,8 +324,8 @@ class ExtensionManager:
 class PacketCallback:
     def __init__(
         self,
-        send_to_server: Callable[[bytes], Any] | None = None,
-        send_to_client: Callable[[bytes], Any] | None = None,
+        send_to_server: Callable[[PreparedPacket], Any] | None = None,
+        send_to_client: Callable[[PreparedPacket], Any] | None = None,
         any: Callable[[bytes], Any] | None = None,
     ) -> None:
         self.send_to_server = send_to_server
@@ -477,35 +475,31 @@ class Broker:
         TankType.ON_STEP_TILE_MOD: InterestType.INTEREST_ON_STEP_TILE_MOD,
     }
 
-    def _get_interested_extension(self, pkt: NetPacket, raw: bytes, direction: Direction) -> Iterator[Client]:
+    def _get_interested_extension(self, pkt: PreparedPacket) -> Iterator[Client]:
         # TODO: handle "super" packet, basically like netpacket shuold match any kind of packet
-        interest_type = self._PACKET_TO_INTEREST_TYPE[pkt.type]
+        interest_type = self._PACKET_TO_INTEREST_TYPE[pkt.as_net.type]
         interest_type2: list[Client] = []
-        if pkt.type == NetType.TANK_PACKET:
+        if pkt.as_net.type == NetType.TANK_PACKET:
             interest_type2.extend(
                 self._extension_mgr.get_interested_extension(
-                    self._PACKET_TO_INTEREST_TYPE2[pkt.tank.type],
+                    self._PACKET_TO_INTEREST_TYPE2[pkt.as_net.tank.type],
                     pkt,
-                    raw,
-                    direction,
                 )
             )
 
         for client in itertools.chain(
-            self._extension_mgr.get_interested_extension(interest_type, pkt, raw, direction),
+            self._extension_mgr.get_interested_extension(interest_type, pkt),
             interest_type2,
         ):
             yield client
 
     def _build_chain(
         self,
-        pkt: NetPacket,
-        raw: bytes,
-        direction: Direction,
+        pkt: PreparedPacket,
         out: deque[Client],
         pred: Callable[[Extension, Interest], bool] | None = None,
     ) -> None:
-        for client in self._get_interested_extension(pkt, raw, direction):
+        for client in self._get_interested_extension(pkt):
             if client.interest.blocking_mode == BLOCKING_MODE_BLOCK:
                 if pred and pred(client.ext, client.interest):
                     if TRACE:
@@ -518,19 +512,19 @@ class Broker:
     # TODO: i didnt think zmq had all the stuff behind the scene before i implemented them myself.
     # might want to utilize that instead for performance
 
-    # TODO: change this parameter to use PreparedPacket
-    def process_event(self, pkt: NetPacket, raw: bytes, direction: Direction, flags: ENetPacketFlag, callback: PacketCallback | None = None) -> tuple[PendingPacket, bool] | None:
+    # if it returns none, then either there is no extension, or no extension matched
+    def process_event(self, pkt: PreparedPacket, callback: PacketCallback | None = None) -> tuple[PendingPacket, bool] | None:
         start = time.perf_counter_ns()
         chain: deque[Client] = deque()
-        for client in self._get_interested_extension(pkt, raw, direction):
+        for client in self._get_interested_extension(pkt):
             if client.interest.blocking_mode == BLOCKING_MODE_SEND_AND_FORGET:
                 pkt_id = random.randbytes(16)
                 pending_pkt = PendingPacket(
                     op=PendingPacket.OP_FORWARD,
                     packet_id=pkt_id,
-                    buf=raw,
-                    direction=direction,
-                    packet_flags=int(flags),
+                    buf=pkt.as_raw,
+                    direction=pkt.direction.value,
+                    packet_flags=pkt.flags,
                     rtt_ns=self._utob(time.perf_counter_ns()),
                     interest_id=client.interest.id,
                 )
@@ -551,9 +545,9 @@ class Broker:
             pending_pkt = PendingPacket(
                 op=PendingPacket.OP_FORWARD,
                 packet_id=chain_id,
-                buf=raw,
-                direction=direction,
-                packet_flags=int(flags),
+                buf=pkt.as_raw,
+                direction=pkt.direction.value,
+                packet_flags=pkt.flags,
                 rtt_ns=self._utob(time.perf_counter_ns()),
                 interest_id=chain[0].interest.id,
             )
@@ -606,9 +600,7 @@ class Broker:
         chain.current = new_packet
         chain.chain.clear()
         self._build_chain(
-            NetPacket.deserialize(new_packet.buf),
-            new_packet.buf,
-            new_packet.direction,
+            PreparedPacket.from_pending(new_packet),
             chain.chain,
             pred=lambda ext, interest: not bool(chain and (ext.id in chain.processed_chain and chain.processed_chain[ext.id] == hash_interest(interest))),
         )
@@ -629,9 +621,11 @@ class Broker:
     def _finish(self, pending: _PendingPacket, new_packet: PendingPacket) -> None:
         pending.current = new_packet
         if pending.current.direction == DIRECTION_CLIENT_TO_SERVER and pending.callback.send_to_server:
-            pending.callback.send_to_server(pending.current.buf)
+            pending.callback.send_to_server(PreparedPacket.from_pending(pending.current))
         elif pending.current.direction == DIRECTION_SERVER_TO_CLIENT and pending.callback.send_to_client:
-            pending.callback.send_to_client(pending.current.buf)
+            pending.callback.send_to_client(PreparedPacket.from_pending(pending.current))
+        else:
+            self.logger.warning(f"packet direction is unspecified: {pending}")
 
         if pending.callback.any:
             pending.callback.any(pending.current.buf)
