@@ -79,8 +79,9 @@ if __name__ == "__main__":
         def process(self, event: PendingPacket) -> PendingPacket | None:
             p = NetPacket.deserialize(event.buf)
             p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0xFFFFFFFF
+            event.buf = p.serialize()
 
-            return self.forward(buf=p.serialize())
+            return self.forward(event)
 
         def destroy(self) -> None:
             pass
@@ -117,7 +118,7 @@ if __name__ == "__main__":
         processed, cancelled = res
 
         print(processed, f"cancelled={cancelled}")
-        print(f"elapsed={int.from_bytes(processed.rtt_ns) / 1e6}us")
+        print(f"elapsed={int.from_bytes(processed._rtt_ns) / 1e6}us")
         print(processed.buf)
 
         for ext in exts:

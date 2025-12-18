@@ -520,12 +520,12 @@ class Broker:
             if client.interest.blocking_mode == BLOCKING_MODE_SEND_AND_FORGET:
                 pkt_id = random.randbytes(16)
                 pending_pkt = PendingPacket(
-                    op=PendingPacket.OP_FORWARD,
-                    packet_id=pkt_id,
+                    _op=PendingPacket.OP_FORWARD,
+                    _packet_id=pkt_id,
                     buf=pkt.as_raw,
                     direction=pkt.direction.value,
                     packet_flags=pkt.flags,
-                    rtt_ns=self._utob(time.perf_counter_ns()),
+                    _rtt_ns=self._utob(time.perf_counter_ns()),
                     interest_id=client.interest.id,
                 )
                 self._send(
@@ -543,12 +543,12 @@ class Broker:
         if chain:
             chain_id = random.randbytes(16)
             pending_pkt = PendingPacket(
-                op=PendingPacket.OP_FORWARD,
-                packet_id=chain_id,
+                _op=PendingPacket.OP_FORWARD,
+                _packet_id=chain_id,
                 buf=pkt.as_raw,
                 direction=pkt.direction.value,
                 packet_flags=pkt.flags,
-                rtt_ns=self._utob(time.perf_counter_ns()),
+                _rtt_ns=self._utob(time.perf_counter_ns()),
                 interest_id=chain[0].interest.id,
             )
 
@@ -564,7 +564,7 @@ class Broker:
                 self.logger.debug(f"broker processing: {(time.perf_counter_ns() - start) / 1e6}us")
             self._pending_chain[chain_id].finished_event.wait()
             finished = self._pending_chain.pop(chain_id)
-            finished.current.rtt_ns = self._utob(time.perf_counter_ns() - int.from_bytes(finished.current.rtt_ns))
+            finished.current._rtt_ns = self._utob(time.perf_counter_ns() - int.from_bytes(finished.current._rtt_ns))
             return finished.current, finished.cancelled
 
     def start(self, block: bool = False) -> None:
@@ -630,39 +630,39 @@ class Broker:
         if pending.callback.any:
             pending.callback.any(pending.current.buf)
 
-        del self._pending_packet[pending.current.packet_id]
+        del self._pending_packet[pending.current._packet_id]
 
     def _handle_packet(self, pkt: PendingPacket) -> None:
-        if (chain := self._pending_chain.get(pkt.packet_id)) is not None:
-            match pkt.op:
+        if (chain := self._pending_chain.get(pkt._packet_id)) is not None:
+            match pkt._op:
                 case PendingPacket.OP_FINISH:
                     chain.current = pkt
                     chain.finished_event.set()
                 case PendingPacket.OP_CANCEL:
-                    chain.current.hit_count = pkt.hit_count
+                    chain.current._hit_count = pkt._hit_count
                     chain.cancelled = True
                     chain.finished_event.set()
                 case PendingPacket.OP_FORWARD:
                     self._forward(chain, pkt)
                 case PendingPacket.OP_PASS:
-                    chain.current.hit_count = pkt.hit_count
+                    chain.current._hit_count = pkt._hit_count
                     self._forward(chain, chain.current)
                     pass
                 case _:
-                    raise ValueError(f"invalid op: {pkt.op}")
-        elif (pending := self._pending_packet.pop(pkt.packet_id, None)) is not None:
-            match pkt.op:
+                    raise ValueError(f"invalid op: {pkt._op}")
+        elif (pending := self._pending_packet.pop(pkt._packet_id, None)) is not None:
+            match pkt._op:
                 case PendingPacket.OP_FINISH:
                     self._finish(pending, pkt)
                 case PendingPacket.OP_CANCEL:
-                    pending.current.hit_count = pkt.hit_count
+                    pending.current._hit_count = pkt._hit_count
                 case PendingPacket.OP_FORWARD:
                     self._finish(pending, pkt)
                 case PendingPacket.OP_PASS:
-                    pending.current.hit_count = pkt.hit_count
+                    pending.current._hit_count = pkt._hit_count
                     self._finish(pending, pending.current)
                 case _:
-                    raise ValueError(f"invalid op: {pkt.op}")
+                    raise ValueError(f"invalid op: {pkt._op}")
         else:
             raise ValueError("invalid packet state")
 

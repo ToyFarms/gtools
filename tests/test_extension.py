@@ -32,8 +32,9 @@ class ExtensionNextState(Extension):
     def process(self, event: PendingPacket) -> PendingPacket | None:
         p = NetPacket.deserialize(event.buf)
         p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0xFFFFFFFF
+        event.buf = p.serialize()
 
-        return self.forward(buf=p.serialize())
+        return self.forward(event)
 
     def destroy(self) -> None:
         pass
@@ -137,7 +138,7 @@ def test_process(request: pytest.FixtureRequest) -> None:
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
-        assert pkt.hit_count == 1
+        assert pkt._hit_count == 1
         assert pkt.direction == DIRECTION_UNSPECIFIED
         assert pkt.packet_flags == ENetPacketFlag.NONE
         net = NetPacket.deserialize(pkt.buf)
@@ -172,7 +173,7 @@ def test_process_multi(request: pytest.FixtureRequest) -> None:
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
-        assert pkt.hit_count == 10
+        assert pkt._hit_count == 10
         assert pkt.direction == DIRECTION_UNSPECIFIED
         assert pkt.packet_flags == ENetPacketFlag.NONE
         net = NetPacket.deserialize(pkt.buf)
@@ -203,7 +204,7 @@ def test_process_forward_not_modified(request: pytest.FixtureRequest) -> None:
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
-        assert pkt.hit_count == 1
+        assert pkt._hit_count == 1
         assert pkt.direction == DIRECTION_UNSPECIFIED
         assert pkt.packet_flags == ENetPacketFlag.NONE
         net = NetPacket.deserialize(pkt.buf)
@@ -233,7 +234,7 @@ def test_broker_restart(request: pytest.FixtureRequest) -> None:
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
-        assert pkt.hit_count == 1
+        assert pkt._hit_count == 1
         assert pkt.direction == DIRECTION_UNSPECIFIED
         assert pkt.packet_flags == ENetPacketFlag.NONE
         net = NetPacket.deserialize(pkt.buf)
@@ -252,7 +253,7 @@ def test_broker_restart(request: pytest.FixtureRequest) -> None:
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
-        assert pkt.hit_count == 1
+        assert pkt._hit_count == 1
         assert pkt.direction == DIRECTION_UNSPECIFIED
         assert pkt.packet_flags == ENetPacketFlag.NONE
         net = NetPacket.deserialize(pkt.buf)
@@ -293,7 +294,7 @@ def test_cancel() -> None:
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
-        assert pkt.hit_count == 1
+        assert pkt._hit_count == 1
         assert pkt.direction == DIRECTION_UNSPECIFIED
         assert pkt.packet_flags == ENetPacketFlag.NONE
         net = NetPacket.deserialize(pkt.buf)
@@ -312,7 +313,7 @@ def test_cancel() -> None:
         assert pkt
         pkt, cancelled = pkt
         assert cancelled
-        assert pkt.hit_count == 1
+        assert pkt._hit_count == 1
         assert pkt.direction == DIRECTION_UNSPECIFIED
         assert pkt.packet_flags == ENetPacketFlag.NONE
         net = NetPacket.deserialize(pkt.buf)
@@ -336,7 +337,9 @@ class ExtensionFinish(Extension):
     def process(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
         pkt.tank.int_x += 1
-        return self.finish(pkt.serialize())
+        event.buf = pkt.serialize()
+
+        return self.finish(event)
 
     def destroy(self) -> None:
         pass
@@ -361,7 +364,7 @@ def test_finish() -> None:
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
-        assert pkt.hit_count == 2
+        assert pkt._hit_count == 2
         assert pkt.direction == DIRECTION_UNSPECIFIED
         assert pkt.packet_flags == ENetPacketFlag.NONE
         net = NetPacket.deserialize(pkt.buf)
@@ -377,7 +380,7 @@ def test_finish() -> None:
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
-        assert pkt.hit_count == 2
+        assert pkt._hit_count == 2
         assert pkt.direction == DIRECTION_UNSPECIFIED
         assert pkt.packet_flags == ENetPacketFlag.NONE
         net = NetPacket.deserialize(pkt.buf)
@@ -491,7 +494,7 @@ def test_fast_drop_extension() -> None:
         assert res
         pkt, cancelled = res
         assert cancelled == False
-        assert pkt.hit_count == 1
+        assert pkt._hit_count == 1
         assert pkt.direction == DIRECTION_CLIENT_TO_SERVER
         assert pkt.packet_flags == ENetPacketFlag.RELIABLE
         net = NetPacket.deserialize(pkt.buf)
@@ -537,7 +540,7 @@ def test_meta_is_preserved_pass() -> None:
         assert res
         pkt, cancelled = res
         assert cancelled == False
-        assert pkt.hit_count == len(extension)
+        assert pkt._hit_count == len(extension)
         assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
         assert pkt.packet_flags == ENetPacketFlag.RELIABLE
         net = NetPacket.deserialize(pkt.buf)
@@ -573,7 +576,7 @@ def test_meta_is_preserved_process() -> None:
         assert res
         pkt, cancelled = res
         assert cancelled == False
-        assert pkt.hit_count == len(extension)
+        assert pkt._hit_count == len(extension)
         assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
         assert pkt.packet_flags == ENetPacketFlag.RELIABLE
         net = NetPacket.deserialize(pkt.buf)

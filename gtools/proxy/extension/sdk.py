@@ -10,7 +10,6 @@ from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
     DIRECTION_UNSPECIFIED,
     CapabilityResponse,
-    Direction,
     Packet,
     Interest,
     PendingPacket,
@@ -172,28 +171,19 @@ class Extension(ABC):
                 except:
                     pass
 
-    # TODO: rather than accepting individual parameter, just accept the whole PendingPacket
-    def forward(self, buf: bytes, direction: Direction = DIRECTION_UNSPECIFIED, flags: ENetPacketFlag = ENetPacketFlag.NONE) -> PendingPacket:
-        return PendingPacket(
-            op=PendingPacket.OP_FORWARD,
-            buf=buf,
-            direction=direction,
-            packet_flags=int(flags),
-        )
+    def forward(self, new: PendingPacket) -> PendingPacket:
+        new._op = PendingPacket.OP_FORWARD
+        return new
 
     def pass_to_next(self) -> PendingPacket:
-        return PendingPacket(op=PendingPacket.OP_PASS)
+        return PendingPacket(_op=PendingPacket.OP_PASS)
 
     def cancel(self) -> PendingPacket:
-        return PendingPacket(op=PendingPacket.OP_CANCEL)
+        return PendingPacket(_op=PendingPacket.OP_CANCEL)
 
-    def finish(self, buf: bytes, direction: Direction = DIRECTION_UNSPECIFIED, flags: ENetPacketFlag = ENetPacketFlag.NONE) -> PendingPacket:
-        return PendingPacket(
-            op=PendingPacket.OP_FINISH,
-            buf=buf,
-            direction=direction,
-            packet_flags=int(flags),
-        )
+    def finish(self, new: PendingPacket) -> PendingPacket:
+        new._op = PendingPacket.OP_FINISH
+        return new
 
     def _worker_thread(self) -> None:
         try:
@@ -219,13 +209,13 @@ class Extension(ABC):
                         if not response:
                             response = self.pass_to_next()
 
-                        response.packet_id = pkt.pending_packet.packet_id
+                        response._packet_id = pkt.pending_packet._packet_id
                         if response.direction == DIRECTION_UNSPECIFIED:
                             response.direction = pkt.pending_packet.direction
                         if response.packet_flags == ENetPacketFlag.NONE:
                             response.packet_flags = pkt.pending_packet.packet_flags
-                        response.rtt_ns = pkt.pending_packet.rtt_ns
-                        response.hit_count = pkt.pending_packet.hit_count + 1
+                        response._rtt_ns = pkt.pending_packet._rtt_ns
+                        response._hit_count = pkt.pending_packet._hit_count + 1
                         if PERF:
                             self.logger.debug(f"extension processing time: {(time.perf_counter_ns() - start) / 1e6}us")
                         self._send(Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=response))

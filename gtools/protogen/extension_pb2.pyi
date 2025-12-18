@@ -227,23 +227,23 @@ class PendingPacket(_message.Message):
     OP_CANCEL: PendingPacket.Op
     OP_FORWARD: PendingPacket.Op
     OP_PASS: PendingPacket.Op
-    OP_FIELD_NUMBER: _ClassVar[int]
-    PACKET_ID_FIELD_NUMBER: _ClassVar[int]
+    _OP_FIELD_NUMBER: _ClassVar[int]
+    _PACKET_ID_FIELD_NUMBER: _ClassVar[int]
     BUF_FIELD_NUMBER: _ClassVar[int]
     PACKET_FLAGS_FIELD_NUMBER: _ClassVar[int]
     DIRECTION_FIELD_NUMBER: _ClassVar[int]
-    HIT_COUNT_FIELD_NUMBER: _ClassVar[int]
-    RTT_NS_FIELD_NUMBER: _ClassVar[int]
+    _HIT_COUNT_FIELD_NUMBER: _ClassVar[int]
+    _RTT_NS_FIELD_NUMBER: _ClassVar[int]
     INTEREST_ID_FIELD_NUMBER: _ClassVar[int]
-    op: PendingPacket.Op
-    packet_id: bytes
+    _op: PendingPacket.Op
+    _packet_id: bytes
     buf: bytes
     packet_flags: int
     direction: Direction
-    hit_count: int
-    rtt_ns: bytes
+    _hit_count: int
+    _rtt_ns: bytes
     interest_id: int
-    def __init__(self, op: _Optional[_Union[PendingPacket.Op, str]] = ..., packet_id: _Optional[bytes] = ..., buf: _Optional[bytes] = ..., packet_flags: _Optional[int] = ..., direction: _Optional[_Union[Direction, str]] = ..., hit_count: _Optional[int] = ..., rtt_ns: _Optional[bytes] = ..., interest_id: _Optional[int] = ...) -> None: ...
+    def __init__(self, _op: _Optional[_Union[PendingPacket.Op, str]] = ..., _packet_id: _Optional[bytes] = ..., buf: _Optional[bytes] = ..., packet_flags: _Optional[int] = ..., direction: _Optional[_Union[Direction, str]] = ..., _hit_count: _Optional[int] = ..., _rtt_ns: _Optional[bytes] = ..., interest_id: _Optional[int] = ...) -> None: ...
 
 class Interest(_message.Message):
     __slots__ = ()

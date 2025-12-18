@@ -15,6 +15,10 @@ class CommandExtension(Extension):
     def __init__(self) -> None:
         logging.basicConfig(level=logging.DEBUG)
 
+        # TODO: how do extension interact with each other, especially for common operation like command
+        # maybe some sort of special interest, but how will the protocol generalizes?
+        # maybe extension can expose a set of function, then it can reuse infra from process
+        # or maybe its not needed, well see
         super().__init__(
             name="command",
             interest=[
@@ -22,7 +26,7 @@ class CommandExtension(Extension):
                     interest=INTEREST_GENERIC_TEXT,
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     direction=DIRECTION_CLIENT_TO_SERVER,
-                    generic_text=InterestGenericText(regex=rb".*"),
+                    generic_text=InterestGenericText(),
                 ),
             ],
         )

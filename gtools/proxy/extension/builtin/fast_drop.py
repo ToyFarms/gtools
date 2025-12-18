@@ -54,12 +54,13 @@ class FastDropExtension(Extension):
 
                 res_pkt = NetPacket(NetType.GENERIC_TEXT, data=res)
 
+                event.direction = DIRECTION_CLIENT_TO_SERVER  # direction will determine where the packet will be sent to (client/server), if none use the original direction,
+                event.buf = res_pkt.serialize()
+
                 # never think the extension is at the end of the chain
                 # always design as if other extension will build upon your response
-                return self.forward(  # forward will look for extension that are interested with the new parameter, if none then the chain is complete
-                    buf=res_pkt.serialize(),
-                    direction=DIRECTION_CLIENT_TO_SERVER,  # direction will determine where the packet will be sent to (client/server), if none use the original direction,
-                )
+                # forward will look for extension that are interested with the new parameter, if none then the chain is complete
+                return self.forward(event)
 
     # this will be called when the extension is disconnected
     # of course it can be reconnected, so think of this as clearing session data
