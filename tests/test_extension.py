@@ -8,7 +8,7 @@ from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
 from gtools.proxy.extension.builtin.fast_drop import FastDropExtension
 from tests import verify
 
-from gtools.core.growtopia.packet import NetPacket, NetType, TankPacket
+from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankPacket
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_CLIENT_TO_SERVER,
@@ -132,7 +132,7 @@ def test_process(request: pytest.FixtureRequest) -> None:
         assert ext.start().wait_true(5)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
-        pkt = b.process_event(pkt, pkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
 
         assert pkt
         pkt, cancelled = pkt
@@ -167,7 +167,7 @@ def test_process_multi(request: pytest.FixtureRequest) -> None:
             extensions.append(ext)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
-        pkt = b.process_event(pkt, pkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
 
         assert pkt
         pkt, cancelled = pkt
@@ -198,7 +198,7 @@ def test_process_forward_not_modified(request: pytest.FixtureRequest) -> None:
         assert ext.start().wait_true(5)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
-        pkt = b.process_event(pkt, pkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
 
         assert pkt
         pkt, cancelled = pkt
@@ -228,7 +228,7 @@ def test_broker_restart(request: pytest.FixtureRequest) -> None:
         assert ext.start().wait_true(5)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
-        pkt = b.process_event(pkt, pkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
 
         assert pkt
         pkt, cancelled = pkt
@@ -247,7 +247,7 @@ def test_broker_restart(request: pytest.FixtureRequest) -> None:
         b.start()
         assert ext.connected.wait_true(5)
 
-        pkt = b.process_event(net, pkt.buf, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(net, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
 
         assert pkt
         pkt, cancelled = pkt
@@ -288,7 +288,7 @@ def test_cancel() -> None:
         assert ext2.start().wait_true(5)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
-        pkt = b.process_event(pkt, pkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
 
         assert pkt
         pkt, cancelled = pkt
@@ -308,7 +308,7 @@ def test_cancel() -> None:
         print("second test")
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
-        pkt = b.process_event(pkt, pkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
         assert pkt
         pkt, cancelled = pkt
         assert cancelled
@@ -357,7 +357,7 @@ def test_finish() -> None:
         assert ext3.start().wait_true(5)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
-        pkt = b.process_event(pkt, pkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
@@ -373,7 +373,7 @@ def test_finish() -> None:
         assert ext2.stop().wait_false(5)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=10))
-        pkt = b.process_event(pkt, pkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
         assert pkt
         pkt, cancelled = pkt
         assert cancelled == False
@@ -433,14 +433,14 @@ def test_generic_text_query() -> None:
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"hello"]]),
         )
-        pkt = b.process_event(opkt, opkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
         assert pkt is None
 
         opkt = NetPacket(
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"/should_work"]]),
         )
-        pkt = b.process_event(opkt, opkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
         assert pkt
         pkt, cancelled = pkt
         verify(pkt.buf)
@@ -450,21 +450,21 @@ def test_generic_text_query() -> None:
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"//should_work"]]),
         )
-        pkt = b.process_event(opkt, opkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
         assert pkt is None
 
         opkt = NetPacket(
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"//no"]]),
         )
-        pkt = b.process_event(opkt, opkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
         assert pkt is None
 
         opkt = NetPacket(
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"/not_registered"]]),
         )
-        pkt = b.process_event(opkt, opkt.serialize(), DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE)
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
         assert pkt is None
 
         assert ext.stop().wait_false(5)
@@ -486,7 +486,7 @@ def test_fast_drop_extension() -> None:
         req_buf = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd4\x00\x00\x00\x02\x00\x02\x0f\x00\x00\x00OnDialogRequest\x01\x02\xb8\x00\x00\x00set_default_color|`o\nadd_label_with_icon|big|`wDrop Sign``|left|20|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||12345|5|\nembed_data|itemID|1092\nend_dialog|drop_item|Cancel|OK|\n@"
         req = NetPacket.deserialize(req_buf)
 
-        res = b.process_event(req, req.serialize(), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE)
+        res = b.process_event(PreparedPacket(req, DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
         assert res
         pkt, cancelled = res
@@ -532,7 +532,7 @@ def test_meta_is_preserved_pass() -> None:
             extension.append(ext)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
-        res = b.process_event(pkt, pkt.serialize(), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE)
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
         assert res
         pkt, cancelled = res
@@ -568,7 +568,7 @@ def test_meta_is_preserved_process() -> None:
             extension.append(ext)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
-        res = b.process_event(pkt, pkt.serialize(), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE)
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
         assert res
         pkt, cancelled = res

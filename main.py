@@ -3,7 +3,7 @@ import logging
 import multiprocessing as mp
 import threading
 
-from gtools.core.growtopia.packet import NetPacket
+from gtools.core.growtopia.packet import NetPacket, PreparedPacket
 from gtools.core.utils.block_sigint import block_sigint
 from gtools.core.utils.network import is_up, resolve_doh
 from gtools.protogen.extension_pb2 import (
@@ -104,12 +104,14 @@ if __name__ == "__main__":
         b.extension_len.wait_for(lambda x: x == len(exts), 5)
 
         buf = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd4\x00\x00\x00\x02\x00\x02\x0f\x00\x00\x00OnDialogRequest\x01\x02\xb8\x00\x00\x00set_default_color|`o\nadd_label_with_icon|big|`wDrop Sign``|left|20|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||3|5|\nembed_data|itemID|20\nend_dialog|drop_item|Cancel|OK|\n@"
-        pkt = NetPacket.deserialize(buf)
-        src = DIRECTION_SERVER_TO_CLIENT
-        flags = ENetPacketFlag.NONE
+        pkt = PreparedPacket(
+            NetPacket.deserialize(buf),
+            DIRECTION_SERVER_TO_CLIENT,
+            ENetPacketFlag.NONE,
+        )
         print(pkt)
 
-        res = b.process_event(pkt, buf, src, flags)
+        res = b.process_event(pkt)
         assert res
 
         processed, cancelled = res

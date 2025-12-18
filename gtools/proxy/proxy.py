@@ -1,4 +1,3 @@
-from enum import Enum, auto
 import logging
 from queue import Queue
 import threading
@@ -6,29 +5,23 @@ import time
 import traceback
 from typing import Generator, NamedTuple, cast
 from gtools.core.eventbus import listen
-from gtools.core.growtopia.packet import NetPacket, NetType, TankType
+from gtools.core.growtopia.packet import NetType, PreparedPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.utils.block_sigint import block_sigint
-from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT
 from gtools.proxy.enet import PyENetEvent
 from gtools.proxy.event import UpdateServerData
 from gtools.proxy.extension.broker import Broker, PacketCallback
 from gtools.proxy.proxy_client import ProxyClient
 from gtools.proxy.proxy_server import ProxyServer
 from gtools.proxy.setting import _setting
-from thirdparty.enet.bindings import ENetEventType, ENetPacketFlag
+from thirdparty.enet.bindings import ENetEventType
 from thirdparty.hexdump import hexdump
-
-
-class From(Enum):
-    SERVER = auto()
-    CLIENT = auto()
 
 
 class ProxyEvent(NamedTuple):
     inner: PyENetEvent
-    src: From
+    direction: PreparedPacket.Direction
 
 
 class Proxy:
@@ -70,23 +63,13 @@ class Proxy:
             self.logger.debug(f"HEXDUMP: \n\t{'\n\t'.join(dump)}")
             self.logger.debug(f"\t{data}")
 
-    def _handle_client_to_server(
-        self,
-        data: bytes,
-        _pkt: NetPacket,
-        flags: ENetPacketFlag,
-    ) -> None:
-        self.proxy_client.send(data, flags)
+    def _handle_client_to_server(self, pkt: PreparedPacket) -> None:
+        self.proxy_client.send(pkt.as_raw, pkt.flags)
 
-    def _handle_server_to_client(
-        self,
-        data: bytes,
-        pkt: NetPacket,
-        flags: ENetPacketFlag,
-    ) -> None:
-        if pkt.type == NetType.TANK_PACKET:
-            if pkt.tank.type == TankType.CALL_FUNCTION:
-                v = Variant.deserialize(pkt.tank.extended_data)
+    def _handle_server_to_client(self, pkt: PreparedPacket) -> None:
+        if pkt.as_net.type == NetType.TANK_PACKET:
+            if pkt.as_net.tank.type == TankType.CALL_FUNCTION:
+                v = Variant.deserialize(pkt.as_net.tank.extended_data)
                 fn = v.as_string[0]
                 if fn == b"OnSendToServer":
                     port = v.as_int[1]
@@ -102,73 +85,59 @@ class Proxy:
                     v[1] = Variant.vint(_setting.proxy_port)
                     v[4] = Variant.vstr(server_data.serialize())
 
-                    pkt.tank.extended_data = v.serialize()
+                    pkt.as_net.tank.extended_data = v.serialize()
 
                     self.redirecting = True
-                    self.proxy_server.send(pkt.serialize(), flags)
+                    self.proxy_server.send(pkt.as_net.serialize(), pkt.flags)
                     self.proxy_client.disconnect()
 
                     return
                 elif fn == b"OnSuperMainStartAcceptLogonHrdxs47254722215a":
                     self.redirecting = False
 
-        self.proxy_server.send(data, flags)
+        self.proxy_server.send(pkt.as_raw, pkt.flags)
 
-    def _handle(
-        self,
-        data: bytes,
-        src: From,
-        flags: ENetPacketFlag,
-    ) -> None:
-        pkt = NetPacket.deserialize(data)
-
+    def _handle(self, pkt: PreparedPacket) -> None:
         res = self.broker.process_event(
             pkt,
-            data,
-            DIRECTION_CLIENT_TO_SERVER if src == From.CLIENT else DIRECTION_SERVER_TO_CLIENT,
-            flags,
             callback=PacketCallback(
-                send_to_server=lambda data: self._handle_client_to_server(data, NetPacket.deserialize(data), ENetPacketFlag(0)),
-                send_to_client=lambda data: self._handle_server_to_client(data, NetPacket.deserialize(data), ENetPacketFlag(0)),
+                send_to_server=lambda pkt: self._handle_client_to_server(pkt),
+                send_to_client=lambda pkt: self._handle_server_to_client(pkt),
             ),
         )
         modified = False
         if res:
             processed, cancelled = res
             if not cancelled:
-                self.logger.debug(f"[original] packet={pkt!r} flags={flags!r} from={src.name}")
-                pkt = NetPacket.deserialize(processed.buf)
-                data = processed.buf
-                dir = processed.direction
-                flags = ENetPacketFlag(processed.packet_flags)
-                src = From.CLIENT if dir == DIRECTION_CLIENT_TO_SERVER else From.SERVER if dir == DIRECTION_SERVER_TO_CLIENT else src
+                self.logger.debug(f"[original] packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
+                pkt = PreparedPacket.from_pending(processed)
                 self.logger.debug(f"[{processed.packet_id}] processed packet: hit={processed.hit_count} rtt={int.from_bytes(processed.rtt_ns) / 1e6}us")
                 modified = True
             else:
                 self.logger.debug(f"[{processed.packet_id}] packet process cancelled")
 
-        self.logger.debug(f"{'[modified] ' if modified else ''}packet={pkt!r} flags={flags!r} from={src.name}")
-        if pkt.type == NetType.TANK_PACKET:
-            if pkt.tank.type in (
+        self.logger.debug(f"{'[modified] ' if modified else ''}packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
+        if pkt.as_net.type == NetType.TANK_PACKET:
+            if pkt.as_net.tank.type in (
                 TankType.APP_CHECK_RESPONSE,
                 TankType.APP_INTEGRITY_FAIL,
             ):
-                self.logger.debug(f"blocked {pkt.tank} from {src}")
+                self.logger.debug(f"blocked {pkt.as_net.tank} from {pkt.direction.name}")
                 return
-            elif pkt.tank.type == TankType.DISCONNECT:
-                src_ = self.proxy_client if src == "proxy_client" else self.proxy_server
+            elif pkt.as_net.tank.type == TankType.DISCONNECT:
+                src_ = self.proxy_client if pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER else self.proxy_server
                 src_.disconnect_now()
-        if pkt.type == NetType.GAME_MESSAGE:
-            if pkt.game_message["action", 1] == b"quit":
+        if pkt.as_net.type == NetType.GAME_MESSAGE:
+            if pkt.as_net.game_message["action", 1] == b"quit":
                 self.disconnect_all()
                 self.running = False
 
                 return
 
-        if src == From.CLIENT:
-            self._handle_client_to_server(data, pkt, flags)
-        elif src == From.SERVER:
-            self._handle_server_to_client(data, pkt, flags)
+        if pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
+            self._handle_client_to_server(pkt)
+        elif pkt.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
+            self._handle_server_to_client(pkt)
 
     def disconnect_all(self) -> None:
         self.proxy_client.disconnect()
@@ -194,9 +163,9 @@ class Proxy:
             self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
             event = proxy_event.inner
 
-            if proxy_event.src == From.CLIENT:
+            if proxy_event.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
                 self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({event.packet.flags!r}):")
-            elif proxy_event.src == From.SERVER:
+            elif proxy_event.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
                 self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({event.packet.flags!r}):")
 
             if event.type == ENetEventType.DISCONNECT:
@@ -205,9 +174,11 @@ class Proxy:
             self.logger.debug(f"\t{ENetEventType(event.type)!r}")
             if event.type == ENetEventType.RECEIVE and event.packet.data:
                 self._handle(
-                    event.packet.data,
-                    proxy_event.src,
-                    event.packet.flags,
+                    PreparedPacket(
+                        packet=event.packet.data,
+                        direction=proxy_event.direction,
+                        flags=event.packet.flags,
+                    )
                 )
                 self._dump_packet(event.packet.data)
 
@@ -245,11 +216,11 @@ class Proxy:
                 while True:
                     start = time.perf_counter()
                     while (event := self.proxy_server.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                        self._event_queue.put(ProxyEvent(event, From.CLIENT))
+                        self._event_queue.put(ProxyEvent(event, PreparedPacket.Direction.CLIENT_TO_SERVER))
 
                     start = time.perf_counter()
                     while (event := self.proxy_client.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                        self._event_queue.put(ProxyEvent(event, From.SERVER))
+                        self._event_queue.put(ProxyEvent(event, PreparedPacket.Direction.SERVER_TO_CLIENT))
 
                     if self._should_reconnect.is_set():
                         self.disconnect_all()
