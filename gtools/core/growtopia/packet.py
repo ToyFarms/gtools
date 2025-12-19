@@ -7,7 +7,7 @@ from typing import Literal, cast
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.protocol import Serializable
-from gtools.protogen.extension_pb2 import Direction as DirectionProto, PendingPacket, PreparedPacket as PreparedPacketProto
+from gtools.protogen.extension_pb2 import Direction as DirectionProto, PendingPacket
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -327,23 +327,15 @@ class PreparedPacket:
             flags=ENetPacketFlag(pending.packet_flags),
         )
 
-    @classmethod
-    def from_proto(cls, packet: PreparedPacketProto) -> "PreparedPacket":
-        return cls(
-            packet=packet.buf,
-            direction=packet.direction,
-            flags=ENetPacketFlag(packet.packet_flags),
-        )
-
-    def to_proto(self) -> PreparedPacketProto:
-        return PreparedPacketProto(
+    def to_pending(self) -> PendingPacket:
+        return PendingPacket(
             buf=self.as_raw,
             direction=self.direction.value,
             packet_flags=self.flags,
         )
 
     def __repr__(self) -> str:
-        return f"packet={self.as_net}, raw={self.as_raw}, direction={self.direction}, flags={self.flags}"
+        return f"PreparedPacket(packet={self.as_net}, raw={self.as_raw}, direction={self.direction}, flags={self.flags})"
 
 
 if __name__ == "__main__":

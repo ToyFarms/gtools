@@ -6,6 +6,7 @@ import logging
 import time
 from zmq.utils.monitor import recv_monitor_message
 
+from gtools.core.growtopia.packet import PreparedPacket
 from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
     DIRECTION_UNSPECIFIED,
@@ -21,7 +22,7 @@ from thirdparty.enet.bindings import ENetPacketFlag
 class Extension(ABC):
     logger = logging.getLogger("extension")
 
-    def __init__(self, name: str, interest: list[Interest], broker_addr: str = "tcp://127.0.0.1:6712") -> None:
+    def __init__(self, name: str, interest: list[Interest], can_push: bool = False, broker_addr: str = "tcp://127.0.0.1:6712") -> None:
         self._name = name.encode()
         self._interest = interest
         self._broker_addr = broker_addr
@@ -36,6 +37,26 @@ class Extension(ABC):
 
         self._stop_event: Waitable[bool] = Waitable(False)
         self.connected: Waitable[bool] = Waitable(False)
+
+        self.can_push = can_push
+        self._push_socket: zmq.SyncSocket | None = None
+        self._job_threads: dict[str, threading.Thread] = {}
+
+    def push(self, pkt: PreparedPacket) -> None:
+        self.connected.wait_true()
+
+        if not self._push_socket:
+            self.logger.warning("set can_push flag to have push capability, if you did set it that means some other things have gone wrong")
+            return
+        # NOTE: to_pending().SerializeToString() makes us go from 1.5m to 500k packet/s,
+        # is that normal? its still way overkill for this use case,
+        # but i might want to start thinking switching capnproto and shared memory ring buffer,
+        # just for the fun of it
+        self.logger.debug(f"   push \x1b[35m-->>\x1b[0m \x1b[35m>>\x1b[0m{pkt!r}\x1b[35m>>\x1b[0m")
+        self._push_socket.send(pkt.to_pending().SerializeToString())
+
+    # TODO: try pytest-xdist rather than pytest-forked
+    # TODO: have a send_to() possibly?
 
     def _send(self, pkt: Packet) -> None:
         if self._stop_event.get():
@@ -92,6 +113,17 @@ class Extension(ABC):
         self._monitor_thread_id = threading.Thread(target=self._monitor_thread, daemon=True)
         self._monitor_thread_id.start()
 
+        for name in dir(self):
+            if not name.startswith("thread_"):
+                continue
+
+            attr = getattr(self, name)
+            if callable(attr):
+                self.logger.debug(f"extension {self._name} starting job: {name}")
+                t = threading.Thread(target=attr, daemon=True)
+                t.start()
+                self._job_threads[name] = t
+
         self._connect()
 
         if block:
@@ -124,6 +156,11 @@ class Extension(ABC):
             self._socket.close()
         except Exception as e:
             self.logger.debug(f"socket close error: {e}")
+        if self._push_socket:
+            try:
+                self._push_socket.close()
+            except Exception as e:
+                self.logger.debug(f"socket close error: {e}")
 
         if self._worker_thread_id and self._worker_thread_id.is_alive():
             self._worker_thread_id.join(timeout=2.0)
@@ -220,7 +257,24 @@ class Extension(ABC):
                             self.logger.debug(f"extension processing time: {(time.perf_counter_ns() - start) / 1e6}us")
                         self._send(Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=response))
                     case Packet.TYPE_CONNECTED:
-                        self.connected.set(True)
+                        if self.can_push:
+                            self._send(Packet(type=Packet.TYPE_CHANNEL_IP_REQUEST))
+                        else:  # if we can push, we need to wait for the push socket to connect first
+                            self.connected.set(True)
+                    case Packet.TYPE_CHANNEL_IP_RESPONSE:
+                        if not self._push_socket:
+                            self._push_socket = self._context.socket(zmq.PUSH)
+                            self._push_socket.setsockopt(zmq.LINGER, 0)
+
+                            res = pkt.channel_ip_response
+                            addr = f"{res.protocol}://{res.host}:{res.port}"
+                            self.logger.debug(f"got channel response, connecting to {addr}")
+
+                            self._push_socket.connect(addr)
+                            self.connected.set(True)
+                            self.logger.debug(f"connected to channel")
+                        else:
+                            self.logger.warning("channel ip response when the socket is already setup")
                     case Packet.TYPE_DISCONNECT:
                         pass
                     case Packet.TYPE_HANDSHAKE_ACK:
@@ -239,4 +293,3 @@ class Extension(ABC):
                 self.logger.debug(f"ZMQ error in main loop: {e}")
         finally:
             self.logger.debug("worker thread exiting")
-

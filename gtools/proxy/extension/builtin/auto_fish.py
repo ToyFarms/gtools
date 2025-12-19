@@ -20,6 +20,9 @@ class AutoFishExtension(Extension):
             interest=[],
         )
 
+    def thread_1(self) -> None:
+        pass
+
     def process(self, event: PendingPacket) -> PendingPacket | None:
         pass
 
