@@ -2,6 +2,7 @@ from bisect import insort
 from collections import defaultdict, deque
 import itertools
 import logging
+from queue import Queue
 import random
 import threading
 import time
@@ -12,12 +13,13 @@ import xxhash
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
-from gtools.flags import PERF, TRACE
+from gtools.flags import BENCHMARK, PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_UNSPECIFIED,
     CapabilityRequest,
+    ChannelIpResponse,
     Packet,
     Interest,
     InterestType,
@@ -355,7 +357,7 @@ class _PendingPacket:
 class Broker:
     logger = logging.getLogger("broker")
 
-    def __init__(self, addr: str = "tcp://127.0.0.1:6712") -> None:
+    def __init__(self, pull_queue: Queue[PreparedPacket | None] | None = None, addr: str = "tcp://127.0.0.1:6712") -> None:
         self._context = zmq.Context()
         self._socket = self._context.socket(zmq.ROUTER)
         self._socket.setsockopt(zmq.LINGER, 0)
@@ -369,14 +371,84 @@ class Broker:
         self._worker_thread_id: threading.Thread | None = None
         self.extension_len: Waitable[int] = Waitable(0)
 
+        self._pull_queue = pull_queue
+        if self._pull_queue:
+            self._pull_socket = self._context.socket(zmq.PULL)
+            self._pull_socket.setsockopt(zmq.LINGER, 0)
+            self._pull_host = "127.0.0.1"
+            self._pull_port = self._pull_socket.bind_to_random_port(f"tcp://{self._pull_host}")
+
+            self.logger.debug(f"broker have push/pull capability, channel=tcp://{self._pull_host}:{self._pull_port}. starting pull thread...")
+
+            self._pull_thread_id = threading.Thread(target=self._pull_thread)
+            self._pull_thread_id.start()
+            # TODO: make it send None on stop()
+
+    def _pull(self) -> PreparedPacket | None:
+        if self._stop_event.is_set():
+            return
+
+        try:
+            if self._pull_socket.poll(100, zmq.POLLIN) == 0:
+                return
+
+            raw = self._pull_socket.recv()
+        except zmq.error.Again:
+            return
+        except zmq.error.ZMQError as e:
+            if self._stop_event.is_set():
+                return
+
+            self.logger.error(f"zmq error: {e}")
+            return
+
+        pkt = PendingPacket()
+        pkt.ParseFromString(raw)
+
+        pkt = PreparedPacket.from_pending(pkt)
+        self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
+
+        return pkt
+
+    def _pull_thread(self) -> None:
+        if BENCHMARK:
+            _last = time.monotonic_ns()
+            i = 0
+            prev_i = 0
+            elapsed_total = 0
+
+            while not self._stop_event.is_set() and self._pull_queue:
+                pkt = self._pull()
+                if not pkt:
+                    continue
+
+                self._pull_queue.put(pkt)
+
+                elapsed_total += time.monotonic_ns() - _last
+                if elapsed_total >= 1e9:
+                    print(f"packet rate: {i - prev_i} / s")
+                    elapsed_total = 0
+                    prev_i = i
+                i += 1
+                _last = time.monotonic_ns()
+        else:
+            while not self._stop_event.is_set() and self._pull_queue:
+                pkt = self._pull()
+                if not pkt:
+                    continue
+
+                self._pull_queue.put(pkt)
+
+        if self._pull_queue:
+            self._pull_queue.put(None)
+        self.logger.debug("pull thread exiting")
+
     def _recv(self) -> tuple[bytes, Packet | None]:
         if self._stop_event.is_set():
             return b"", None
 
         try:
-            events = self._socket.poll(100, zmq.POLLIN)
-
-            if events == 0:
+            if self._socket.poll(100, zmq.POLLIN) == 0:
                 return b"", None
 
             id, data = self._socket.recv_multipart(zmq.NOBLOCK)
@@ -385,7 +457,7 @@ class Broker:
         except zmq.error.ZMQError as e:
             if self._stop_event.is_set():
                 return b"", None
-            self.logger.debug(f"Recv error: {e}")
+            self.logger.debug(f"recv error: {e}")
             return b"", None
 
         pkt = Packet()
@@ -671,8 +743,6 @@ class Broker:
             while not self._stop_event.is_set():
                 id, pkt = self._recv()
                 if pkt is None:
-                    if self._stop_event.is_set():
-                        break
                     continue
 
                 match pkt.type:
@@ -687,7 +757,7 @@ class Broker:
                             ),
                         )
                         self._send(id, Packet(type=Packet.TYPE_CONNECTED))
-                        self.extension_len.set(self.extension_len.get() + 1)
+                        self.extension_len.update(lambda x: x + 1)
                     case Packet.TYPE_DISCONNECT:
                         self._extension_mgr.remove_extension(id)
                     case Packet.TYPE_PENDING_PACKET:
@@ -699,6 +769,13 @@ class Broker:
                                 f"\tpacket={self._pending_packet}\n",
                             )
                         self._handle_packet(pkt.pending_packet)
+                    case Packet.TYPE_CHANNEL_IP_REQUEST:
+                        if self._pull_queue:
+                            self._send(
+                                id, Packet(type=Packet.TYPE_CHANNEL_IP_RESPONSE, channel_ip_response=ChannelIpResponse(protocol="tcp", host=self._pull_host, port=self._pull_port))
+                            )
+                        else:
+                            self.logger.warning(f"extension {id} is requesting channel, but broker does not have the capability for it")
         except (KeyboardInterrupt, InterruptedError):
             pass
         except zmq.error.ZMQError as e:

@@ -1,9 +1,14 @@
 import argparse
 import logging
 import multiprocessing as mp
+import os
+from queue import Queue
+import sys
 import threading
 
-from gtools.core.growtopia.packet import NetPacket, PreparedPacket
+from gtools import flags
+from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
+from gtools.core.growtopia.strkv import StrKV
 from gtools.core.utils.block_sigint import block_sigint
 from gtools.core.utils.network import is_up, resolve_doh
 from gtools.protogen.extension_pb2 import (
@@ -69,6 +74,7 @@ if __name__ == "__main__":
     subparser.add_parser("proxy")
     subparser.add_parser("ext_test")
     subparser.add_parser("test")
+    subparser.add_parser("stress")
 
     args = parser.parse_args()
 
@@ -125,4 +131,42 @@ if __name__ == "__main__":
             ext.terminate()
             ext.join()
 
+        b.stop()
+    elif args.cmd == "stress":
+        if not flags.BENCHMARK:
+            os.environ["BENCHMARK"] = "1"
+            os.execvpe(sys.executable, [sys.executable] + sys.argv, os.environ)
+
+        class Stress(Extension):
+            def __init__(self) -> None:
+                super().__init__(
+                    name="stress", can_push=True, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=0, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)]
+                )
+
+            def thread_spam(self) -> None:
+                p = PreparedPacket(packet=NetPacket(type=NetType.GAME_MESSAGE, data=StrKV([[b"test", b"1"]])), direction=DIRECTION_SERVER_TO_CLIENT, flags=ENetPacketFlag.RELIABLE)
+                while True:
+                    self.push(p)
+
+            def process(self, event: PendingPacket) -> PendingPacket | None:
+                pass
+
+            def destroy(self) -> None:
+                pass
+
+        q = Queue()
+        b = Broker(q)
+        b.start()
+
+        p = mp.Process(target=_run, args=[Stress])
+        p.start()
+
+        try:
+            while True:
+                q.get()
+        except (KeyboardInterrupt, InterruptedError):
+            pass
+
+        p.terminate()
+        p.join()
         b.stop()

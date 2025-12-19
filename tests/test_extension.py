@@ -1,4 +1,6 @@
+from queue import Queue
 import socket
+import time
 from google.protobuf.any_pb2 import Any
 import pytest
 
@@ -530,7 +532,7 @@ def test_meta_is_preserved_pass() -> None:
     try:
         for i in range(10):
             ext = ExtensionPass(f"pass-{i}")
-            ext.start().wait_true(5)
+            assert ext.start().wait_true(5)
 
             extension.append(ext)
 
@@ -549,7 +551,7 @@ def test_meta_is_preserved_pass() -> None:
         verify(pkt.buf)
 
         for ext in extension:
-            ext.stop().wait_false(5)
+            assert ext.stop().wait_false(5)
     except:
         raise
     finally:
@@ -566,7 +568,7 @@ def test_meta_is_preserved_process() -> None:
     try:
         for i in range(10):
             ext = ExtensionNextState(f"state-{i}", i)
-            ext.start().wait_true(5)
+            assert ext.start().wait_true(5)
 
             extension.append(ext)
 
@@ -585,9 +587,360 @@ def test_meta_is_preserved_process() -> None:
         verify(pkt.buf)
 
         for ext in extension:
-            ext.stop().wait_false(5)
+            assert ext.stop().wait_false(5)
     except:
         raise
     finally:
         b.stop()
         assert not is_port_in_use(6712)
+
+
+class ExtensionPush(Extension):
+    def __init__(self, name: str, priority: int = 0, id: int = 0, delay: float | None = None) -> None:
+        super().__init__(
+            name=name,
+            interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)],
+            can_push=True,
+        )
+        self.delay = delay
+        self.id = id
+
+    def thread_1(self) -> None:
+        for i in range(100):
+            self.push(
+                PreparedPacket(
+                    NetPacket(type=NetType.TANK_PACKET, data=TankPacket(target_net_id=self.id, net_id=i)),
+                    DIRECTION_SERVER_TO_CLIENT,
+                    ENetPacketFlag.NONE,
+                )
+            )
+            if self.delay:
+                time.sleep(self.delay)
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        pass
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_push_pull() -> None:
+    queue: Queue[PreparedPacket | None] = Queue()
+    b = Broker(queue)
+    b.start()
+
+    try:
+        ext = ExtensionPush(f"push")
+        assert ext.start().wait_true(5)
+
+        for i in range(100):
+            pkt = queue.get()
+            if not pkt:
+                break
+
+            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.flags == ENetPacketFlag.NONE
+            assert pkt.as_net.tank.net_id == i
+
+        assert ext.stop().wait_false(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
+
+
+def test_push_pull_with_delay() -> None:
+    queue: Queue[PreparedPacket | None] = Queue()
+    b = Broker(queue)
+    b.start()
+
+    try:
+        ext = ExtensionPush(f"push", delay=0.01)
+        assert ext.start().wait_true(5)
+
+        for i in range(100):
+            pkt = queue.get()
+            if not pkt:
+                break
+
+            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.flags == ENetPacketFlag.NONE
+            assert pkt.as_net.tank.net_id == i
+
+        assert ext.stop().wait_false(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
+
+
+class ExtensionPushMulti(Extension):
+    def __init__(self, name: str, priority: int = 0, id: int = 0, id2: int = 0, delay1: float | None = None, delay2: float | None = None) -> None:
+        super().__init__(
+            name=name,
+            interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)],
+            can_push=True,
+        )
+        self.id = id
+        self.id2 = id2
+        self.delay1 = delay1
+        self.delay2 = delay2
+
+    def thread_1(self) -> None:
+        for i in range(100):
+            self.push(
+                PreparedPacket(
+                    NetPacket(type=NetType.TANK_PACKET, data=TankPacket(target_net_id=self.id, net_id=i)),
+                    DIRECTION_SERVER_TO_CLIENT,
+                    ENetPacketFlag.NONE,
+                )
+            )
+            if self.delay1:
+                time.sleep(self.delay1)
+
+    def thread_2(self) -> None:
+        for i in range(100):
+            self.push(
+                PreparedPacket(
+                    NetPacket(type=NetType.TANK_PACKET, data=TankPacket(target_net_id=self.id2, net_id=i)),
+                    DIRECTION_SERVER_TO_CLIENT,
+                    ENetPacketFlag.NONE,
+                )
+            )
+            if self.delay2:
+                time.sleep(self.delay2)
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        pass
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_push_pull_multi() -> None:
+    queue: Queue[PreparedPacket | None] = Queue()
+    b = Broker(queue)
+    b.start()
+
+    try:
+        ext = ExtensionPushMulti(f"push-multi", id=0, id2=1)
+        assert ext.start().wait_true(5)
+
+        n1 = iter(range(100))
+        n2 = iter(range(100))
+        for _ in range(200):
+            pkt = queue.get()
+            if not pkt:
+                break
+
+            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.flags == ENetPacketFlag.NONE
+            if pkt.as_net.tank.target_net_id == 0:
+                assert pkt.as_net.tank.net_id == next(n1)
+            elif pkt.as_net.tank.target_net_id == 1:
+                assert pkt.as_net.tank.net_id == next(n2)
+
+        with pytest.raises(StopIteration):
+            _ = next(n1)
+            _ = next(n2)
+
+        assert ext.stop().wait_false(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
+
+
+def test_push_pull_multi_one_delay() -> None:
+    queue: Queue[PreparedPacket | None] = Queue()
+    b = Broker(queue)
+    b.start()
+
+    try:
+        ext = ExtensionPushMulti(f"push-multi", id=0, id2=1, delay1=0.01)
+        assert ext.start().wait_true(5)
+
+        n1 = iter(range(100))
+        n2 = iter(range(100))
+        for _ in range(200):
+            pkt = queue.get()
+            if not pkt:
+                break
+
+            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.flags == ENetPacketFlag.NONE
+            if pkt.as_net.tank.target_net_id == 0:
+                assert pkt.as_net.tank.net_id == next(n1)
+            elif pkt.as_net.tank.target_net_id == 1:
+                assert pkt.as_net.tank.net_id == next(n2)
+
+        with pytest.raises(StopIteration):
+            _ = next(n1)
+            _ = next(n2)
+
+        assert ext.stop().wait_false(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
+
+
+def test_push_pull_multi_one_delay_the_other_one() -> None:
+    queue: Queue[PreparedPacket | None] = Queue()
+    b = Broker(queue)
+    b.start()
+
+    try:
+        ext = ExtensionPushMulti(f"push-multi", id=0, id2=1, delay2=0.01)
+        assert ext.start().wait_true(5)
+
+        n1 = iter(range(100))
+        n2 = iter(range(100))
+        for _ in range(200):
+            pkt = queue.get()
+            if not pkt:
+                break
+
+            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.flags == ENetPacketFlag.NONE
+            if pkt.as_net.tank.target_net_id == 0:
+                assert pkt.as_net.tank.net_id == next(n1)
+            elif pkt.as_net.tank.target_net_id == 1:
+                assert pkt.as_net.tank.net_id == next(n2)
+
+        with pytest.raises(StopIteration):
+            _ = next(n1)
+            _ = next(n2)
+
+        assert ext.stop().wait_false(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
+
+
+def test_push_pull_multi_both_delay() -> None:
+    queue: Queue[PreparedPacket | None] = Queue()
+    b = Broker(queue)
+    b.start()
+
+    try:
+        ext = ExtensionPushMulti(f"push-multi", id=0, id2=1, delay1=0.02, delay2=0.01)
+        assert ext.start().wait_true(5)
+
+        n1 = iter(range(100))
+        n2 = iter(range(100))
+        for _ in range(200):
+            pkt = queue.get()
+            if not pkt:
+                break
+
+            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.flags == ENetPacketFlag.NONE
+            if pkt.as_net.tank.target_net_id == 0:
+                assert pkt.as_net.tank.net_id == next(n1)
+            elif pkt.as_net.tank.target_net_id == 1:
+                assert pkt.as_net.tank.net_id == next(n2)
+
+        with pytest.raises(StopIteration):
+            _ = next(n1)
+            _ = next(n2)
+
+        assert ext.stop().wait_false(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
+
+
+def test_push_pull_multi_extension() -> None:
+    queue: Queue[PreparedPacket | None] = Queue()
+    b = Broker(queue)
+    b.start()
+
+    try:
+        ext = ExtensionPushMulti(f"push-1", id=0, id2=1)
+        assert ext.start().wait_true(5)
+
+        ext2 = ExtensionPush(f"push-2", id=2)
+        assert ext2.start().wait_true(5)
+
+        n = {
+            0: iter(range(100)),
+            1: iter(range(100)),
+            2: iter(range(100)),
+        }
+        for _ in range(300):
+            pkt = queue.get()
+            if not pkt:
+                break
+
+            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.flags == ENetPacketFlag.NONE
+            assert next(n[pkt.as_net.tank.target_net_id]) == pkt.as_net.tank.net_id
+
+        for _, v in n.items():
+            with pytest.raises(StopIteration):
+                _ = next(v)
+
+        assert ext.stop().wait_false(5)
+        assert ext2.stop().wait_false(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
+
+
+def test_push_pull_multi_extension_wih_delay() -> None:
+    queue: Queue[PreparedPacket | None] = Queue()
+    b = Broker(queue)
+    b.start()
+
+    try:
+        ext = ExtensionPushMulti(f"push-1", id=0, id2=1, delay1=0.01, delay2=0.02)
+        assert ext.start().wait_true(5)
+
+        ext2 = ExtensionPush(f"push-2", id=2, delay=0.03)
+        assert ext2.start().wait_true(5)
+
+        n = {
+            0: iter(range(100)),
+            1: iter(range(100)),
+            2: iter(range(100)),
+        }
+        for _ in range(300):
+            pkt = queue.get()
+            if not pkt:
+                break
+
+            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.flags == ENetPacketFlag.NONE
+            assert next(n[pkt.as_net.tank.target_net_id]) == pkt.as_net.tank.net_id
+
+        for i in n.values():
+            with pytest.raises(StopIteration):
+                _ = next(i)
+
+        assert ext.stop().wait_false(5)
+        assert ext2.stop().wait_false(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
+
