@@ -16,8 +16,8 @@ def call_function(fn_name: bytes, *args: Variant.Type) -> TankPacket:
     )
 
 
-def console_message(text: bytes) -> NetPacket:
-    call = call_function(b"OnConsoleMessage", Variant.vstr(text))
+def console_message(text: str | bytes) -> NetPacket:
+    call = call_function(b"OnConsoleMessage", Variant.vstr(text.encode() if isinstance(text, str) else text))
     call.net_id = 4294967295  # 2**32 - 1
 
     return NetPacket(NetType.TANK_PACKET, call)

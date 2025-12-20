@@ -1,4 +1,4 @@
-from queue import Queue
+from queue import Empty, Queue
 import socket
 import time
 from google.protobuf.any_pb2 import Any
@@ -82,10 +82,10 @@ def test_connect() -> None:
         assert ext.start().wait_true(5)
 
         assert len(b._extension_mgr._extensions) == 1
-        assert ext.connected.get()
+        assert ext.broker_connected.get()
         assert b._extension_mgr.get_extension(ext._name).id == ext._name
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
         assert len(b._extension_mgr._extensions) == 0
         with pytest.raises(KeyError):
             assert b._extension_mgr.get_extension(ext._name)
@@ -113,7 +113,7 @@ def test_connect_multi(request: pytest.FixtureRequest) -> None:
         for i, ext in enumerate(extensions, 1):
             assert b._extension_mgr.get_extension(ext._name).id == ext._name
 
-            assert ext.stop().wait_false(5)
+            assert ext.stop().wait_true(5)
             assert len(b._extension_mgr._extensions) == len(extensions) - i
 
             with pytest.raises(KeyError):
@@ -148,7 +148,7 @@ def test_process(request: pytest.FixtureRequest) -> None:
         assert net.tank.net_id == compute_state(1, 1)
         verify(pkt.buf)
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -183,7 +183,7 @@ def test_process_multi(request: pytest.FixtureRequest) -> None:
         assert net.tank.net_id == compute_state(1, 10)
         verify(pkt.buf)
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -214,7 +214,7 @@ def test_process_forward_not_modified(request: pytest.FixtureRequest) -> None:
         assert net.tank.net_id == 1
         verify(pkt.buf)
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -245,10 +245,10 @@ def test_broker_restart(request: pytest.FixtureRequest) -> None:
         verify(pkt.buf, key=1)
 
         b.stop()
-        assert ext.connected.wait_false(5)
+        assert ext.broker_connected.wait_false(5)
         b = Broker()
         b.start()
-        assert ext.connected.wait_true(5)
+        assert ext.broker_connected.wait_true(5)
 
         pkt = b.process_event(PreparedPacket(net, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
 
@@ -263,7 +263,7 @@ def test_broker_restart(request: pytest.FixtureRequest) -> None:
         assert net.tank.net_id == compute_state(compute_state(1, 1), 1)
         verify(pkt.buf, key=2)
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -323,8 +323,8 @@ def test_cancel() -> None:
         assert net.tank.net_id == 1
         verify(pkt.buf, key=2)
 
-        assert ext.stop().wait_false(5)
-        assert ext2.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
+        assert ext2.stop().wait_true(5)
     except:
         raise
     finally:
@@ -375,7 +375,7 @@ def test_finish() -> None:
         assert net.tank.int_x == 1
         verify(pkt.buf, key=1)
 
-        assert ext2.stop().wait_false(5)
+        assert ext2.stop().wait_true(5)
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=10))
         pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
@@ -391,8 +391,8 @@ def test_finish() -> None:
         assert net.tank.int_x == 0
         verify(pkt.buf, key=2)
 
-        assert ext.stop().wait_false(5)
-        assert ext3.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
+        assert ext3.stop().wait_true(5)
     except:
         raise
     finally:
@@ -472,7 +472,7 @@ def test_generic_text_query() -> None:
         pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
         assert pkt is None
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -504,7 +504,7 @@ def test_fast_drop_extension() -> None:
         assert net.serialize() == b"\x02\x00\x00\x00action|dialog_return\ndialog_name|drop_item\nitemID|1092|\ncount|12345\n\x00"
         verify(pkt.buf)
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -551,7 +551,7 @@ def test_meta_is_preserved_pass() -> None:
         verify(pkt.buf)
 
         for ext in extension:
-            assert ext.stop().wait_false(5)
+            assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -587,7 +587,7 @@ def test_meta_is_preserved_process() -> None:
         verify(pkt.buf)
 
         for ext in extension:
-            assert ext.stop().wait_false(5)
+            assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -600,7 +600,6 @@ class ExtensionPush(Extension):
         super().__init__(
             name=name,
             interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)],
-            can_push=True,
         )
         self.delay = delay
         self.id = id
@@ -642,7 +641,7 @@ def test_push_pull() -> None:
             assert pkt.flags == ENetPacketFlag.NONE
             assert pkt.as_net.tank.net_id == i
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -669,7 +668,7 @@ def test_push_pull_with_delay() -> None:
             assert pkt.flags == ENetPacketFlag.NONE
             assert pkt.as_net.tank.net_id == i
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -683,7 +682,6 @@ class ExtensionPushMulti(Extension):
         super().__init__(
             name=name,
             interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)],
-            can_push=True,
         )
         self.id = id
         self.id2 = id2
@@ -692,6 +690,7 @@ class ExtensionPushMulti(Extension):
 
     def thread_1(self) -> None:
         for i in range(100):
+            print(f"thread_1: {i} {self.broker_connected.get()}")
             self.push(
                 PreparedPacket(
                     NetPacket(type=NetType.TANK_PACKET, data=TankPacket(target_net_id=self.id, net_id=i)),
@@ -701,9 +700,11 @@ class ExtensionPushMulti(Extension):
             )
             if self.delay1:
                 time.sleep(self.delay1)
+            print(f"thread_1_end: {i}")
 
     def thread_2(self) -> None:
         for i in range(100):
+            print(f"thread_2: {i} {self.broker_connected.get()}")
             self.push(
                 PreparedPacket(
                     NetPacket(type=NetType.TANK_PACKET, data=TankPacket(target_net_id=self.id2, net_id=i)),
@@ -713,6 +714,7 @@ class ExtensionPushMulti(Extension):
             )
             if self.delay2:
                 time.sleep(self.delay2)
+            print(f"thread_2_end: {i}")
 
     def process(self, event: PendingPacket) -> PendingPacket | None:
         pass
@@ -748,7 +750,7 @@ def test_push_pull_multi() -> None:
             _ = next(n1)
             _ = next(n2)
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -784,7 +786,7 @@ def test_push_pull_multi_one_delay() -> None:
             _ = next(n1)
             _ = next(n2)
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -820,7 +822,7 @@ def test_push_pull_multi_one_delay_the_other_one() -> None:
             _ = next(n1)
             _ = next(n2)
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -856,7 +858,7 @@ def test_push_pull_multi_both_delay() -> None:
             _ = next(n1)
             _ = next(n2)
 
-        assert ext.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -895,8 +897,8 @@ def test_push_pull_multi_extension() -> None:
             with pytest.raises(StopIteration):
                 _ = next(v)
 
-        assert ext.stop().wait_false(5)
-        assert ext2.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
+        assert ext2.stop().wait_true(5)
     except:
         raise
     finally:
@@ -935,8 +937,8 @@ def test_push_pull_multi_extension_wih_delay() -> None:
             with pytest.raises(StopIteration):
                 _ = next(i)
 
-        assert ext.stop().wait_false(5)
-        assert ext2.stop().wait_false(5)
+        assert ext.stop().wait_true(5)
+        assert ext2.stop().wait_true(5)
     except:
         raise
     finally:
@@ -944,3 +946,50 @@ def test_push_pull_multi_extension_wih_delay() -> None:
         assert not is_port_in_use(6712)
         assert not is_port_in_use(b._pull_port)
 
+
+def test_push_pull_restart() -> None:
+    queue: Queue[PreparedPacket | None] = Queue()
+    b = Broker(queue)
+    b.start()
+
+    try:
+        ext = ExtensionNoOp(f"push-1")
+        assert ext.start().wait_true(5)
+
+        p = PreparedPacket(
+            NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1)),
+            DIRECTION_SERVER_TO_CLIENT,
+            ENetPacketFlag.NONE,
+        )
+
+        ext.push(p)
+        e = queue.get()
+        assert e
+        assert e.as_net.tank.net_id == p.as_net.tank.net_id
+        assert e.direction == p.direction
+        assert e.flags == p.flags
+
+        b.stop()
+        assert ext.connected.wait_false(5)
+        time.sleep(1)
+        b = Broker(queue)
+        b.start()
+        assert ext.connected.wait_true(5)
+
+        ext.push(p)
+        e = queue.get()
+        assert e
+        assert e.as_net.tank.net_id == p.as_net.tank.net_id
+        assert e.direction == p.direction
+        assert e.flags == p.flags
+
+        with pytest.raises(Empty):
+            queue.get_nowait()
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
