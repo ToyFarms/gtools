@@ -537,7 +537,7 @@ def test_counter_with_threshold() -> None:
     thread = threading.Thread(target=monitor)
     thread.start()
 
-    for i in range(15):
+    for _ in range(15):
         counter.update(lambda x: x + 1)
         time.sleep(0.01)
 

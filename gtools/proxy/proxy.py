@@ -1,4 +1,5 @@
 import logging
+import os
 from queue import Queue
 import threading
 import time
@@ -38,10 +39,16 @@ class Proxy:
         self.running = True
 
         self._event_queue: Queue[ProxyEvent | None] = Queue()
-        self._worker_thread: threading.Thread | None = None
+        self._worker_thread_id: threading.Thread | None = None
+        self._channel_thread_id: threading.Thread | None = None
+        self._worker_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._should_reconnect = threading.Event()
-        self.broker = Broker()
+
+        self._channel_queue: Queue[PreparedPacket | None] = Queue()
+        addr = f"tcp://127.0.0.1:{os.getenv('PORT', 6712)}"
+        self.broker = Broker(self._channel_queue, addr)
+        self.logger.debug(f"starting broker on {addr}")
         self.broker.start()
 
         self._last_event_time = -1
@@ -97,24 +104,32 @@ class Proxy:
 
         self.proxy_server.send(pkt.as_raw, pkt.flags)
 
-    def _handle(self, pkt: PreparedPacket) -> None:
-        res = self.broker.process_event(
-            pkt,
-            callback=PacketCallback(
-                send_to_server=lambda pkt: self._handle_client_to_server(pkt),
-                send_to_client=lambda pkt: self._handle_server_to_client(pkt),
-            ),
-        )
+    def _handle(self, pkt: PreparedPacket, *, fabricated: bool) -> None:
         modified = False
-        if res:
-            processed, cancelled = res
-            if not cancelled:
-                self.logger.debug(f"[original] packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
-                pkt = PreparedPacket.from_pending(processed)
-                self.logger.debug(f"[{processed._packet_id}] processed packet: hit={processed._hit_count} rtt={int.from_bytes(processed._rtt_ns) / 1e6}us")
-                modified = True
-            else:
-                self.logger.debug(f"[{processed._packet_id}] packet process cancelled")
+        if not fabricated:
+            try:
+                _pkt_replace: PreparedPacket | None = None
+                res = self.broker.process_event(
+                    pkt,
+                    callback=PacketCallback(
+                        send_to_server=lambda pkt: self._handle_client_to_server(pkt),
+                        send_to_client=lambda pkt: self._handle_server_to_client(pkt),
+                    ),
+                )
+                if res:
+                    processed, cancelled = res
+                    if not cancelled:
+                        self.logger.debug(f"[original] packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
+                        _pkt_replace = PreparedPacket.from_pending(processed)
+                        self.logger.debug(f"[{processed._packet_id}] processed packet: hit={processed._hit_count} rtt={int.from_bytes(processed._rtt_ns) / 1e6}us")
+                        modified = True
+                    else:
+                        self.logger.debug(f"[{processed._packet_id}] packet process cancelled")
+
+                if _pkt_replace:
+                    pkt = _pkt_replace
+            except Exception as e:
+                self.logger.error(f"process_event failed: {e}")
 
         self.logger.debug(f"{'[modified] ' if modified else ''}packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
         if pkt.as_net.type == NetType.TANK_PACKET:
@@ -140,8 +155,8 @@ class Proxy:
             self._handle_server_to_client(pkt)
 
     def disconnect_all(self) -> None:
-        self.proxy_client.disconnect()
-        self.proxy_server.disconnect()
+        self.proxy_client.disconnect_now()
+        self.proxy_server.disconnect_now()
 
         if self.proxy_server.peer:
             self.logger.debug("waiting for proxy_server to disconnect...")
@@ -160,40 +175,72 @@ class Proxy:
                 self._event_queue.task_done()
                 continue
 
-            self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
-            event = proxy_event.inner
+            with self._worker_lock:
+                self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
+                event = proxy_event.inner
 
-            if proxy_event.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
-                self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({event.packet.flags!r}):")
-            elif proxy_event.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
-                self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({event.packet.flags!r}):")
+                if proxy_event.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
+                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({event.packet.flags!r}):")
+                elif proxy_event.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
+                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({event.packet.flags!r}):")
 
-            if event.type == ENetEventType.DISCONNECT:
-                self._should_reconnect.set()
+                if event.type == ENetEventType.DISCONNECT:
+                    self._should_reconnect.set()
 
-            self.logger.debug(f"\t{ENetEventType(event.type)!r}")
-            if event.type == ENetEventType.RECEIVE and event.packet.data:
-                self._handle(
-                    PreparedPacket(
-                        packet=event.packet.data,
-                        direction=proxy_event.direction,
-                        flags=event.packet.flags,
+                self.logger.debug(f"\t{ENetEventType(event.type)!r}")
+                if event.type == ENetEventType.RECEIVE and event.packet.data:
+                    self._handle(
+                        PreparedPacket(
+                            packet=event.packet.data,
+                            direction=proxy_event.direction,
+                            flags=event.packet.flags,
+                        ),
+                        fabricated=False,
                     )
-                )
-                self._dump_packet(event.packet.data)
+                    self._dump_packet(event.packet.data)
 
-            print()
+                print()
 
-            self._last_event_time = time.monotonic()
+                self._last_event_time = time.monotonic()
+
             self._event_queue.task_done()
 
         self.logger.debug("packet worker thread exited")
 
+    def _channel_worker(self) -> None:
+        while not self._stop_event.is_set():
+            pkt = self._channel_queue.get()
+            if pkt is None:
+                self._channel_queue.task_done()
+                continue
+
+            with self._worker_lock:
+                self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
+
+                if pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
+                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client[fabricated] ({pkt.flags!r}):")
+                elif pkt.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
+                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server[fabricated] ({pkt.flags!r}):")
+
+                self._handle(pkt, fabricated=True)
+                self._dump_packet(pkt.as_raw)
+                print()
+
+                self._last_event_time = time.monotonic()
+
+            self._channel_queue.task_done()
+
+        self.logger.debug("channel worker thread exited")
+
     def run(self) -> None:
         self.logger.info("proxy running")
-        if self._worker_thread is None:
-            self._worker_thread = threading.Thread(target=self._worker)
-            self._worker_thread.start()
+        if self._worker_thread_id is None:
+            self._worker_thread_id = threading.Thread(target=self._worker)
+            self._worker_thread_id.start()
+
+        if self._channel_thread_id is None:
+            self._channel_thread_id = threading.Thread(target=self._channel_worker)
+            self._channel_thread_id.start()
 
         try:
             while True:
@@ -249,4 +296,6 @@ class Proxy:
 
                 self._stop_event.set()
                 self._event_queue.put(None)
-                self._worker_thread.join()
+                self._worker_thread_id.join()
+                self._channel_queue.put(None)
+                self._channel_thread_id.join()

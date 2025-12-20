@@ -7,19 +7,20 @@ import random
 import threading
 import time
 from typing import Any, Callable, Iterator, cast
+from urllib.parse import urlparse
 import zmq
 import xxhash
 
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
+from gtools.core.signal import Signal
 from gtools.flags import BENCHMARK, PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_UNSPECIFIED,
     CapabilityRequest,
-    ChannelIpResponse,
     Packet,
     Interest,
     InterestType,
@@ -30,7 +31,6 @@ from gtools.protogen.extension_pb2 import (
 from gtools.protogen.op_pb2 import Op
 from gtools.protogen.strkv_pb2 import FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field
-from gtools.proxy.extension.common import Waitable
 
 
 def hash_interest(interest: Interest) -> int:
@@ -369,20 +369,21 @@ class Broker:
 
         self._stop_event = threading.Event()
         self._worker_thread_id: threading.Thread | None = None
-        self.extension_len: Waitable[int] = Waitable(0)
+        self.extension_len = Signal(0)
 
         self._pull_queue = pull_queue
-        if self._pull_queue:
-            self._pull_socket = self._context.socket(zmq.PULL)
-            self._pull_socket.setsockopt(zmq.LINGER, 0)
-            self._pull_host = "127.0.0.1"
-            self._pull_port = self._pull_socket.bind_to_random_port(f"tcp://{self._pull_host}")
+        self._pull_socket = self._context.socket(zmq.PULL)
+        self._pull_socket.setsockopt(zmq.LINGER, 0)
 
-            self.logger.debug(f"broker have push/pull capability, channel=tcp://{self._pull_host}:{self._pull_port}. starting pull thread...")
+        _addr = urlparse(addr)
+        _addr = _addr._replace(netloc=f"{_addr.hostname}:{(_addr.port or 18192) + 1}")
+        self._pull_socket.bind(_addr.geturl())
+        self._pull_port = cast(int, _addr.port)
 
-            self._pull_thread_id = threading.Thread(target=self._pull_thread)
-            self._pull_thread_id.start()
-            # TODO: make it send None on stop()
+        self.logger.debug(f"broker have push/pull capability, channel={_addr.geturl()}. starting pull thread...")
+
+        self._pull_thread_id = threading.Thread(target=self._pull_thread)
+        self._pull_thread_id.start()
 
     def _pull(self) -> PreparedPacket | None:
         if self._stop_event.is_set():
@@ -417,12 +418,15 @@ class Broker:
             prev_i = 0
             elapsed_total = 0
 
-            while not self._stop_event.is_set() and self._pull_queue:
+            while not self._stop_event.is_set():
                 pkt = self._pull()
                 if not pkt:
                     continue
 
-                self._pull_queue.put(pkt)
+                if self._pull_queue:
+                    self._pull_queue.put(pkt)
+                else:
+                    self.logger.debug(f"pull unhandled: {pkt}")
 
                 elapsed_total += time.monotonic_ns() - _last
                 if elapsed_total >= 1e9:
@@ -432,15 +436,16 @@ class Broker:
                 i += 1
                 _last = time.monotonic_ns()
         else:
-            while not self._stop_event.is_set() and self._pull_queue:
+            while not self._stop_event.is_set():
                 pkt = self._pull()
                 if not pkt:
                     continue
 
-                self._pull_queue.put(pkt)
+                if self._pull_queue:
+                    self._pull_queue.put(pkt)
+                else:
+                    self.logger.debug(f"pull unhandled: {pkt}")
 
-        if self._pull_queue:
-            self._pull_queue.put(None)
         self.logger.debug("pull thread exiting")
 
     def _recv(self) -> tuple[bytes, Packet | None]:
@@ -659,9 +664,12 @@ class Broker:
             self._worker_thread_id.join(timeout=2.0)
             self.logger.debug("worker thread exited")
 
+        if self._pull_thread_id and self._pull_thread_id.is_alive():
+            self._pull_thread_id.join(timeout=2.0)
+            self.logger.debug("pull thread exited")
+
         try:
             self.logger.debug("closing zmq context")
-            # self._context.term()
             self._context.destroy(linger=0)
         except Exception as e:
             self.logger.debug(f"context term error: {e}")
@@ -705,6 +713,7 @@ class Broker:
         del self._pending_packet[pending.current._packet_id]
 
     def _handle_packet(self, pkt: PendingPacket) -> None:
+        assert pkt._packet_id, "invalid packet id"
         if (chain := self._pending_chain.get(pkt._packet_id)) is not None:
             match pkt._op:
                 case PendingPacket.OP_FINISH:
@@ -769,13 +778,6 @@ class Broker:
                                 f"\tpacket={self._pending_packet}\n",
                             )
                         self._handle_packet(pkt.pending_packet)
-                    case Packet.TYPE_CHANNEL_IP_REQUEST:
-                        if self._pull_queue:
-                            self._send(
-                                id, Packet(type=Packet.TYPE_CHANNEL_IP_RESPONSE, channel_ip_response=ChannelIpResponse(protocol="tcp", host=self._pull_host, port=self._pull_port))
-                            )
-                        else:
-                            self.logger.warning(f"extension {id} is requesting channel, but broker does not have the capability for it")
         except (KeyboardInterrupt, InterruptedError):
             pass
         except zmq.error.ZMQError as e:

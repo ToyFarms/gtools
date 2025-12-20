@@ -10,6 +10,8 @@ from gtools.core.utils.network import resolve_doh
 from gtools.proxy.event import UpdateServerData
 from gtools.proxy.setting import _setting
 
+# TODO: rename file to server_data.py
+
 
 class ProxyHandler(BaseHTTPRequestHandler):
     logger = logging.getLogger("http_proxy")
@@ -30,14 +32,23 @@ class ProxyHandler(BaseHTTPRequestHandler):
         context.check_hostname = False
         context.verify_mode = ssl.VerifyMode.CERT_NONE
 
-        conn = http.client.HTTPSConnection(
-            resolve_doh(_setting.server_data_url)[0], context=context
-        )
+        conn = http.client.HTTPSConnection(resolve_doh(_setting.server_data_url)[0], context=context)
         conn.request("POST", "/growtopia/server_data.php", body, headers)
 
         resp = conn.getresponse()
         body = resp.read()
         kv = StrKV.deserialize(body)
+        self.logger.debug(f"server_data response: {kv}")
+        if "maint" in kv:
+            self.logger.info("server is in maintenance")
+
+            self.send_response(resp.status)
+            for k, v in resp.headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+
+            return
 
         orig_server = kv["server", 1].decode()
         orig_port = int(kv["port", 1].decode())

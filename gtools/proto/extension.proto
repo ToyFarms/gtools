@@ -14,8 +14,6 @@ message Packet {
     TYPE_DISCONNECT = 5;
     TYPE_CONNECTED = 6;
     TYPE_PENDING_PACKET = 7;
-    TYPE_CHANNEL_IP_REQUEST = 8;
-    TYPE_CHANNEL_IP_RESPONSE = 9;
   }
 
   Type type = 1;
@@ -27,8 +25,6 @@ message Packet {
     Disconnect disconnect = 6;
     Connected connected = 7;
     PendingPacket pending_packet = 8;
-    ChannelIpRequest channel_ip_request = 9;
-    ChannelIpResponse channel_ip_response = 10;
   }
 }
 
@@ -61,13 +57,6 @@ message PendingPacket {
   uint32 _hit_count = 6;
   bytes _rtt_ns = 7;
   uint32 interest_id = 8;
-}
-
-message ChannelIpRequest {}
-message ChannelIpResponse {
-  string protocol = 1;
-  string host = 2;
-  uint32 port = 3;
 }
 
 enum InterestType {

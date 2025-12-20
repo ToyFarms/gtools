@@ -12,13 +12,13 @@ class Signal[T]:
         self._dependencies: tuple[Signal, ...] = ()
         self._dependents: list[Signal] = []
 
-    @classmethod
-    def derive(cls, derive_fn: Callable[[], T], *dependencies: "Signal") -> "Signal[T]":
+    @staticmethod
+    def derive[U](derive_fn: Callable[[], U], *dependencies: "Signal") -> "Signal[U]":
         if not dependencies:
             raise ValueError("derived signal must have at least one dependency")
 
         initial = derive_fn()
-        signal = cls(initial)
+        signal = Signal(initial)
         signal._is_derived = True
         signal._derive_fn = derive_fn
         signal._dependencies = dependencies
