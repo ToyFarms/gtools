@@ -125,6 +125,7 @@ class Proxy:
                         modified = True
                     else:
                         self.logger.debug(f"[{processed._packet_id}] packet process cancelled")
+                        return
 
                 if _pkt_replace:
                     pkt = _pkt_replace
