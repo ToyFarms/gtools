@@ -1,3 +1,16 @@
+[project]
+name = "gtools"
+version = "0.0.1"
+description = "general tools related to the game growtopia"
+readme = "README"
+dependencies = [
+    "cbor2>=5.7.1",
+    "protobuf>=6.33.2",
+    "pyglm>=2.8.3",
+    "xxhash>=3.6.0",
+    "zmq>=0.0.0",
+]
+
 [tools.pyright]
 include = "gtools"
 
