@@ -4,21 +4,28 @@ from urllib.parse import urlparse
 import os
 import threading
 import traceback
+from pyglm.glm import ivec2, vec2
+from google.protobuf.any_pb2 import Any
+from typing import Any as TAny
 import zmq
 import logging
 import time
 from zmq.utils.monitor import recv_monitor_message
 
+from gtools.core.growtopia.create import console_message, particle
 from gtools.core.growtopia.packet import PreparedPacket
 from gtools.core.signal import Signal
 from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
-    DIRECTION_UNSPECIFIED,
+    DIRECTION_SERVER_TO_CLIENT,
     CapabilityResponse,
     Packet,
     Interest,
     PendingPacket,
 )
+from gtools.protogen.op_pb2 import BinOp, Op
+from gtools.protogen.tank_pb2 import Field, FieldValue
+from gtools.proxy.state import State, Status
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -57,6 +64,7 @@ class Extension(ABC):
         self.disconnected = Signal.derive(lambda: (not self.broker_connected.get()) and (not self.push_connected.get()), self.broker_connected, self.push_connected)
 
         self._job_threads: dict[str, threading.Thread] = {}
+        self.state = State()
 
     # NOTE: because we set linger to 0, any messages queued when broker restarts will be dropped.
     # so either each extension needs to know the connectivity states, so it can reset it states as to not
@@ -65,6 +73,7 @@ class Extension(ABC):
     def push(self, pkt: PreparedPacket) -> None:
         self.push_connected.wait_true()
         # NOTE: to_pending().SerializeToString() makes us go from 1.5m to 500k packet/s,
+        # AND hooking with the whole infra pushed it to 50k packet/s.
         # is that normal? its still way overkill for this use case,
         # but i might want to start thinking switching capnproto and shared memory ring buffer,
         # just for the fun of it
@@ -298,6 +307,7 @@ class Extension(ABC):
                         self._send(Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=response))
                     case Packet.TYPE_CONNECTED:
                         self.broker_connected.set(True)
+                        self._send(Packet(type=Packet.TYPE_STATE_REQUEST))
                     case Packet.TYPE_DISCONNECT:
                         self.broker_connected.set(False)
                         self.push_connected.set(False)
@@ -312,8 +322,165 @@ class Extension(ABC):
                                 ),
                             )
                         )
+                    case Packet.TYPE_STATE_RESPONSE:
+                        print(pkt.state_response.state)
+                        self.state = State.from_proto(pkt.state_response.state)
+                        if self.state.status == Status.IN_WORLD:
+                            self.console_log(f"extension {self._name} connected")
+                    case Packet.TYPE_STATE_UPDATE:
+                        self.state.update(pkt.state_update)
         except zmq.error.ZMQError as e:
             if not self._stop_event.get():
                 self.logger.debug(f"ZMQ error in main loop: {e}")
         finally:
             self.logger.debug("worker thread exiting")
+
+    # helper
+
+    def any(self, obj: object) -> Any:
+        ret = Any()
+        ret.Pack(obj)
+
+        return ret
+
+    class Type:
+        x: TAny
+        name: str
+
+        def make(self) -> dict[str, TAny]:
+            return {self.name: self.x}
+
+    class uint32_t(Type):
+        def __init__(self, x: int) -> None:
+            self.x = x
+            self.name = "u32"
+
+    class int32_t(Type):
+        def __init__(self, x: int) -> None:
+            self.x = x
+            self.name = "i32"
+
+    class float_t(Type):
+        def __init__(self, x: float) -> None:
+            self.x = x
+            self.name = "flt"
+
+    class string_t(Type):
+        def __init__(self, x: str) -> None:
+            self.x = x
+            self.name = "str"
+
+    class bytes_t(Type):
+        def __init__(self, x: bytes) -> None:
+            self.x = x
+            self.name = "buf"
+
+    class TankFieldSelector:
+        def __init__(self, lvalue: Any) -> None:
+            self.lvalue = lvalue
+
+        def _binop(self, other: "Extension.Type", op: Op) -> BinOp:
+            return BinOp(
+                lvalue=self.lvalue,
+                op=op,
+                **other.make(),
+            )
+
+        def __eq__(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_EQ)
+
+        def __ne__(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_NEQ)
+
+        def __gt__(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_GT)
+
+        def __ge__(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_GTE)
+
+        def __lt__(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_LT)
+
+        def __le__(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_LTE)
+
+        def eq_eps(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_EQ_EPS)
+
+        def bit_test(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_BIT_TEST)
+
+    @property
+    def tank_type(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_TYPE)))
+
+    @property
+    def tank_object_type(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_OBJECT_TYPE)))
+
+    @property
+    def tank_jump_count(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_JUMP_COUNT)))
+
+    @property
+    def tank_animation_type(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_ANIMATION_TYPE)))
+
+    @property
+    def tank_net_id(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_NET_ID)))
+
+    @property
+    def tank_target_net_id(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_TARGET_NET_ID)))
+
+    @property
+    def tank_flags(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_FLAGS)))
+
+    @property
+    def tank_float_var(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_FLOAT_VAR)))
+
+    @property
+    def tank_value(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VALUE)))
+
+    @property
+    def tank_vector_x(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VECTOR_X)))
+
+    @property
+    def tank_vector_y(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VECTOR_Y)))
+
+    @property
+    def tank_vector_x2(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VECTOR_X2)))
+
+    @property
+    def tank_vector_y2(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VECTOR_Y2)))
+
+    @property
+    def tank_particle_rotation(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_PARTICLE_ROTATION)))
+
+    @property
+    def tank_int_x(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_INT_X)))
+
+    @property
+    def tank_int_y(self) -> TankFieldSelector:
+        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_INT_Y)))
+
+    def console_log(self, msg: str) -> None:
+        self.push(PreparedPacket(console_message(msg), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
+
+    def send_particle(self, id: int, *, abs: vec2 | None = None, tile: ivec2 | None = None) -> None:
+        pos = abs if abs else tile * 32 + 16 if tile else None
+        pos = abs if abs else (tile[0] * 32.0 + 16, tile[1] * 32.0 + 16) if tile else None
+        if not pos:
+            return
+
+        self.push(PreparedPacket(particle(id, pos[0], pos[1]), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))

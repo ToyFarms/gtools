@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import any_pb2 as google_dot_protobuf_dot_any__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x08op.proto\x12\tgtools.op\x1a\x19google/protobuf/any.proto\"\x9d\x01\n\x05\x42inOp\x12$\n\x06lvalue\x18\x01 \x01(\x0b\x32\x14.google.protobuf.Any\x12\x19\n\x02op\x18\x03 \x01(\x0e\x32\r.gtools.op.Op\x12\r\n\x03u32\x18\x04 \x01(\rH\x00\x12\r\n\x03i32\x18\x05 \x01(\x05H\x00\x12\r\n\x03\x66lt\x18\x06 \x01(\x02H\x00\x12\r\n\x03str\x18\x07 \x01(\tH\x00\x12\r\n\x03\x62uf\x18\x08 \x01(\x0cH\x00\x42\x08\n\x06rvalue*l\n\x02Op\x12\x12\n\x0eOP_UNSPECIFIED\x10\x00\x12\t\n\x05OP_EQ\x10\x01\x12\r\n\tOP_EQ_EPS\x10\x02\x12\n\n\x06OP_NEQ\x10\x03\x12\t\n\x05OP_GT\x10\x04\x12\n\n\x06OP_GTE\x10\x05\x12\t\n\x05OP_LT\x10\x06\x12\n\n\x06OP_LTE\x10\x07\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x08op.proto\x12\tgtools.op\x1a\x19google/protobuf/any.proto\"\x9d\x01\n\x05\x42inOp\x12$\n\x06lvalue\x18\x01 \x01(\x0b\x32\x14.google.protobuf.Any\x12\x19\n\x02op\x18\x03 \x01(\x0e\x32\r.gtools.op.Op\x12\r\n\x03u32\x18\x04 \x01(\rH\x00\x12\r\n\x03i32\x18\x05 \x01(\x05H\x00\x12\r\n\x03\x66lt\x18\x06 \x01(\x02H\x00\x12\r\n\x03str\x18\x07 \x01(\tH\x00\x12\r\n\x03\x62uf\x18\x08 \x01(\x0cH\x00\x42\x08\n\x06rvalue*}\n\x02Op\x12\x12\n\x0eOP_UNSPECIFIED\x10\x00\x12\t\n\x05OP_EQ\x10\x01\x12\r\n\tOP_EQ_EPS\x10\x02\x12\n\n\x06OP_NEQ\x10\x03\x12\t\n\x05OP_GT\x10\x04\x12\n\n\x06OP_GTE\x10\x05\x12\t\n\x05OP_LT\x10\x06\x12\n\n\x06OP_LTE\x10\x07\x12\x0f\n\x0bOP_BIT_TEST\x10\x08\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,7 +33,7 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'op_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_OP']._serialized_start=210
-  _globals['_OP']._serialized_end=318
+  _globals['_OP']._serialized_end=335
   _globals['_BINOP']._serialized_start=51
   _globals['_BINOP']._serialized_end=208
 # @@protoc_insertion_point(module_scope)

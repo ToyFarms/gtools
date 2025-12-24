@@ -1,6 +1,7 @@
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
-from typing import ClassVar as _ClassVar
+from google.protobuf import message as _message
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -42,3 +43,9 @@ TANK_FIELD_PARTICLE_ROTATION: Field
 TANK_FIELD_INT_X: Field
 TANK_FIELD_INT_Y: Field
 TANK_FIELD_EXTENDED_LEN: Field
+
+class FieldValue(_message.Message):
+    __slots__ = ()
+    V_FIELD_NUMBER: _ClassVar[int]
+    v: Field
+    def __init__(self, v: _Optional[_Union[Field, str]] = ...) -> None: ...

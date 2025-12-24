@@ -24,13 +24,15 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\ntank.proto\x12\x11gtools.tank.query*\xda\x03\n\x05\x46ield\x12\x1a\n\x16TANK_FIELD_UNSPECIFIED\x10\x00\x12\x13\n\x0fTANK_FIELD_TYPE\x10\x01\x12\x1a\n\x16TANK_FIELD_OBJECT_TYPE\x10\x02\x12\x19\n\x15TANK_FIELD_JUMP_COUNT\x10\x03\x12\x1d\n\x19TANK_FIELD_ANIMATION_TYPE\x10\x04\x12\x15\n\x11TANK_FIELD_NET_ID\x10\x05\x12\x1c\n\x18TANK_FIELD_TARGET_NET_ID\x10\x06\x12\x14\n\x10TANK_FIELD_FLAGS\x10\x07\x12\x18\n\x14TANK_FIELD_FLOAT_VAR\x10\x08\x12\x14\n\x10TANK_FIELD_VALUE\x10\t\x12\x17\n\x13TANK_FIELD_VECTOR_X\x10\n\x12\x17\n\x13TANK_FIELD_VECTOR_Y\x10\x0b\x12\x18\n\x14TANK_FIELD_VECTOR_X2\x10\x0c\x12\x18\n\x14TANK_FIELD_VECTOR_Y2\x10\r\x12 \n\x1cTANK_FIELD_PARTICLE_ROTATION\x10\x0e\x12\x14\n\x10TANK_FIELD_INT_X\x10\x0f\x12\x14\n\x10TANK_FIELD_INT_Y\x10\x10\x12\x1b\n\x17TANK_FIELD_EXTENDED_LEN\x10\x11\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\ntank.proto\x12\x11gtools.tank.query\"1\n\nFieldValue\x12#\n\x01v\x18\x01 \x01(\x0e\x32\x18.gtools.tank.query.Field*\xda\x03\n\x05\x46ield\x12\x1a\n\x16TANK_FIELD_UNSPECIFIED\x10\x00\x12\x13\n\x0fTANK_FIELD_TYPE\x10\x01\x12\x1a\n\x16TANK_FIELD_OBJECT_TYPE\x10\x02\x12\x19\n\x15TANK_FIELD_JUMP_COUNT\x10\x03\x12\x1d\n\x19TANK_FIELD_ANIMATION_TYPE\x10\x04\x12\x15\n\x11TANK_FIELD_NET_ID\x10\x05\x12\x1c\n\x18TANK_FIELD_TARGET_NET_ID\x10\x06\x12\x14\n\x10TANK_FIELD_FLAGS\x10\x07\x12\x18\n\x14TANK_FIELD_FLOAT_VAR\x10\x08\x12\x14\n\x10TANK_FIELD_VALUE\x10\t\x12\x17\n\x13TANK_FIELD_VECTOR_X\x10\n\x12\x17\n\x13TANK_FIELD_VECTOR_Y\x10\x0b\x12\x18\n\x14TANK_FIELD_VECTOR_X2\x10\x0c\x12\x18\n\x14TANK_FIELD_VECTOR_Y2\x10\r\x12 \n\x1cTANK_FIELD_PARTICLE_ROTATION\x10\x0e\x12\x14\n\x10TANK_FIELD_INT_X\x10\x0f\x12\x14\n\x10TANK_FIELD_INT_Y\x10\x10\x12\x1b\n\x17TANK_FIELD_EXTENDED_LEN\x10\x11\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'tank_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_FIELD']._serialized_start=34
-  _globals['_FIELD']._serialized_end=508
+  _globals['_FIELD']._serialized_start=85
+  _globals['_FIELD']._serialized_end=559
+  _globals['_FIELDVALUE']._serialized_start=33
+  _globals['_FIELDVALUE']._serialized_end=82
 # @@protoc_insertion_point(module_scope)

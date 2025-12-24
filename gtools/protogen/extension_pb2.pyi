@@ -1,4 +1,6 @@
 import op_pb2 as _op_pb2
+import growtopia_pb2 as _growtopia_pb2
+import state_pb2 as _state_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -68,6 +70,7 @@ class InterestType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     INTEREST_PVE_NPC_POSITION_UPDATE: _ClassVar[InterestType]
     INTEREST_SET_EXTRA_MODS: _ClassVar[InterestType]
     INTEREST_ON_STEP_TILE_MOD: _ClassVar[InterestType]
+    INTEREST_STATE_UPDATE: _ClassVar[InterestType]
 
 class Direction(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -138,6 +141,7 @@ INTEREST_PVE_APPLY_PLAYER_DAMAGE: InterestType
 INTEREST_PVE_NPC_POSITION_UPDATE: InterestType
 INTEREST_SET_EXTRA_MODS: InterestType
 INTEREST_ON_STEP_TILE_MOD: InterestType
+INTEREST_STATE_UPDATE: InterestType
 DIRECTION_UNSPECIFIED: Direction
 DIRECTION_CLIENT_TO_SERVER: Direction
 DIRECTION_SERVER_TO_CLIENT: Direction
@@ -157,6 +161,9 @@ class Packet(_message.Message):
         TYPE_DISCONNECT: _ClassVar[Packet.Type]
         TYPE_CONNECTED: _ClassVar[Packet.Type]
         TYPE_PENDING_PACKET: _ClassVar[Packet.Type]
+        TYPE_STATE_REQUEST: _ClassVar[Packet.Type]
+        TYPE_STATE_RESPONSE: _ClassVar[Packet.Type]
+        TYPE_STATE_UPDATE: _ClassVar[Packet.Type]
     TYPE_UNSPECIFIED: Packet.Type
     TYPE_HANDSHAKE: Packet.Type
     TYPE_HANDSHAKE_ACK: Packet.Type
@@ -165,6 +172,9 @@ class Packet(_message.Message):
     TYPE_DISCONNECT: Packet.Type
     TYPE_CONNECTED: Packet.Type
     TYPE_PENDING_PACKET: Packet.Type
+    TYPE_STATE_REQUEST: Packet.Type
+    TYPE_STATE_RESPONSE: Packet.Type
+    TYPE_STATE_UPDATE: Packet.Type
     TYPE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_ACK_FIELD_NUMBER: _ClassVar[int]
@@ -173,6 +183,9 @@ class Packet(_message.Message):
     DISCONNECT_FIELD_NUMBER: _ClassVar[int]
     CONNECTED_FIELD_NUMBER: _ClassVar[int]
     PENDING_PACKET_FIELD_NUMBER: _ClassVar[int]
+    STATE_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    STATE_RESPONSE_FIELD_NUMBER: _ClassVar[int]
+    STATE_UPDATE_FIELD_NUMBER: _ClassVar[int]
     type: Packet.Type
     handshake: Handshake
     handshake_ack: HandshakeAck
@@ -181,7 +194,10 @@ class Packet(_message.Message):
     disconnect: Disconnect
     connected: Connected
     pending_packet: PendingPacket
-    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., pending_packet: _Optional[_Union[PendingPacket, _Mapping]] = ...) -> None: ...
+    state_request: StateRequest
+    state_response: StateResponse
+    state_update: _state_pb2.StateUpdate
+    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., pending_packet: _Optional[_Union[PendingPacket, _Mapping]] = ..., state_request: _Optional[_Union[StateRequest, _Mapping]] = ..., state_response: _Optional[_Union[StateResponse, _Mapping]] = ..., state_update: _Optional[_Union[_state_pb2.StateUpdate, _Mapping]] = ...) -> None: ...
 
 class Handshake(_message.Message):
     __slots__ = ()
@@ -242,6 +258,16 @@ class PendingPacket(_message.Message):
     _rtt_ns: bytes
     interest_id: int
     def __init__(self, _op: _Optional[_Union[PendingPacket.Op, str]] = ..., _packet_id: _Optional[bytes] = ..., buf: _Optional[bytes] = ..., packet_flags: _Optional[int] = ..., direction: _Optional[_Union[Direction, str]] = ..., _hit_count: _Optional[int] = ..., _rtt_ns: _Optional[bytes] = ..., interest_id: _Optional[int] = ...) -> None: ...
+
+class StateRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class StateResponse(_message.Message):
+    __slots__ = ()
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    state: _growtopia_pb2.State
+    def __init__(self, state: _Optional[_Union[_growtopia_pb2.State, _Mapping]] = ...) -> None: ...
 
 class Interest(_message.Message):
     __slots__ = ()
@@ -419,190 +445,296 @@ class InterestClientLogResponse(_message.Message):
 
 class InterestState(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestCallFunction(_message.Message):
     __slots__ = ()
+    WHERE_FIELD_NUMBER: _ClassVar[int]
     FN_NAME_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
     fn_name: bytes
-    def __init__(self, fn_name: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ..., fn_name: _Optional[bytes] = ...) -> None: ...
 
 class InterestUpdateStatus(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestTileChangeRequest(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendMapData(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendTileUpdateData(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendTileUpdateDataMultiple(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestTileActivateRequest(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestTileApplyDamage(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendInventoryState(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestItemActivateRequest(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestItemActivateObjectRequest(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendTileTreeState(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestModifyItemInventory(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestItemChangeObject(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendLock(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendItemDatabaseData(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendParticleEffect(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSetIconState(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestItemEffect(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSetCharacterState(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestPingReply(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestPingRequest(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestGotPunched(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestAppCheckResponse(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestAppIntegrityFail(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestDisconnect(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestBattleJoin(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestBattleEvent(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestUseDoor(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendParental(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestGoneFishin(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSteam(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestPetBattle(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestNpc(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSpecial(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendParticleEffectV2(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestActivateArrowToItem(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSelectTileIndex(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSendPlayerTributeData(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestFtueSetItemToQuickInventory(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestPveNpc(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestPvpCardBattle(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestPveApplyPlayerDamage(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestPveNpcPositionUpdate(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestSetExtraMods(_message.Message):
     __slots__ = ()
-    def __init__(self) -> None: ...
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestOnStepTileMod(_message.Message):
+    __slots__ = ()
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
+
+class InterestMy(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class InterestWorld(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class InterestOtherPlayer(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...

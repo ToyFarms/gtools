@@ -22,3 +22,8 @@ enum Field {
   TANK_FIELD_INT_Y = 16;
   TANK_FIELD_EXTENDED_LEN = 17;
 }
+
+// you need to do this shit because any doesnt work with enum
+message FieldValue {
+  Field v = 1;
+}

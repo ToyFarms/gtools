@@ -1,3 +1,4 @@
+import ctypes
 import logging
 import os
 from queue import Queue
@@ -5,18 +6,50 @@ import threading
 import time
 import traceback
 from typing import Generator, NamedTuple, cast
+
+from pyglm.glm import ivec2
+from gtools.core.async_writer import write_async
+from gtools.core.buffer import Buffer
 from gtools.core.eventbus import listen
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
+from gtools.core.growtopia.world import Tile
+from gtools.core.limits import UINT32_MAX
 from gtools.core.utils.block_sigint import block_sigint
+from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet, StateResponse
+from gtools.protogen import growtopia_pb2
+from gtools.protogen.state_pb2 import (
+    STATE_ENTER_WORLD,
+    STATE_EXIT_WORLD,
+    STATE_MODIFY_INVENTORY,
+    STATE_MODIFY_ITEM,
+    STATE_MODIFY_WORLD,
+    STATE_PLAYER_JOIN,
+    STATE_PLAYER_LEAVE,
+    STATE_PLAYER_UPDATE_POS,
+    STATE_SEND_INVENTORY,
+    STATE_SET_MY_PLAYER,
+    STATE_SET_MY_RANGE,
+    STATE_SET_MY_TELEMETRY,
+    STATE_UPDATE_STATUS,
+    EnterWorld,
+    ModifyInventory,
+    ModifyItem,
+    ModifyWorld,
+    PlayerUpdatePos,
+    SetMyRange,
+    SetMyTelemetry,
+    StateUpdate,
+)
 from gtools.proxy.enet import PyENetEvent
 from gtools.proxy.event import UpdateServerData
-from gtools.proxy.extension.broker import Broker, PacketCallback
+from gtools.proxy.extension.broker import Broker, BrokerFunction, PacketCallback
 from gtools.proxy.proxy_client import ProxyClient
 from gtools.proxy.proxy_server import ProxyServer
 from gtools.proxy.setting import _setting
-from thirdparty.enet.bindings import ENetEventType
+from gtools.proxy.state import Inventory, State, Status, World
+from thirdparty.enet.bindings import ENetEventType, ENetPeer
 from thirdparty.hexdump import hexdump
 
 
@@ -50,11 +83,26 @@ class Proxy:
         self.broker = Broker(self._channel_queue, addr)
         self.logger.debug(f"starting broker on {addr}")
         self.broker.start()
+        self.broker.set_handler(Packet.TYPE_STATE_REQUEST, self._state_request)
 
         self._last_event_time = -1
         self._event_elapsed = -1.0
 
+        self.state = State()
+        self._logged_in_time: float = 0.0
+        self._enter_world_time: float = 0.0
+        self._last_telemetry_update: float = 0.0
+        self._telemetry_update_interval: float = 0.1
+
         listen(UpdateServerData)(lambda ch, ev: self._on_server_data(ch, ev))
+
+    def _state_request(self, _id: bytes, _pkt: Packet, fn: BrokerFunction) -> None:
+        fn.reply(
+            Packet(
+                type=Packet.TYPE_STATE_RESPONSE,
+                state_response=StateResponse(state=self.state.to_proto()),
+            )
+        )
 
     def _on_server_data(self, _channel: str, event: UpdateServerData) -> None:
         self.logger.info(f"server_data: {event.server}:{event.port}")
@@ -96,11 +144,12 @@ class Proxy:
 
                     self.redirecting = True
                     self.proxy_server.send(pkt.as_net.serialize(), pkt.flags)
-                    self.proxy_client.disconnect()
+                    self.proxy_client.disconnect_now()
 
                     return
                 elif fn == b"OnSuperMainStartAcceptLogonHrdxs47254722215a":
                     self.redirecting = False
+                    self._update_status(Status.LOGGED_IN)
 
         self.proxy_server.send(pkt.as_raw, pkt.flags)
 
@@ -111,28 +160,30 @@ class Proxy:
                 _pkt_replace: PreparedPacket | None = None
                 res = self.broker.process_event(
                     pkt,
-                    callback=PacketCallback(
-                        send_to_server=lambda pkt: self._handle_client_to_server(pkt),
-                        send_to_client=lambda pkt: self._handle_server_to_client(pkt),
-                    ),
+                    callback=PacketCallback(any=lambda pkt: self._handle(pkt, fabricated=True)),
                 )
                 if res:
                     processed, cancelled = res
-                    if not cancelled:
-                        self.logger.debug(f"[original] packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
-                        _pkt_replace = PreparedPacket.from_pending(processed)
-                        self.logger.debug(f"[{processed._packet_id}] processed packet: hit={processed._hit_count} rtt={int.from_bytes(processed._rtt_ns) / 1e6}us")
-                        modified = True
-                    else:
+                    if cancelled:
                         self.logger.debug(f"[{processed._packet_id}] packet process cancelled")
                         return
+
+                    self.logger.debug(f"[original] packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
+                    _pkt_replace = PreparedPacket.from_pending(processed)
+                    self.logger.debug(f"[{processed._packet_id}] processed packet: hit={processed._hit_count} rtt={int.from_bytes(processed._rtt_ns) / 1e6}us")
+                    modified = True
 
                 if _pkt_replace:
                     pkt = _pkt_replace
             except Exception as e:
                 self.logger.error(f"process_event failed: {e}")
 
-        self.logger.debug(f"{'[modified] ' if modified else ''}packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
+        try:
+            self._update_state(pkt)
+        except Exception as e:
+            self.logger.error(f"FAILED UPDATING STATE: {e}")
+
+        self.logger.debug(f"{'[modified] ' if modified else '[fabricated]' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
         if pkt.as_net.type == NetType.TANK_PACKET:
             if pkt.as_net.tank.type in (
                 TankType.APP_CHECK_RESPONSE,
@@ -149,11 +200,226 @@ class Proxy:
                 self.running = False
 
                 return
+        elif pkt.as_net.type == NetType.SERVER_HELLO:
+            self._update_status(Status.LOGGING_IN)
 
         if pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
             self._handle_client_to_server(pkt)
         elif pkt.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
             self._handle_server_to_client(pkt)
+
+    def _send_state_update(self, upd: StateUpdate) -> None:
+        self.state.update(upd)
+        self.broker.process_event_any(INTEREST_STATE_UPDATE, Packet(type=Packet.TYPE_STATE_UPDATE, state_update=upd))
+
+    def _update_status(self, status: Status) -> None:
+        match status:
+            case Status.IN_WORLD:
+                self._enter_world_time = time.time()
+            case Status.CONNECTED:
+                self._enter_world_time = 0.0
+            case Status.LOGGED_IN:
+                self._logged_in_time = time.time()
+            case Status.DISCONNECTED:
+                self._logged_in_time = 0.0
+
+        self._send_state_update(StateUpdate(what=STATE_UPDATE_STATUS, update_status=status))
+
+    # TODO: move this somewhere else, this is more like an event emitter
+    def _update_state(self, event: PreparedPacket) -> None:
+        # TODO: some of these event can be send in multiple rather than one event
+        # for example: tile place, its composed of modify_world and modify_inventory if net_id == me.net_id
+        # so rather than creating super specific packet, we can just send multiple to simplify it a bit
+        pkt = event.as_net
+        match pkt.type:
+            case NetType.GAME_MESSAGE:
+                match bytes(pkt.game_message[b"action", 1]):
+                    case b"quit":
+                        self._send_state_update(StateUpdate(what=STATE_EXIT_WORLD))
+                        self._update_status(Status.DISCONNECTED)
+                    case b"quit_to_exit":
+                        self._send_state_update(StateUpdate(what=STATE_EXIT_WORLD))
+                        self._update_status(Status.CONNECTED)
+            case NetType.TANK_PACKET:
+                match pkt.tank.type:
+                    case TankType.STATE:
+                        # NOTE: net_id of 0 is self
+                        self._send_state_update(
+                            StateUpdate(
+                                what=STATE_PLAYER_UPDATE_POS,
+                                player_update_pos=PlayerUpdatePos(
+                                    net_id=pkt.tank.net_id,
+                                    x=pkt.tank.vector_x,
+                                    y=pkt.tank.vector_y,
+                                ),
+                            ),
+                        )
+                    case TankType.TILE_CHANGE_REQUEST:
+                        if event.direction != DIRECTION_SERVER_TO_CLIENT or not self.state.world:
+                            return
+
+                        op = ModifyWorld.OP_PLACE if pkt.tank.value != 18 else ModifyWorld.OP_DESTROY
+                        self._send_state_update(
+                            StateUpdate(
+                                what=STATE_MODIFY_WORLD,
+                                modify_world=ModifyWorld(
+                                    op=op,
+                                    tile=growtopia_pb2.Tile(
+                                        fg_id=pkt.tank.value if op == ModifyWorld.OP_PLACE else 0,
+                                        x=pkt.tank.int_x,
+                                        y=pkt.tank.int_y,
+                                    ),
+                                ),
+                            )
+                        )
+                        if pkt.tank.net_id == self.state.me.net_id:
+                            self._send_state_update(
+                                StateUpdate(
+                                    what=STATE_MODIFY_INVENTORY,
+                                    modify_inventory=ModifyInventory(
+                                        id=pkt.tank.value,
+                                        to_add=-1,
+                                    ),
+                                )
+                            )
+                    case TankType.SEND_TILE_TREE_STATE:
+                        # NOTE: we set fg_id to 0? idk what this does, need to test first
+                        pass
+                    case TankType.SEND_TILE_UPDATE_DATA:
+                        self._send_state_update(
+                            StateUpdate(
+                                what=STATE_MODIFY_WORLD,
+                                modify_world=ModifyWorld(
+                                    op=ModifyWorld.OP_REPLACE,
+                                    tile=Tile.deserialize(Buffer(pkt.tank.extended_data)).to_proto(),
+                                ),
+                            )
+                        )
+                    case TankType.CALL_FUNCTION:
+                        v = Variant.deserialize(pkt.tank.extended_data)
+                        fn = v.as_string[0]
+                        if fn == b"OnSpawn":
+                            kv = StrKV.deserialize(v.as_string[1])
+                            if b"type" in kv:
+                                self._send_state_update(
+                                    StateUpdate(
+                                        what=STATE_SET_MY_PLAYER,
+                                        set_my_player=int(kv[b"netID", 1]),
+                                    ),
+                                )
+
+                            self._send_state_update(
+                                StateUpdate(
+                                    what=STATE_PLAYER_JOIN,
+                                    player_join=growtopia_pb2.Player(
+                                        netID=int(kv[b"netID", 1]),
+                                        userID=int(kv[b"userID", 1]),
+                                        eid=b"|".join(kv[b"eid", 1:]),
+                                        ip=bytes(kv[b"ip", 1]),
+                                        colrect=growtopia_pb2.Vec4I(
+                                            x=int(kv[b"colrect", 1]),
+                                            y=int(kv[b"colrect", 2]),
+                                            w=int(kv[b"colrect", 3]),
+                                            h=int(kv[b"colrect", 4]),
+                                        ),
+                                        posXY=growtopia_pb2.Vec2F(
+                                            x=float(kv[b"posXY", 1]),
+                                            y=float(kv[b"posXY", 2]),
+                                        ),
+                                        name=bytes(kv[b"name", 1]),
+                                        titleIcon=bytes(kv[b"titleIcon", 1]),
+                                        country=b"|".join(kv[b"country", 1:]),
+                                        invis=int(kv[b"invis", 1]),
+                                        mstate=int(kv[b"mstate", 1]),
+                                        smstate=int(kv[b"smstate", 1]),
+                                        onlineID=bytes(kv[b"onlineID", 1]),
+                                    ),
+                                ),
+                            )
+                        elif fn == b"OnRemove":
+                            kv = StrKV.deserialize(v.as_string[1])
+                            self._send_state_update(
+                                StateUpdate(
+                                    what=STATE_PLAYER_LEAVE,
+                                    player_leave=int(kv[b"netID", 1]),
+                                )
+                            )
+                    case TankType.ITEM_CHANGE_OBJECT:
+                        if pkt.tank.net_id == UINT32_MAX:  # add new
+                            self._send_state_update(
+                                StateUpdate(
+                                    what=STATE_MODIFY_ITEM,
+                                    modify_item=ModifyItem(
+                                        op=ModifyItem.OP_CREATE,
+                                        item_id=pkt.tank.value,
+                                        x=pkt.tank.vector_x,
+                                        y=pkt.tank.vector_y,
+                                        amount=int(pkt.tank.float_var),
+                                        flags=pkt.tank.object_type,
+                                    ),
+                                )
+                            )
+                        elif pkt.tank.net_id == UINT32_MAX - 3:  # set amount
+                            self._send_state_update(
+                                StateUpdate(
+                                    what=STATE_MODIFY_ITEM,
+                                    modify_item=ModifyItem(
+                                        op=ModifyItem.OP_SET_AMOUNT,
+                                        uid=pkt.tank.value,
+                                        amount=pkt.tank.jump_count,
+                                    ),
+                                )
+                            )
+                        else:  # someone took it
+                            self._send_state_update(
+                                StateUpdate(
+                                    what=STATE_MODIFY_ITEM,
+                                    modify_item=ModifyItem(
+                                        op=ModifyItem.OP_TAKE,
+                                        uid=pkt.tank.value,
+                                    ),
+                                )
+                            )
+                    case TankType.SEND_INVENTORY_STATE:
+                        self._send_state_update(
+                            StateUpdate(
+                                what=STATE_SEND_INVENTORY,
+                                send_inventory=Inventory.deserialize(pkt.tank.extended_data).to_proto(),
+                            )
+                        )
+                    case TankType.MODIFY_ITEM_INVENTORY:
+                        self._send_state_update(
+                            StateUpdate(
+                                what=STATE_MODIFY_INVENTORY,
+                                modify_inventory=ModifyInventory(
+                                    id=pkt.tank.value,
+                                    to_add=-pkt.tank.jump_count,
+                                ),
+                            ),
+                        )
+                    case TankType.SET_CHARACTER_STATE:
+                        self._send_state_update(
+                            StateUpdate(
+                                what=STATE_SET_MY_RANGE,
+                                my_range=SetMyRange(
+                                    build_range=pkt.tank.jump_count - 126,
+                                    punch_range=pkt.tank.animation_type - 126,
+                                ),
+                            ),
+                        )
+                    case TankType.SEND_MAP_DATA:
+                        world = World.deserialize(pkt.tank.extended_data).to_proto()
+                        write_async(pkt.serialize(), _setting.appdir / "worlds" / world.inner.name.decode(), "wb")
+
+                        self._send_state_update(
+                            StateUpdate(
+                                what=STATE_ENTER_WORLD,
+                                enter_world=EnterWorld(
+                                    enter_world=world,
+                                ),
+                            ),
+                        )
+                        self._update_status(Status.IN_WORLD)
 
     def disconnect_all(self) -> None:
         self.proxy_client.disconnect_now()
@@ -219,9 +485,9 @@ class Proxy:
                 self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
 
                 if pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
-                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client[fabricated] ({pkt.flags!r}):")
+                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({pkt.flags!r}):")
                 elif pkt.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
-                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server[fabricated] ({pkt.flags!r}):")
+                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({pkt.flags!r}):")
 
                 self._handle(pkt, fabricated=True)
                 self._dump_packet(pkt.as_raw)
@@ -245,6 +511,7 @@ class Proxy:
 
         try:
             while True:
+                self._update_status(Status.CONNECTING)
                 if not self.server_data:
                     self.logger.info("waiting for server_data...")
                     while not self.server_data:
@@ -258,6 +525,7 @@ class Proxy:
                 self.logger.info(f"proxy_client connecting to {self.server_data.server}:{self.server_data.port}")
                 self.proxy_client.connect(self.server_data.server, self.server_data.port)
                 self.logger.info("connected! now polling for events")
+                self._update_status(Status.CONNECTED)
 
                 MAX_POLL_MS = 100
 
@@ -269,6 +537,22 @@ class Proxy:
                     start = time.perf_counter()
                     while (event := self.proxy_client.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
                         self._event_queue.put(ProxyEvent(event, PreparedPacket.Direction.SERVER_TO_CLIENT))
+
+                    now = time.time()
+                    if now - self._last_telemetry_update > self._telemetry_update_interval:
+                        with self.broker.suppressed_log():
+                            self._send_state_update(
+                                StateUpdate(
+                                    what=STATE_SET_MY_TELEMETRY,
+                                    set_my_telemetry=SetMyTelemetry(
+                                        server_ping=ctypes.cast(self.proxy_client.peer, ctypes.POINTER(ENetPeer)).contents.roundTripTime if self.proxy_client.peer else 0,
+                                        client_ping=ctypes.cast(self.proxy_server.peer, ctypes.POINTER(ENetPeer)).contents.roundTripTime if self.proxy_server.peer else 0,
+                                        time_since_login=now - self._logged_in_time if self._logged_in_time != 0.0 else 0.0,
+                                        time_in_world=now - self._enter_world_time if self._enter_world_time != 0.0 else 0.0,
+                                    ),
+                                )
+                            )
+                            self._last_telemetry_update = now
 
                     if self._should_reconnect.is_set():
                         self.disconnect_all()

@@ -1,13 +1,18 @@
 from bisect import insort
 from collections import defaultdict, deque
+from contextlib import contextmanager
+from dataclasses import dataclass
 import itertools
 import logging
 from queue import Queue
 import random
 import threading
 import time
+from traceback import print_exc
 from typing import Any, Callable, Iterator, cast
 from urllib.parse import urlparse
+from google.protobuf.internal.containers import RepeatedCompositeFieldContainer
+from google.protobuf.message import Message
 import zmq
 import xxhash
 
@@ -28,9 +33,9 @@ from gtools.protogen.extension_pb2 import (
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
 )
-from gtools.protogen.op_pb2 import Op
+from gtools.protogen.op_pb2 import BinOp, Op
 from gtools.protogen.strkv_pb2 import FindCol, FindRow, Query
-from gtools.protogen.tank_pb2 import Field
+from gtools.protogen.tank_pb2 import Field, FieldValue
 
 
 def hash_interest(interest: Interest) -> int:
@@ -73,6 +78,134 @@ class Client:
         return self.ext == value.ext and self.interest == value.interest
 
 
+_TANK_INTEREST = {
+    InterestType.INTEREST_STATE,
+    InterestType.INTEREST_CALL_FUNCTION,
+    InterestType.INTEREST_UPDATE_STATUS,
+    InterestType.INTEREST_TILE_CHANGE_REQUEST,
+    InterestType.INTEREST_SEND_MAP_DATA,
+    InterestType.INTEREST_SEND_TILE_UPDATE_DATA,
+    InterestType.INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE,
+    InterestType.INTEREST_TILE_ACTIVATE_REQUEST,
+    InterestType.INTEREST_TILE_APPLY_DAMAGE,
+    InterestType.INTEREST_SEND_INVENTORY_STATE,
+    InterestType.INTEREST_ITEM_ACTIVATE_REQUEST,
+    InterestType.INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST,
+    InterestType.INTEREST_SEND_TILE_TREE_STATE,
+    InterestType.INTEREST_MODIFY_ITEM_INVENTORY,
+    InterestType.INTEREST_ITEM_CHANGE_OBJECT,
+    InterestType.INTEREST_SEND_LOCK,
+    InterestType.INTEREST_SEND_ITEM_DATABASE_DATA,
+    InterestType.INTEREST_SEND_PARTICLE_EFFECT,
+    InterestType.INTEREST_SET_ICON_STATE,
+    InterestType.INTEREST_ITEM_EFFECT,
+    InterestType.INTEREST_SET_CHARACTER_STATE,
+    InterestType.INTEREST_PING_REPLY,
+    InterestType.INTEREST_PING_REQUEST,
+    InterestType.INTEREST_GOT_PUNCHED,
+    InterestType.INTEREST_APP_CHECK_RESPONSE,
+    InterestType.INTEREST_APP_INTEGRITY_FAIL,
+    InterestType.INTEREST_DISCONNECT,
+    InterestType.INTEREST_BATTLE_JOIN,
+    InterestType.INTEREST_BATTLE_EVENT,
+    InterestType.INTEREST_USE_DOOR,
+    InterestType.INTEREST_SEND_PARENTAL,
+    InterestType.INTEREST_GONE_FISHIN,
+    InterestType.INTEREST_STEAM,
+    InterestType.INTEREST_PET_BATTLE,
+    InterestType.INTEREST_NPC,
+    InterestType.INTEREST_SPECIAL,
+    InterestType.INTEREST_SEND_PARTICLE_EFFECT_V2,
+    InterestType.INTEREST_ACTIVATE_ARROW_TO_ITEM,
+    InterestType.INTEREST_SELECT_TILE_INDEX,
+    InterestType.INTEREST_SEND_PLAYER_TRIBUTE_DATA,
+    InterestType.INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY,
+    InterestType.INTEREST_PVE_NPC,
+    InterestType.INTEREST_PVP_CARD_BATTLE,
+    InterestType.INTEREST_PVE_APPLY_PLAYER_DAMAGE,
+    InterestType.INTEREST_PVE_NPC_POSITION_UPDATE,
+    InterestType.INTEREST_SET_EXTRA_MODS,
+    InterestType.INTEREST_ON_STEP_TILE_MOD,
+}
+
+
+_GET_ROW: dict[FindRow.Method, Callable[[StrKV, Any], list[bytes]]] = {
+    FindRow.KEY: lambda strkv, k: list(strkv[k]),
+    FindRow.KEY_ANY: lambda strkv, k: list(strkv.find[k]),
+    FindRow.INDEX: lambda strkv, k: list(strkv[k]),
+}
+_GET_COL: dict[tuple[FindRow.Method, FindCol.Method], Callable[[StrKV, Any, Any], bytes]] = {
+    (FindRow.KEY, FindCol.ABSOLUTE): lambda strkv, k1, k2: bytes(strkv[k1, k2]),
+    (FindRow.KEY, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
+    (FindRow.KEY_ANY, FindCol.ABSOLUTE): lambda strkv, k1, k2: cast(bytes, strkv.find[k1, k2]),
+    (FindRow.KEY_ANY, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
+    (FindRow.INDEX, FindCol.ABSOLUTE): lambda strkv, k1, k2: bytes(strkv[k1, k2]),
+    (FindRow.INDEX, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
+}
+
+_TANK_FIELD_ACCESSOR: dict[Field, Callable[[TankPacket], object]] = {
+    Field.TANK_FIELD_TYPE: lambda pkt: pkt.type,
+    Field.TANK_FIELD_OBJECT_TYPE: lambda pkt: pkt.object_type,
+    Field.TANK_FIELD_JUMP_COUNT: lambda pkt: pkt.jump_count,
+    Field.TANK_FIELD_ANIMATION_TYPE: lambda pkt: pkt.animation_type,
+    Field.TANK_FIELD_NET_ID: lambda pkt: pkt.net_id,
+    Field.TANK_FIELD_TARGET_NET_ID: lambda pkt: pkt.target_net_id,
+    Field.TANK_FIELD_FLAGS: lambda pkt: pkt.flags,
+    Field.TANK_FIELD_FLOAT_VAR: lambda pkt: pkt.float_var,
+    Field.TANK_FIELD_VALUE: lambda pkt: pkt.value,
+    Field.TANK_FIELD_VECTOR_X: lambda pkt: pkt.vector_x,
+    Field.TANK_FIELD_VECTOR_Y: lambda pkt: pkt.vector_y,
+    Field.TANK_FIELD_VECTOR_X2: lambda pkt: pkt.vector_x2,
+    Field.TANK_FIELD_VECTOR_Y2: lambda pkt: pkt.vector_y2,
+    Field.TANK_FIELD_PARTICLE_ROTATION: lambda pkt: pkt.particle_rotation,
+    Field.TANK_FIELD_INT_X: lambda pkt: pkt.int_x,
+    Field.TANK_FIELD_INT_Y: lambda pkt: pkt.int_y,
+    Field.TANK_FIELD_EXTENDED_LEN: lambda pkt: pkt.extended_len,
+}
+
+_OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
+    Op.OP_EQ: lambda lval, rval: lval == rval,
+    Op.OP_EQ_EPS: lambda lval, rval: abs(lval - rval) < 0.01,
+    Op.OP_NEQ: lambda lval, rval: lval != rval,
+    Op.OP_GT: lambda lval, rval: lval > rval,
+    Op.OP_GTE: lambda lval, rval: lval >= rval,
+    Op.OP_LT: lambda lval, rval: lval < rval,
+    Op.OP_LTE: lambda lval, rval: lval <= rval,
+    Op.OP_BIT_TEST: lambda lval, rval: (lval & rval) == rval,
+}
+
+
+def match_strkv_clause(kv: StrKV, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
+    for clause in where:
+        lvalue = Query()
+        if not clause.lvalue.Unpack(lvalue):
+            raise TypeError("strkv lvalue expects a query type")
+
+        for find in lvalue.where:
+            if find.HasField("col"):
+                col = _GET_COL[find.row.method, find.col.method](kv, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
+                if not _OP_EVALUATE[clause.op](col, getattr(clause, clause.WhichOneof("rvalue"))):
+                    return False
+            else:
+                row = _GET_ROW[find.row.method](kv, getattr(find.row, find.row.WhichOneof("m")))
+                if not _OP_EVALUATE[clause.op](row, getattr(clause, clause.WhichOneof("rvalue"))):
+                    return False
+
+    return True
+
+
+def match_tank_clause(tank: TankPacket, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
+    for clause in where:
+        lvalue = FieldValue()
+        if not clause.lvalue.Unpack(lvalue):
+            raise TypeError("tank lvalue expects a field type")
+
+        if not _OP_EVALUATE[clause.op](_TANK_FIELD_ACCESSOR[lvalue.v](tank), getattr(clause, clause.WhichOneof("rvalue"))):
+            return False
+
+    return True
+
+
 class ExtensionManager:
     logger = logging.getLogger("extension_mgr")
 
@@ -103,49 +236,27 @@ class ExtensionManager:
 
             del self._extensions[id]
 
-    _TANK_FIELD_ACCESSOR: dict[Field, Callable[[TankPacket], object]] = {
-        Field.TANK_FIELD_TYPE: lambda pkt: pkt.type,
-        Field.TANK_FIELD_OBJECT_TYPE: lambda pkt: pkt.object_type,
-        Field.TANK_FIELD_JUMP_COUNT: lambda pkt: pkt.jump_count,
-        Field.TANK_FIELD_ANIMATION_TYPE: lambda pkt: pkt.animation_type,
-        Field.TANK_FIELD_NET_ID: lambda pkt: pkt.net_id,
-        Field.TANK_FIELD_TARGET_NET_ID: lambda pkt: pkt.target_net_id,
-        Field.TANK_FIELD_FLAGS: lambda pkt: pkt.flags,
-        Field.TANK_FIELD_FLOAT_VAR: lambda pkt: pkt.float_var,
-        Field.TANK_FIELD_VALUE: lambda pkt: pkt.value,
-        Field.TANK_FIELD_VECTOR_X: lambda pkt: pkt.vector_x,
-        Field.TANK_FIELD_VECTOR_Y: lambda pkt: pkt.vector_y,
-        Field.TANK_FIELD_VECTOR_X2: lambda pkt: pkt.vector_x2,
-        Field.TANK_FIELD_VECTOR_Y2: lambda pkt: pkt.vector_y2,
-        Field.TANK_FIELD_PARTICLE_ROTATION: lambda pkt: pkt.particle_rotation,
-        Field.TANK_FIELD_INT_X: lambda pkt: pkt.int_x,
-        Field.TANK_FIELD_INT_Y: lambda pkt: pkt.int_y,
-        Field.TANK_FIELD_EXTENDED_LEN: lambda pkt: pkt.extended_len,
-    }
-
-    _OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
-        Op.OP_EQ: lambda lval, rval: lval == rval,
-        Op.OP_EQ_EPS: lambda lval, rval: abs(lval - rval) < 0.01,
-        Op.OP_NEQ: lambda lval, rval: lval != rval,
-        Op.OP_GT: lambda lval, rval: lval > rval,
-        Op.OP_GTE: lambda lval, rval: lval >= rval,
-        Op.OP_LT: lambda lval, rval: lval < rval,
-        Op.OP_LTE: lambda lval, rval: lval <= rval,
-    }
+    def get_interested_extension_any(self, interest_type: InterestType) -> Iterator[Client]:
+        for client in self._interest_map[interest_type]:
+            yield client
 
     def get_interested_extension(self, interest_type: InterestType, pkt: PreparedPacket) -> Iterator[Client]:
         for client in self._interest_map[interest_type]:
             interest = client.interest
 
-            matches: dict[str, bool] = {}
-
             if f := client.interest.WhichOneof("payload"):
-                matches["has_interest"] = getattr(interest, f) is not None
+                if getattr(interest, f) is None:
+                    continue
+                if TRACE:
+                    print("[matcher] payload exists, continuing")
 
             if interest.direction != DIRECTION_UNSPECIFIED:
-                matches["same_direction"] = interest.direction == pkt.direction.value
+                if interest.direction != pkt.direction.value:
+                    continue
 
-            matched = True
+                if TRACE:
+                    print("[matcher] direction matched, continuing")
+
             match interest.interest:
                 case InterestType.INTEREST_PEER_CONNECT:
                     raise NotImplementedError("INTEREST_PEER_CONNECT")
@@ -154,54 +265,24 @@ class ExtensionManager:
                 case InterestType.INTEREST_SERVER_HELLO:
                     raise NotImplementedError("INTEREST_SERVER_HELLO")
                 case InterestType.INTEREST_GENERIC_TEXT:
-                    for clause in interest.generic_text.where:
-                        should_break = False
-                        lvalue = Query()
-                        if not clause.lvalue.Unpack(lvalue):
-                            raise TypeError("strkv lvalue expects a query type")
+                    if not match_strkv_clause(pkt.as_net.generic_text, interest.generic_text.where):
+                        continue
 
-                        for find in lvalue.where:
-                            _GET_ROW: dict[FindRow.Method, Callable[[StrKV, Any], list[bytes]]] = {
-                                FindRow.KEY: lambda strkv, k: list(strkv[k]),
-                                FindRow.KEY_ANY: lambda strkv, k: list(strkv.find[k]),
-                                FindRow.INDEX: lambda strkv, k: list(strkv[k]),
-                            }
-                            _GET_COL: dict[tuple[FindRow.Method, FindCol.Method], Callable[[StrKV, Any, Any], bytes]] = {
-                                (FindRow.KEY, FindCol.ABSOLUTE): lambda strkv, k1, k2: bytes(strkv[k1, k2]),
-                                (FindRow.KEY, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
-                                (FindRow.KEY_ANY, FindCol.ABSOLUTE): lambda strkv, k1, k2: cast(bytes, strkv.find[k1, k2]),
-                                (FindRow.KEY_ANY, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
-                                (FindRow.INDEX, FindCol.ABSOLUTE): lambda strkv, k1, k2: bytes(strkv[k1, k2]),
-                                (FindRow.INDEX, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
-                            }
-                            if find.HasField("col"):
-                                col = _GET_COL[find.row.method, find.col.method](pkt.as_net.generic_text, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
-                                if not self._OP_EVALUATE[clause.op](col, getattr(clause, clause.WhichOneof("rvalue"))):
-                                    matched = False
-                                    should_break = True
-                                    break
-                            else:
-                                row = _GET_ROW[find.row.method](pkt.as_net.generic_text, getattr(find.row, find.row.WhichOneof("m")))
-                                if not self._OP_EVALUATE[clause.op](row, getattr(clause, clause.WhichOneof("rvalue"))):
-                                    matched = False
-                                    should_break = True
-                                    break
-
-                        if should_break:
-                            break
+                    if TRACE:
+                        print("[matcher] generic text matched, continuing")
                 case InterestType.INTEREST_GAME_MESSAGE:
                     if interest.game_message.action:
-                        matched = interest.game_message.action == pkt.as_net.game_message["action", 1]
+                        if interest.game_message.action != pkt.as_net.game_message["action", 1]:
+                            continue
+
+                    if TRACE:
+                        print("[matcher] game message matched, continuing")
                 case InterestType.INTEREST_TANK_PACKET:
-                    for clause in interest.tank_packet.where:
-                        lvalue = Field()
-                        if not clause.lvalue.Unpack(lvalue):
-                            raise TypeError("tank lvalue expects a field type")
+                    if not match_tank_clause(pkt.as_net.tank, interest.tank_packet.where):
+                        continue
 
-                        if not self._OP_EVALUATE[clause.op](self._TANK_FIELD_ACCESSOR[lvalue](pkt.as_net.tank), getattr(clause, clause.WhichOneof("rvalue"))):
-                            matched = False
-                            break
-
+                    if TRACE:
+                        print("[matcher] tank packet matched, continuing")
                 case InterestType.INTEREST_ERROR:
                     raise NotImplementedError("INTEREST_ERROR")
                 case InterestType.INTEREST_TRACK:
@@ -211,110 +292,126 @@ class ExtensionManager:
                 case InterestType.INTEREST_CLIENT_LOG_RESPONSE:
                     raise NotImplementedError("INTEREST_CLIENT_LOG_RESPONSE")
 
-            if pkt.as_net.type == NetType.TANK_PACKET and interest.interest != InterestType.INTEREST_TANK_PACKET:
+            if interest.interest in _TANK_INTEREST:
+                matched = True
+                i: Message = getattr(interest, interest.WhichOneof("payload"))
+                if (clauses := getattr(i, "where")) is not None:
+                    if not match_tank_clause(pkt.as_net.tank, clauses):
+                        continue
+
+                    if TRACE:
+                        print(f"[matcher] top-level tank clause for {InterestType.Name(interest.interest)} matched, continuing")
+
+                    matched = bool(clauses)
+
                 match interest.interest:
                     case InterestType.INTEREST_STATE:
-                        raise NotImplementedError("INTEREST_STATE")
+                        pass
                     case InterestType.INTEREST_CALL_FUNCTION:
                         if interest.call_function.fn_name:
                             matched = interest.call_function.fn_name == Variant.get(pkt.as_net.tank.extended_data, 0).value
                     case InterestType.INTEREST_UPDATE_STATUS:
-                        raise NotImplementedError("INTEREST_UPDATE_STATUS")
+                        pass
                     case InterestType.INTEREST_TILE_CHANGE_REQUEST:
-                        raise NotImplementedError("INTEREST_TILE_CHANGE_REQUEST")
+                        pass
                     case InterestType.INTEREST_SEND_MAP_DATA:
-                        raise NotImplementedError("INTEREST_SEND_MAP_DATA")
+                        pass
                     case InterestType.INTEREST_SEND_TILE_UPDATE_DATA:
-                        raise NotImplementedError("INTEREST_SEND_TILE_UPDATE_DATA")
+                        pass
                     case InterestType.INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE:
-                        raise NotImplementedError("INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE")
+                        pass
                     case InterestType.INTEREST_TILE_ACTIVATE_REQUEST:
-                        raise NotImplementedError("INTEREST_TILE_ACTIVATE_REQUEST")
+                        pass
                     case InterestType.INTEREST_TILE_APPLY_DAMAGE:
-                        raise NotImplementedError("INTEREST_TILE_APPLY_DAMAGE")
+                        pass
                     case InterestType.INTEREST_SEND_INVENTORY_STATE:
-                        raise NotImplementedError("INTEREST_SEND_INVENTORY_STATE")
+                        pass
                     case InterestType.INTEREST_ITEM_ACTIVATE_REQUEST:
-                        raise NotImplementedError("INTEREST_ITEM_ACTIVATE_REQUEST")
+                        pass
                     case InterestType.INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST:
-                        raise NotImplementedError("INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST")
+                        pass
                     case InterestType.INTEREST_SEND_TILE_TREE_STATE:
-                        raise NotImplementedError("INTEREST_SEND_TILE_TREE_STATE")
+                        pass
                     case InterestType.INTEREST_MODIFY_ITEM_INVENTORY:
-                        raise NotImplementedError("INTEREST_MODIFY_ITEM_INVENTORY")
+                        pass
                     case InterestType.INTEREST_ITEM_CHANGE_OBJECT:
-                        raise NotImplementedError("INTEREST_ITEM_CHANGE_OBJECT")
+                        pass
                     case InterestType.INTEREST_SEND_LOCK:
-                        raise NotImplementedError("INTEREST_SEND_LOCK")
+                        pass
                     case InterestType.INTEREST_SEND_ITEM_DATABASE_DATA:
-                        raise NotImplementedError("INTEREST_SEND_ITEM_DATABASE_DATA")
+                        pass
                     case InterestType.INTEREST_SEND_PARTICLE_EFFECT:
-                        raise NotImplementedError("INTEREST_SEND_PARTICLE_EFFECT")
+                        pass
                     case InterestType.INTEREST_SET_ICON_STATE:
-                        raise NotImplementedError("INTEREST_SET_ICON_STATE")
+                        pass
                     case InterestType.INTEREST_ITEM_EFFECT:
-                        raise NotImplementedError("INTEREST_ITEM_EFFECT")
+                        pass
                     case InterestType.INTEREST_SET_CHARACTER_STATE:
-                        raise NotImplementedError("INTEREST_SET_CHARACTER_STATE")
+                        pass
                     case InterestType.INTEREST_PING_REPLY:
-                        raise NotImplementedError("INTEREST_PING_REPLY")
+                        pass
                     case InterestType.INTEREST_PING_REQUEST:
-                        raise NotImplementedError("INTEREST_PING_REQUEST")
+                        pass
                     case InterestType.INTEREST_GOT_PUNCHED:
-                        raise NotImplementedError("INTEREST_GOT_PUNCHED")
+                        pass
                     case InterestType.INTEREST_APP_CHECK_RESPONSE:
-                        raise NotImplementedError("INTEREST_APP_CHECK_RESPONSE")
+                        pass
                     case InterestType.INTEREST_APP_INTEGRITY_FAIL:
-                        raise NotImplementedError("INTEREST_APP_INTEGRITY_FAIL")
+                        pass
                     case InterestType.INTEREST_DISCONNECT:
-                        raise NotImplementedError("INTEREST_DISCONNECT")
+                        pass
                     case InterestType.INTEREST_BATTLE_JOIN:
-                        raise NotImplementedError("INTEREST_BATTLE_JOIN")
+                        pass
                     case InterestType.INTEREST_BATTLE_EVENT:
-                        raise NotImplementedError("INTEREST_BATTLE_EVENT")
+                        pass
                     case InterestType.INTEREST_USE_DOOR:
-                        raise NotImplementedError("INTEREST_USE_DOOR")
+                        pass
                     case InterestType.INTEREST_SEND_PARENTAL:
-                        raise NotImplementedError("INTEREST_SEND_PARENTAL")
+                        pass
                     case InterestType.INTEREST_GONE_FISHIN:
-                        raise NotImplementedError("INTEREST_GONE_FISHIN")
+                        pass
                     case InterestType.INTEREST_STEAM:
-                        raise NotImplementedError("INTEREST_STEAM")
+                        pass
                     case InterestType.INTEREST_PET_BATTLE:
-                        raise NotImplementedError("INTEREST_PET_BATTLE")
+                        pass
                     case InterestType.INTEREST_NPC:
-                        raise NotImplementedError("INTEREST_NPC")
+                        pass
                     case InterestType.INTEREST_SPECIAL:
-                        raise NotImplementedError("INTEREST_SPECIAL")
+                        pass
                     case InterestType.INTEREST_SEND_PARTICLE_EFFECT_V2:
-                        raise NotImplementedError("INTEREST_SEND_PARTICLE_EFFECT_V2")
+                        pass
                     case InterestType.INTEREST_ACTIVATE_ARROW_TO_ITEM:
-                        raise NotImplementedError("INTEREST_ACTIVATE_ARROW_TO_ITEM")
+                        pass
                     case InterestType.INTEREST_SELECT_TILE_INDEX:
-                        raise NotImplementedError("INTEREST_SELECT_TILE_INDEX")
+                        pass
                     case InterestType.INTEREST_SEND_PLAYER_TRIBUTE_DATA:
-                        raise NotImplementedError("INTEREST_SEND_PLAYER_TRIBUTE_DATA")
+                        pass
                     case InterestType.INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY:
-                        raise NotImplementedError("INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY")
+                        pass
                     case InterestType.INTEREST_PVE_NPC:
-                        raise NotImplementedError("INTEREST_PVE_NPC")
+                        pass
                     case InterestType.INTEREST_PVP_CARD_BATTLE:
-                        raise NotImplementedError("INTEREST_PVP_CARD_BATTLE")
+                        pass
                     case InterestType.INTEREST_PVE_APPLY_PLAYER_DAMAGE:
-                        raise NotImplementedError("INTEREST_PVE_APPLY_PLAYER_DAMAGE")
+                        pass
                     case InterestType.INTEREST_PVE_NPC_POSITION_UPDATE:
-                        raise NotImplementedError("INTEREST_PVE_NPC_POSITION_UPDATE")
+                        pass
                     case InterestType.INTEREST_SET_EXTRA_MODS:
-                        raise NotImplementedError("INTEREST_SET_EXTRA_MODS")
+                        pass
                     case InterestType.INTEREST_ON_STEP_TILE_MOD:
-                        raise NotImplementedError("INTEREST_ON_STEP_TILE_MOD")
+                        pass
                     case InterestType.INTEREST_UNSPECIFIED:
-                        raise NotImplementedError("INTEREST_UNSPECIFIED")
-            matches["interest_matched"] = matched
+                        pass
 
-            self.logger.debug(f"{matches=} for {interest_type} in {client.interest}")
-            if all(matches.values()):
-                yield client
+                if not matched:
+                    continue
+
+                if TRACE:
+                    print("[matcher] tank matched, continuing")
+
+            if TRACE:
+                print(f"[matcher] all matched for extension {interest}")
+            yield client
 
     def get_extension(self, id: bytes) -> Extension:
         return self._extensions[id]
@@ -328,7 +425,7 @@ class PacketCallback:
         self,
         send_to_server: Callable[[PreparedPacket], Any] | None = None,
         send_to_client: Callable[[PreparedPacket], Any] | None = None,
-        any: Callable[[bytes], Any] | None = None,
+        any: Callable[[PreparedPacket], Any] | None = None,
     ) -> None:
         self.send_to_server = send_to_server
         self.send_to_client = send_to_client
@@ -354,6 +451,16 @@ class _PendingPacket:
         self.callback = callback
 
 
+@dataclass
+class BrokerFunction:
+    reply: Callable[[Packet], None]
+    send_to: Callable[[bytes, Packet], None]
+    send_to_interested: Callable[[InterestType, Packet], None]
+
+
+HandleFunction = Callable[[bytes, Packet, BrokerFunction], Any]
+
+
 class Broker:
     logger = logging.getLogger("broker")
 
@@ -362,6 +469,8 @@ class Broker:
         self._socket = self._context.socket(zmq.ROUTER)
         self._socket.setsockopt(zmq.LINGER, 0)
         self._socket.bind(addr)
+        self._send_lock = threading.Lock()
+        self._suppress_log = False
 
         self._extension_mgr = ExtensionManager()
         self._pending_chain: dict[bytes, PendingChain] = {}
@@ -385,6 +494,17 @@ class Broker:
         self._pull_thread_id = threading.Thread(target=self._pull_thread)
         self._pull_thread_id.start()
 
+        self._handler: dict[Packet.Type, HandleFunction] = {}
+
+    @contextmanager
+    def suppressed_log(self) -> Iterator["Broker"]:
+        orig = self._suppress_log
+        try:
+            self._suppress_log = True
+            yield self
+        finally:
+            self._suppress_log = orig
+
     def _pull(self) -> PreparedPacket | None:
         if self._stop_event.is_set():
             return
@@ -407,7 +527,8 @@ class Broker:
         pkt.ParseFromString(raw)
 
         pkt = PreparedPacket.from_pending(pkt)
-        self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
+        if not self._suppress_log:
+            self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
 
         return pkt
 
@@ -426,7 +547,7 @@ class Broker:
                 if self._pull_queue:
                     self._pull_queue.put(pkt)
                 else:
-                    self.logger.debug(f"pull unhandled: {pkt}")
+                    self.logger.warning(f"pull unhandled: {pkt}")
 
                 elapsed_total += time.monotonic_ns() - _last
                 if elapsed_total >= 1e9:
@@ -444,7 +565,7 @@ class Broker:
                 if self._pull_queue:
                     self._pull_queue.put(pkt)
                 else:
-                    self.logger.debug(f"pull unhandled: {pkt}")
+                    self.logger.warning(f"pull unhandled: {pkt}")
 
         self.logger.debug("pull thread exiting")
 
@@ -462,13 +583,14 @@ class Broker:
         except zmq.error.ZMQError as e:
             if self._stop_event.is_set():
                 return b"", None
-            self.logger.debug(f"recv error: {e}")
+            self.logger.error(f"recv error: {e}")
             return b"", None
 
         pkt = Packet()
         pkt.ParseFromString(data)
 
-        self.logger.debug(f"\x1b[31m<<--\x1b[0m recv    \x1b[31m<<\x1b[0m{pkt!r}\x1b[31m<<\x1b[0m")
+        if not self._suppress_log:
+            self.logger.debug(f"\x1b[31m<<--\x1b[0m recv    \x1b[31m<<\x1b[0m{pkt!r}\x1b[31m<<\x1b[0m")
 
         return id, pkt
 
@@ -481,16 +603,18 @@ class Broker:
                 continue
 
     def _send(self, extension: bytes, pkt: Packet) -> None:
-        if self._stop_event.is_set():
-            return
+        with self._send_lock:
+            if self._stop_event.is_set():
+                return
 
-        self.logger.debug(f"   send \x1b[32m-->>\x1b[0m target={extension}: \x1b[32m>>\x1b[0m{pkt!r}\x1b[32m>>\x1b[0m")
-        try:
-            if self._socket.poll(100, zmq.POLLOUT):
-                self._socket.send_multipart((extension, pkt.SerializeToString()))
-        except zmq.error.ZMQError as e:
-            if not self._stop_event.is_set():
-                self.logger.debug(f"Send error: {e}")
+            if not self._suppress_log:
+                self.logger.debug(f"   send \x1b[32m-->>\x1b[0m target={extension}: \x1b[32m>>\x1b[0m{pkt!r}\x1b[32m>>\x1b[0m")
+            try:
+                if self._socket.poll(100, zmq.POLLOUT):
+                    self._socket.send_multipart((extension, pkt.SerializeToString()))
+            except zmq.error.ZMQError as e:
+                if not self._stop_event.is_set():
+                    self.logger.error(f"Send error: {e}")
 
     _PACKET_TO_INTEREST_TYPE: dict[NetType | TankType, InterestType] = {
         NetType.SERVER_HELLO: InterestType.INTEREST_SERVER_HELLO,
@@ -553,7 +677,6 @@ class Broker:
     }
 
     def _get_interested_extension(self, pkt: PreparedPacket) -> Iterator[Client]:
-        # TODO: handle "super" packet, basically like netpacket shuold match any kind of packet
         interest_type = self._PACKET_TO_INTEREST_TYPE[pkt.as_net.type]
         interest_type2: list[Client] = []
         if pkt.as_net.type == NetType.TANK_PACKET:
@@ -644,6 +767,12 @@ class Broker:
             finished.current._rtt_ns = self._utob(time.perf_counter_ns() - int.from_bytes(finished.current._rtt_ns))
             return finished.current, finished.cancelled
 
+    # this version of process_event doesn't work with prepared packet, but with arbitrary packet, thus
+    # it can only send block and doesn't chain
+    def process_event_any(self, interest: InterestType, pkt: Packet) -> None:
+        for client in self._extension_mgr.get_interested_extension_any(interest):
+            self._send(client.ext.id, pkt)
+
     def start(self, block: bool = False) -> None:
         if block:
             self._worker_thread()
@@ -708,9 +837,7 @@ class Broker:
             self.logger.warning(f"packet direction is unspecified: {pending}")
 
         if pending.callback.any:
-            pending.callback.any(pending.current.buf)
-
-        del self._pending_packet[pending.current._packet_id]
+            pending.callback.any(PreparedPacket.from_pending(pending.current))
 
     def _handle_packet(self, pkt: PendingPacket) -> None:
         assert pkt._packet_id, "invalid packet id"
@@ -736,12 +863,11 @@ class Broker:
                 case PendingPacket.OP_FINISH:
                     self._finish(pending, pkt)
                 case PendingPacket.OP_CANCEL:
-                    pending.current._hit_count = pkt._hit_count
+                    pass
                 case PendingPacket.OP_FORWARD:
                     self._finish(pending, pkt)
                 case PendingPacket.OP_PASS:
-                    pending.current._hit_count = pkt._hit_count
-                    self._finish(pending, pending.current)
+                    pass
                 case _:
                     raise ValueError(f"invalid op: {pkt._op}")
         else:
@@ -778,6 +904,25 @@ class Broker:
                                 f"\tpacket={self._pending_packet}\n",
                             )
                         self._handle_packet(pkt.pending_packet)
+                    case _:
+                        if handler := self._handler.get(pkt.type):
+                            if TRACE:
+                                print(f"{Packet.Type.Name(pkt.type)} handled by external handler")
+
+                            try:
+                                handler(
+                                    id,
+                                    pkt,
+                                    BrokerFunction(
+                                        lambda pkt, id=id: self._send(id, pkt),
+                                        self._send,
+                                        self.process_event_any,
+                                    ),
+                                )
+                            except Exception as e:
+                                self.logger.error(f"error in handler: {e}")
+                                print_exc()
+
         except (KeyboardInterrupt, InterruptedError):
             pass
         except zmq.error.ZMQError as e:
@@ -785,3 +930,6 @@ class Broker:
                 self.logger.debug(f"ZMQ error in main loop: {e}")
         finally:
             self.logger.debug("worker thread exiting")
+
+    def set_handler(self, type: Packet.Type, handler: HandleFunction) -> None:
+        self._handler[type] = handler
