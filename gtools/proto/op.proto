@@ -13,6 +13,7 @@ enum Op {
   OP_GTE = 5;
   OP_LT = 6;
   OP_LTE = 7;
+  OP_BIT_TEST = 8;
 }
 
 message BinOp {

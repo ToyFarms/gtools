@@ -10,19 +10,23 @@ from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
 from gtools.proxy.extension.builtin.fast_drop import FastDropExtension
 from tests import verify
 
-from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankPacket
+from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
+    BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
     DIRECTION_UNSPECIFIED,
     INTEREST_GENERIC_TEXT,
+    INTEREST_STATE,
     INTEREST_TANK_PACKET,
+    Direction,
     Interest,
     InterestGenericText,
+    InterestState,
     PendingPacket,
 )
-from gtools.proxy.extension.broker import Broker
+from gtools.proxy.extension.broker import Broker, PacketCallback
 from gtools.proxy.extension.sdk import Extension
 from thirdparty.enet.bindings import ENetPacketFlag
 
@@ -53,6 +57,36 @@ class ExtensionNoOp(Extension):
         pass
 
 
+class ExtensionNextStateNonBlock(Extension):
+    def __init__(self, name: str, priority: int = 0) -> None:
+        super().__init__(
+            name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
+        )
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        p = NetPacket.deserialize(event.buf)
+        p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0xFFFFFFFF
+        event.buf = p.serialize()
+
+        return self.forward(event)
+
+    def destroy(self) -> None:
+        pass
+
+
+class ExtensionNoOpNonBlock(Extension):
+    def __init__(self, name: str, priority: int = 0) -> None:
+        super().__init__(
+            name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
+        )
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        pass
+
+    def destroy(self) -> None:
+        pass
+
+
 def compute_state(init: int, n: int | list[int]) -> int:
     s = init
     l = range(n - 1, -1, -1) if isinstance(n, int) else n
@@ -72,6 +106,224 @@ def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         return False
 
 
+def test_connect_non_block() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        name = f"test-0"
+        ext = ExtensionNextStateNonBlock(name)
+        assert ext.start().wait_true(5)
+
+        assert len(b._extension_mgr._extensions) == 1
+        assert ext.broker_connected.get()
+        assert b._extension_mgr.get_extension(ext._name).id == ext._name
+
+        assert ext.stop().wait_true(5)
+        assert len(b._extension_mgr._extensions) == 0
+        with pytest.raises(KeyError):
+            assert b._extension_mgr.get_extension(ext._name)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+def test_connect_multi_non_block(request: pytest.FixtureRequest) -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        extensions: list[ExtensionNextStateNonBlock] = []
+        for i in range(5):
+            ext = ExtensionNextStateNonBlock(f"{request.node.name}-{i}")
+            assert ext.start().wait_true(5)
+            extensions.append(ext)
+
+        assert len(b._extension_mgr._extensions) == len(extensions)
+        assert len(b._extension_mgr._interest_map[extensions[0]._interest[0].interest]) == len(extensions)
+
+        for i, ext in enumerate(extensions, 1):
+            assert b._extension_mgr.get_extension(ext._name).id == ext._name
+
+            assert ext.stop().wait_true(5)
+            assert len(b._extension_mgr._extensions) == len(extensions) - i
+
+            with pytest.raises(KeyError):
+                assert b._extension_mgr.get_extension(ext._name)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+def test_process_non_block(request: pytest.FixtureRequest) -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        name = f"{request.node.name}-0"
+        ext = ExtensionNextStateNonBlock(name)
+        assert ext.start().wait_true(5)
+
+        ress: list[PreparedPacket] = []
+
+        def set_res(pkt: PreparedPacket) -> None:
+            nonlocal ress
+            ress.append(pkt)
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE), PacketCallback(any=set_res))
+        assert pkt is None
+
+        while not ress:
+            time.sleep(0.1)
+
+        res = ress[0]
+        assert res is not None
+        assert res.direction.value == DIRECTION_UNSPECIFIED
+        assert res.flags == ENetPacketFlag.NONE
+        assert res.as_net.type == NetType.TANK_PACKET
+        assert res.as_net.tank.net_id == compute_state(1, 1)
+        verify(res.as_raw)
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+def test_process_forward_not_modified_non_block(request: pytest.FixtureRequest) -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        name = f"{request.node.name}-0"
+        ext = ExtensionNoOpNonBlock(name)
+        assert ext.start().wait_true(5)
+
+        ress: list[PreparedPacket] = []
+
+        def set_res(pkt: PreparedPacket) -> None:
+            nonlocal ress
+            ress.append(pkt)
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE), PacketCallback(any=set_res))
+
+        time.sleep(0.5)
+        assert not ress
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+class ExtensionCancelNonBlock(Extension):
+    def __init__(self, name: str, priority: int = 0) -> None:
+        super().__init__(
+            name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
+        )
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        return self.cancel()
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_cancel_non_block() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionCancelNonBlock(f"cancel-1", 1)
+        assert ext.start().wait_true(5)
+
+        assert len(b._extension_mgr.get_all_extension()) == 1
+
+        ress: list[PreparedPacket] = []
+
+        def set_res(pkt: PreparedPacket) -> None:
+            nonlocal ress
+            ress.append(pkt)
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE), PacketCallback(any=set_res))
+
+        time.sleep(0.5)
+        assert len(ress) == 0
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+class ExtensionFinishNonBlock(Extension):
+    def __init__(self, name: str, priority: int = 0) -> None:
+        super().__init__(
+            name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
+        )
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        pkt = NetPacket.deserialize(event.buf)
+        pkt.tank.int_x += 1
+        event.buf = pkt.serialize()
+
+        return self.finish(event)
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_finish_non_block() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionFinishNonBlock("finish")
+        assert ext.start().wait_true(5)
+
+        ress: list[PreparedPacket] = []
+
+        def set_res(pkt: PreparedPacket) -> None:
+            nonlocal ress
+            ress.append(pkt)
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE), PacketCallback(any=set_res))
+
+        while not ress:
+            time.sleep(0.1)
+
+        res = ress[0]
+        assert res is not None
+        assert res.direction.value == DIRECTION_UNSPECIFIED
+        assert res.flags == ENetPacketFlag.NONE
+        assert res.as_net.type == NetType.TANK_PACKET
+        assert res.as_net.tank.net_id == 1
+        assert res.as_net.tank.int_x == 1
+        verify(res.as_raw)
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+# TODO: since port is dynamic now, use the port from broker directly
 def test_connect() -> None:
     b = Broker()
     b.start()
@@ -308,7 +560,6 @@ def test_cancel() -> None:
         assert ext.start().wait_true(5)
 
         assert len(b._extension_mgr.get_all_extension()) == 2
-        print("second test")
 
         pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
         pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
@@ -523,6 +774,19 @@ class ExtensionPass(Extension):
         pass
 
 
+class ExtensionPassNonBlock(Extension):
+    def __init__(self, name: str, priority: int = 0) -> None:
+        super().__init__(
+            name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
+        )
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        return self.pass_to_next()
+
+    def destroy(self) -> None:
+        pass
+
+
 def test_meta_is_preserved_pass() -> None:
     b = Broker()
     b.start()
@@ -588,6 +852,74 @@ def test_meta_is_preserved_process() -> None:
 
         for ext in extension:
             assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+def test_meta_is_preserved_pass_non_block() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionPassNonBlock(f"pass")
+        assert ext.start().wait_true(5)
+
+        ress: dict[Direction, PreparedPacket] = {}
+
+        def set_res(d: Direction, pkt: PreparedPacket) -> None:
+            nonlocal ress
+            ress[d] = pkt
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        res = b.process_event(
+            PreparedPacket(pkt, DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE),
+            PacketCallback(send_to_server=lambda x: set_res(DIRECTION_CLIENT_TO_SERVER, x), send_to_client=lambda x: set_res(DIRECTION_SERVER_TO_CLIENT, x)),
+        )
+        assert not res
+
+        time.sleep(0.5)
+        assert not ress
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+def test_meta_is_preserved_process_non_block() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionNextStateNonBlock(f"state-0")
+        assert ext.start().wait_true(5)
+
+        ress: dict[Direction, PreparedPacket] = {}
+
+        def set_res(d: Direction, pkt: PreparedPacket) -> None:
+            nonlocal ress
+            ress[d] = pkt
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        res = b.process_event(
+            PreparedPacket(pkt, DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE),
+            PacketCallback(send_to_server=lambda x: set_res(DIRECTION_CLIENT_TO_SERVER, x), send_to_client=lambda x: set_res(DIRECTION_SERVER_TO_CLIENT, x)),
+        )
+        assert not res
+
+        while not ress:
+            time.sleep(0.1)
+
+        assert DIRECTION_SERVER_TO_CLIENT in ress
+        assert ress[DIRECTION_SERVER_TO_CLIENT].flags == ENetPacketFlag.RELIABLE
+        assert ress[DIRECTION_SERVER_TO_CLIENT].as_net.tank.net_id == compute_state(1, 1)
+
+        assert ext.stop().wait_true(5)
     except:
         raise
     finally:
@@ -993,3 +1325,171 @@ def test_push_pull_restart() -> None:
         b.stop()
         assert not is_port_in_use(6712)
         assert not is_port_in_use(b._pull_port)
+
+
+class ExtensionMatch(Extension):
+    def __init__(self) -> None:
+        super().__init__(
+            name="match",
+            interest=[
+                Interest(
+                    interest=INTEREST_STATE,
+                    state=InterestState(
+                        where=[
+                            self.tank_flags.bit_test(self.uint32_t(TankFlags.PUNCH)),
+                        ]
+                    ),
+                    blocking_mode=BLOCKING_MODE_BLOCK,
+                    direction=DIRECTION_CLIENT_TO_SERVER,
+                ),
+            ],
+        )
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        pkt = NetPacket.deserialize(event.buf)
+        pkt.tank.net_id += 1
+
+        event.buf = pkt.serialize()
+        return self.forward(event)
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_match() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionMatch()
+        assert ext.start().wait_true(5)
+
+        p = PreparedPacket(
+            NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1)),
+            DIRECTION_CLIENT_TO_SERVER,
+            ENetPacketFlag.NONE,
+        )
+        res = b.process_event(p)
+        assert not res
+
+        p = PreparedPacket(
+            NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1, flags=TankFlags.PUNCH)),
+            DIRECTION_CLIENT_TO_SERVER,
+            ENetPacketFlag.NONE,
+        )
+        res = b.process_event(p)
+        assert res
+        assert PreparedPacket.from_pending(res[0]).as_net.tank.net_id == 2
+
+        p = PreparedPacket(
+            NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1, flags=TankFlags.PUNCH | TankFlags.FACING_LEFT)),
+            DIRECTION_CLIENT_TO_SERVER,
+            ENetPacketFlag.NONE,
+        )
+        res = b.process_event(p)
+        assert res
+        assert PreparedPacket.from_pending(res[0]).as_net.tank.net_id == 2
+
+        p = PreparedPacket(
+            NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1, flags=TankFlags.FACING_LEFT)),
+            DIRECTION_CLIENT_TO_SERVER,
+            ENetPacketFlag.NONE,
+        )
+        res = b.process_event(p)
+        assert not res
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+        assert not is_port_in_use(b._pull_port)
+
+
+def test_non_block_pass_should_cancel() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionPassNonBlock("pass")
+        assert ext.start().wait_true(5)
+
+        ress: list[PreparedPacket] = []
+
+        def set_res(pkt: PreparedPacket) -> None:
+            nonlocal ress
+            ress.append(pkt)
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE), PacketCallback(any=set_res))
+
+        time.sleep(1)
+        assert not ress
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+def test_non_block_finish_should_continue() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionFinishNonBlock("finish")
+        assert ext.start().wait_true(5)
+
+        ress: list[PreparedPacket] = []
+
+        def set_res(pkt: PreparedPacket) -> None:
+            nonlocal ress
+            ress.append(pkt)
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE), PacketCallback(any=set_res))
+
+        while not ress:
+            time.sleep(0.1)
+
+        assert ress[0].direction.value == DIRECTION_UNSPECIFIED
+        assert ress[0].flags == ENetPacketFlag.NONE
+        assert ress[0].as_net.tank.net_id == 1
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+def test_non_block_cancel_should_cancel() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionCancelNonBlock("cancel")
+        assert ext.start().wait_true(5)
+
+        ress: list[PreparedPacket] = []
+
+        def set_res(pkt: PreparedPacket) -> None:
+            nonlocal ress
+            ress.append(pkt)
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        pkt = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE), PacketCallback(any=set_res))
+
+        time.sleep(1)
+        assert not ress
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)

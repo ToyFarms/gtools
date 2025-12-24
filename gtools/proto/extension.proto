@@ -3,6 +3,8 @@ syntax = "proto3";
 package gtools.proxy.extension;
 
 import "op.proto";
+import "growtopia.proto";
+import "state.proto";
 
 message Packet {
   enum Type {
@@ -14,6 +16,9 @@ message Packet {
     TYPE_DISCONNECT = 5;
     TYPE_CONNECTED = 6;
     TYPE_PENDING_PACKET = 7;
+    TYPE_STATE_REQUEST = 8;
+    TYPE_STATE_RESPONSE = 9;
+    TYPE_STATE_UPDATE = 10;
   }
 
   Type type = 1;
@@ -25,6 +30,9 @@ message Packet {
     Disconnect disconnect = 6;
     Connected connected = 7;
     PendingPacket pending_packet = 8;
+    StateRequest state_request = 9;
+    StateResponse state_response = 10;
+    gtools.state.StateUpdate state_update = 11;
   }
 }
 
@@ -58,6 +66,9 @@ message PendingPacket {
   bytes _rtt_ns = 7;
   uint32 interest_id = 8;
 }
+
+message StateRequest {}
+message StateResponse { gtools.growtopia.State state = 1; }
 
 enum InterestType {
   INTEREST_UNSPECIFIED = 0;
@@ -121,6 +132,12 @@ enum InterestType {
   INTEREST_PVE_NPC_POSITION_UPDATE = 55;
   INTEREST_SET_EXTRA_MODS = 56;
   INTEREST_ON_STEP_TILE_MOD = 57;
+
+  // TODO: we should segment this further, but for now we just send all state update
+  // INTEREST_STATE_ME = 58;           // receive update about me
+  // INTEREST_STATE_WORLD = 59;        // init, place, break
+  // INTEREST_STATE_OTHER_PLAYER = 60; // when player join, exit.
+  INTEREST_STATE_UPDATE = 61;
 }
 
 enum Direction {
@@ -217,50 +234,63 @@ message InterestTrack {}
 message InterestClientLogRequest {}
 message InterestClientLogResponse {}
 
-message InterestState {}
-message InterestCallFunction { optional bytes fn_name = 1; }
-message InterestUpdateStatus {}
-message InterestTileChangeRequest {}
-message InterestSendMapData {}
-message InterestSendTileUpdateData {}
-message InterestSendTileUpdateDataMultiple {}
-message InterestTileActivateRequest {}
-message InterestTileApplyDamage {}
-message InterestSendInventoryState {}
-message InterestItemActivateRequest {}
-message InterestItemActivateObjectRequest {}
-message InterestSendTileTreeState {}
-message InterestModifyItemInventory {}
-message InterestItemChangeObject {}
-message InterestSendLock {}
-message InterestSendItemDatabaseData {}
-message InterestSendParticleEffect {}
-message InterestSetIconState {}
-message InterestItemEffect {}
-message InterestSetCharacterState {}
-message InterestPingReply {}
-message InterestPingRequest {}
-message InterestGotPunched {}
-message InterestAppCheckResponse {}
-message InterestAppIntegrityFail {}
-message InterestDisconnect {}
-message InterestBattleJoin {}
-message InterestBattleEvent {}
-message InterestUseDoor {}
-message InterestSendParental {}
-message InterestGoneFishin {}
-message InterestSteam {}
-message InterestPetBattle {}
-message InterestNpc {}
-message InterestSpecial {}
-message InterestSendParticleEffectV2 {}
-message InterestActivateArrowToItem {}
-message InterestSelectTileIndex {}
-message InterestSendPlayerTributeData {}
-message InterestFtueSetItemToQuickInventory {}
-message InterestPveNpc {}
-message InterestPvpCardBattle {}
-message InterestPveApplyPlayerDamage {}
-message InterestPveNpcPositionUpdate {}
-message InterestSetExtraMods {}
-message InterestOnStepTileMod {}
+message InterestState { repeated gtools.op.BinOp where = 1; }
+message InterestCallFunction {
+  repeated gtools.op.BinOp where = 1;
+  optional bytes fn_name = 2;
+}
+message InterestUpdateStatus { repeated gtools.op.BinOp where = 1; }
+message InterestTileChangeRequest { repeated gtools.op.BinOp where = 1; }
+message InterestSendMapData { repeated gtools.op.BinOp where = 1; }
+message InterestSendTileUpdateData { repeated gtools.op.BinOp where = 1; }
+message InterestSendTileUpdateDataMultiple {
+  repeated gtools.op.BinOp where = 1;
+}
+message InterestTileActivateRequest { repeated gtools.op.BinOp where = 1; }
+message InterestTileApplyDamage { repeated gtools.op.BinOp where = 1; }
+message InterestSendInventoryState { repeated gtools.op.BinOp where = 1; }
+message InterestItemActivateRequest { repeated gtools.op.BinOp where = 1; }
+message InterestItemActivateObjectRequest {
+  repeated gtools.op.BinOp where = 1;
+}
+message InterestSendTileTreeState { repeated gtools.op.BinOp where = 1; }
+message InterestModifyItemInventory { repeated gtools.op.BinOp where = 1; }
+message InterestItemChangeObject { repeated gtools.op.BinOp where = 1; }
+message InterestSendLock { repeated gtools.op.BinOp where = 1; }
+message InterestSendItemDatabaseData { repeated gtools.op.BinOp where = 1; }
+message InterestSendParticleEffect { repeated gtools.op.BinOp where = 1; }
+message InterestSetIconState { repeated gtools.op.BinOp where = 1; }
+message InterestItemEffect { repeated gtools.op.BinOp where = 1; }
+message InterestSetCharacterState { repeated gtools.op.BinOp where = 1; }
+message InterestPingReply { repeated gtools.op.BinOp where = 1; }
+message InterestPingRequest { repeated gtools.op.BinOp where = 1; }
+message InterestGotPunched { repeated gtools.op.BinOp where = 1; }
+message InterestAppCheckResponse { repeated gtools.op.BinOp where = 1; }
+message InterestAppIntegrityFail { repeated gtools.op.BinOp where = 1; }
+message InterestDisconnect { repeated gtools.op.BinOp where = 1; }
+message InterestBattleJoin { repeated gtools.op.BinOp where = 1; }
+message InterestBattleEvent { repeated gtools.op.BinOp where = 1; }
+message InterestUseDoor { repeated gtools.op.BinOp where = 1; }
+message InterestSendParental { repeated gtools.op.BinOp where = 1; }
+message InterestGoneFishin { repeated gtools.op.BinOp where = 1; }
+message InterestSteam { repeated gtools.op.BinOp where = 1; }
+message InterestPetBattle { repeated gtools.op.BinOp where = 1; }
+message InterestNpc { repeated gtools.op.BinOp where = 1; }
+message InterestSpecial { repeated gtools.op.BinOp where = 1; }
+message InterestSendParticleEffectV2 { repeated gtools.op.BinOp where = 1; }
+message InterestActivateArrowToItem { repeated gtools.op.BinOp where = 1; }
+message InterestSelectTileIndex { repeated gtools.op.BinOp where = 1; }
+message InterestSendPlayerTributeData { repeated gtools.op.BinOp where = 1; }
+message InterestFtueSetItemToQuickInventory {
+  repeated gtools.op.BinOp where = 1;
+}
+message InterestPveNpc { repeated gtools.op.BinOp where = 1; }
+message InterestPvpCardBattle { repeated gtools.op.BinOp where = 1; }
+message InterestPveApplyPlayerDamage { repeated gtools.op.BinOp where = 1; }
+message InterestPveNpcPositionUpdate { repeated gtools.op.BinOp where = 1; }
+message InterestSetExtraMods { repeated gtools.op.BinOp where = 1; }
+message InterestOnStepTileMod { repeated gtools.op.BinOp where = 1; }
+
+message InterestMy {}
+message InterestWorld {}
+message InterestOtherPlayer {}

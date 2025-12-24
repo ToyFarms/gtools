@@ -908,3 +908,11 @@ def test_trailing_newline_preserved() -> None:
     assert kv._trailing_nl
     assert kv.serialize() == buf
     verify(kv.serialize())
+
+
+def test_cell_int() -> None:
+    buf = b"action|dialog_return\ndialog_name|drop_item\namount|1222"
+    kv = StrKV.deserialize(buf)
+
+    assert int(kv[b"amount", 1]) == 1222
+

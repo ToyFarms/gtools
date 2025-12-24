@@ -9,6 +9,7 @@ import threading
 from gtools import flags
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.strkv import StrKV
+from gtools.core.log import setup_logger
 from gtools.core.utils.block_sigint import block_sigint
 from gtools.core.utils.network import is_up, resolve_doh
 from gtools.protogen.extension_pb2 import (
@@ -25,6 +26,7 @@ from gtools.proxy.extension.builtin.fast_drop import FastDropExtension
 from gtools.proxy.extension.sdk import Extension
 from gtools.proxy.proxy import Proxy
 from thirdparty.enet.bindings import ENetPacketFlag
+from gtools.proxy.setting import _setting
 
 
 def run_proxy() -> None:
@@ -92,8 +94,8 @@ if __name__ == "__main__":
         def destroy(self) -> None:
             pass
 
-    if args.v:
-        logging.basicConfig(level=logging.DEBUG)
+    level = logging.DEBUG if args.v else logging.INFO
+    setup_logger(log_dir=_setting.appdir / "logs", level=level)
 
     if args.cmd == "test":
         test_server()
@@ -108,7 +110,7 @@ if __name__ == "__main__":
         p.start()
         exts.append(p)
 
-        b.extension_len.wait_for(lambda x: x == len(exts), 5)
+        b.extension_len.wait_until(lambda x: x == len(exts), 5)
 
         buf = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd4\x00\x00\x00\x02\x00\x02\x0f\x00\x00\x00OnDialogRequest\x01\x02\xb8\x00\x00\x00set_default_color|`o\nadd_label_with_icon|big|`wDrop Sign``|left|20|\nadd_textbox|How many to drop?|left|\nadd_text_input|count||3|5|\nembed_data|itemID|20\nend_dialog|drop_item|Cancel|OK|\n@"
         pkt = PreparedPacket(
@@ -139,9 +141,7 @@ if __name__ == "__main__":
 
         class Stress(Extension):
             def __init__(self) -> None:
-                super().__init__(
-                    name="stress", can_push=True, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=0, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)]
-                )
+                super().__init__(name="stress", interest=[Interest(interest=INTEREST_TANK_PACKET, priority=0, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)])
 
             def thread_spam(self) -> None:
                 p = PreparedPacket(packet=NetPacket(type=NetType.GAME_MESSAGE, data=StrKV([[b"test", b"1"]])), direction=DIRECTION_SERVER_TO_CLIENT, flags=ENetPacketFlag.RELIABLE)

@@ -182,6 +182,12 @@ class _CellView:
     def __bytes__(self) -> bytes:
         return self._get_value()
 
+    def __int__(self) -> int:
+        return int(self._get_value().decode())
+
+    def __float__(self) -> float:
+        return float(self._get_value().decode())
+
     def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
         return self._get_value().decode(encoding, errors)
 

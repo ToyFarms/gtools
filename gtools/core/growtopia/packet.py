@@ -335,7 +335,7 @@ class PreparedPacket:
         )
 
     def __repr__(self) -> str:
-        return f"PreparedPacket(packet={self.as_net}, raw={self.as_raw}, direction={self.direction}, flags={self.flags})"
+        return f"PreparedPacket(packet={self.as_net}, direction={self.direction}, flags={self.flags})"
 
 
 if __name__ == "__main__":
