@@ -334,6 +334,7 @@ def main() -> None:
                 return 0
             return 1 + count_nodes(node.left) + count_nodes(node.right)
 
+        @cache
         def calc_cost(node: SpliceNode | None, depth: int = 1) -> None:
             if node is None:
                 return
@@ -370,6 +371,7 @@ def main() -> None:
         pprint(most_nodes)
         print()
 
+        @cache
         def count_raw_mats(node: SpliceNode) -> int:
             raw_mats = defaultdict(int)
             no = defaultdict(int)
