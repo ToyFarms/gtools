@@ -10,6 +10,8 @@ test:
 
 to run the test
 $ python script.py test
+or
+$ pytest --forked -vv
 
 see coverage report
 $ python script.py test -r
