@@ -895,6 +895,7 @@ class Broker:
                         self.extension_len.update(lambda x: x + 1)
                     case Packet.TYPE_DISCONNECT:
                         self._extension_mgr.remove_extension(id)
+                        self.extension_len.update(lambda x: x - 1)
                     case Packet.TYPE_PENDING_PACKET:
                         if TRACE:
                             print(f"recv from {id}: {pkt}")

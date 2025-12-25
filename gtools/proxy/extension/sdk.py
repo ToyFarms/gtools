@@ -184,17 +184,17 @@ class Extension(ABC):
             pass
 
         self._stop_event.set(True)
-        self.broker_connected.set(False)
-        self.push_connected.set(False)
 
         try:
             self._socket.close()
         except Exception as e:
             self.logger.debug(f"socket close error: {e}")
+        self.broker_connected.set(False)
         try:
             self._push_socket.close()
         except Exception as e:
             self.logger.debug(f"socket close error: {e}")
+        self.push_connected.set(False)
 
         if self._worker_thread_id and self._worker_thread_id.is_alive():
             self._worker_thread_id.join(timeout=2.0)
