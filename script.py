@@ -143,6 +143,7 @@ def main() -> None:
             shutil.rmtree(snapshots)
     elif args.cmd == "analyze":
 
+        # TODO: fk this, is shouldve just dump the raw traffic instead of parsing the logs
         def analyze(file: Path, out: IO[str]) -> None:
             __pattern = re.compile(
                 r"""
@@ -184,10 +185,26 @@ def main() -> None:
 
                 return __pattern.sub(repl, s)
 
-            content = file.read_text()
-            packets = re.split(r"^DEBUG:proxy:\[T\+(.*)\] from gt ", content, flags=re.MULTILINE)
-            it = iter(packets[1:])
-            packets = [(mark, block.strip().splitlines()) for mark, block in zip(it, it)]
+            lines = file.read_text().splitlines()
+            packets = []
+            patt = r".*proxy proxy\.py.* \[T\+([\d\.]*)] from gt (server|client)"
+
+            for i, line in enumerate(lines):
+                match = re.findall(patt, line)
+                if not match:
+                    continue
+
+                next_index = None
+
+                for j in range(i + 1, len(lines)):
+                    if re.findall(patt, lines[j]):
+                        next_index = j
+                        break
+
+                if next_index is not None:
+                    packets.append((match[0][0], lines[i:next_index]))
+                else:
+                    packets.append((match[0][0], lines[i:]))
 
             def find_index[T](iterable: list[T], predicate: Callable[[T], bool]) -> int | None:
                 for i, item in enumerate(iterable):
@@ -198,9 +215,9 @@ def main() -> None:
 
             for pkt_num, (time, pkt) in enumerate(packets):
                 src = pkt[0].split(" ")[0]
-                pkt_repr_start = find_index(pkt, lambda x: x.startswith("DEBUG:proxy:packet="))
+                pkt_repr_start = find_index(pkt, lambda x: "packet=NetPacket" in x)
                 net_type = re.findall(r".*NetPacket\[(.*)\]", pkt[pkt_repr_start])[0]  # pyright: ignore
-                pkt_repr_end = find_index(pkt, lambda x: "flags=" in x and "from=" in x)
+                pkt_repr_end = find_index(pkt, lambda x: "from=" in x)
 
                 if pkt_repr_start and pkt_repr_end:
                     pkt_repr = "".join(pkt[pkt_repr_start : pkt_repr_end + 1])
@@ -255,6 +272,9 @@ def main() -> None:
             out.flush()
 
         for file in list(Path("analyze").glob("*.txt")):
+            # if "punch2" not in file.name:
+            #     continue
+
             out_file = file.with_suffix(".out")
             with open(out_file, "w") as out:
                 analyze(file, out)
