@@ -477,7 +477,7 @@ HandleFunction = Callable[[bytes, Packet, BrokerFunction], Any]
 class Broker:
     logger = logging.getLogger("broker")
 
-    def __init__(self, pull_queue: Queue[PreparedPacket | None] | None = None, addr: str = "tcp://127.0.0.1:6712") -> None:
+    def __init__(self, pull_queue: Queue[PreparedPacket | None] | Callable[[PreparedPacket | None], Any] | None = None, addr: str = "tcp://127.0.0.1:6712") -> None:
         self._context = zmq.Context()
         self._socket = self._context.socket(zmq.ROUTER)
         self._socket.setsockopt(zmq.LINGER, 0)
@@ -558,7 +558,10 @@ class Broker:
                     continue
 
                 if self._pull_queue:
-                    self._pull_queue.put(pkt)
+                    if callable(self._pull_queue):
+                        self._pull_queue(pkt)
+                    else:
+                        self._pull_queue.put(pkt)
                 else:
                     self.logger.warning(f"pull unhandled: {pkt}")
 
@@ -576,7 +579,10 @@ class Broker:
                     continue
 
                 if self._pull_queue:
-                    self._pull_queue.put(pkt)
+                    if callable(self._pull_queue):
+                        self._pull_queue(pkt)
+                    else:
+                        self._pull_queue.put(pkt)
                 else:
                     self.logger.warning(f"pull unhandled: {pkt}")
 
