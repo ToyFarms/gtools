@@ -1,1 +1,1 @@
-"{set_default_color|`o\\nadd_label_with_icon|big|`wDrop Sign``|left|20|\\nadd_textbox|How many to drop?|left|\\nadd_text_input|count||3|5|\\nembed_data|itemID|20\\nend_dialog|drop_item|Cancel|OK|}"
+"{set_default_color|`o\\nadd_label_with_icon|big|`wDrop Sign``|left|20|\\nadd_textbox|How many to drop?|left|\\nadd_text_input|count||3|5|\\nembed_data|itemID|20\\nend_dialog|drop_item|Cancel|OK|\\n}"

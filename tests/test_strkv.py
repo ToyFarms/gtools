@@ -504,7 +504,7 @@ def test_setitem_on_nonexistent_key() -> None:
 
 def test_deserialize_malformed_data() -> None:
     kv = StrKV.deserialize(b"malformed||data\n\n\nempty||lines")
-    assert len(kv._data) == 2  # Updated: empty lines are skipped
+    assert len(kv._data) == 4
     verify(repr(kv))
 
 
@@ -599,7 +599,7 @@ def test_find_by_key_and_offset_and_direct_access() -> None:
 def test_with_trailing_newline_serialization() -> None:
     kv = StrKV()
     kv.append(["srv", "127.0.0.1"])
-    kv.with_trailing_newline()
+    kv.with_nl()
     s = kv.serialize()
     assert s.endswith(b"\n")
 
@@ -796,7 +796,7 @@ def test_real_world_usage():
 
     expected_nl = b"action|dialog_return\n" b"dialog_name|drop_item\n" b"itemID|20|\n" b"count|3\n"
 
-    result2 = res.with_trailing_newline().serialize()
+    result2 = res.with_nl().serialize()
     assert result2 == expected_nl
     verify(result2.decode(), key="serialized-nl")
 
@@ -901,11 +901,11 @@ def test_serialization_roundtrip():
     assert s2[2, 0] == b"x"
     assert s2[2, 1] == b"y"
 
+
 def test_trailing_newline_preserved() -> None:
     buf = b"action|dialog_return\ndialog_name|drop_item\n"
     kv = StrKV.deserialize(buf)
 
-    assert kv._trailing_nl
     assert kv.serialize() == buf
     verify(kv.serialize())
 
@@ -916,3 +916,20 @@ def test_cell_int() -> None:
 
     assert int(kv[b"amount", 1]) == 1222
 
+
+def test_multiple_newline() -> None:
+    target = b"action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n"
+    kv = StrKV([[b"action", b"dialog_return"], [b"dialog_name", b"gazette"], [b"buttonClicked", b"banner"]]).with_nl().with_nl()
+    assert kv.serialize() == target
+
+
+def test_multiple_newline2() -> None:
+    target = b"action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n"
+    kv = StrKV([[b"action", b"dialog_return"], [b"dialog_name", b"gazette"], [b"buttonClicked", b"banner"], [], []])
+    assert kv.serialize() == target
+
+
+def test_multiple_newline_preserved() -> None:
+    buf = b"action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n"
+    kv = StrKV.deserialize(buf)
+    assert kv.serialize() == buf

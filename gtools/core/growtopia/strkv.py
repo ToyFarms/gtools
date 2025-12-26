@@ -342,9 +342,9 @@ class _RelativeProxy:
 
 
 class StrKV:
-    __slots__ = ("_data", "_key_map", "find", "relative", "_trailing_nl")
+    __slots__ = ("_data", "_key_map", "find", "relative")
 
-    def __init__(self, data: list[list[bytes]] | None = None, trailing_nl: bool = False) -> None:
+    def __init__(self, data: list[list[bytes]] | None = None) -> None:
         self._data: list[list[bytes]]
         self._key_map: dict[bytes, int] = {}
 
@@ -356,7 +356,6 @@ class StrKV:
 
         self.find = _FindProxy(self)
         self.relative = _RelativeProxy(self)
-        self._trailing_nl = trailing_nl
 
     def _rebuild_key_map(self) -> None:
         self._key_map.clear()
@@ -487,22 +486,22 @@ class StrKV:
         if not data:
             return cls()
 
-        if nl := data.endswith(b"\n"):
-            data = data.rstrip(b"\n")
-
         _data: list[list[bytes]] = []
         for line in data.split(b"\n"):
             if line:
                 _data.append(line.split(b"|"))
+            else:
+                _data.append([])
 
-        return cls(_data).with_trailing_newline(nl)
-
-    def with_trailing_newline(self, v: bool = True) -> "StrKV":
-        self._trailing_nl = v
-        return self
+        return cls(_data)
 
     def serialize(self) -> bytes:
-        return b"\n".join(b"|".join(row) for row in self._data) + (b"\n" if self._trailing_nl else b"")
+        return b"\n".join(b"|".join(row) for row in self._data)
+
+    def with_nl(self) -> "StrKV":
+        """adds a trailing newline"""
+        self._data.append([])
+        return self
 
     def __repr__(self) -> str:
         return f"{{{'\\n'.join(f'{x}' for x in ('|'.join(cell.decode('utf-8', 'backslashreplace') for cell in row) for row in self._data))}}}"
