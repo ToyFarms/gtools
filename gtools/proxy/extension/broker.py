@@ -6,6 +6,7 @@ import itertools
 import logging
 from queue import Queue
 import random
+import re
 import threading
 import time
 from traceback import print_exc
@@ -172,6 +173,10 @@ _OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
     Op.OP_LT: lambda lval, rval: lval < rval,
     Op.OP_LTE: lambda lval, rval: lval <= rval,
     Op.OP_BIT_TEST: lambda lval, rval: (lval & rval) == rval,
+    Op.OP_LIKE: lambda lval, rval: bool(re.match(rval, lval)),
+    Op.OP_STARTSWITH: lambda lval, rval: lval.startswith(rval),
+    Op.OP_ENDSWITH: lambda lval, rval: lval.endswith(rval),
+    Op.OP_CONTAINS: lambda lval, rval: rval in lval,
 }
 
 

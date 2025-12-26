@@ -73,6 +73,18 @@ wheels = [
 ]
 
 [[package]]
+name = "click"
+version = "8.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/fa/656b739db8587d7b5dfa22e22ed02566950fbfbcdc20311993483657a5c0/click-8.3.1.tar.gz", hash = "sha256:12ff4785d337a1bb490bb7e9c2b1ee5da3112e94a8622f26a6c77f5d2fc6842a", size = 295065, upload-time = "2025-11-15T20:45:42.706Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/98/78/01c019cdb5d6498122777c1a43056ebb3ebfeef2076d9d026bfe15583b2b/click-8.3.1-py3-none-any.whl", hash = "sha256:981153a64e25f12d547d3426c367a4857371575ee7ad18df2a6183ab0545b2a6", size = 108274, upload-time = "2025-11-15T20:45:41.139Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -143,12 +155,25 @@ wheels = [
 ]
 
 [[package]]
+name = "fix-protobuf-imports"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c7/c8/b5464411051fc876aac32323ceeafe3308ec619b6ed66a2dc36f759e1811/fix_protobuf_imports-0.1.7.tar.gz", hash = "sha256:19e21b909e13b034906414199fc32011e6d161ffbb900935eb4df7ef7fa84c87", size = 4240, upload-time = "2022-09-16T16:29:36.934Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/f8/58c189f06800aebe813bcc33a52ffc9c19260e2642b0ca0e39d69cf202c0/fix_protobuf_imports-0.1.7-py3-none-any.whl", hash = "sha256:d0363779783db5ebab586f4e34cddfd96ba8fbb5c39e7d04bcb743fc9a1222d0", size = 4582, upload-time = "2022-09-16T16:29:35.339Z" },
+]
+
+[[package]]
 name = "gtools"
 version = "0.0.1"
 source = { virtual = "." }
 dependencies = [
     { name = "cbor2" },
     { name = "coverage" },
+    { name = "fix-protobuf-imports" },
     { name = "pillow" },
     { name = "protobuf" },
     { name = "pyglm" },
@@ -162,6 +187,7 @@ dependencies = [
 requires-dist = [
     { name = "cbor2", specifier = ">=5.7.1" },
     { name = "coverage", specifier = ">=7.13.0" },
+    { name = "fix-protobuf-imports", specifier = ">=0.1.7" },
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "protobuf", specifier = ">=6.33.2" },
     { name = "pyglm", specifier = ">=2.8.3" },

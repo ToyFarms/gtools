@@ -18,6 +18,10 @@ class Op(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     OP_LT: _ClassVar[Op]
     OP_LTE: _ClassVar[Op]
     OP_BIT_TEST: _ClassVar[Op]
+    OP_LIKE: _ClassVar[Op]
+    OP_STARTSWITH: _ClassVar[Op]
+    OP_ENDSWITH: _ClassVar[Op]
+    OP_CONTAINS: _ClassVar[Op]
 OP_UNSPECIFIED: Op
 OP_EQ: Op
 OP_EQ_EPS: Op
@@ -27,6 +31,10 @@ OP_GTE: Op
 OP_LT: Op
 OP_LTE: Op
 OP_BIT_TEST: Op
+OP_LIKE: Op
+OP_STARTSWITH: Op
+OP_ENDSWITH: Op
+OP_CONTAINS: Op
 
 class BinOp(_message.Message):
     __slots__ = ()
