@@ -26,13 +26,13 @@ def console_message(text: str | bytes) -> NetPacket:
 def chat(text: bytes) -> NetPacket:
     return NetPacket(NetType.GENERIC_TEXT, StrKV([[b"action", b"input"], [b"", b"text", text]]))
 
-def particle(id: int, x: float, y: float) -> NetPacket:
+def particle(id: int, x: float, y: float, f: int = 0, f2: int = 0) -> NetPacket:
     call = call_function(
         b"OnParticleEffect",
         Variant.vuint(id),
         Variant.vvec2((x, y)),
-        Variant.vint(0),
-        Variant.vint(0),
+        Variant.vint(f),
+        Variant.vint(f2),
     )
     call.net_id = 4294967295
     return NetPacket(NetType.TANK_PACKET, call)

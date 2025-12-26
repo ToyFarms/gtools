@@ -503,13 +503,13 @@ class Extension(ABC):
     def console_log(self, msg: str) -> None:
         self.push(PreparedPacket(console_message(msg), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
-    def send_particle(self, id: int, *, abs: vec2 | None = None, tile: ivec2 | None = None) -> None:
+    def send_particle(self, id: int, f: int = 0, f2: int = 0, *, abs: vec2 | None = None, tile: ivec2 | None = None) -> None:
         pos = abs if abs else tile * 32 + 16 if tile else None
         pos = abs if abs else (tile[0] * 32.0 + 16, tile[1] * 32.0 + 16) if tile else None
         if not pos:
             return
 
-        self.push(PreparedPacket(particle(id, pos[0], pos[1]), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
+        self.push(PreparedPacket(particle(id, pos[0], pos[1], f, f2), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
     # TODO: improve command
     def command_toggle(self, cmd: str | bytes, id: int) -> Interest:

@@ -37,21 +37,33 @@ class Particle(Extension):
                 self.command_toggle("/c", 2),  # complete
                 self.command_toggle("/n", 3),  # next
                 self.command_toggle("/p", 4),  # prev
+                self.command("/a", 5),  # set the first args
+                self.command("/b", 6),  # set the second args
             ],
         )
         self.id = 0
+        self.first_args = 0
+        self.second_args = 0
 
     def process(self, event: PendingPacket) -> PendingPacket | None:
         match event.interest_id:
             case 0:
-                self.send_particle(self.id, abs=self.state.me.pos + vec2(0, -64))
+                self.send_particle(self.id, self.first_args, self.second_args, abs=self.state.me.pos + vec2(0, -64))
             case 1:
-                self.id = int(NetPacket.deserialize(event.buf).game_message[b"text", 1].decode().removeprefix("/set"))
+                self.id = int(NetPacket.deserialize(event.buf).generic_text.relative[b"text", 1].decode().removeprefix("/set"))
                 self.console_log(f"id set to {self.id}")
+                return self.cancel()
+            case 5:
+                self.first_args = int(NetPacket.deserialize(event.buf).generic_text.relative[b"text", 1].decode().removeprefix("/a"))
+                self.console_log(f"first set to {self.first_args}")
+                return self.cancel()
+            case 6:
+                self.second_args = int(NetPacket.deserialize(event.buf).generic_text.relative[b"text", 1].decode().removeprefix("/b"))
+                self.console_log(f"second set to {self.second_args}")
                 return self.cancel()
             case 2:
                 with open("particle.txt", "a") as f:
-                    name = NetPacket.deserialize(event.buf).game_message[b"text", 1].decode().removeprefix("/c")
+                    name = NetPacket.deserialize(event.buf).generic_text.relative[b"text", 1].decode().removeprefix("/c")
                     f.write(name)
                     self.console_log(f"saved id {self.id} as '{name}', next!")
                     self.id += 1
