@@ -439,11 +439,7 @@ class Proxy:
         while not self._stop_event.is_set():
             self._worker_should_process.wait()
             proxy_event, ver = self._event_queue.get()
-            if proxy_event is None:
-                self._event_queue.task_done()
-                continue
-            if ver != self._packet_version:
-                self._channel_queue.task_done()
+            if proxy_event is None or ver != self._packet_version:
                 continue
 
             with self._worker_lock:
@@ -474,19 +470,13 @@ class Proxy:
 
                 self._last_event_time = time.monotonic()
 
-            self._event_queue.task_done()
-
         self.logger.debug("packet worker thread exited")
 
     def _channel_worker(self) -> None:
         while not self._stop_event.is_set():
             self._worker_should_process.wait()
             pkt, ver = self._channel_queue.get()
-            if pkt is None:
-                self._channel_queue.task_done()
-                continue
-            if ver != self._packet_version:
-                self._channel_queue.task_done()
+            if pkt is None or ver != self._packet_version:
                 continue
 
             with self._worker_lock:
@@ -502,8 +492,6 @@ class Proxy:
                 print()
 
                 self._last_event_time = time.monotonic()
-
-            self._channel_queue.task_done()
 
         self.logger.debug("channel worker thread exited")
 
