@@ -2,17 +2,15 @@ from enum import IntEnum, auto
 import random
 import time
 
-from pyglm.glm import ivec2
-
 from gtools.core.growtopia.strkv import StrKV
+from gtools.core.growtopia.variant import Variant
+from gtools.core.task_scheduler import schedule_task
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
-    INTEREST_SEND_PARTICLE_EFFECT,
-    INTEREST_STATE_UPDATE,
-    INTEREST_TILE_CHANGE_REQUEST,
+    INTEREST_CALL_FUNCTION,
     Interest,
     InterestCallFunction,
     InterestGameMessage,
@@ -20,20 +18,21 @@ from gtools.protogen.extension_pb2 import (
     PendingPacket,
 )
 from gtools.proxy.extension.sdk import Extension
-from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
-from gtools.proxy.state import Status
+from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
 class Action(IntEnum):
-    EXIT = 0
-    BLOCK_EXTRA_QUIT_TO_EXIT = 1
-    WARP = 2
-    EXITED = 3
+    EXIT = auto()
+    BLOCK_EXTRA_QUIT_TO_EXIT = auto()
+    WARP = auto()
+    EXITED = auto()
 
+    FAST_DROP_TOGGLE = auto()
+    FAST_DROP_REQUEST = auto()
 
-GEIGER_PING = 114
-LBOT_BLOCK_PLACE = 88
+    # TODO: need to implement matcher for variant
+    GAZETTE_BANNER = auto()
 
 
 class AutoFishExtension(Extension):
@@ -43,7 +42,6 @@ class AutoFishExtension(Extension):
             name="utils",
             interest=[
                 self.command_toggle("/exit", Action.EXIT),
-                self.command("/warp", Action.WARP),
                 Interest(
                     interest=InterestType.INTEREST_GAME_MESSAGE,
                     game_message=InterestGameMessage(action=b"quit_to_exit"),
@@ -51,6 +49,7 @@ class AutoFishExtension(Extension):
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     id=Action.BLOCK_EXTRA_QUIT_TO_EXIT,
                 ),
+                self.command("/warp", Action.WARP),
                 Interest(
                     interest=InterestType.INTEREST_CALL_FUNCTION,
                     call_function=InterestCallFunction(fn_name=b"OnRequestWorldSelectMenu"),
@@ -58,15 +57,19 @@ class AutoFishExtension(Extension):
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
                     id=Action.EXITED,
                 ),
+                self.command("/fd", Action.FAST_DROP_TOGGLE),
+                Interest(
+                    interest=INTEREST_CALL_FUNCTION,
+                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+                    direction=DIRECTION_SERVER_TO_CLIENT,
+                    call_function=InterestCallFunction(fn_name=b"OnDialogRequest"),
+                    id=Action.FAST_DROP_REQUEST,
+                ),
             ],
         )
         self.should_block = False
         self.warp_target = None
-
-    # def thread_1(self) -> None:
-    #     while True:
-    #         self.console_log(f"{self.should_block}")
-    #         time.sleep(1)
+        self.fast_drop = False
 
     def to_main_menu(self) -> None:
         self.should_block = True
@@ -90,7 +93,6 @@ class AutoFishExtension(Extension):
             case Action.BLOCK_EXTRA_QUIT_TO_EXIT:
                 if self.should_block:
                     self.should_block = False
-                    print("BLOCKED QUIT_TO_EXIT")
                     return self.cancel()
                 else:
                     return self.pass_to_next()
@@ -101,7 +103,7 @@ class AutoFishExtension(Extension):
                 return self.cancel()
             case Action.EXITED:
                 if self.warp_target:
-                    time.sleep(1)
+                    time.sleep(random.uniform(0.929, 1.123))
                     self.push(
                         PreparedPacket(
                             NetPacket(
@@ -112,17 +114,43 @@ class AutoFishExtension(Extension):
                                         [b"name", self.warp_target.encode()],
                                         [b"invitedWorld", b"0"],
                                     ]
-                                ).with_trailing_newline(),
+                                ).with_nl(),
                             ),
                             DIRECTION_CLIENT_TO_SERVER,
                             ENetPacketFlag.RELIABLE,
                         )
                     )
                     self.warp_target = None
+            case Action.FAST_DROP_TOGGLE:
+                self.fast_drop = not self.fast_drop
+                self.console_log(f"fast drop enabled: {self.fast_drop}")
+                return self.cancel()
+            case Action.FAST_DROP_REQUEST:
+                var = Variant.deserialize(pkt.tank.extended_data)
+                if b"How many to drop" not in var.as_string[1]:
+                    return
+
+                kv = StrKV.deserialize(var.as_string[1])
+
+                res_data = StrKV().with_nl()
+                res_data[b"action"] = b"dialog_return"
+                res_data[b"dialog_name"] = b"drop_item"
+                res_data[b"itemID"] = kv.relative[b"itemID", 1], b""
+                res_data[b"count"] = kv.relative[b"count", 2]
+
+                res = PreparedPacket(
+                    NetPacket(NetType.GENERIC_TEXT, data=res_data),
+                    DIRECTION_CLIENT_TO_SERVER,
+                    ENetPacketFlag.RELIABLE,
+                )
+
+                schedule_task(lambda: self.push(res), random.uniform(0.712, 0.9812))
 
     def destroy(self) -> None:
         pass
 
+
+# \x02\x00\x00\x00action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n\x00
 
 if __name__ == "__main__":
     AutoFishExtension().standalone()

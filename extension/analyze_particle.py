@@ -17,8 +17,6 @@ from gtools.proxy.extension.sdk import Extension
 
 class Particle(Extension):
     def __init__(self) -> None:
-        logging.basicConfig(level=logging.DEBUG)
-
         # TODO: design a better command design
         super().__init__(
             name="analyze",
