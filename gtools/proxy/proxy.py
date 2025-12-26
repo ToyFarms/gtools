@@ -586,6 +586,7 @@ class Proxy:
                 self.proxy_client.destroy()
 
                 self._stop_event.set()
+                self._worker_should_process.set()
                 self._event_queue.put((None, 0))
                 self._worker_thread_id.join()
                 self._channel_queue.put((None, 0))
