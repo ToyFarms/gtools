@@ -75,8 +75,8 @@ class ENetPeerBase:
             return
 
         enet_peer_disconnect(self.peer, 0)
-        self.peer = None
 
+    # NOTE: no disconnect event produced on poll() (as opposed to regular disconnect())
     def disconnect_now(self) -> None:
         if not self.peer:
             return
