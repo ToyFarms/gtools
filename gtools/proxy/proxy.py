@@ -564,11 +564,12 @@ class Proxy:
                             self._last_telemetry_update = now
 
                     if self._should_reconnect.is_set():
-                        self._worker_should_process.clear()
-                        self._packet_version += 1
                         self.disconnect_all()
                         self._should_reconnect.clear()
                         break
+
+                self._worker_should_process.clear()
+                self._packet_version += 1
 
         except (InterruptedError, KeyboardInterrupt):
             pass
