@@ -22,11 +22,11 @@ from gtools.protogen.extension_pb2 import (
 )
 from gtools.proxy import login
 from gtools.proxy.extension.broker import Broker
-from gtools.proxy.extension.builtin.fast_drop import FastDropExtension
 from gtools.proxy.extension.sdk import Extension
 from gtools.proxy.proxy import Proxy
 from thirdparty.enet.bindings import ENetPacketFlag
 from gtools.proxy.setting import _setting
+from extension.fast_drop import FastDropExtension
 
 
 def run_proxy() -> None:
