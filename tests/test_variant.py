@@ -603,5 +603,51 @@ def test_256_elements() -> None:
         v.serialize()
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+def _make_variant_with_all_kinds() -> Variant:
+    v = Variant()
+    v.append(Variant.vfloat(value=1.5))
+    v.append(Variant.vstr(value=b"hello"))
+    v.append(Variant.vvec2(value=(2.0, 3.0)))
+    v.append(Variant.vvec3(value=(4.0, 5.0, 6.0)))
+    v.append(Variant.vuint(value=123456))
+    v.append(Variant.vint(value=-42))
+    return v
+
+
+def test_get_returns_each_kind_by_index():
+    v = _make_variant_with_all_kinds()
+    data = v.serialize()
+
+    expected = [
+        Variant.vfloat(value=1.5),
+        Variant.vstr(value=b"hello"),
+        Variant.vvec2(value=(2.0, 3.0)),
+        Variant.vvec3(value=(4.0, 5.0, 6.0)),
+        Variant.vuint(value=123456),
+        Variant.vint(value=-42),
+    ]
+
+    for i, exp in enumerate(expected):
+        got = Variant.get(data, i)
+        assert type(got) is type(exp)
+        assert got == exp
+
+
+def test_get_supports_negative_indices():
+    v = _make_variant_with_all_kinds()
+    data = v.serialize()
+
+    assert Variant.get(data, -1) == Variant.vint(value=-42)
+    assert Variant.get(data, -6) == Variant.vfloat(value=1.5)
+
+
+def test_get_raises_on_out_of_range_index():
+    v = Variant()
+    v.append(Variant.vfloat(value=0.0))
+    data = v.serialize()
+
+    with pytest.raises(ValueError) as excinfo:
+        Variant.get(data, 1)
+    assert "invalid index" in str(excinfo.value)
+
+
