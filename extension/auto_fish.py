@@ -32,7 +32,6 @@ LBOT_BLOCK_PLACE = 88
 
 class AutoFishExtension(Extension):
     def __init__(self) -> None:
-
         super().__init__(
             name="auto_fish",
             interest=[

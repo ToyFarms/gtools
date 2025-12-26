@@ -150,6 +150,7 @@ class Extension(ABC):
         self._monitor_thread_id.start()
 
         for name in dir(self):
+            # TODO: use decorator rather than this
             if not name.startswith("thread_"):
                 continue
 
