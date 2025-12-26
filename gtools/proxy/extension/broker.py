@@ -722,9 +722,6 @@ class Broker:
     def _utob(self, i: int) -> bytes:
         return i.to_bytes((i.bit_length() + 7) // 8)
 
-    # TODO: i didnt think zmq had all the stuff behind the scene before i implemented them myself.
-    # might want to utilize that instead for performance
-
     # if it returns none, then either there is no extension, or no extension matched
     def process_event(self, pkt: PreparedPacket, callback: PacketCallback | None = None) -> tuple[PendingPacket, bool] | None:
         start = time.perf_counter_ns()

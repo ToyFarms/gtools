@@ -34,11 +34,12 @@ class Particle(Extension):
                     id=0,
                 ),
                 self.command("/set", 1),  # set id
-                self.command_toggle("/c", 2),  # complete
+                self.command("/c", 2),  # complete
                 self.command_toggle("/n", 3),  # next
                 self.command_toggle("/p", 4),  # prev
                 self.command("/a", 5),  # set the first args
                 self.command("/b", 6),  # set the second args
+                self.command("/s", 7),  # send
             ],
         )
         self.id = 0
@@ -49,6 +50,10 @@ class Particle(Extension):
         match event.interest_id:
             case 0:
                 self.send_particle(self.id, self.first_args, self.second_args, abs=self.state.me.pos + vec2(0, -64))
+            case 7:
+                id = int(NetPacket.deserialize(event.buf).generic_text.relative[b"text", 1].decode().removeprefix("/s"))
+                self.send_particle(id, self.first_args, self.second_args, abs=self.state.me.pos + vec2(0, -32))
+                return self.cancel()
             case 1:
                 self.id = int(NetPacket.deserialize(event.buf).generic_text.relative[b"text", 1].decode().removeprefix("/set"))
                 self.console_log(f"id set to {self.id}")
@@ -64,7 +69,7 @@ class Particle(Extension):
             case 2:
                 with open("particle.txt", "a") as f:
                     name = NetPacket.deserialize(event.buf).generic_text.relative[b"text", 1].decode().removeprefix("/c")
-                    f.write(name)
+                    f.write(f"{self.id}={name.strip()}\n")
                     self.console_log(f"saved id {self.id} as '{name}', next!")
                     self.id += 1
                 return self.cancel()
