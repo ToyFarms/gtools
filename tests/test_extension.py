@@ -7,10 +7,10 @@ import pytest
 from gtools.core.growtopia.strkv import StrKV
 from gtools.protogen.op_pb2 import OP_EQ, BinOp
 from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
-from gtools.proxy.extension.builtin.fast_drop import FastDropExtension
+from extension.fast_drop import FastDropExtension
 from tests import verify
 
-from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket
+from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     BLOCKING_MODE_SEND_AND_FORGET,
@@ -20,6 +20,7 @@ from gtools.protogen.extension_pb2 import (
     INTEREST_GENERIC_TEXT,
     INTEREST_STATE,
     INTEREST_TANK_PACKET,
+    INTEREST_TILE_CHANGE_REQUEST,
     Direction,
     Interest,
     InterestGenericText,
@@ -653,31 +654,22 @@ def test_finish() -> None:
 
 class ExtensionCommand(Extension):
     def __init__(self, name: str, priority: int = 0) -> None:
-        q = Query(where=[Clause(row=FindRow(method=FindRow.KEY_ANY, key=b"text"), col=FindCol(method=FindCol.RELATIVE, index=1))])
-        query = Any()
-        query.Pack(q)
-
         super().__init__(
             name=name,
             interest=[
-                Interest(
-                    interest=INTEREST_GENERIC_TEXT,
-                    generic_text=InterestGenericText(where=[BinOp(lvalue=query, op=OP_EQ, buf=b"/should_work")]),
-                    priority=priority,
-                    blocking_mode=BLOCKING_MODE_BLOCK,
-                    direction=DIRECTION_UNSPECIFIED,
-                )
+                self.command("/should_work", 0),
             ],
         )
 
     def process(self, event: PendingPacket) -> PendingPacket | None:
+        print(NetPacket.deserialize(event.buf))
         return self.cancel()
 
     def destroy(self) -> None:
         pass
 
 
-def test_generic_text_query() -> None:
+def test_match_generic_text() -> None:
     b = Broker()
     b.start()
 
@@ -689,14 +681,14 @@ def test_generic_text_query() -> None:
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"hello"]]),
         )
-        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
         assert pkt is None
 
         opkt = NetPacket(
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"/should_work"]]),
         )
-        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
         assert pkt
         pkt, cancelled = pkt
         verify(pkt.buf)
@@ -706,21 +698,21 @@ def test_generic_text_query() -> None:
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"//should_work"]]),
         )
-        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
         assert pkt is None
 
         opkt = NetPacket(
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"//no"]]),
         )
-        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
         assert pkt is None
 
         opkt = NetPacket(
             type=NetType.GENERIC_TEXT,
             data=StrKV([[b"action", b"input"], [b"", b"text", b"/not_registered"]]),
         )
-        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        pkt = b.process_event(PreparedPacket(opkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
         assert pkt is None
 
         assert ext.stop().wait_true(5)
@@ -1486,6 +1478,134 @@ def test_non_block_cancel_should_cancel() -> None:
 
         time.sleep(1)
         assert not ress
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+class ExtensionTileChangeRequest(Extension):
+    def __init__(self, name: str, priority: int = 0) -> None:
+        super().__init__(
+            name=name,
+            interest=[
+                Interest(
+                    interest=INTEREST_TILE_CHANGE_REQUEST,
+                    blocking_mode=BLOCKING_MODE_BLOCK,
+                    direction=DIRECTION_CLIENT_TO_SERVER,
+                ),
+            ],
+        )
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        pass
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_match_tile_change_request() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionTileChangeRequest("tilechange")
+        assert ext.start().wait_true(5)
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        assert not res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
+        assert not res
+
+        pkt = NetPacket(type=NetType.GAME_MESSAGE, data=StrKV([[b"something", b"123"]]))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        assert not res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(type=TankType.ITEM_ACTIVATE_OBJECT_REQUEST))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        assert not res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(type=TankType.ITEM_ACTIVATE_OBJECT_REQUEST))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
+        assert not res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(type=TankType.TILE_CHANGE_REQUEST))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
+        assert res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(type=TankType.TILE_CHANGE_REQUEST))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        assert not res
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+class ExtensionTileMatchAnyDirection(Extension):
+    def __init__(self, name: str, priority: int = 0) -> None:
+        super().__init__(
+            name=name,
+            interest=[
+                Interest(
+                    interest=INTEREST_TANK_PACKET,
+                    blocking_mode=BLOCKING_MODE_BLOCK,
+                    direction=DIRECTION_UNSPECIFIED,
+                ),
+            ],
+        )
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        pass
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_match_any_direction() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionTileMatchAnyDirection("match_any")
+        assert ext.start().wait_true(5)
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        assert res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
+        assert res
+
+        pkt = NetPacket(type=NetType.GAME_MESSAGE, data=StrKV([[b"something", b"123"]]))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        assert not res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(type=TankType.ITEM_ACTIVATE_OBJECT_REQUEST))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        assert res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(type=TankType.ITEM_ACTIVATE_OBJECT_REQUEST))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
+        assert res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(type=TankType.TILE_CHANGE_REQUEST))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
+        assert res
+
+        pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(type=TankType.TILE_CHANGE_REQUEST))
+        res = b.process_event(PreparedPacket(pkt, DIRECTION_UNSPECIFIED, ENetPacketFlag.NONE))
+        assert res
 
         assert ext.stop().wait_true(5)
     except:

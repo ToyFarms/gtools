@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from argparse import ArgumentParser
 from dataclasses import dataclass
 from urllib.parse import urlparse
 import os
@@ -14,18 +15,25 @@ from zmq.utils.monitor import recv_monitor_message
 
 from gtools.core.growtopia.create import console_message, particle
 from gtools.core.growtopia.packet import PreparedPacket
+from gtools.core.log import setup_logger
 from gtools.core.signal import Signal
 from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
+    BLOCKING_MODE_BLOCK,
+    DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
+    INTEREST_GENERIC_TEXT,
     CapabilityResponse,
+    InterestGenericText,
     Packet,
     Interest,
     PendingPacket,
 )
-from gtools.protogen.op_pb2 import BinOp, Op
+from gtools.protogen.op_pb2 import OP_EQ, BinOp, Op
+from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field, FieldValue
 from gtools.proxy.state import State, Status
+from gtools.proxy.setting import _setting
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -484,3 +492,40 @@ class Extension(ABC):
             return
 
         self.push(PreparedPacket(particle(id, pos[0], pos[1]), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
+
+    def command(self, cmd: str | bytes, id: int) -> Interest:
+        cmd = cmd.encode() if isinstance(cmd, str) else cmd
+        return Interest(
+            interest=INTEREST_GENERIC_TEXT,
+            generic_text=InterestGenericText(
+                where=[
+                    BinOp(
+                        lvalue=self.any(Query(where=[Clause(row=FindRow(method=FindRow.KEY_ANY, key=b"text"), col=FindCol(method=FindCol.RELATIVE, index=1))])),
+                        op=OP_EQ,
+                        buf=cmd,
+                    )
+                ]
+            ),
+            blocking_mode=BLOCKING_MODE_BLOCK,
+            direction=DIRECTION_CLIENT_TO_SERVER,
+            id=id,
+        )
+
+    def standalone(self) -> None:
+        """call this only in `if __name__ == '__main__'`"""
+        parser = ArgumentParser()
+        parser.add_argument("-v", action="store_true", help="verbose")
+
+        args = parser.parse_args()
+
+        level = logging.DEBUG if args.v else logging.INFO
+        setup_logger(
+            self._name.decode(errors="surrogateescape"),
+            log_dir=_setting.appdir / "logs" / "extension",
+            level=level,
+        )
+
+        try:
+            self.start(block=True)
+        except:
+            pass

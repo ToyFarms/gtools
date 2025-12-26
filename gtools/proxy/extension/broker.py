@@ -175,33 +175,44 @@ _OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
 }
 
 
-def match_strkv_clause(kv: StrKV, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
-    for clause in where:
-        lvalue = Query()
-        if not clause.lvalue.Unpack(lvalue):
-            raise TypeError("strkv lvalue expects a query type")
+logger = logging.getLogger("matcher")
 
-        for find in lvalue.where:
-            if find.HasField("col"):
-                col = _GET_COL[find.row.method, find.col.method](kv, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
-                if not _OP_EVALUATE[clause.op](col, getattr(clause, clause.WhichOneof("rvalue"))):
-                    return False
-            else:
-                row = _GET_ROW[find.row.method](kv, getattr(find.row, find.row.WhichOneof("m")))
-                if not _OP_EVALUATE[clause.op](row, getattr(clause, clause.WhichOneof("rvalue"))):
-                    return False
+
+def match_strkv_clause(kv: StrKV, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
+    try:
+        for clause in where:
+            lvalue = Query()
+            if not clause.lvalue.Unpack(lvalue):
+                raise TypeError("strkv lvalue expects a query type")
+
+            for find in lvalue.where:
+                if find.HasField("col"):
+                    col = _GET_COL[find.row.method, find.col.method](kv, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
+                    if not _OP_EVALUATE[clause.op](col, getattr(clause, clause.WhichOneof("rvalue"))):
+                        return False
+                else:
+                    row = _GET_ROW[find.row.method](kv, getattr(find.row, find.row.WhichOneof("m")))
+                    if not _OP_EVALUATE[clause.op](row, getattr(clause, clause.WhichOneof("rvalue"))):
+                        return False
+    except Exception as e:
+        logger.warning(f"failed matching clause with exception: {e}")
+        return False
 
     return True
 
 
 def match_tank_clause(tank: TankPacket, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
-    for clause in where:
-        lvalue = FieldValue()
-        if not clause.lvalue.Unpack(lvalue):
-            raise TypeError("tank lvalue expects a field type")
+    try:
+        for clause in where:
+            lvalue = FieldValue()
+            if not clause.lvalue.Unpack(lvalue):
+                raise TypeError("tank lvalue expects a field type")
 
-        if not _OP_EVALUATE[clause.op](_TANK_FIELD_ACCESSOR[lvalue.v](tank), getattr(clause, clause.WhichOneof("rvalue"))):
-            return False
+            if not _OP_EVALUATE[clause.op](_TANK_FIELD_ACCESSOR[lvalue.v](tank), getattr(clause, clause.WhichOneof("rvalue"))):
+                return False
+    except Exception as e:
+        logger.warning(f"failed matching clause with exception: {e}")
+        return False
 
     return True
 
@@ -244,12 +255,8 @@ class ExtensionManager:
         for client in self._interest_map[interest_type]:
             interest = client.interest
 
-            if f := client.interest.WhichOneof("payload"):
-                if getattr(interest, f) is None:
-                    continue
-                if TRACE:
-                    print("[matcher] payload exists, continuing")
-
+            # if the interest direction is unspecified, means it doesn't care about direction (match all)
+            # if the prepared packet direction is unspecified, we only match extension with unspecified direction
             if interest.direction != DIRECTION_UNSPECIFIED:
                 if interest.direction != pkt.direction.value:
                     continue
@@ -294,15 +301,16 @@ class ExtensionManager:
 
             if interest.interest in _TANK_INTEREST:
                 matched = True
-                i: Message = getattr(interest, interest.WhichOneof("payload"))
-                if (clauses := getattr(i, "where")) is not None:
-                    if not match_tank_clause(pkt.as_net.tank, clauses):
-                        continue
+                if which := interest.WhichOneof("payload"):
+                    i: Message = getattr(interest, which)
+                    if (clauses := getattr(i, "where")) is not None:
+                        if not match_tank_clause(pkt.as_net.tank, clauses):
+                            continue
 
-                    if TRACE:
-                        print(f"[matcher] top-level tank clause for {InterestType.Name(interest.interest)} matched, continuing")
+                        if TRACE:
+                            print(f"[matcher] top-level tank clause for {InterestType.Name(interest.interest)} matched, continuing")
 
-                    matched = bool(clauses)
+                        matched = bool(clauses)
 
                 match interest.interest:
                     case InterestType.INTEREST_STATE:
