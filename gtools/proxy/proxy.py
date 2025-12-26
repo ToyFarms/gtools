@@ -423,13 +423,10 @@ class Proxy:
                         self._update_status(Status.IN_WORLD)
 
     def disconnect_all(self) -> None:
-        self.proxy_client.disconnect_now()
+        self.proxy_client.disconnect()
         self.proxy_server.disconnect_now()
+        self.logger.debug("gt client disconnected")
 
-        if self.proxy_server.peer:
-            self.logger.debug("waiting for proxy_server to disconnect...")
-            while self.proxy_server.peer:
-                self.proxy_server.poll()
         if self.proxy_client.peer:
             self.logger.debug("waiting for proxy_client to disconnect...")
             while self.proxy_client.peer:
