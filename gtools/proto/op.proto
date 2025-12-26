@@ -14,6 +14,10 @@ enum Op {
   OP_LT = 6;
   OP_LTE = 7;
   OP_BIT_TEST = 8;
+  OP_LIKE = 9;
+  OP_STARTSWITH = 10;
+  OP_ENDSWITH = 11;
+  OP_CONTAINS = 12;
 }
 
 message BinOp {

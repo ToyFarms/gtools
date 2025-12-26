@@ -29,7 +29,7 @@ from gtools.protogen.extension_pb2 import (
     Interest,
     PendingPacket,
 )
-from gtools.protogen.op_pb2 import OP_EQ, BinOp, Op
+from gtools.protogen.op_pb2 import OP_EQ, OP_STARTSWITH, BinOp, Op
 from gtools.protogen.state_pb2 import STATE_SET_MY_TELEMETRY
 from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field, FieldValue
@@ -139,7 +139,6 @@ class Extension(ABC):
 
         return pkt
 
-    # TODO: the extension should be able to send more than one packet in one process
     @abstractmethod
     def process(self, event: PendingPacket) -> PendingPacket | None: ...
 
@@ -419,11 +418,23 @@ class Extension(ABC):
         def __le__(self, other: "Extension.Type") -> BinOp:
             return self._binop(other, Op.OP_LTE)
 
+        def __contains__(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_CONTAINS)
+
         def eq_eps(self, other: "Extension.Type") -> BinOp:
             return self._binop(other, Op.OP_EQ_EPS)
 
         def bit_test(self, other: "Extension.Type") -> BinOp:
             return self._binop(other, Op.OP_BIT_TEST)
+
+        def startswith(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_STARTSWITH)
+
+        def endswith(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_ENDSWITH)
+
+        def like(self, other: "Extension.Type") -> BinOp:
+            return self._binop(other, Op.OP_LIKE)
 
     @property
     def tank_type(self) -> TankFieldSelector:
@@ -500,7 +511,9 @@ class Extension(ABC):
 
         self.push(PreparedPacket(particle(id, pos[0], pos[1]), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
-    def command(self, cmd: str | bytes, id: int) -> Interest:
+    # TODO: improve command
+    def command_toggle(self, cmd: str | bytes, id: int) -> Interest:
+        """match all text"""
         cmd = cmd.encode() if isinstance(cmd, str) else cmd
         return Interest(
             interest=INTEREST_GENERIC_TEXT,
@@ -509,6 +522,25 @@ class Extension(ABC):
                     BinOp(
                         lvalue=self.any(Query(where=[Clause(row=FindRow(method=FindRow.KEY_ANY, key=b"text"), col=FindCol(method=FindCol.RELATIVE, index=1))])),
                         op=OP_EQ,
+                        buf=cmd,
+                    )
+                ]
+            ),
+            blocking_mode=BLOCKING_MODE_BLOCK,
+            direction=DIRECTION_CLIENT_TO_SERVER,
+            id=id,
+        )
+
+    def command(self, cmd: str | bytes, id: int) -> Interest:
+        """match startswith"""
+        cmd = cmd.encode() if isinstance(cmd, str) else cmd
+        return Interest(
+            interest=INTEREST_GENERIC_TEXT,
+            generic_text=InterestGenericText(
+                where=[
+                    BinOp(
+                        lvalue=self.any(Query(where=[Clause(row=FindRow(method=FindRow.KEY_ANY, key=b"text"), col=FindCol(method=FindCol.RELATIVE, index=1))])),
+                        op=OP_STARTSWITH,
                         buf=cmd,
                     )
                 ]

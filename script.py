@@ -13,8 +13,11 @@ import sys
 from typing import IO, Callable, Protocol
 import zlib
 
-from gtools.core.growtopia.items_dat import Item, item_database
-from gtools.core.growtopia.packet import NetPacket
+try:
+    from gtools.core.growtopia.items_dat import Item, item_database
+    from gtools.core.growtopia.packet import NetPacket
+except ImportError:
+    pass
 
 
 class SupportsStr(Protocol):
