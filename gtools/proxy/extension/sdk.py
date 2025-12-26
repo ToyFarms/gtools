@@ -30,6 +30,7 @@ from gtools.protogen.extension_pb2 import (
     PendingPacket,
 )
 from gtools.protogen.op_pb2 import OP_EQ, BinOp, Op
+from gtools.protogen.state_pb2 import STATE_SET_MY_TELEMETRY
 from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field, FieldValue
 from gtools.proxy.state import State, Status
@@ -128,7 +129,13 @@ class Extension(ABC):
         if expected and pkt.type != expected:
             raise TypeError(f"expected type {expected!r} got {pkt.type!r}")
 
-        self.logger.debug(f"\x1b[32m<<--\x1b[0m recv    \x1b[32m<<\x1b[0m{pkt!r}\x1b[32m<<\x1b[0m")
+        if self.logger.isEnabledFor(logging.DEBUG):
+            suppress = False
+            if pkt.HasField("state_update") and pkt.state_update.what == STATE_SET_MY_TELEMETRY:
+                suppress = True
+
+            if not suppress:
+                self.logger.debug(f"\x1b[32m<<--\x1b[0m recv    \x1b[32m<<\x1b[0m{pkt!r}\x1b[32m<<\x1b[0m")
 
         return pkt
 
