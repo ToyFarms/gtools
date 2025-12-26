@@ -1,4 +1,5 @@
 from pathlib import Path
+from sys import argv
 import zlib
 from dataclasses import dataclass
 from PIL import Image
@@ -141,3 +142,7 @@ class RtTexManager:
         RtTexManager._cache[file] = img
 
         return img.crop(crop)
+
+
+if __name__ == "__main__":
+    get_image_buffer(argv[1]).show()

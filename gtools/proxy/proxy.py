@@ -7,7 +7,6 @@ import time
 import traceback
 from typing import Generator, NamedTuple, cast
 
-from pyglm.glm import ivec2
 from gtools.core.async_writer import write_async
 from gtools.core.buffer import Buffer
 from gtools.core.eventbus import listen
@@ -71,16 +70,18 @@ class Proxy:
         self.redirecting: bool = False
         self.running = True
 
-        self._event_queue: Queue[ProxyEvent | None] = Queue()
+        self._event_queue: Queue[tuple[ProxyEvent | None, int]] = Queue()
         self._worker_thread_id: threading.Thread | None = None
         self._channel_thread_id: threading.Thread | None = None
         self._worker_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._should_reconnect = threading.Event()
+        self._worker_should_process = threading.Event()
+        self._packet_version = 0  # this is used to invalidate old packets that is left behind when restarting application
 
-        self._channel_queue: Queue[PreparedPacket | None] = Queue()
+        self._channel_queue: Queue[tuple[PreparedPacket | None, int]] = Queue()
         addr = f"tcp://127.0.0.1:{os.getenv('PORT', 6712)}"
-        self.broker = Broker(self._channel_queue, addr)
+        self.broker = Broker(lambda pkt: self._channel_queue.put((pkt, self._packet_version)), addr)
         self.logger.debug(f"starting broker on {addr}")
         self.broker.start()
         self.broker.set_handler(Packet.TYPE_STATE_REQUEST, self._state_request)
@@ -436,9 +437,13 @@ class Proxy:
     def _worker(self) -> None:
         self.logger.debug("starting packet worker thread")
         while not self._stop_event.is_set():
-            proxy_event = self._event_queue.get()
+            self._worker_should_process.wait()
+            proxy_event, ver = self._event_queue.get()
             if proxy_event is None:
                 self._event_queue.task_done()
+                continue
+            if ver != self._packet_version:
+                self._channel_queue.task_done()
                 continue
 
             with self._worker_lock:
@@ -475,8 +480,12 @@ class Proxy:
 
     def _channel_worker(self) -> None:
         while not self._stop_event.is_set():
-            pkt = self._channel_queue.get()
+            self._worker_should_process.wait()
+            pkt, ver = self._channel_queue.get()
             if pkt is None:
+                self._channel_queue.task_done()
+                continue
+            if ver != self._packet_version:
                 self._channel_queue.task_done()
                 continue
 
@@ -528,14 +537,15 @@ class Proxy:
 
                 MAX_POLL_MS = 100
 
+                self._worker_should_process.set()
                 while True:
                     start = time.perf_counter()
                     while (event := self.proxy_server.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                        self._event_queue.put(ProxyEvent(event, PreparedPacket.Direction.CLIENT_TO_SERVER))
+                        self._event_queue.put((ProxyEvent(event, PreparedPacket.Direction.CLIENT_TO_SERVER), self._packet_version))
 
                     start = time.perf_counter()
                     while (event := self.proxy_client.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                        self._event_queue.put(ProxyEvent(event, PreparedPacket.Direction.SERVER_TO_CLIENT))
+                        self._event_queue.put((ProxyEvent(event, PreparedPacket.Direction.SERVER_TO_CLIENT), self._packet_version))
 
                     now = time.time()
                     if now - self._last_telemetry_update > self._telemetry_update_interval:
@@ -554,14 +564,11 @@ class Proxy:
                             self._last_telemetry_update = now
 
                     if self._should_reconnect.is_set():
+                        self._worker_should_process.clear()
+                        self._packet_version += 1
                         self.disconnect_all()
                         self._should_reconnect.clear()
                         break
-
-                with self._event_queue.mutex:
-                    self._event_queue.queue.clear()
-                    self._event_queue.unfinished_tasks = 0
-                    self._event_queue.all_tasks_done.notify_all()
 
         except (InterruptedError, KeyboardInterrupt):
             pass
@@ -579,7 +586,7 @@ class Proxy:
                 self.proxy_client.destroy()
 
                 self._stop_event.set()
-                self._event_queue.put(None)
+                self._event_queue.put((None, 0))
                 self._worker_thread_id.join()
-                self._channel_queue.put(None)
+                self._channel_queue.put((None, 0))
                 self._channel_thread_id.join()
