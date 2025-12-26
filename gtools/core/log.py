@@ -1,3 +1,4 @@
+import binascii
 import logging
 import sys
 import os
@@ -109,9 +110,10 @@ def _get_env_vars() -> dict[str, str]:
     return env
 
 
-def _get_system_info(name: str, log_file: str | Path, start_ts: datetime) -> dict:
+def _get_system_info(name: str, log_file: str | Path, start_ts: datetime, id: str) -> dict:
     info = {}
     info["session_start"] = start_ts.isoformat(sep=" ", timespec="seconds")
+    info["id"] = id
     info["logger_name"] = name
     info["log_file"] = str(log_file)
     info["pid"] = os.getpid()
@@ -224,12 +226,12 @@ def _format_info_block(info: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_end_block(start_ts: datetime, end_ts: datetime, final_mem_kb, peak_mem_kb, disk, exception_info=None) -> str:
+def _format_end_block(start_ts: datetime, end_ts: datetime, id: str, final_mem_kb, peak_mem_kb, disk, exception_info=None) -> str:
     duration = end_ts - start_ts
     lines = []
     lines.append("")
     lines.append("=" * 80)
-    lines.append("SESSION END")
+    lines.append(f"SESSION END ({id})")
     lines.append("=" * 80)
     lines.append(f"End Time:      {end_ts.isoformat(sep=' ', timespec='seconds')}")
     lines.append(f"Duration:      {duration.total_seconds():.2f} seconds ({duration})")
@@ -298,12 +300,14 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
 
-    sys_info = _get_system_info(name, str(log_file), start_ts)
+    id = binascii.hexlify(os.urandom(16)).decode()
+    sys_info = _get_system_info(name, str(log_file), start_ts, id)
     info_block = _format_info_block(sys_info)
     file_handler.stream.write(info_block + "\n\n")
     file_handler.flush()
 
     root_logger._session_start_ts = start_ts  # type: ignore
+    root_logger._session_id = id  # type: ignore
     root_logger._session_log_file = str(log_file)  # type: ignore
     root_logger._session_file_handler = file_handler  # type: ignore
     root_logger._session_logger_configured = True  # type: ignore
@@ -318,7 +322,15 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
         disk = _get_disk_usage(".")
         exception_info = getattr(root_logger, "_session_exception_info", None)  # type: ignore
 
-        end_block = _format_end_block(root_logger._session_start_ts, end_ts, final_mem, peak_mem, disk, exception_info)  # type: ignore
+        end_block = _format_end_block(
+            root_logger._session_start_ts,  # type: ignore
+            end_ts,
+            getattr(root_logger, "_session_id", ""),
+            final_mem,
+            peak_mem,
+            disk,
+            exception_info,
+        )
 
         file_handler.stream.write("\n" + end_block + "\n")
         file_handler.flush()
