@@ -278,7 +278,7 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
 
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     start_ts = datetime.now()
-    date_str = start_ts.strftime("%Y%m%d")
+    date_str = start_ts.strftime("%Y%m%d_%H%M%S")
     log_file = Path(log_dir) / f"{date_str}_{name}.log"
 
     console_handler = logging.StreamHandler(sys.stdout)
