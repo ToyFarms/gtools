@@ -197,27 +197,54 @@ class Variant:
         return cls(out)
 
     @staticmethod
-    # TODO: this is incorrect
     def get(data: bytes, idx: int) -> "Variant.Type":
         s = Buffer(data, endian="<")
         count = s.read_u8()
+
+        if idx < 0:
+            idx += count
+        if not (0 <= idx < count):
+            raise ValueError(f"invalid index: {idx} (len={count})")
+
         for i in range(count):
             _ = s.read_u8()
             kind = Kind(s.read_u8())
 
-            if i == idx:
-                if kind == Kind.FLOAT:
+            if kind == Kind.FLOAT:
+                if i == idx:
                     return Variant.vfloat(value=s.read_f32())
-                elif kind == Kind.STRING:
+                s.read_f32()
+
+            elif kind == Kind.STRING:
+                if i == idx:
                     return Variant.vstr(value=s.read_pascal_bytes("I"))
-                elif kind == Kind.VEC2:
+                s.read_pascal_bytes("I")
+
+            elif kind == Kind.VEC2:
+                if i == idx:
                     return Variant.vvec2(value=(s.read_f32(), s.read_f32()))
-                elif kind == Kind.VEC3:
+                s.read_f32()
+                s.read_f32()
+
+            elif kind == Kind.VEC3:
+                if i == idx:
                     return Variant.vvec3(value=(s.read_f32(), s.read_f32(), s.read_f32()))
-                elif kind == Kind.UNSIGNED:
+                s.read_f32()
+                s.read_f32()
+                s.read_f32()
+
+            elif kind == Kind.UNSIGNED:
+                if i == idx:
                     return Variant.vuint(value=s.read_u32())
-                elif kind == Kind.SIGNED:
+                s.read_u32()
+
+            elif kind == Kind.SIGNED:
+                if i == idx:
                     return Variant.vint(value=s.read_i32())
+                s.read_i32()
+
+            else:
+                raise ValueError("invalid Kind")
 
         raise ValueError(f"invalid index: {idx} (len={count})")
 
