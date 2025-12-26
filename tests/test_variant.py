@@ -1,4 +1,5 @@
 import struct
+from typing import Any
 import pytest
 from gtools.core.growtopia.variant import Kind, Variant
 from tests import verify
@@ -603,7 +604,7 @@ def test_256_elements() -> None:
         v.serialize()
 
 
-def _make_variant_with_all_kinds() -> Variant:
+def _make_mixed_variant() -> Variant:
     v = Variant()
     v.append(Variant.vfloat(value=1.5))
     v.append(Variant.vstr(value=b"hello"))
@@ -615,7 +616,7 @@ def _make_variant_with_all_kinds() -> Variant:
 
 
 def test_get_returns_each_kind_by_index():
-    v = _make_variant_with_all_kinds()
+    v = _make_mixed_variant()
     data = v.serialize()
 
     expected = [
@@ -634,7 +635,7 @@ def test_get_returns_each_kind_by_index():
 
 
 def test_get_supports_negative_indices():
-    v = _make_variant_with_all_kinds()
+    v = _make_mixed_variant()
     data = v.serialize()
 
     assert Variant.get(data, -1) == Variant.vint(value=-42)
@@ -651,3 +652,107 @@ def test_get_raises_on_out_of_range_index():
     assert "invalid index" in str(excinfo.value)
 
 
+def test_same_class_different_value_are_not_equal():
+    a = Variant.vfloat(value=1.5)
+    b = Variant.vfloat(value=2.0)
+    assert a != b
+
+
+def test_different_kinds_with_same_underlying_value_are_not_equal():
+    u = Variant.vuint(value=1)
+    i = Variant.vint(value=1)
+    assert u != i
+
+    f = Variant.vfloat(value=1.0)
+    assert f != u
+
+    s = Variant.vstr(value=b"1")
+    assert s != u
+    assert s != f
+
+
+def test_roundtrip_serialize_deserialize_preserves_element_equality():
+    v = _make_mixed_variant()
+    data = v.serialize()
+    v2 = Variant.deserialize(data)
+
+    assert len(v2) == len(v)
+
+    for idx in range(len(v)):
+        orig = v[idx]
+        new = v2[idx]
+        assert type(orig) is type(new)
+        assert orig == new
+
+
+def test_hashable_and_set_membership():
+    a = Variant.vvec2(value=(1.0, 2.0))
+    b = Variant.vvec2(value=(1.0, 2.0))
+    c = Variant.vvec2(value=(3.0, 4.0))
+
+    s = {a, c, b}
+    assert len(s) == 2
+    assert a in s
+    assert b in s
+    assert c in s
+
+
+def test_comparison_with_non_variant_type_returns_false():
+    a = Variant.vfloat(value=1.0)
+    assert not (a == 1.0)
+    assert a != 1.0
+
+
+def test_str_and_bytes_equality():
+    s1 = Variant.vstr(value=b"abc")
+    s2 = Variant.vstr(value=b"abc")
+    s3 = Variant.vstr(value=b"def")
+    assert s1 == s2
+    assert s1 != s3
+
+
+@pytest.mark.parametrize(
+    "variant, raw",
+    [
+        (Variant.vfloat(1.5), 1.5),
+        (Variant.vfloat(0.0), 0.0),
+        (Variant.vuint(42), 42),
+        (Variant.vint(-7), -7),
+        (Variant.vstr(b"abc"), b"abc"),
+        (Variant.vvec2((1.0, 2.0)), (1.0, 2.0)),
+        (Variant.vvec3((1.0, 2.0, 3.0)), (1.0, 2.0, 3.0)),
+    ],
+)
+def test_variant_type_not_equal_to_raw_value(variant: Variant, raw: Any) -> None:
+    assert variant != raw
+    assert not (variant == raw)
+
+
+@pytest.mark.parametrize(
+    "variant, raw",
+    [
+        (Variant.vfloat(1.5), 2.5),
+        (Variant.vuint(42), 43),
+        (Variant.vint(-7), 7),
+        (Variant.vstr(b"abc"), b"def"),
+        (Variant.vvec2((1.0, 2.0)), (2.0, 1.0)),
+        (Variant.vvec3((1.0, 2.0, 3.0)), (3.0, 2.0, 1.0)),
+    ],
+)
+def test_variant_type_not_equal_to_different_raw_value(variant: Variant, raw: Any) -> None:
+    assert variant != raw
+
+
+def test_symmetric_equality_behavior_with_raw_values() -> None:
+    v = Variant.vuint(10)
+    raw = 10
+
+    assert v != raw
+    assert not (raw == v)
+    assert raw != v
+
+
+def test_variant_type_does_not_equal_other_raw_types() -> None:
+    assert Variant.vuint(1) != 1.0
+    assert Variant.vfloat(1.0) != 1
+    assert Variant.vstr(b"1") != "1"
