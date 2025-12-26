@@ -425,6 +425,7 @@ class Proxy:
     def disconnect_all(self) -> None:
         self.proxy_client.disconnect()
         self.proxy_server.disconnect_now()
+        self._should_reconnect.set()
         self.logger.debug("gt client disconnected")
 
         if self.proxy_client.peer:
