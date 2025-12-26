@@ -1,27 +1,19 @@
 from enum import IntEnum, auto
-from pprint import pprint
 import random
 import time
 
 from pyglm.glm import ivec2
 
 from gtools.protogen.extension_pb2 import (
-    BLOCKING_MODE_BLOCK,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
-    INTEREST_GENERIC_TEXT,
     INTEREST_SEND_PARTICLE_EFFECT,
     INTEREST_STATE_UPDATE,
     INTEREST_TILE_CHANGE_REQUEST,
     Interest,
-    InterestGenericText,
-    InterestSendParticleEffect,
-    InterestTileChangeRequest,
     PendingPacket,
 )
-from gtools.protogen.op_pb2 import OP_EQ, BinOp
-from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
 from gtools.proxy.extension.sdk import Extension
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.proxy.state import Status
@@ -37,45 +29,22 @@ class Action(IntEnum):
 GEIGER_PING = 114
 LBOT_BLOCK_PLACE = 88
 
-# TODO: move builtin no <root>/extension because its so deep
-
 
 class AutoFishExtension(Extension):
     def __init__(self) -> None:
-        # logging.basicConfig(level=logging.DEBUG)
 
         super().__init__(
             name="auto_fish",
             interest=[
-                Interest(
-                    interest=INTEREST_GENERIC_TEXT,
-                    generic_text=InterestGenericText(
-                        where=[
-                            BinOp(
-                                lvalue=self.any(Query(where=[Clause(row=FindRow(method=FindRow.KEY_ANY, key=b"text"), col=FindCol(method=FindCol.RELATIVE, index=1))])),
-                                op=OP_EQ,
-                                buf=b"/ft",
-                            )
-                        ]
-                    ),
-                    blocking_mode=BLOCKING_MODE_BLOCK,
-                    direction=DIRECTION_CLIENT_TO_SERVER,
-                    id=Action.TOGGLE_AUTO,
-                ),
+                self.command("/ft", Action.TOGGLE_AUTO),
                 Interest(
                     interest=INTEREST_TILE_CHANGE_REQUEST,
-                    tile_change_request=InterestTileChangeRequest(
-                        where=[  # FIXME: this tricks the matcher, i need to fix for just broad interest
-                            self.tank_type == self.uint32_t(TankType.TILE_CHANGE_REQUEST),
-                        ]
-                    ),
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
                     direction=DIRECTION_CLIENT_TO_SERVER,
                     id=Action.INITIATE,
                 ),
                 Interest(
                     interest=INTEREST_SEND_PARTICLE_EFFECT,
-                    send_particle_effect=InterestSendParticleEffect(where=[self.tank_type == self.uint32_t(TankType.SEND_PARTICLE_EFFECT)]),
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     id=Action.GOT_FISH,
@@ -141,7 +110,6 @@ class AutoFishExtension(Extension):
                         self.send_reel_packet()
                         time.sleep(random.uniform(0.261, 0.400))
                         self.send_throw_packet()
-
 
     def facing_left(self, to: ivec2) -> TankFlags:
         bot_pos = ivec2(self.state.me.pos // 32)
@@ -241,4 +209,4 @@ class AutoFishExtension(Extension):
 
 
 if __name__ == "__main__":
-    AutoFishExtension().start(block=True)
+    AutoFishExtension().standalone()
