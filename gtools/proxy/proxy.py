@@ -49,7 +49,7 @@ from gtools.proxy.proxy_client import ProxyClient
 from gtools.proxy.proxy_server import ProxyServer
 from gtools.proxy.setting import _setting
 from gtools.proxy.state import Inventory, State, Status, World
-from thirdparty.enet.bindings import ENetEventType, ENetPeer
+from thirdparty.enet.bindings import ENetEventType, ENetPeer, enet_host_flush
 from thirdparty.hexdump import hexdump
 
 
@@ -144,7 +144,9 @@ class Proxy:
 
                     self.redirecting = True
                     self.proxy_server.send(pkt.as_net.serialize(), pkt.flags)
-                    self.proxy_client.disconnect_now()
+                    enet_host_flush(self.proxy_server.host)
+                    self.proxy_client.disconnect()
+                    self.proxy_server.disconnect()
 
                     return
                 elif fn == b"OnSuperMainStartAcceptLogonHrdxs47254722215a":
