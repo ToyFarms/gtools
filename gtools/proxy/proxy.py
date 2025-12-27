@@ -148,6 +148,8 @@ class Proxy:
                     self.proxy_server.send(pkt.as_net.serialize(), pkt.flags)
                     enet_host_flush(self.proxy_server.host)
                     self.proxy_client.disconnect()
+                    self.proxy_server.disconnect()
+                    self._should_reconnect.set()
 
                     return
                 elif fn == b"OnSuperMainStartAcceptLogonHrdxs47254722215a":
