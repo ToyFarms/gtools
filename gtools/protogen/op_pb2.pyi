@@ -36,6 +36,24 @@ OP_STARTSWITH: Op
 OP_ENDSWITH: Op
 OP_CONTAINS: Op
 
+class Vec2(_message.Message):
+    __slots__ = ()
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    x: float
+    y: float
+    def __init__(self, x: _Optional[float] = ..., y: _Optional[float] = ...) -> None: ...
+
+class Vec3(_message.Message):
+    __slots__ = ()
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    Z_FIELD_NUMBER: _ClassVar[int]
+    x: float
+    y: float
+    z: float
+    def __init__(self, x: _Optional[float] = ..., y: _Optional[float] = ..., z: _Optional[float] = ...) -> None: ...
+
 class BinOp(_message.Message):
     __slots__ = ()
     LVALUE_FIELD_NUMBER: _ClassVar[int]
@@ -45,6 +63,8 @@ class BinOp(_message.Message):
     FLT_FIELD_NUMBER: _ClassVar[int]
     STR_FIELD_NUMBER: _ClassVar[int]
     BUF_FIELD_NUMBER: _ClassVar[int]
+    VEC2_FIELD_NUMBER: _ClassVar[int]
+    VEC3_FIELD_NUMBER: _ClassVar[int]
     lvalue: _any_pb2.Any
     op: Op
     u32: int
@@ -52,4 +72,6 @@ class BinOp(_message.Message):
     flt: float
     str: str
     buf: bytes
-    def __init__(self, lvalue: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., op: _Optional[_Union[Op, str]] = ..., u32: _Optional[int] = ..., i32: _Optional[int] = ..., flt: _Optional[float] = ..., str: _Optional[str] = ..., buf: _Optional[bytes] = ...) -> None: ...
+    vec2: Vec2
+    vec3: Vec3
+    def __init__(self, lvalue: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., op: _Optional[_Union[Op, str]] = ..., u32: _Optional[int] = ..., i32: _Optional[int] = ..., flt: _Optional[float] = ..., str: _Optional[str] = ..., buf: _Optional[bytes] = ..., vec2: _Optional[_Union[Vec2, _Mapping]] = ..., vec3: _Optional[_Union[Vec3, _Mapping]] = ...) -> None: ...

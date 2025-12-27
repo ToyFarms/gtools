@@ -83,6 +83,9 @@ class BlockingMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     BLOCKING_MODE_UNSPECIFIED: _ClassVar[BlockingMode]
     BLOCKING_MODE_BLOCK: _ClassVar[BlockingMode]
     BLOCKING_MODE_SEND_AND_FORGET: _ClassVar[BlockingMode]
+    BLOCKING_MODE_SEND_AND_CANCEL: _ClassVar[BlockingMode]
+    BLOCKING_MODE_ONESHOT: _ClassVar[BlockingMode]
+    BLOCKING_MODE_ONESHOT_AND_CANCEL: _ClassVar[BlockingMode]
 INTEREST_UNSPECIFIED: InterestType
 INTEREST_PEER_CONNECT: InterestType
 INTEREST_PEER_DISCONNECT: InterestType
@@ -148,6 +151,9 @@ DIRECTION_SERVER_TO_CLIENT: Direction
 BLOCKING_MODE_UNSPECIFIED: BlockingMode
 BLOCKING_MODE_BLOCK: BlockingMode
 BLOCKING_MODE_SEND_AND_FORGET: BlockingMode
+BLOCKING_MODE_SEND_AND_CANCEL: BlockingMode
+BLOCKING_MODE_ONESHOT: BlockingMode
+BLOCKING_MODE_ONESHOT_AND_CANCEL: BlockingMode
 
 class Packet(_message.Message):
     __slots__ = ()
@@ -452,10 +458,8 @@ class InterestState(_message.Message):
 class InterestCallFunction(_message.Message):
     __slots__ = ()
     WHERE_FIELD_NUMBER: _ClassVar[int]
-    FN_NAME_FIELD_NUMBER: _ClassVar[int]
     where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
-    fn_name: bytes
-    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ..., fn_name: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestUpdateStatus(_message.Message):
     __slots__ = ()

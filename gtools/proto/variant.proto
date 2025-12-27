@@ -1,0 +1,6 @@
+syntax = "proto3";
+
+package gtools.variant.query;
+
+message VariantClause { uint32 v = 1; }
+message VariantQuery { repeated VariantClause where = 1; }

@@ -5,6 +5,7 @@ import os
 from queue import Queue
 import sys
 import threading
+import time
 
 from gtools import flags
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
@@ -26,7 +27,7 @@ from gtools.proxy.extension.sdk import Extension
 from gtools.proxy.proxy import Proxy
 from thirdparty.enet.bindings import ENetPacketFlag
 from gtools.proxy.setting import _setting
-from extension.fast_drop import FastDropExtension
+from extension.utils import UtilityExtension
 
 
 def run_proxy() -> None:
@@ -106,7 +107,7 @@ if __name__ == "__main__":
         b.start()
         exts: list[mp.Process] = []
 
-        p = mp.Process(target=_run, args=[FastDropExtension])
+        p = mp.Process(target=_run, args=[UtilityExtension])
         p.start()
         exts.append(p)
 

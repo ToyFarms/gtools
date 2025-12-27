@@ -498,7 +498,7 @@ class StrKV:
     def serialize(self) -> bytes:
         return b"\n".join(b"|".join(row) for row in self._data)
 
-    def with_nl(self) -> "StrKV":
+    def append_nl(self) -> "StrKV":
         """adds a trailing newline"""
         self._data.append([])
         return self

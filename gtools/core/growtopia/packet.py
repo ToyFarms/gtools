@@ -106,6 +106,7 @@ class TankFlags(IntFlag):
     ACID_DAMAGE = 1 << 28
 
 
+# TODO: have constructor for variant
 class TankPacket(Serializable):
     logger = logging.getLogger("tank_packet")
     _FMT: str = "<BBBBIiIfIfffffiiI"

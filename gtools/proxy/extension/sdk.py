@@ -1,41 +1,29 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from urllib.parse import urlparse
 import os
 import threading
 import traceback
-from pyglm.glm import ivec2, vec2
-from google.protobuf.any_pb2 import Any
-from typing import Any as TAny
 import zmq
 import logging
 import time
 from zmq.utils.monitor import recv_monitor_message
 
-from gtools.core.growtopia.create import console_message, particle
 from gtools.core.growtopia.packet import PreparedPacket
 from gtools.core.log import setup_logger
 from gtools.core.signal import Signal
 from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
-    BLOCKING_MODE_BLOCK,
-    DIRECTION_CLIENT_TO_SERVER,
-    DIRECTION_SERVER_TO_CLIENT,
-    INTEREST_GENERIC_TEXT,
     CapabilityResponse,
-    InterestGenericText,
     Packet,
     Interest,
     PendingPacket,
 )
-from gtools.protogen.op_pb2 import OP_EQ, OP_STARTSWITH, BinOp, Op
 from gtools.protogen.state_pb2 import STATE_SET_MY_TELEMETRY
-from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
-from gtools.protogen.tank_pb2 import Field, FieldValue
+from gtools.proxy.extension.sdk_utils import ExtensionUtility
 from gtools.proxy.state import State, Status
 from gtools.proxy.setting import _setting
-from thirdparty.enet.bindings import ENetPacketFlag
 
 
 @dataclass
@@ -44,7 +32,7 @@ class SocketStatus:
     connected: Signal[bool]
 
 
-class Extension(ABC):
+class Extension(ExtensionUtility):
     logger = logging.getLogger("extension")
 
     def __init__(self, name: str, interest: list[Interest], broker_addr: str | None = None) -> None:
@@ -351,205 +339,6 @@ class Extension(ABC):
             self.logger.debug("worker thread exiting")
 
     # helper
-
-    def any(self, obj: object) -> Any:
-        ret = Any()
-        ret.Pack(obj)
-
-        return ret
-
-    class Type:
-        x: TAny
-        name: str
-
-        def make(self) -> dict[str, TAny]:
-            return {self.name: self.x}
-
-    class uint32_t(Type):
-        def __init__(self, x: int) -> None:
-            self.x = x
-            self.name = "u32"
-
-    class int32_t(Type):
-        def __init__(self, x: int) -> None:
-            self.x = x
-            self.name = "i32"
-
-    class float_t(Type):
-        def __init__(self, x: float) -> None:
-            self.x = x
-            self.name = "flt"
-
-    class string_t(Type):
-        def __init__(self, x: str) -> None:
-            self.x = x
-            self.name = "str"
-
-    class bytes_t(Type):
-        def __init__(self, x: bytes) -> None:
-            self.x = x
-            self.name = "buf"
-
-    class TankFieldSelector:
-        def __init__(self, lvalue: Any) -> None:
-            self.lvalue = lvalue
-
-        def _binop(self, other: "Extension.Type", op: Op) -> BinOp:
-            return BinOp(
-                lvalue=self.lvalue,
-                op=op,
-                **other.make(),
-            )
-
-        def __eq__(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_EQ)
-
-        def __ne__(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_NEQ)
-
-        def __gt__(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_GT)
-
-        def __ge__(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_GTE)
-
-        def __lt__(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_LT)
-
-        def __le__(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_LTE)
-
-        def __contains__(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_CONTAINS)
-
-        def eq_eps(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_EQ_EPS)
-
-        def bit_test(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_BIT_TEST)
-
-        def startswith(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_STARTSWITH)
-
-        def endswith(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_ENDSWITH)
-
-        def like(self, other: "Extension.Type") -> BinOp:
-            return self._binop(other, Op.OP_LIKE)
-
-    @property
-    def tank_type(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_TYPE)))
-
-    @property
-    def tank_object_type(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_OBJECT_TYPE)))
-
-    @property
-    def tank_jump_count(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_JUMP_COUNT)))
-
-    @property
-    def tank_animation_type(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_ANIMATION_TYPE)))
-
-    @property
-    def tank_net_id(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_NET_ID)))
-
-    @property
-    def tank_target_net_id(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_TARGET_NET_ID)))
-
-    @property
-    def tank_flags(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_FLAGS)))
-
-    @property
-    def tank_float_var(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_FLOAT_VAR)))
-
-    @property
-    def tank_value(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VALUE)))
-
-    @property
-    def tank_vector_x(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VECTOR_X)))
-
-    @property
-    def tank_vector_y(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VECTOR_Y)))
-
-    @property
-    def tank_vector_x2(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VECTOR_X2)))
-
-    @property
-    def tank_vector_y2(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_VECTOR_Y2)))
-
-    @property
-    def tank_particle_rotation(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_PARTICLE_ROTATION)))
-
-    @property
-    def tank_int_x(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_INT_X)))
-
-    @property
-    def tank_int_y(self) -> TankFieldSelector:
-        return Extension.TankFieldSelector(self.any(FieldValue(v=Field.TANK_FIELD_INT_Y)))
-
-    def console_log(self, msg: str) -> None:
-        self.push(PreparedPacket(console_message(msg), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
-
-    def send_particle(self, id: int, f: int = 0, f2: int = 0, *, abs: vec2 | None = None, tile: ivec2 | None = None) -> None:
-        pos = abs if abs else tile * 32 + 16 if tile else None
-        pos = abs if abs else (tile[0] * 32.0 + 16, tile[1] * 32.0 + 16) if tile else None
-        if not pos:
-            return
-
-        self.push(PreparedPacket(particle(id, pos[0], pos[1], f, f2), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
-
-    # TODO: improve command
-    def command_toggle(self, cmd: str | bytes, id: int) -> Interest:
-        """match all text"""
-        cmd = cmd.encode() if isinstance(cmd, str) else cmd
-        return Interest(
-            interest=INTEREST_GENERIC_TEXT,
-            generic_text=InterestGenericText(
-                where=[
-                    BinOp(
-                        lvalue=self.any(Query(where=[Clause(row=FindRow(method=FindRow.KEY_ANY, key=b"text"), col=FindCol(method=FindCol.RELATIVE, index=1))])),
-                        op=OP_EQ,
-                        buf=cmd,
-                    )
-                ]
-            ),
-            blocking_mode=BLOCKING_MODE_BLOCK,
-            direction=DIRECTION_CLIENT_TO_SERVER,
-            id=id,
-        )
-
-    def command(self, cmd: str | bytes, id: int) -> Interest:
-        """match startswith"""
-        cmd = cmd.encode() if isinstance(cmd, str) else cmd
-        return Interest(
-            interest=INTEREST_GENERIC_TEXT,
-            generic_text=InterestGenericText(
-                where=[
-                    BinOp(
-                        lvalue=self.any(Query(where=[Clause(row=FindRow(method=FindRow.KEY_ANY, key=b"text"), col=FindCol(method=FindCol.RELATIVE, index=1))])),
-                        op=OP_STARTSWITH,
-                        buf=cmd,
-                    )
-                ]
-            ),
-            blocking_mode=BLOCKING_MODE_BLOCK,
-            direction=DIRECTION_CLIENT_TO_SERVER,
-            id=id,
-        )
 
     def standalone(self) -> None:
         """call this only in `if __name__ == '__main__'`"""
