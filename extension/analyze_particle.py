@@ -1,5 +1,3 @@
-import logging
-
 from pyglm.glm import vec2
 
 from gtools.core.growtopia.packet import NetPacket, TankFlags
@@ -26,7 +24,7 @@ class Particle(Extension):
                 ),
                 Interest(
                     interest=INTEREST_STATE,
-                    state=InterestState(where=[self.tank_flags.bit_test(self.uint32_t(TankFlags.PUNCH))]),
+                    state=InterestState(where=[self.tank_flags.bit_test(self.uint(TankFlags.PUNCH))]),
                     direction=DIRECTION_CLIENT_TO_SERVER,
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
                     id=0,
