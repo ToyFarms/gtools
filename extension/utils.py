@@ -7,7 +7,6 @@ from gtools.core.growtopia.variant import Variant
 from gtools.core.task_scheduler import schedule_task
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
-    BLOCKING_MODE_SEND_AND_CANCEL,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
@@ -32,7 +31,6 @@ class Action(IntEnum):
     FAST_DROP_TOGGLE = auto()
     FAST_DROP_REQUEST = auto()
 
-    # TODO: need to implement matcher for variant
     GAZETTE_DIALOG = auto()
 
 
