@@ -618,6 +618,21 @@ class item_database:
                 pass
 
     @classmethod
+    def _atomic_write_bytes(cls, path: Path, data: bytes) -> None:
+        fd, tmp = tempfile.mkstemp(prefix="tmp_itemdb-", suffix=".dat", dir=str(path.parent))
+        os.close(fd)
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, str(path))
+        finally:
+            try:
+                if Path(tmp).exists():
+                    Path(tmp).unlink()
+            except Exception:
+                pass
+
+    @classmethod
     def db(cls) -> ItemDatabase:
         if not cls._db:
             candidate: list[Path] = [
@@ -642,7 +657,7 @@ class item_database:
         return cls._db
 
     @classmethod
-    def _save_cache(cls, hash: str, db: ItemDatabase) -> None:
+    def _save_cache(cls, hash: str, db: ItemDatabase, source_path: Path | None = None, source_bytes: bytes | None = None) -> None:
         version_dir = _setting.appdir / "item_database" / f"v{db.version}"
         version_dir.mkdir(parents=True, exist_ok=True)
 
@@ -650,15 +665,37 @@ class item_database:
         if existing is not None:
             cls._version_cache[db.version] = db
             cls.logger.debug(f"cache file already exists: {existing}")
-            return
+        else:
+            filename = f"{datetime.now(timezone.utc).strftime(cls._date_fmt)}_{hash}.pkl"
+            try:
+                cls._atomic_write(version_dir / filename, db)
+                cls._version_cache[db.version] = db
+                cls.logger.info(f"wrote cache {filename} version={db.version}")
+            except Exception as e:
+                cls.logger.error(f"failed saving cache {filename}: {e}")
 
-        filename = f"{datetime.now(timezone.utc).strftime(cls._date_fmt)}_{hash}.pkl"
-        try:
-            cls._atomic_write(version_dir / filename, db)
-            cls._version_cache[db.version] = db
-            cls.logger.info(f"wrote cache {filename} version={db.version}")
-        except Exception as e:
-            cls.logger.error(f"failed saving cache {filename}: {e}")
+        # archive items.dat
+        data_to_archive: bytes | None = None
+        if source_bytes is not None:
+            data_to_archive = source_bytes
+        elif source_path is not None and source_path.is_file():
+            try:
+                data_to_archive = source_path.read_bytes()
+            except Exception as e:
+                cls.logger.error(f"failed reading source_path for archive {source_path}: {e}")
+                data_to_archive = None
+
+        if data_to_archive is not None:
+            existing_dat = next(version_dir.glob(f"*_{hash}.dat"), None)
+            if existing_dat is not None:
+                cls.logger.debug(f"archive file already exists: {existing_dat}")
+            else:
+                dat_filename = f"{datetime.now(timezone.utc).strftime(cls._date_fmt)}_{hash}.dat"
+                try:
+                    cls._atomic_write_bytes(version_dir / dat_filename, data_to_archive)
+                    cls.logger.info(f"archived items.dat version {db.version} at {version_dir / dat_filename}")
+                except Exception as e:
+                    cls.logger.error(f"archive failed {dat_filename}: {e}")
 
     @classmethod
     def _load_cache(cls, hash: str, version: int) -> ItemDatabase | None:
@@ -712,9 +749,13 @@ class item_database:
     def deserialize(cls, path_or_data: str | Path | bytes) -> ItemDatabase:
         if isinstance(path_or_data, bytes):
             data = path_or_data
+            source_path = None
+            source_bytes = data
         else:
             path_or_data = Path(path_or_data)
             data = path_or_data.read_bytes()
+            source_path = path_or_data
+            source_bytes = None
 
         s = Buffer(data)
         version = s.read_u16()
@@ -730,7 +771,7 @@ class item_database:
             items[item.id] = item
 
         db = ItemDatabase(version=version, item_count=item_count, items=items)
-        cls._save_cache(hash, db)
+        cls._save_cache(hash, db, source_path, source_bytes)
 
         return db
 
