@@ -12,7 +12,7 @@ from sqlalchemy.sql import func, insert, select, update
 from gtools.core.discord.history import HistoryFetcher
 from gtools.core.discord.models import BackfillSession, Channel, Message
 from gtools.core.discord.writer import MessageWriter
-from gtools.core.utils.rate_limiter import async_rate_limiter, rate_limiter
+from gtools.core.rate_limiter import async_rate_limiter, rate_limiter
 
 
 global_limiter = rate_limiter(30)

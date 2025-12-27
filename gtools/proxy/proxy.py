@@ -15,7 +15,7 @@ from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.growtopia.world import Tile
 from gtools.core.limits import UINT32_MAX
-from gtools.core.utils.block_sigint import block_sigint
+from gtools.core.block_sigint import block_sigint
 from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet, StateResponse
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.state_pb2 import (

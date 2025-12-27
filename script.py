@@ -1,3 +1,4 @@
+#!/usr/bin/env -S uv run --script
 # TODO: make a directory scripts/ keep stuff separated out there so its not so cluttered
 import argparse
 from collections import defaultdict

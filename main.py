@@ -5,14 +5,13 @@ import os
 from queue import Queue
 import sys
 import threading
-import time
 
 from gtools import flags
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.log import setup_logger
-from gtools.core.utils.block_sigint import block_sigint
-from gtools.core.utils.network import is_up, resolve_doh
+from gtools.core.block_sigint import block_sigint
+from gtools.core.network import is_up, resolve_doh
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_SERVER_TO_CLIENT,

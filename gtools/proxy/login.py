@@ -6,7 +6,7 @@ import socketserver
 import ssl
 
 from gtools.core.growtopia.strkv import StrKV
-from gtools.core.utils.network import resolve_doh
+from gtools.core.network import resolve_doh
 from gtools.proxy.event import UpdateServerData
 from gtools.proxy.setting import _setting
 
