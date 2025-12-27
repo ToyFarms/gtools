@@ -1,12 +1,13 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import difflib
 from enum import IntEnum
 import logging
 import os
 from pathlib import Path
 import pickle
 import tempfile
-from typing import Any
+from typing import Any, Sequence
 
 import xxhash
 from zmq import IntFlag
@@ -600,7 +601,11 @@ class item_database:
     _date_fmt = "%Y%m%d_%H%M%S"
     logger = logging.getLogger("item_database")
 
+    # TODO: i think version is not only the version number, but the content needs to be factored in
     _version_cache: dict[int, ItemDatabase] = {}
+    _name_index_cache: dict[int, dict[bytes, Item]] = {}
+    _name_str_list_cache: dict[int, list[str]] = {}
+    _name_str_to_items_cache: dict[int, dict[str, list[Item]]] = {}
 
     @classmethod
     def _atomic_write(cls, path: Path, obj: Any) -> None:
@@ -665,12 +670,14 @@ class item_database:
         if existing is not None:
             cls._version_cache[db.version] = db
             cls.logger.debug(f"cache file already exists: {existing}")
+            cls._build_name_index(db)
         else:
             filename = f"{datetime.now(timezone.utc).strftime(cls._date_fmt)}_{hash}.pkl"
             try:
                 cls._atomic_write(version_dir / filename, db)
                 cls._version_cache[db.version] = db
                 cls.logger.info(f"wrote cache {filename} version={db.version}")
+                cls._build_name_index(db)
             except Exception as e:
                 cls.logger.error(f"failed saving cache {filename}: {e}")
 
@@ -741,6 +748,7 @@ class item_database:
                 with path.open("rb") as f:
                     cached = pickle.load(f)
                     cls._version_cache[version] = cached
+                    cls._build_name_index(cached)
                     return cached
             except Exception as e:
                 cls.logger.error("failed parsing pickle object %s: %s", path, e)
@@ -776,6 +784,38 @@ class item_database:
         return db
 
     @classmethod
+    def _build_name_index(cls, db: ItemDatabase) -> None:
+        version = getattr(db, "version", None)
+        if version is None:
+            return
+
+        if version in cls._name_index_cache:
+            return
+
+        name_index: dict[bytes, Item] = {}
+        name_str_to_items: dict[str, list[Item]] = {}
+        name_str_list: list[str] = []
+
+        for item in db.items.values():
+            name_bytes = getattr(item, "name", None)
+            if name_bytes is None:
+                continue
+
+            if name_bytes not in name_index:
+                name_index[name_bytes] = item
+
+            name_str = name_bytes.decode()
+            if name_str not in name_str_to_items:
+                name_str_to_items[name_str] = []
+                name_str_list.append(name_str)
+            name_str_to_items[name_str].append(item)
+
+        cls._name_index_cache[version] = name_index
+        cls._name_str_to_items_cache[version] = name_str_to_items
+        cls._name_str_list_cache[version] = name_str_list
+        cls.logger.debug(f"built name index for version {version} ({len(name_str_list)} names)")
+
+    @classmethod
     def items(cls) -> dict[int, Item]:
         return cls.db().items
 
@@ -784,9 +824,86 @@ class item_database:
         return cls.db().items[id]
 
     @classmethod
-    def get_by_name(cls, name: bytes) -> Item:
-        # TODO: regex / levhistein distance
-        return [item for _, item in cls.db().items.items() if item.name == name][0]
+    def get_by_name(cls, name: bytes | str) -> Item:
+        db = cls.db()
+        version = getattr(db, "version", None)
+        if version is None:
+            raise ValueError("database has no version")
+
+        key = name.encode() if isinstance(name, str) else name
+        cls._build_name_index(db)
+
+        name_index = cls._name_index_cache.get(version, {})
+        try:
+            return name_index[key]
+        except KeyError:
+            raise KeyError(f"no item with exact name {key!r} in version {version}")
+
+    @classmethod
+    def search(
+        cls,
+        query: bytes | str,
+        n: int = 5,
+        cutoff: float = 0.6,
+        version: int | None = None,
+        return_scores: bool = False,
+    ) -> Sequence[Item | tuple[Item, float]]:
+        query = query if isinstance(query, str) else query.decode()
+        if version is None:
+            version = getattr(cls.db(), "version", None)
+            if version is None:
+                raise ValueError("no database version available to search")
+
+        db = cls._version_cache.get(version) or cls.load_version(version) or cls.db()
+        cls._build_name_index(db)
+
+        name_list = cls._name_str_list_cache.get(version, [])
+        name_str_to_items = cls._name_str_to_items_cache.get(version, {})
+
+        if not name_list:
+            return []
+
+        matches = difflib.get_close_matches(query, name_list, n=n, cutoff=cutoff)
+
+        results: list[tuple[Item, float]] = []
+        seen_item_ids: set[int] = set()
+
+        for matched_name in matches:
+            items_for_name = name_str_to_items.get(matched_name, [])
+            score = difflib.SequenceMatcher(a=query, b=matched_name).ratio()
+            for item in items_for_name:
+                if item.id in seen_item_ids:
+                    continue
+                results.append((item, score))
+                seen_item_ids.add(item.id)
+                if len(results) >= n:
+                    break
+            if len(results) >= n:
+                break
+
+        if len(results) < n:
+            extra: list[tuple[Item, float]] = []
+            for name_str, items in name_str_to_items.items():
+                score = difflib.SequenceMatcher(a=query, b=name_str).ratio()
+                if score <= 0:
+                    continue
+                for item in items:
+                    if item.id in seen_item_ids:
+                        continue
+                    extra.append((item, score))
+            extra.sort(key=lambda x: x[1], reverse=True)
+            for itm, sc in extra:
+                results.append((itm, sc))
+                seen_item_ids.add(item.id)
+                if len(results) >= n:
+                    break
+
+        results = results[:n]
+
+        if return_scores:
+            return results
+        else:
+            return [itm for itm, _ in results]
 
     @classmethod
     def has_version(cls, version: int) -> bool:
