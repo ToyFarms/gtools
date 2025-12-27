@@ -345,6 +345,14 @@ def _format_exception_block(
     lines.append(f"Duration:      {duration.total_seconds():.2f} seconds ({duration})")
     lines.append("")
 
+    if log_stats:
+        lines.append("")
+        lines.append("Log Summary:")
+        total = sum(log_stats.values())
+        for level in sorted(log_stats.keys()):
+            lines.append(f"  {level:<8}: {log_stats[level]}")
+        lines.append(f"  TOTAL   : {total}")
+
     lines.append("Resources at End:")
     if final_mem_kb is not None:
         mem_mb = final_mem_kb / 1024
@@ -408,14 +416,6 @@ def _format_exception_block(
                 for k, v in locals_map.items():
                     lines.append(f"  {k}: {v}")
                 lines.append("")
-
-    if log_stats:
-        lines.append("")
-        lines.append("Log Summary:")
-        total = sum(log_stats.values())
-        for level in sorted(log_stats.keys()):
-            lines.append(f"  {level:<8}: {log_stats[level]}")
-        lines.append(f"  TOTAL   : {total}")
 
     lines.append("=" * 80)
     return "\n".join(lines)
