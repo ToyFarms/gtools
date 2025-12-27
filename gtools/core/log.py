@@ -155,7 +155,7 @@ def _get_system_info(name: str, log_file: str | Path, start_ts: datetime, id: st
 def _format_info_block(info: dict) -> str:
     lines = []
     lines.append("=" * 80)
-    lines.append("SESSION START")
+    lines.append(f"SESSION START {info['id']}")
     lines.append("=" * 80)
 
     lines.append(f"Timestamp:     {info['session_start']}")
