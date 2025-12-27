@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import pickle
 import tempfile
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence, overload
 
 import xxhash
 from zmq import IntFlag
@@ -839,6 +839,27 @@ class item_database:
         except KeyError:
             raise KeyError(f"no item with exact name {key!r} in version {version}")
 
+    @overload
+    @classmethod
+    def search(
+        cls,
+        query: bytes | str,
+        n: int = ...,
+        cutoff: float = ...,
+        version: int | None = ...,
+        return_scores: Literal[False] = ...,
+    ) -> Sequence[Item]: ...
+    @overload
+    @classmethod
+    def search(
+        cls,
+        query: bytes | str,
+        n: int = ...,
+        cutoff: float = ...,
+        version: int | None = ...,
+        return_scores: Literal[True] = ...,
+    ) -> Sequence[tuple[Item, float]]: ...
+
     @classmethod
     def search(
         cls,
@@ -847,7 +868,7 @@ class item_database:
         cutoff: float = 0.6,
         version: int | None = None,
         return_scores: bool = False,
-    ) -> Sequence[Item | tuple[Item, float]]:
+    ) -> Sequence[tuple[Item, float]] | Sequence[Item]:
         query = query if isinstance(query, str) else query.decode()
         if version is None:
             version = getattr(cls.db(), "version", None)

@@ -1,6 +1,6 @@
 # TODO: make a directory scripts/ keep stuff separated out there so its not so cluttered
 import argparse
-from collections import defaultdict, deque
+from collections import defaultdict
 from functools import cache
 import itertools
 import os
@@ -74,6 +74,10 @@ def main() -> None:
 
     item = sub.add_parser("item")
     item.add_argument("id", type=int)
+
+    search = sub.add_parser("search")
+    search.add_argument("name")
+    search.add_argument("-n", type=int, default=20)
 
     recipe = sub.add_parser("recipe")
     recipe.add_argument("id", type=int)
@@ -291,6 +295,14 @@ def main() -> None:
         pprint(NetPacket.deserialize(b))
     elif args.cmd == "item":
         print(item_database.get(args.id))
+    elif args.cmd == "search":
+        trim = lambda x, n=60: x if len(x) <= n else f"{x[:n]}..."
+        for i, ent in reversed(list(enumerate(item_database.search(args.name, n=args.n), 1))):
+            if i % 5 == 0:
+                print(f"\x1b[2m{i:<6} {ent.id:<10} {ent.name.decode():<30} {trim(ent.info.decode()):<80} {ent.item_type.name}\x1b[0m")
+            else:
+                print(f"{i:<5} {ent.id:<10} {ent.name.decode():<30} {trim(ent.info.decode()):<80} {ent.item_type.name}")
+
     elif args.cmd == "recipe":
 
         class SpliceNode:
