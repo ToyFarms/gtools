@@ -11,11 +11,28 @@ import shutil
 import atexit
 import traceback
 import subprocess
+import threading
+import types
+import reprlib
 
 try:
     import resource
 except Exception:
     resource = None
+
+try:
+    import psutil  # type: ignore
+except Exception:
+    psutil = None
+
+try:
+    import importlib.metadata as importlib_metadata  # type: ignore
+except Exception:
+    importlib_metadata = None
+
+LAST_LOG_CAPACITY = 200
+MAX_LOCAL_REPR = 1024
+MAX_MODULES_LIST = 400
 
 
 class ColorFormatter(logging.Formatter):
@@ -44,6 +61,30 @@ class ColorFormatter(logging.Formatter):
         return super().format(record)
 
 
+class LastNLogHandler(logging.Handler):
+    def __init__(self, capacity: int = LAST_LOG_CAPACITY):
+        super().__init__()
+        self.capacity = int(capacity)
+        self._records: list[str] = []
+        self.setLevel(logging.DEBUG)
+        self._fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s %(filename)s:%(lineno)d: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            s = self._fmt.format(record)
+            self._records.append(s)
+            if len(self._records) > self.capacity:
+                del self._records[: len(self._records) - self.capacity]
+        except Exception:
+            try:
+                self._records.append(f"<failed to format record {record}>")
+            except Exception:
+                pass
+
+    def get_records(self) -> list[str]:
+        return list(self._records)
+
+
 def _get_memory_usage_kb() -> int | None:
     try:
         if resource is None:
@@ -58,7 +99,6 @@ def _get_memory_usage_kb() -> int | None:
 
 
 def _get_peak_memory_kb() -> int | None:
-    """Get peak memory usage."""
     try:
         if resource is None:
             return None
@@ -80,7 +120,6 @@ def _get_disk_usage(path: str = ".") -> dict[str, int] | None:
 
 
 def _get_git_info() -> dict[str, str | None]:
-    """Get git repository information if available."""
     info = {}
     try:
         info["branch"] = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL, text=True).strip()
@@ -101,13 +140,75 @@ def _get_git_info() -> dict[str, str | None]:
 
 
 def _get_env_vars() -> dict[str, str]:
-    """Get relevant environment variables for debugging."""
     relevant_keys = ["PATH", "PYTHONPATH", "VIRTUAL_ENV", "CONDA_DEFAULT_ENV", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL", "DEBUG", "ENV", "ENVIRONMENT", "LOG_LEVEL"]
     env = {}
     for key in relevant_keys:
         if key in os.environ:
             env[key] = os.environ[key]
     return env
+
+
+def _safe_repr(value, max_len=MAX_LOCAL_REPR):
+    try:
+        r = reprlib.Repr()
+        r.maxstring = max_len
+        r.maxother = max_len
+        rep = r.repr(value)
+        if len(rep) > max_len:
+            return rep[:max_len] + "..."
+        return rep
+    except Exception:
+        try:
+            return f"<unrepresentable {type(value).__name__}>"
+        except Exception:
+            return "<unrepresentable>"
+
+
+def _gather_modules(limit=MAX_MODULES_LIST):
+    modules = []
+    for i, (name, mod) in enumerate(sorted(sys.modules.items())):
+        if i >= limit:
+            modules.append(f"... plus {len(sys.modules) - limit} more modules")
+            break
+        try:
+            ver = None
+            path = None
+            if isinstance(mod, types.ModuleType):
+                path = getattr(mod, "__file__", None)
+                ver = getattr(mod, "__version__", None)
+                if ver is None and importlib_metadata is not None:
+                    try:
+                        ver = importlib_metadata.version(name)
+                    except Exception:
+                        ver = None
+            modules.append(f"{name} {ver or ''} {path or ''}".strip())
+        except Exception:
+            modules.append(f"{name} <failed to inspect>")
+    return modules
+
+
+def _gather_psutil_info(pid=None):
+    if psutil is None:
+        return None
+    try:
+        p = psutil.Process(pid or os.getpid())
+        info = {
+            "cmdline": p.cmdline(),
+            "cwd": p.cwd(),
+            "exe": getattr(p, "exe", lambda: None)(),
+            "uids": getattr(p, "uids", lambda: None)(),
+            "gids": getattr(p, "gids", lambda: None)(),
+            "num_threads": p.num_threads(),
+            "threads": [t._asdict() if hasattr(t, "_asdict") else str(t) for t in p.threads()],
+            "open_files": [f.path for f in p.open_files()],
+            "connections": [dict(fd=c.fd, laddr=getattr(c, "laddr", None), raddr=getattr(c, "raddr", None), status=getattr(c, "status", None)) for c in p.net_connections(kind="inet")],
+            "num_fds": getattr(p, "num_fds", lambda: None)(),
+            "memory_info": getattr(p, "memory_info", lambda: None)()._asdict() if hasattr(getattr(p, "memory_info", None)(), "_asdict") else str(getattr(p, "memory_info", lambda: None)()),  # type: ignore
+            "cpu_percent": p.cpu_percent(interval=0.0),
+        }
+        return info
+    except Exception:
+        return None
 
 
 def _get_system_info(name: str, log_file: str | Path, start_ts: datetime, id: str) -> dict:
@@ -226,7 +327,9 @@ def _format_info_block(info: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_end_block(start_ts: datetime, end_ts: datetime, id: str, final_mem_kb, peak_mem_kb, disk, exception_info=None) -> str:
+def _format_exception_block(
+    start_ts: datetime, end_ts: datetime, id: str, final_mem_kb, peak_mem_kb, disk, exception_info=None, recent_logs=None, all_threads=None, modules=None, psutil_info=None
+) -> str:
     duration = end_ts - start_ts
     lines = []
     lines.append("")
@@ -253,18 +356,137 @@ def _format_end_block(start_ts: datetime, end_ts: datetime, id: str, final_mem_k
         lines.append(f"  Disk Used:   {used_gb:.2f} GB ({used_pct:.1f}%)")
         lines.append(f"  Disk Free:   {free_gb:.2f} GB")
 
+    if psutil_info:
+        try:
+            lines.append("")
+            lines.append("psutil Process Info:")
+            for k, v in psutil_info.items():
+                lines.append(f"  {k}: {v}")
+        except Exception:
+            pass
+
+    if recent_logs:
+        lines.append("")
+        lines.append("Recent Log Records (most recent last):")
+        for l in recent_logs[-LAST_LOG_CAPACITY:]:
+            lines.append(f"  {l}")
+
+    if modules:
+        lines.append("")
+        lines.append("Loaded Modules:")
+        for m in modules:
+            lines.append(f"  {m}")
+
+    if all_threads:
+        lines.append("")
+        lines.append("All Threads (stack traces):")
+        for tname, stack_lines in all_threads.items():
+            lines.append(f"Thread: {tname}")
+            for sl in stack_lines:
+                lines.append(f"  {sl}")
+            lines.append("")
+
     if exception_info:
         lines.append("")
         lines.append("UNHANDLED EXCEPTION:")
-        lines.append(f"  Type:        {exception_info['type']}")
-        lines.append(f"  Message:     {exception_info['message']}")
+        lines.append(f"  Type:        {exception_info.get('type')}")
+        lines.append(f"  Message:     {exception_info.get('message')}")
         lines.append("")
-        lines.append("Traceback:")
-        for line in exception_info["traceback"]:
-            lines.append(f"  {line}")
-
+        lines.append("Traceback (most recent call last):")
+        for line in exception_info.get("traceback", []):
+            lines.append(f"  {line.rstrip()}")
+        if exception_info.get("frame_locals"):
+            lines.append("")
+            lines.append("Locals in top frames:")
+            for frame_desc, locals_map in exception_info["frame_locals"].items():
+                lines.append(f"Frame: {frame_desc}")
+                for k, v in locals_map.items():
+                    lines.append(f"  {k}: {v}")
+                lines.append("")
     lines.append("=" * 80)
     return "\n".join(lines)
+
+
+def _collect_exception_context(exc_type, exc_value, exc_tb, logger) -> dict:
+    """Collect enhanced exception context: locals, thread stacks, modules, psutil info, recent logs."""
+    ctx = {}
+    tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+    ctx["traceback"] = tb_lines
+    ctx["type"] = getattr(exc_type, "__name__", str(exc_type))
+    ctx["message"] = str(exc_value)
+
+    frame_locals = {}
+    try:
+        tb = exc_tb
+        depth = 0
+        while tb and depth < 5:
+            frame = tb.tb_frame
+            lineno = tb.tb_lineno
+            code = frame.f_code
+            frame_desc = f"{code.co_filename}:{code.co_name}:{lineno}"
+            locals_snapshot = {}
+            try:
+                for k, v in frame.f_locals.items():
+                    try:
+                        locals_snapshot[k] = _safe_repr(v)
+                    except Exception:
+                        locals_snapshot[k] = "<unrepresentable>"
+                frame_locals[frame_desc] = locals_snapshot
+            except Exception:
+                frame_locals[frame_desc] = {"<error>": "<could not obtain locals>"}
+            tb = tb.tb_next
+            depth += 1
+    except Exception:
+        frame_locals["<error>"] = {"<error>": "<collecting locals failed>"}
+
+    ctx["frame_locals"] = frame_locals
+
+    threads_stacks = {}
+    try:
+        current_frames = sys._current_frames()
+        for tid, frame in current_frames.items():
+            try:
+                tname = None
+                for t in threading.enumerate():
+                    if getattr(t, "ident", None) == tid:
+                        tname = f"{t.name} (ident={tid})"
+                        break
+                if tname is None:
+                    tname = f"unknown (ident={tid})"
+                stack_lines = traceback.format_stack(frame)
+                threads_stacks[tname] = [sl.rstrip() for sl in stack_lines]
+            except Exception:
+                threads_stacks[f"thread_{tid}"] = ["<failed to format thread stack>"]
+    except Exception:
+        threads_stacks["<error>"] = ["<could not collect thread stacks>"]
+
+    ctx["all_threads"] = threads_stacks
+
+    try:
+        ctx["modules"] = _gather_modules()
+    except Exception:
+        ctx["modules"] = ["<failed to gather modules>"]
+
+    try:
+        ctx["psutil_info"] = _gather_psutil_info()
+    except Exception:
+        ctx["psutil_info"] = None
+
+    try:
+        recent = None
+        if hasattr(logger, "_last_log_handler") and getattr(logger, "_last_log_handler") is not None:
+            recent = logger._last_log_handler.get_records()
+        else:
+            root = logging.getLogger()
+            for h in getattr(root, "handlers", []):
+                if isinstance(h, LastNLogHandler):
+                    recent = h.get_records()
+                    break
+        ctx["recent_logs"] = recent
+    except Exception:
+        ctx["recent_logs"] = None
+
+    return ctx
 
 
 def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = logging.INFO) -> logging.Logger:
@@ -293,18 +515,29 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
     file_handler.setLevel(level)
     file_formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s %(filename)s:%(lineno)d: %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     file_handler.setFormatter(file_formatter)
 
+    lastn_handler = LastNLogHandler(capacity=LAST_LOG_CAPACITY)
+    lastn_handler.setLevel(logging.DEBUG)
+
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
+    root_logger.addHandler(lastn_handler)
 
     id = binascii.hexlify(os.urandom(16)).decode()
     sys_info = _get_system_info(name, str(log_file), start_ts, id)
     info_block = _format_info_block(sys_info)
-    file_handler.stream.write(info_block + "\n\n")
-    file_handler.flush()
+    try:
+        file_handler.stream.write(info_block + "\n\n")
+        file_handler.flush()
+    except Exception:
+        try:
+            console_handler.stream.write(info_block + "\n\n")
+            console_handler.flush()
+        except Exception:
+            pass
 
     root_logger._session_start_ts = start_ts  # type: ignore
     root_logger._session_id = id  # type: ignore
@@ -312,6 +545,7 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
     root_logger._session_file_handler = file_handler  # type: ignore
     root_logger._session_logger_configured = True  # type: ignore
     root_logger._session_exception_info = None  # type: ignore
+    root_logger._last_log_handler = lastn_handler  # type: ignore
 
     def _log_session_end():
         if getattr(root_logger, "_session_end_logged", False):
@@ -322,18 +556,71 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
         disk = _get_disk_usage(".")
         exception_info = getattr(root_logger, "_session_exception_info", None)  # type: ignore
 
-        end_block = _format_end_block(
+        recent = None
+        try:
+            recent = root_logger._last_log_handler.get_records()  # type: ignore
+        except Exception:
+            recent = None
+
+        all_threads = None
+        modules = None
+        psutil_info = None
+        if exception_info and isinstance(exception_info, dict):
+            all_threads = exception_info.get("all_threads")
+            modules = exception_info.get("modules")
+            psutil_info = exception_info.get("psutil_info")
+        else:
+            try:
+                cf = {}
+                current_frames = sys._current_frames()
+                for tid, frame in current_frames.items():
+                    try:
+                        tname = None
+                        for t in threading.enumerate():
+                            if getattr(t, "ident", None) == tid:
+                                tname = f"{t.name} (ident={tid})"
+                                break
+                        if tname is None:
+                            tname = f"unknown (ident={tid})"
+                        stack_lines = traceback.format_stack(frame)
+                        cf[tname] = [sl.rstrip() for sl in stack_lines]
+                    except Exception:
+                        cf[f"thread_{tid}"] = ["<failed to format thread stack>"]
+                all_threads = cf
+            except Exception:
+                all_threads = None
+            try:
+                modules = _gather_modules()
+            except Exception:
+                modules = None
+            try:
+                psutil_info = _gather_psutil_info()
+            except Exception:
+                psutil_info = None
+
+        end_block = _format_exception_block(
             root_logger._session_start_ts,  # type: ignore
             end_ts,
             getattr(root_logger, "_session_id", ""),
             final_mem,
             peak_mem,
             disk,
-            exception_info,
+            exception_info=exception_info,
+            recent_logs=recent,
+            all_threads=all_threads,
+            modules=modules,
+            psutil_info=psutil_info,
         )
 
-        file_handler.stream.write("\n" + end_block + "\n")
-        file_handler.flush()
+        try:
+            file_handler.stream.write("\n" + end_block + "\n")
+            file_handler.flush()
+        except Exception:
+            try:
+                console_handler.stream.write("\n" + end_block + "\n")
+                console_handler.flush()
+            except Exception:
+                pass
         root_logger._session_end_logged = True  # type: ignore
 
     atexit.register(_log_session_end)
@@ -341,15 +628,45 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
     orig_excepthook = sys.excepthook
 
     def _excepthook(exc_type, exc_value, exc_traceback):
-        root_logger._session_exception_info = {  # type: ignore
-            "type": exc_type.__name__,
-            "message": str(exc_value),
-            "traceback": traceback.format_exception(exc_type, exc_value, exc_traceback),
-        }
-
-        root_logger.critical("UNHANDLED EXCEPTION", exc_info=(exc_type, exc_value, exc_traceback))
-
-        _log_session_end()
+        try:
+            enriched = _collect_exception_context(exc_type, exc_value, exc_traceback, root_logger)
+            root_logger._session_exception_info = enriched  # type: ignore
+            root_logger.critical("UNHANDLED EXCEPTION OCCURRED — writing full context to log file.", exc_info=(exc_type, exc_value, exc_traceback))
+            end_ts = datetime.now()
+            final_mem = _get_memory_usage_kb()
+            peak_mem = _get_peak_memory_kb()
+            disk = _get_disk_usage(".")
+            recent = enriched.get("recent_logs")
+            all_threads = enriched.get("all_threads")
+            modules = enriched.get("modules")
+            psutil_info = enriched.get("psutil_info")
+            end_block = _format_exception_block(
+                root_logger._session_start_ts,  # type: ignore
+                end_ts,
+                getattr(root_logger, "_session_id", ""),
+                final_mem,
+                peak_mem,
+                disk,
+                exception_info=enriched,
+                recent_logs=recent,
+                all_threads=all_threads,
+                modules=modules,
+                psutil_info=psutil_info,
+            )
+            try:
+                file_handler.stream.write("\n" + end_block + "\n")
+                file_handler.flush()
+            except Exception:
+                try:
+                    console_handler.stream.write("\n" + end_block + "\n")
+                    console_handler.flush()
+                except Exception:
+                    pass
+        except Exception:
+            try:
+                logging.getLogger(name).exception("Failed while collecting exception context", exc_info=True)
+            except Exception:
+                pass
 
         try:
             orig_excepthook(exc_type, exc_value, exc_traceback)
