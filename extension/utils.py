@@ -110,6 +110,7 @@ class UtilityExtension(Extension):
                 return self.cancel()
             case Action.BLOCK_EXTRA_QUIT_TO_EXIT:
                 if self.should_block:
+                    print("BLCOKED EXTRA QUIT_TO_EXIT")
                     self.should_block = False
                     return self.cancel()
                 else:
