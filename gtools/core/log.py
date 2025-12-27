@@ -1,4 +1,5 @@
 import binascii
+from collections import Counter
 import logging
 import sys
 import os
@@ -61,28 +62,19 @@ class ColorFormatter(logging.Formatter):
         return super().format(record)
 
 
-class LastNLogHandler(logging.Handler):
-    def __init__(self, capacity: int = LAST_LOG_CAPACITY):
-        super().__init__()
-        self.capacity = int(capacity)
-        self._records: list[str] = []
-        self.setLevel(logging.DEBUG)
-        self._fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s %(filename)s:%(lineno)d: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+class LogStatsHandler(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.DEBUG)
+        self.counts = Counter()
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            s = self._fmt.format(record)
-            self._records.append(s)
-            if len(self._records) > self.capacity:
-                del self._records[: len(self._records) - self.capacity]
+            self.counts[record.levelname] += 1
         except Exception:
-            try:
-                self._records.append(f"<failed to format record {record}>")
-            except Exception:
-                pass
+            pass
 
-    def get_records(self) -> list[str]:
-        return list(self._records)
+    def snapshot(self) -> dict[str, int]:
+        return dict(self.counts)
 
 
 def _get_memory_usage_kb() -> int | None:
@@ -201,7 +193,9 @@ def _gather_psutil_info(pid=None):
             "num_threads": p.num_threads(),
             "threads": [t._asdict() if hasattr(t, "_asdict") else str(t) for t in p.threads()],
             "open_files": [f.path for f in p.open_files()],
-            "connections": [dict(fd=c.fd, laddr=getattr(c, "laddr", None), raddr=getattr(c, "raddr", None), status=getattr(c, "status", None)) for c in p.net_connections(kind="inet")],
+            "connections": [
+                dict(fd=c.fd, laddr=getattr(c, "laddr", None), raddr=getattr(c, "raddr", None), status=getattr(c, "status", None)) for c in p.net_connections(kind="inet")
+            ],
             "num_fds": getattr(p, "num_fds", lambda: None)(),
             "memory_info": getattr(p, "memory_info", lambda: None)()._asdict() if hasattr(getattr(p, "memory_info", None)(), "_asdict") else str(getattr(p, "memory_info", lambda: None)()),  # type: ignore
             "cpu_percent": p.cpu_percent(interval=0.0),
@@ -328,7 +322,18 @@ def _format_info_block(info: dict) -> str:
 
 
 def _format_exception_block(
-    start_ts: datetime, end_ts: datetime, id: str, final_mem_kb, peak_mem_kb, disk, exception_info=None, recent_logs=None, all_threads=None, modules=None, psutil_info=None
+    start_ts: datetime,
+    end_ts: datetime,
+    id: str,
+    final_mem_kb,
+    peak_mem_kb,
+    disk,
+    exception_info=None,
+    recent_logs=None,
+    all_threads=None,
+    modules=None,
+    psutil_info=None,
+    log_stats: dict[str, int] | None = None,
 ) -> str:
     duration = end_ts - start_ts
     lines = []
@@ -403,12 +408,20 @@ def _format_exception_block(
                 for k, v in locals_map.items():
                     lines.append(f"  {k}: {v}")
                 lines.append("")
+
+    if log_stats:
+        lines.append("")
+        lines.append("Log Summary:")
+        total = sum(log_stats.values())
+        for level in sorted(log_stats.keys()):
+            lines.append(f"  {level:<8}: {log_stats[level]}")
+        lines.append(f"  TOTAL   : {total}")
+
     lines.append("=" * 80)
     return "\n".join(lines)
 
 
-def _collect_exception_context(exc_type, exc_value, exc_tb, logger) -> dict:
-    """Collect enhanced exception context: locals, thread stacks, modules, psutil info, recent logs."""
+def _collect_exception_context(exc_type, exc_value, exc_tb, _logger) -> dict:
     ctx = {}
     tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
     ctx["traceback"] = tb_lines
@@ -472,20 +485,6 @@ def _collect_exception_context(exc_type, exc_value, exc_tb, logger) -> dict:
     except Exception:
         ctx["psutil_info"] = None
 
-    try:
-        recent = None
-        if hasattr(logger, "_last_log_handler") and getattr(logger, "_last_log_handler") is not None:
-            recent = logger._last_log_handler.get_records()
-        else:
-            root = logging.getLogger()
-            for h in getattr(root, "handlers", []):
-                if isinstance(h, LastNLogHandler):
-                    recent = h.get_records()
-                    break
-        ctx["recent_logs"] = recent
-    except Exception:
-        ctx["recent_logs"] = None
-
     return ctx
 
 
@@ -519,12 +518,11 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
     )
     file_handler.setFormatter(file_formatter)
 
-    lastn_handler = LastNLogHandler(capacity=LAST_LOG_CAPACITY)
-    lastn_handler.setLevel(logging.DEBUG)
+    log_stats_handler = LogStatsHandler()
 
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
-    root_logger.addHandler(lastn_handler)
+    root_logger.addHandler(log_stats_handler)
 
     id = binascii.hexlify(os.urandom(16)).decode()
     sys_info = _get_system_info(name, str(log_file), start_ts, id)
@@ -545,7 +543,7 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
     root_logger._session_file_handler = file_handler  # type: ignore
     root_logger._session_logger_configured = True  # type: ignore
     root_logger._session_exception_info = None  # type: ignore
-    root_logger._last_log_handler = lastn_handler  # type: ignore
+    root_logger._session_log_stats = log_stats_handler  # type: ignore
 
     def _log_session_end():
         if getattr(root_logger, "_session_end_logged", False):
@@ -598,6 +596,14 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
             except Exception:
                 psutil_info = None
 
+        stats = None
+        try:
+            stats_handler = getattr(root_logger, "_session_log_stats", None)
+            if stats_handler:
+                stats = stats_handler.snapshot()
+        except Exception:
+            stats = None
+
         end_block = _format_exception_block(
             root_logger._session_start_ts,  # type: ignore
             end_ts,
@@ -610,6 +616,7 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
             all_threads=all_threads,
             modules=modules,
             psutil_info=psutil_info,
+            log_stats=stats,
         )
 
         try:
@@ -621,6 +628,7 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
                 console_handler.flush()
             except Exception:
                 pass
+
         root_logger._session_end_logged = True  # type: ignore
 
     atexit.register(_log_session_end)
@@ -628,6 +636,14 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
     orig_excepthook = sys.excepthook
 
     def _excepthook(exc_type, exc_value, exc_traceback):
+        stats = None
+        try:
+            stats_handler = getattr(root_logger, "_session_log_stats", None)
+            if stats_handler:
+                stats = stats_handler.snapshot()
+        except Exception:
+            stats = None
+
         try:
             enriched = _collect_exception_context(exc_type, exc_value, exc_traceback, root_logger)
             root_logger._session_exception_info = enriched  # type: ignore
@@ -652,6 +668,7 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
                 all_threads=all_threads,
                 modules=modules,
                 psutil_info=psutil_info,
+                log_stats=stats
             )
             try:
                 file_handler.stream.write("\n" + end_block + "\n")
