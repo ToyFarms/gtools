@@ -24,8 +24,11 @@ from gtools.core.signal import Signal
 from gtools.flags import BENCHMARK, PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
+    BLOCKING_MODE_ONESHOT,
+    BLOCKING_MODE_SEND_AND_CANCEL,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_UNSPECIFIED,
+    BlockingMode,
     CapabilityRequest,
     Packet,
     Interest,
@@ -37,6 +40,7 @@ from gtools.protogen.extension_pb2 import (
 from gtools.protogen.op_pb2 import BinOp, Op
 from gtools.protogen.strkv_pb2 import FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field, FieldValue
+from gtools.protogen.variant_pb2 import VariantClause
 
 
 def hash_interest(interest: Interest) -> int:
@@ -49,8 +53,14 @@ def hash_interest(interest: Interest) -> int:
         h.update(interest.direction.to_bytes())
     if interest.id:
         h.update(interest.id.to_bytes())
+    if payload := interest.WhichOneof("payload"):
+        h.update(getattr(interest, payload).SerializeToString())
 
     return h.intdigest()
+
+
+# TODO: rename blocking_mode to packet_mode
+# TODO: add "oneshot" packet mode where it will expect no reply from the extension
 
 
 # extension represent the extension as a whole
@@ -183,6 +193,7 @@ _OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
 logger = logging.getLogger("matcher")
 
 
+# TODO: create a common class
 def match_strkv_clause(kv: StrKV, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
     try:
         for clause in where:
@@ -214,6 +225,22 @@ def match_tank_clause(tank: TankPacket, where: RepeatedCompositeFieldContainer[B
                 raise TypeError("tank lvalue expects a field type")
 
             if not _OP_EVALUATE[clause.op](_TANK_FIELD_ACCESSOR[lvalue.v](tank), getattr(clause, clause.WhichOneof("rvalue"))):
+                return False
+    except Exception as e:
+        logger.warning(f"failed matching clause with exception: {e}")
+        return False
+
+    return True
+
+
+def match_variant_clause(variant: Variant, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
+    try:
+        for clause in where:
+            lvalue = VariantClause()
+            if not clause.lvalue.Unpack(lvalue):
+                raise TypeError("variant lvalue expects a field type")
+
+            if not _OP_EVALUATE[clause.op](variant[lvalue.v].value, getattr(clause, clause.WhichOneof("rvalue"))):
                 return False
     except Exception as e:
         logger.warning(f"failed matching clause with exception: {e}")
@@ -267,7 +294,7 @@ class ExtensionManager:
                     continue
 
                 if TRACE:
-                    print("[matcher] direction matched, continuing")
+                    print("\t\t[matcher] direction matched, continuing")
 
             match interest.interest:
                 case InterestType.INTEREST_PEER_CONNECT:
@@ -281,20 +308,20 @@ class ExtensionManager:
                         continue
 
                     if TRACE:
-                        print("[matcher] generic text matched, continuing")
+                        print("\t\t[matcher] generic text matched, continuing")
                 case InterestType.INTEREST_GAME_MESSAGE:
                     if interest.game_message.action:
                         if interest.game_message.action != pkt.as_net.game_message["action", 1]:
                             continue
 
                     if TRACE:
-                        print("[matcher] game message matched, continuing")
+                        print("\t\t[matcher] game message matched, continuing")
                 case InterestType.INTEREST_TANK_PACKET:
                     if not match_tank_clause(pkt.as_net.tank, interest.tank_packet.where):
                         continue
 
                     if TRACE:
-                        print("[matcher] tank packet matched, continuing")
+                        print("\t\t[matcher] tank packet matched, continuing")
                 case InterestType.INTEREST_ERROR:
                     raise NotImplementedError("INTEREST_ERROR")
                 case InterestType.INTEREST_TRACK:
@@ -306,14 +333,16 @@ class ExtensionManager:
 
             if interest.interest in _TANK_INTEREST:
                 matched = True
-                if which := interest.WhichOneof("payload"):
+                handled_further = {InterestType.INTEREST_CALL_FUNCTION}
+                if interest.interest not in handled_further and (which := interest.WhichOneof("payload")):
+                    # TODO: fix this, where contains and clauses, should be handled inside
                     i: Message = getattr(interest, which)
                     if (clauses := getattr(i, "where")) is not None:
                         if not match_tank_clause(pkt.as_net.tank, clauses):
                             continue
 
                         if TRACE:
-                            print(f"[matcher] top-level tank clause for {InterestType.Name(interest.interest)} matched, continuing")
+                            print(f"\t\t[matcher] top-level tank clause for {InterestType.Name(interest.interest)} matched, continuing")
 
                         matched = bool(clauses)
 
@@ -321,8 +350,8 @@ class ExtensionManager:
                     case InterestType.INTEREST_STATE:
                         pass
                     case InterestType.INTEREST_CALL_FUNCTION:
-                        if interest.call_function.fn_name:
-                            matched = interest.call_function.fn_name == Variant.get(pkt.as_net.tank.extended_data, 0).value
+                        if not match_variant_clause(Variant.deserialize(pkt.as_net.tank.extended_data), interest.call_function.where):
+                            matched = False
                     case InterestType.INTEREST_UPDATE_STATUS:
                         pass
                     case InterestType.INTEREST_TILE_CHANGE_REQUEST:
@@ -420,10 +449,10 @@ class ExtensionManager:
                     continue
 
                 if TRACE:
-                    print("[matcher] tank matched, continuing")
+                    print("\t\t[matcher] tank matched, continuing")
 
             if TRACE:
-                print(f"[matcher] all matched for extension {interest}")
+                print(f"\t\t[matcher] all matched for extension {interest}")
             yield client
 
     def get_extension(self, id: bytes) -> Extension:
@@ -459,7 +488,7 @@ class PendingChain:
 
 
 class _PendingPacket:
-    def __init__(self, callback: PacketCallback, current: PendingPacket) -> None:
+    def __init__(self, callback: PacketCallback | None, current: PendingPacket) -> None:
         self.current = current
         self.callback = callback
 
@@ -722,7 +751,7 @@ class Broker:
             if client.interest.blocking_mode == BLOCKING_MODE_BLOCK:
                 if pred and pred(client.ext, client.interest):
                     if TRACE:
-                        print(f"interested for {pkt}:\n\t{client.ext.id}\n\t{repr(client.interest).replace('\n', '\n\t')}")
+                        print(f"\t\tinterested for {pkt}:\n\t{client.ext.id}\n\t{repr(client.interest).replace('\n', '\n\t')}")
                     out.append(client)
 
     def _utob(self, i: int) -> bytes:
@@ -733,28 +762,89 @@ class Broker:
         start = time.perf_counter_ns()
         chain: deque[Client] = deque()
         for client in self._get_interested_extension(pkt):
-            if client.interest.blocking_mode == BLOCKING_MODE_SEND_AND_FORGET:
-                pkt_id = random.randbytes(16)
-                pending_pkt = PendingPacket(
-                    _op=PendingPacket.OP_FORWARD,
-                    _packet_id=pkt_id,
-                    buf=pkt.as_raw,
-                    direction=pkt.direction.value,
-                    packet_flags=pkt.flags,
-                    _rtt_ns=self._utob(time.perf_counter_ns()),
-                    interest_id=client.interest.id,
-                )
-                self._send(
-                    client.ext.id,
-                    Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=pending_pkt),
-                )
-                if callback:
+            if TRACE:
+                print(f"\t\tMATCHING CLIENT (MODE={BlockingMode.Name(client.interest.blocking_mode)}) FOR {pkt}: {client}")
+
+            match client.interest.blocking_mode:
+                case BlockingMode.BLOCKING_MODE_BLOCK:
+                    chain.append(client)
+                case BlockingMode.BLOCKING_MODE_SEND_AND_FORGET:
+                    pkt_id = random.randbytes(16)
+                    pending_pkt = PendingPacket(
+                        _op=PendingPacket.OP_FORWARD,
+                        _packet_id=pkt_id,
+                        buf=pkt.as_raw,
+                        direction=pkt.direction.value,
+                        packet_flags=pkt.flags,
+                        _rtt_ns=self._utob(time.perf_counter_ns()),
+                        interest_id=client.interest.id,
+                    )
+                    self._send(
+                        client.ext.id,
+                        Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=pending_pkt),
+                    )
                     self._pending_packet[pkt_id] = _PendingPacket(
                         callback,
                         pending_pkt,
                     )
-            else:
-                chain.append(client)
+                    if not callback:
+                        self.logger.warning(f"no callback defined for {pkt}")
+                case BlockingMode.BLOCKING_MODE_SEND_AND_CANCEL:
+                    pkt_id = random.randbytes(16)
+                    pending_pkt = PendingPacket(
+                        _op=PendingPacket.OP_FORWARD,
+                        _packet_id=pkt_id,
+                        buf=pkt.as_raw,
+                        direction=pkt.direction.value,
+                        packet_flags=pkt.flags,
+                        _rtt_ns=self._utob(time.perf_counter_ns()),
+                        interest_id=client.interest.id,
+                    )
+                    self._send(
+                        client.ext.id,
+                        Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=pending_pkt),
+                    )
+                    self._pending_packet[pkt_id] = _PendingPacket(
+                        callback,
+                        pending_pkt,
+                    )
+                    if not callback:
+                        self.logger.warning(f"no callback defined for {pkt}")
+
+                    # since we dont use the packet if cancelled is true, this should be safe
+                    return PendingPacket(), True
+                case BlockingMode.BLOCKING_MODE_ONESHOT:
+                    pending_pkt = PendingPacket(
+                        _op=PendingPacket.OP_FORWARD,
+                        buf=pkt.as_raw,
+                        direction=pkt.direction.value,
+                        packet_flags=pkt.flags,
+                        interest_id=client.interest.id,
+                    )
+                    self._send(
+                        client.ext.id,
+                        Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=pending_pkt),
+                    )
+                case BlockingMode.BLOCKING_MODE_ONESHOT_AND_CANCEL:
+                    pending_pkt = PendingPacket(
+                        _op=PendingPacket.OP_FORWARD,
+                        buf=pkt.as_raw,
+                        direction=pkt.direction.value,
+                        packet_flags=pkt.flags,
+                        interest_id=client.interest.id,
+                    )
+                    self._send(
+                        client.ext.id,
+                        Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=pending_pkt),
+                    )
+                    return PendingPacket(), True
+
+        if TRACE:
+            print(
+                f"\t\tSTATE PROCESS_EVENT NOBLOCK (ext={len(self._extension_mgr._extensions)}, pending_chain={len(self._pending_chain)}, pending_packet={len(self._pending_packet)}):\n"
+                f"\tchain={self._pending_chain}\n",
+                f"\tpacket={self._pending_packet}\n",
+            )
 
         if chain:
             chain_id = random.randbytes(16)
@@ -775,6 +865,13 @@ class Broker:
                 chain[0].ext.id,
                 Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=pending_pkt),
             )
+
+            if TRACE:
+                print(
+                    f"\t\tSTATE PROCESS_EVENT BLOCK (ext={len(self._extension_mgr._extensions)}, pending_chain={len(self._pending_chain)}, pending_packet={len(self._pending_packet)}):\n"
+                    f"\tchain={self._pending_chain}\n",
+                    f"\tpacket={self._pending_packet}\n",
+                )
 
             if PERF:
                 self.logger.debug(f"broker processing: {(time.perf_counter_ns() - start) / 1e6}us")
@@ -844,6 +941,9 @@ class Broker:
             )
 
     def _finish(self, pending: _PendingPacket, new_packet: PendingPacket) -> None:
+        if not pending.callback:
+            return
+
         pending.current = new_packet
         if pending.current.direction == DIRECTION_CLIENT_TO_SERVER and pending.callback.send_to_server:
             pending.callback.send_to_server(PreparedPacket.from_pending(pending.current))
@@ -887,7 +987,7 @@ class Broker:
                 case _:
                     raise ValueError(f"invalid op: {pkt._op}")
         else:
-            raise ValueError("invalid packet state")
+            raise ValueError(f"packet is not in any pending state: {pkt}")
 
     def _worker_thread(self) -> None:
         try:
@@ -914,9 +1014,9 @@ class Broker:
                         self.extension_len.update(lambda x: x - 1)
                     case Packet.TYPE_PENDING_PACKET:
                         if TRACE:
-                            print(f"recv from {id}: {pkt}")
+                            print(f"\t\trecv from {id}: {pkt}")
                             print(
-                                f"STATE (ext={len(self._extension_mgr._extensions)}, pending_chain={len(self._pending_chain)}, pending_packet={len(self._pending_packet)}):\n"
+                                f"\t\tSTATE (ext={len(self._extension_mgr._extensions)}, pending_chain={len(self._pending_chain)}, pending_packet={len(self._pending_packet)}):\n"
                                 f"\tchain={self._pending_chain}\n",
                                 f"\tpacket={self._pending_packet}\n",
                             )
@@ -924,7 +1024,7 @@ class Broker:
                     case _:
                         if handler := self._handler.get(pkt.type):
                             if TRACE:
-                                print(f"{Packet.Type.Name(pkt.type)} handled by external handler")
+                                print(f"\t\t{Packet.Type.Name(pkt.type)} handled by external handler")
 
                             try:
                                 handler(

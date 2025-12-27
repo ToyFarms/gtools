@@ -20,6 +20,17 @@ enum Op {
   OP_CONTAINS = 12;
 }
 
+message Vec2 {
+  float x = 1;
+  float y = 2;
+}
+
+message Vec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
 message BinOp {
   google.protobuf.Any lvalue = 1;
   Op op = 3;
@@ -29,5 +40,7 @@ message BinOp {
     float flt = 6;
     string str = 7;
     bytes buf = 8;
+    Vec2 vec2 = 10;
+    Vec3 vec3 = 11;
   };
 }

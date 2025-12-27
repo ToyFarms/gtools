@@ -6,7 +6,7 @@ from enum import IntEnum
 
 class Kind(IntEnum):
     FLOAT = 1
-    STRING = 2
+    STRING = 2  # NOTE: its bytes
     VEC2 = 3
     VEC3 = 4
     UNSIGNED = 5

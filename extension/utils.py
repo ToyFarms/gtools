@@ -7,6 +7,7 @@ from gtools.core.growtopia.variant import Variant
 from gtools.core.task_scheduler import schedule_task
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
+    BLOCKING_MODE_SEND_AND_CANCEL,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
@@ -32,10 +33,10 @@ class Action(IntEnum):
     FAST_DROP_REQUEST = auto()
 
     # TODO: need to implement matcher for variant
-    GAZETTE_BANNER = auto()
+    GAZETTE_DIALOG = auto()
 
 
-class AutoFishExtension(Extension):
+class UtilityExtension(Extension):
     def __init__(self) -> None:
 
         super().__init__(
@@ -52,7 +53,7 @@ class AutoFishExtension(Extension):
                 self.command("/warp", Action.WARP),
                 Interest(
                     interest=InterestType.INTEREST_CALL_FUNCTION,
-                    call_function=InterestCallFunction(fn_name=b"OnRequestWorldSelectMenu"),
+                    call_function=InterestCallFunction(where=[self.variant[0] == b"OnRequestWorldSelectMenu"]),
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
                     id=Action.EXITED,
@@ -60,10 +61,27 @@ class AutoFishExtension(Extension):
                 self.command("/fd", Action.FAST_DROP_TOGGLE),
                 Interest(
                     interest=INTEREST_CALL_FUNCTION,
-                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+                    blocking_mode=BLOCKING_MODE_BLOCK,
                     direction=DIRECTION_SERVER_TO_CLIENT,
-                    call_function=InterestCallFunction(fn_name=b"OnDialogRequest"),
+                    call_function=InterestCallFunction(
+                        where=[
+                            self.variant[0] == b"OnDialogRequest",
+                            self.variant[1].contains(b"How many to drop"),
+                        ]
+                    ),
                     id=Action.FAST_DROP_REQUEST,
+                ),
+                Interest(
+                    interest=INTEREST_CALL_FUNCTION,
+                    blocking_mode=BLOCKING_MODE_BLOCK,
+                    direction=DIRECTION_SERVER_TO_CLIENT,
+                    call_function=InterestCallFunction(
+                        where=[
+                            self.variant[0] == b"OnDialogRequest",
+                            self.variant[1].contains(b"The Growtopia Gazette"),
+                        ]
+                    ),
+                    id=Action.GAZETTE_DIALOG,
                 ),
             ],
         )
@@ -114,7 +132,7 @@ class AutoFishExtension(Extension):
                                         [b"name", self.warp_target.encode()],
                                         [b"invitedWorld", b"0"],
                                     ]
-                                ).with_nl(),
+                                ).append_nl(),
                             ),
                             DIRECTION_CLIENT_TO_SERVER,
                             ENetPacketFlag.RELIABLE,
@@ -126,31 +144,52 @@ class AutoFishExtension(Extension):
                 self.console_log(f"fast drop enabled: {self.fast_drop}")
                 return self.cancel()
             case Action.FAST_DROP_REQUEST:
-                var = Variant.deserialize(pkt.tank.extended_data)
-                if b"How many to drop" not in var.as_string[1]:
-                    return
+                if self.fast_drop:
+                    var = Variant.deserialize(pkt.tank.extended_data)
+                    if b"How many to drop" not in var.as_string[1]:
+                        return
 
-                kv = StrKV.deserialize(var.as_string[1])
+                    kv = StrKV.deserialize(var.as_string[1])
 
-                res_data = StrKV().with_nl()
-                res_data[b"action"] = b"dialog_return"
-                res_data[b"dialog_name"] = b"drop_item"
-                res_data[b"itemID"] = kv.relative[b"itemID", 1], b""
-                res_data[b"count"] = kv.relative[b"count", 2]
+                    res_data = StrKV()
+                    res_data[b"action"] = b"dialog_return"
+                    res_data[b"dialog_name"] = b"drop_item"
+                    res_data[b"itemID"] = kv.relative[b"itemID", 1], b""
+                    res_data[b"count"] = kv.relative[b"count", 2]
 
-                res = PreparedPacket(
-                    NetPacket(NetType.GENERIC_TEXT, data=res_data),
-                    DIRECTION_CLIENT_TO_SERVER,
-                    ENetPacketFlag.RELIABLE,
+                    res = PreparedPacket(
+                        NetPacket(NetType.GENERIC_TEXT, data=res_data.append_nl()),
+                        DIRECTION_CLIENT_TO_SERVER,
+                        ENetPacketFlag.RELIABLE,
+                    )
+
+                    schedule_task(lambda: self.push(res), random.uniform(0.712, 0.9812))
+                    return self.cancel()
+            case Action.GAZETTE_DIALOG:
+                time.sleep(random.uniform(0.518, 0.812))
+                return self.forward(
+                    PendingPacket(
+                        buf=NetPacket(
+                            type=NetType.GENERIC_TEXT,
+                            data=StrKV(
+                                [
+                                    [b"action", b"dialog_return"],
+                                    [b"dialog_name", b"gazette"],
+                                    [b"buttonClicked", b"banner"],
+                                ]
+                            )
+                            .append_nl()
+                            .append_nl(),
+                        ).serialize(),
+                        direction=DIRECTION_CLIENT_TO_SERVER,
+                        packet_flags=ENetPacketFlag.RELIABLE,
+                    )
                 )
-
-                schedule_task(lambda: self.push(res), random.uniform(0.712, 0.9812))
 
     def destroy(self) -> None:
         pass
 
 
-# \x02\x00\x00\x00action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n\x00
-
 if __name__ == "__main__":
-    AutoFishExtension().standalone()
+    UtilityExtension().standalone()
+
