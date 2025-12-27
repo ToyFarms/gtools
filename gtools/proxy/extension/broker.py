@@ -24,9 +24,6 @@ from gtools.core.signal import Signal
 from gtools.flags import BENCHMARK, PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
-    BLOCKING_MODE_ONESHOT,
-    BLOCKING_MODE_SEND_AND_CANCEL,
-    BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_UNSPECIFIED,
     BlockingMode,
     CapabilityRequest,
@@ -60,7 +57,6 @@ def hash_interest(interest: Interest) -> int:
 
 
 # TODO: rename blocking_mode to packet_mode
-# TODO: add "oneshot" packet mode where it will expect no reply from the extension
 
 
 # extension represent the extension as a whole
