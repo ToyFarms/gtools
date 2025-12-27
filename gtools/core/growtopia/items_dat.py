@@ -1,13 +1,13 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import difflib
+from rapidfuzz import fuzz, process
 from enum import IntEnum
 import logging
 import os
 from pathlib import Path
 import pickle
 import tempfile
-from typing import Any, Literal, Sequence, overload
+from typing import Any, Hashable, Literal, Sequence, overload
 
 import xxhash
 from zmq import IntFlag
@@ -870,6 +870,7 @@ class item_database:
         return_scores: bool = False,
     ) -> Sequence[tuple[Item, float]] | Sequence[Item]:
         query = query if isinstance(query, str) else query.decode()
+
         if version is None:
             version = getattr(cls.db(), "version", None)
             if version is None:
@@ -877,48 +878,93 @@ class item_database:
 
         db = cls._version_cache.get(version) or cls.load_version(version) or cls.db()
         cls._build_name_index(db)
-
         name_list = cls._name_str_list_cache.get(version, [])
         name_str_to_items = cls._name_str_to_items_cache.get(version, {})
 
         if not name_list:
             return []
 
-        matches = difflib.get_close_matches(query, name_list, n=n, cutoff=cutoff)
+        query_normalized = query.strip().lower()
+
+        def combined_scorer(
+            _s1: Sequence[Hashable],
+            s2: Sequence[Hashable],
+            score_cutoff: float | None = None,
+        ) -> float:
+            s2 = str(s2)
+            choice_normalized = s2.lower()
+
+            if query_normalized == choice_normalized:
+                return 100.0
+            if choice_normalized.startswith(query_normalized):
+                return 95.0
+            if f" {query_normalized} " in f" {choice_normalized} ":
+                return 90.0
+
+            scores = []
+
+            ratio_score = fuzz.ratio(query_normalized, choice_normalized)
+            scores.append(ratio_score * 1.0)
+
+            partial_score = fuzz.partial_ratio(query_normalized, choice_normalized)
+            scores.append(partial_score * 0.9)
+
+            token_sort_score = fuzz.token_sort_ratio(query_normalized, choice_normalized)
+            scores.append(token_sort_score * 0.85)
+
+            token_set_score = fuzz.token_set_ratio(query_normalized, choice_normalized)
+            scores.append(token_set_score * 0.8)
+
+            scores.sort(reverse=True)
+            weighted_score = scores[0] * 0.5 + scores[1] * 0.3 + scores[2] * 0.15 + scores[3] * 0.05
+
+            return max(weighted_score, 0.0)
+
+        cutoff_percent = cutoff * 100
+        matches = process.extract(query, name_list, scorer=combined_scorer, score_cutoff=cutoff_percent, limit=n * 3)
 
         results: list[tuple[Item, float]] = []
         seen_item_ids: set[int] = set()
 
-        for matched_name in matches:
+        for matched_name, score, _ in matches:
             items_for_name = name_str_to_items.get(matched_name, [])
-            score = difflib.SequenceMatcher(a=query, b=matched_name).ratio()
+            normalized_score = score / 100.0
+
             for item in items_for_name:
                 if item.id in seen_item_ids:
                     continue
-                results.append((item, score))
+                results.append((item, normalized_score))
                 seen_item_ids.add(item.id)
+
                 if len(results) >= n:
                     break
+
             if len(results) >= n:
                 break
 
         if len(results) < n:
-            extra: list[tuple[Item, float]] = []
-            for name_str, items in name_str_to_items.items():
-                score = difflib.SequenceMatcher(a=query, b=name_str).ratio()
-                if score <= 0:
-                    continue
-                for item in items:
+            additional_cutoff = max(cutoff_percent * 0.7, 30.0)
+            additional_matches = process.extract(
+                query, [name for name in name_list if name not in [m[0] for m in matches]], scorer=combined_scorer, score_cutoff=additional_cutoff, limit=n * 2
+            )
+
+            for matched_name, score, _ in additional_matches:
+                items_for_name = name_str_to_items.get(matched_name, [])
+                normalized_score = score / 100.0
+
+                for item in items_for_name:
                     if item.id in seen_item_ids:
                         continue
-                    extra.append((item, score))
-            extra.sort(key=lambda x: x[1], reverse=True)
-            for itm, sc in extra:
-                results.append((itm, sc))
-                seen_item_ids.add(item.id)
+                    results.append((item, normalized_score))
+                    seen_item_ids.add(item.id)
+
+                    if len(results) >= n:
+                        break
+
                 if len(results) >= n:
                     break
 
+        results.sort(key=lambda x: x[1], reverse=True)
         results = results[:n]
 
         if return_scores:

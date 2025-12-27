@@ -12,6 +12,7 @@ dependencies = [
     "pyglm>=2.8.3",
     "pytest>=9.0.2",
     "pytest-forked>=1.6.0",
+    "rapidfuzz>=3.14.3",
     "xxhash>=3.6.0",
     "zmq>=0.0.0",
 ]
