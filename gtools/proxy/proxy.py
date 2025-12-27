@@ -157,10 +157,6 @@ class Proxy:
         self.proxy_server.send(pkt.as_raw, pkt.flags)
 
     def _handle(self, pkt: PreparedPacket, *, fabricated: bool) -> None:
-        if self._in_dialog and pkt.as_net.type == NetType.TANK_PACKET and pkt.as_net.tank.type == TankType.STATE:
-            self.logger.debug("state packet blocked because in a dialog")
-            return
-
         modified = False
         if not fabricated:
             try:
@@ -210,9 +206,6 @@ class Proxy:
         elif pkt.as_net.type == NetType.SERVER_HELLO:
             self._update_status(Status.LOGGING_IN)
 
-        # if we are in a dialog, block any state packet, in reality, you
-        # would need to block more packet types since you can't do them
-        # in the official client if you're in a dialog, but whatever
         if pkt.as_net.type == NetType.TANK_PACKET and pkt.as_net.tank.type == TankType.CALL_FUNCTION and Variant.get(pkt.as_net.tank.extended_data, 0).value == b"OnDialogRequest":
             self.logger.debug("dialog enter")
             self._in_dialog = True
