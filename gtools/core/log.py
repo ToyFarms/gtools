@@ -346,13 +346,13 @@ def _format_exception_block(
     lines.append("")
 
     if log_stats:
-        lines.append("")
         lines.append("Log Summary:")
         total = sum(log_stats.values())
         for level in sorted(log_stats.keys()):
             lines.append(f"  {level:<8}: {log_stats[level]}")
         lines.append(f"  TOTAL   : {total}")
 
+    lines.append("")
     lines.append("Resources at End:")
     if final_mem_kb is not None:
         mem_mb = final_mem_kb / 1024
