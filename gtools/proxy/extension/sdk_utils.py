@@ -4,13 +4,16 @@ from google.protobuf.any_pb2 import Any
 from typing import Any as TAny
 from gtools.core.convertible import ConvertibleToBytes, ConvertibleToFloat, ConvertibleToInt, ConvertibleToStr, SupportsLenAndGet, Vec2Like, Vec3Like
 from gtools.core.growtopia.create import console_message, particle
-from gtools.core.growtopia.packet import PreparedPacket
+from gtools.core.growtopia.packet import PreparedPacket, TankFlags
 from gtools.core.limits import INT32_MAX
 from gtools.protogen.extension_pb2 import BLOCKING_MODE_BLOCK, DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT, INTEREST_GENERIC_TEXT, Interest, InterestGenericText
 from gtools.protogen.op_pb2 import OP_EQ, OP_STARTSWITH, BinOp, Op
 from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field, FieldValue
-from gtools.protogen.variant_pb2 import VariantClause, VariantQuery
+from gtools.protogen.variant_pb2 import VariantClause
+from gtools.proxy.state import State
+from pyglm.glm import vec2
+
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -111,6 +114,8 @@ class ExtensionUtility(ABC):
     @abstractmethod
     def push(self, pkt: PreparedPacket) -> None: ...
 
+    state: State
+
     @property
     def variant(self) -> VariantProxy:
         return VariantProxy()
@@ -184,7 +189,6 @@ class ExtensionUtility(ABC):
 
     def send_particle(self, id: int, f: int = 0, f2: int = 0, *, abs: glm.vec2 | None = None, tile: glm.ivec2 | None = None) -> None:
         pos = abs if abs else tile * 32 + 16 if tile else None
-        pos = abs if abs else (tile[0] * 32.0 + 16, tile[1] * 32.0 + 16) if tile else None
         if not pos:
             return
 
@@ -228,6 +232,9 @@ class ExtensionUtility(ABC):
             direction=DIRECTION_CLIENT_TO_SERVER,
             id=id,
         )
+
+    def facing_left(self, to: vec2) -> TankFlags:
+        return TankFlags.FACING_LEFT if self.state.me.pos.x > ((to.x + 31) // 32) * 32 else TankFlags.NONE
 
     class Type:
         x: TAny

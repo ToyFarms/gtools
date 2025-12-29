@@ -1,6 +1,7 @@
 from abc import abstractmethod
 from argparse import ArgumentParser
 from dataclasses import dataclass
+import struct
 from urllib.parse import urlparse
 import os
 import threading
@@ -75,7 +76,12 @@ class Extension(ExtensionUtility):
         # but i might want to start thinking switching capnproto and shared memory ring buffer,
         # just for the fun of it
         self.logger.debug(f"   push \x1b[35m-->>\x1b[0m \x1b[35m>>\x1b[0m{pkt!r}\x1b[35m>>\x1b[0m")
-        self._push_socket.send(pkt.to_pending().SerializeToString())
+
+        # NOTE: we use _rtt_ns to store the timestamp for strict packet ordering
+        # because without it, some packet will be clumped and batched which is a no no
+        pending = pkt.to_pending()
+        pending._rtt_ns = struct.pack("<Q", time.monotonic_ns())
+        self._push_socket.send(pending.SerializeToString())
 
     # TODO: try pytest-xdist rather than pytest-forked
     # TODO: have a send_to() possibly?
@@ -357,4 +363,4 @@ class Extension(ExtensionUtility):
         try:
             self.start(block=True)
         except:
-            pass
+            raise

@@ -2,11 +2,13 @@ from bisect import insort
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass
+import heapq
 import itertools
 import logging
 from queue import Queue
 import random
 import re
+import struct
 import threading
 import time
 from traceback import print_exc
@@ -489,6 +491,73 @@ class _PendingPacket:
         self.callback = callback
 
 
+class PacketScheduler:
+    def __init__(self, out_queue: Queue[PreparedPacket | None] | Callable[[PreparedPacket | None], Any], clock_offset_ns: int = 0):
+        self._out_queue = out_queue
+        self._clock_offset_ns = clock_offset_ns
+        self._heap: list[tuple[int, PendingPacket]] = []
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+        self._seq = itertools.count()
+        self._stopped = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+        self.late_threshold_ns = 20_000_000
+
+    def stop(self):
+        with self._cond:
+            self._stopped = True
+            self._cond.notify_all()
+        self._thread.join()
+
+    def update_clock_offset(self, offset_ns: int):
+        with self._cond:
+            self._clock_offset_ns = offset_ns
+            self._cond.notify_all()
+
+    def _put(self, pending: PendingPacket) -> None:
+        if callable(self._out_queue):
+            self._out_queue(PreparedPacket.from_pending(pending))
+        else:
+            self._out_queue.put(PreparedPacket.from_pending(pending))
+
+    def push(self, pkt: PendingPacket) -> None:
+        try:
+            send_ts_ns = struct.unpack("<Q", pkt._rtt_ns)[0]
+        except:
+            self._put(pkt)
+            return
+
+        with self._cond:
+            heapq.heappush(self._heap, (send_ts_ns, pkt))
+            self._cond.notify()
+
+    def _run(self):
+        with self._cond:
+            while not self._stopped:
+                if not self._heap:
+                    self._cond.wait()
+                    continue
+
+                send_ts_ns, pkt = self._heap[0]
+                scheduled_monotonic_ns = send_ts_ns - self._clock_offset_ns
+                now_ns = time.monotonic_ns()
+                wait_ns = scheduled_monotonic_ns - now_ns
+
+                if wait_ns <= 0:
+                    heapq.heappop(self._heap)
+                    lateness_ns = now_ns - scheduled_monotonic_ns
+                    if lateness_ns > self.late_threshold_ns:
+                        pass
+                    self._put(pkt)
+                    continue
+
+                wait_s = wait_ns / 1_000_000_000.0
+                timeout = min(wait_s, 1.0)
+                self._cond.wait(timeout=timeout)
+
+
 @dataclass
 class BrokerFunction:
     reply: Callable[[Packet], None]
@@ -519,6 +588,10 @@ class Broker:
         self.extension_len = Signal(0)
 
         self._pull_queue = pull_queue
+        if self._pull_queue:
+            self._scheduler = PacketScheduler(self._pull_queue)
+        else:
+            self._scheduler = None
         self._pull_socket = self._context.socket(zmq.PULL)
         self._pull_socket.setsockopt(zmq.LINGER, 0)
 
@@ -543,7 +616,7 @@ class Broker:
         finally:
             self._suppress_log = orig
 
-    def _pull(self) -> PreparedPacket | None:
+    def _pull(self) -> None:
         if self._stop_event.is_set():
             return
 
@@ -564,11 +637,14 @@ class Broker:
         pkt = PendingPacket()
         pkt.ParseFromString(raw)
 
-        pkt = PreparedPacket.from_pending(pkt)
-        if not self._suppress_log:
-            self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
+        if self._scheduler:
+            self._scheduler.push(pkt)
+        else:
+            self.logger.warning(f"pull unhandled: {pkt}")
 
-        return pkt
+        # if not self._suppress_log and self.logger.isEnabledFor(logging.DEBUG):
+        #     pkt = PreparedPacket.from_pending(pkt)
+        #     self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
 
     def _pull_thread(self) -> None:
         if BENCHMARK:
@@ -578,17 +654,7 @@ class Broker:
             elapsed_total = 0
 
             while not self._stop_event.is_set():
-                pkt = self._pull()
-                if not pkt:
-                    continue
-
-                if self._pull_queue:
-                    if callable(self._pull_queue):
-                        self._pull_queue(pkt)
-                    else:
-                        self._pull_queue.put(pkt)
-                else:
-                    self.logger.warning(f"pull unhandled: {pkt}")
+                self._pull()
 
                 elapsed_total += time.monotonic_ns() - _last
                 if elapsed_total >= 1e9:
@@ -599,17 +665,7 @@ class Broker:
                 _last = time.monotonic_ns()
         else:
             while not self._stop_event.is_set():
-                pkt = self._pull()
-                if not pkt:
-                    continue
-
-                if self._pull_queue:
-                    if callable(self._pull_queue):
-                        self._pull_queue(pkt)
-                    else:
-                        self._pull_queue.put(pkt)
-                else:
-                    self.logger.warning(f"pull unhandled: {pkt}")
+                self._pull()
 
         self.logger.debug("pull thread exiting")
 

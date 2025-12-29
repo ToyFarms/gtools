@@ -222,7 +222,7 @@ def main() -> None:
             ref: list[tuple[str, list[str], int, str]] = []
 
             for pkt_num, (time, pkt) in enumerate(packets):
-                src = pkt[0].split(" ")[0]
+                src = re.findall(r"from gt (server|client)", pkt[0])[0]
                 pkt_repr_start = find_index(pkt, lambda x: "packet=NetPacket" in x)
                 net_type = re.findall(r".*NetPacket\[(.*)\]", pkt[pkt_repr_start])[0]  # pyright: ignore
                 pkt_repr_end = find_index(pkt, lambda x: "from=" in x)

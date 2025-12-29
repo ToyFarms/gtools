@@ -23,7 +23,8 @@ def console_message(text: str | bytes) -> NetPacket:
     return NetPacket(NetType.TANK_PACKET, call)
 
 
-def chat(text: bytes) -> NetPacket:
+def chat(text: str | bytes) -> NetPacket:
+    text = text if isinstance(text, bytes) else text.encode()
     return NetPacket(NetType.GENERIC_TEXT, StrKV([[b"action", b"input"], [b"", b"text", text]]))
 
 def particle(id: int, x: float, y: float, f: int = 0, f2: int = 0) -> NetPacket:
