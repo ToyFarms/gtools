@@ -285,7 +285,7 @@ class Proxy:
                                 ),
                             )
                         )
-                        if pkt.tank.net_id == self.state.me.net_id:
+                        if pkt.tank.net_id == self.state.me.net_id and op == ModifyWorld.OP_PLACE:
                             self._send_state_update(
                                 StateUpdate(
                                     what=STATE_MODIFY_INVENTORY,
