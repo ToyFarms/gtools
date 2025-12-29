@@ -7,7 +7,7 @@ from typing import Literal, cast
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.protocol import Serializable
-from gtools.protogen.extension_pb2 import Direction as DirectionProto, PendingPacket
+from gtools.protogen.extension_pb2 import Direction, PendingPacket
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -292,21 +292,7 @@ class NetPacket(Serializable):
 
 
 class PreparedPacket:
-    class Direction(Enum):
-        CLIENT_TO_SERVER = DirectionProto.DIRECTION_CLIENT_TO_SERVER
-        SERVER_TO_CLIENT = DirectionProto.DIRECTION_SERVER_TO_CLIENT
-        UNSPECIFIED = DirectionProto.DIRECTION_UNSPECIFIED
-
-        def __eq__(self, value: object, /) -> bool:
-            if isinstance(value, DirectionProto):
-                return self.value == value
-            return super().__eq__(value)
-
-        @classmethod
-        def from_proto(cls, dir: DirectionProto) -> "PreparedPacket.Direction":
-            return cls(dir)
-
-    def __init__(self, packet: NetPacket | bytes, direction: "PreparedPacket.Direction | DirectionProto", flags: ENetPacketFlag) -> None:
+    def __init__(self, packet: NetPacket | bytes, direction: Direction, flags: ENetPacketFlag) -> None:
         if isinstance(packet, NetPacket):
             self._packet = packet
             self._packet_raw = packet.serialize()
@@ -314,7 +300,7 @@ class PreparedPacket:
             self._packet = NetPacket.deserialize(packet)
             self._packet_raw = packet
 
-        self.direction = direction if isinstance(direction, PreparedPacket.Direction) else PreparedPacket.Direction.from_proto(direction)
+        self.direction = direction
         self.flags = flags
 
     @property
@@ -336,7 +322,7 @@ class PreparedPacket:
     def to_pending(self) -> PendingPacket:
         return PendingPacket(
             buf=self.as_raw,
-            direction=self.direction.value,
+            direction=self.direction,
             packet_flags=self.flags,
         )
 

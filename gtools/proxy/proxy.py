@@ -16,7 +16,7 @@ from gtools.core.growtopia.variant import Variant
 from gtools.core.growtopia.world import Tile
 from gtools.core.limits import UINT32_MAX
 from gtools.core.block_sigint import block_sigint
-from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet, StateResponse
+from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Direction, Packet, StateResponse
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.state_pb2 import (
     STATE_ENTER_WORLD,
@@ -54,7 +54,7 @@ from thirdparty.hexdump import hexdump
 
 class ProxyEvent(NamedTuple):
     inner: PyENetEvent
-    direction: PreparedPacket.Direction
+    direction: Direction
 
 
 class Proxy:
@@ -173,7 +173,7 @@ class Proxy:
                         self.logger.debug(f"[{processed._packet_id}] packet process cancelled")
                         return
 
-                    self.logger.debug(f"[original] packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
+                    self.logger.debug(f"[original] packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
                     _pkt_replace = PreparedPacket.from_pending(processed)
                     self.logger.debug(f"[{processed._packet_id}] processed packet: hit={processed._hit_count} rtt={int.from_bytes(processed._rtt_ns) / 1e6}us")
                     modified = True
@@ -188,16 +188,16 @@ class Proxy:
         except Exception as e:
             self.logger.error(f"FAILED UPDATING STATE: {e}")
 
-        self.logger.debug(f"{'[modified] ' if modified else '[fabricated]' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={pkt.direction.name}")
+        self.logger.debug(f"{'[modified] ' if modified else '[fabricated]' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
         if pkt.as_net.type == NetType.TANK_PACKET:
             if pkt.as_net.tank.type in (
                 TankType.APP_CHECK_RESPONSE,
                 TankType.APP_INTEGRITY_FAIL,
             ):
-                self.logger.debug(f"blocked {pkt.as_net.tank} from {pkt.direction.name}")
+                self.logger.debug(f"blocked {pkt.as_net.tank} from {Direction.Name(pkt.direction)}")
                 return
             elif pkt.as_net.tank.type == TankType.DISCONNECT:
-                src_ = self.proxy_client if pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER else self.proxy_server
+                src_ = self.proxy_client if pkt.direction == DIRECTION_CLIENT_TO_SERVER else self.proxy_server
                 src_.disconnect_now()
         if pkt.as_net.type == NetType.GAME_MESSAGE:
             if pkt.as_net.game_message["action", 1] == b"quit":
@@ -215,9 +215,9 @@ class Proxy:
             self.logger.debug("dialog exit")
             self._in_dialog = False
 
-        if pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
+        if pkt.direction == DIRECTION_CLIENT_TO_SERVER:
             self._handle_client_to_server(pkt)
-        elif pkt.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
+        elif pkt.direction == DIRECTION_SERVER_TO_CLIENT:
             self._handle_server_to_client(pkt)
 
     def _send_state_update(self, upd: StateUpdate) -> None:
@@ -457,9 +457,9 @@ class Proxy:
                 self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
                 event = proxy_event.inner
 
-                if proxy_event.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
+                if proxy_event.direction == DIRECTION_CLIENT_TO_SERVER:
                     self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({event.packet.flags!r}):")
-                elif proxy_event.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
+                elif proxy_event.direction == DIRECTION_SERVER_TO_CLIENT:
                     self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({event.packet.flags!r}):")
 
                 if event.type == ENetEventType.DISCONNECT:
@@ -493,9 +493,9 @@ class Proxy:
             with self._worker_lock:
                 self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
 
-                if pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER:
+                if pkt.direction == DIRECTION_CLIENT_TO_SERVER:
                     self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({pkt.flags!r}):")
-                elif pkt.direction == PreparedPacket.Direction.SERVER_TO_CLIENT:
+                elif pkt.direction == DIRECTION_SERVER_TO_CLIENT:
                     self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({pkt.flags!r}):")
 
                 self._handle(pkt, fabricated=True)
@@ -540,11 +540,11 @@ class Proxy:
                 while True:
                     start = time.perf_counter()
                     while (event := self.proxy_server.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                        self._event_queue.put((ProxyEvent(event, PreparedPacket.Direction.CLIENT_TO_SERVER), self._packet_version))
+                        self._event_queue.put((ProxyEvent(event, DIRECTION_CLIENT_TO_SERVER), self._packet_version))
 
                     start = time.perf_counter()
                     while (event := self.proxy_client.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                        self._event_queue.put((ProxyEvent(event, PreparedPacket.Direction.SERVER_TO_CLIENT), self._packet_version))
+                        self._event_queue.put((ProxyEvent(event, DIRECTION_SERVER_TO_CLIENT), self._packet_version))
 
                     now = time.time()
                     if now - self._last_telemetry_update > self._telemetry_update_interval:

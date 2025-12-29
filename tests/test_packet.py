@@ -1,11 +1,12 @@
 import binascii
 import time
 from gtools.core.growtopia.create import chat, chat_seq, console_message
-from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
+from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, TankFlags, TankPacket, TankType
 import pytest
 import struct
 
 from gtools.core.growtopia.strkv import StrKV
+from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER
 from tests import verify
 from thirdparty.enet.bindings import ENetPacketFlag
 
@@ -620,7 +621,7 @@ def test_create_seq_realtime() -> None:
     assert pkt.verified
     assert pkt.pkt.as_raw == next(expected)
     assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
-    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    assert pkt.pkt.direction == DIRECTION_CLIENT_TO_SERVER
     verify(pkt.pkt.as_raw, key=1)
 
     start = time.monotonic()
@@ -637,7 +638,7 @@ def test_create_seq_realtime() -> None:
     assert pkt.verified
     assert pkt.pkt.as_raw == next(expected)
     assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
-    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    assert pkt.pkt.direction == DIRECTION_CLIENT_TO_SERVER
     elapsed = time.monotonic() - start
     assert 0.5 < elapsed < 2
     verify(pkt.pkt.as_raw, key=2)
@@ -647,7 +648,7 @@ def test_create_seq_realtime() -> None:
     assert pkt.verified
     assert pkt.pkt.as_raw == next(expected)
     assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
-    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    assert pkt.pkt.direction == DIRECTION_CLIENT_TO_SERVER
     verify(pkt.pkt.as_raw, key=3)
 
 
@@ -672,7 +673,7 @@ def test_create_seq_delay_range() -> None:
     assert pkt.verified
     assert pkt.pkt.as_raw == next(expected)
     assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
-    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    assert pkt.pkt.direction == DIRECTION_CLIENT_TO_SERVER
     verify(pkt.pkt.as_raw, key=1)
 
     start = time.monotonic()
@@ -689,7 +690,7 @@ def test_create_seq_delay_range() -> None:
     assert pkt.verified
     assert pkt.pkt.as_raw == next(expected)
     assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
-    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    assert pkt.pkt.direction == DIRECTION_CLIENT_TO_SERVER
     elapsed = time.monotonic() - start
     assert delay[0] <= elapsed <= delay[1]
     verify(pkt.pkt.as_raw, key=2)
@@ -699,7 +700,7 @@ def test_create_seq_delay_range() -> None:
     assert pkt.verified
     assert pkt.pkt.as_raw == next(expected)
     assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
-    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    assert pkt.pkt.direction == DIRECTION_CLIENT_TO_SERVER
     verify(pkt.pkt.as_raw, key=3)
 
 
@@ -724,7 +725,7 @@ def test_create_seq_delay_const() -> None:
     assert pkt.verified
     assert pkt.pkt.as_raw == next(expected)
     assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
-    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    assert pkt.pkt.direction == DIRECTION_CLIENT_TO_SERVER
     verify(pkt.pkt.as_raw, key=1)
 
     start = time.monotonic()
@@ -741,7 +742,7 @@ def test_create_seq_delay_const() -> None:
     assert pkt.verified
     assert pkt.pkt.as_raw == next(expected)
     assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
-    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    assert pkt.pkt.direction == DIRECTION_CLIENT_TO_SERVER
     elapsed = time.monotonic() - start
     assert delay - 0.1 < elapsed < delay + 0.1
     verify(pkt.pkt.as_raw, key=2)
@@ -751,5 +752,5 @@ def test_create_seq_delay_const() -> None:
     assert pkt.verified
     assert pkt.pkt.as_raw == next(expected)
     assert pkt.pkt.flags == ENetPacketFlag.RELIABLE
-    assert pkt.pkt.direction == PreparedPacket.Direction.CLIENT_TO_SERVER
+    assert pkt.pkt.direction == DIRECTION_CLIENT_TO_SERVER
     verify(pkt.pkt.as_raw, key=3)

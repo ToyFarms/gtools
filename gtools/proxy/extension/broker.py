@@ -288,7 +288,7 @@ class ExtensionManager:
             # if the interest direction is unspecified, means it doesn't care about direction (match all)
             # if the prepared packet direction is unspecified, we only match extension with unspecified direction
             if interest.direction != DIRECTION_UNSPECIFIED:
-                if interest.direction != pkt.direction.value:
+                if interest.direction != pkt.direction:
                     continue
 
                 if TRACE:
@@ -826,7 +826,7 @@ class Broker:
                         _op=PendingPacket.OP_FORWARD,
                         _packet_id=pkt_id,
                         buf=pkt.as_raw,
-                        direction=pkt.direction.value,
+                        direction=pkt.direction,
                         packet_flags=pkt.flags,
                         _rtt_ns=self._utob(time.perf_counter_ns()),
                         interest_id=client.interest.id,
@@ -847,7 +847,7 @@ class Broker:
                         _op=PendingPacket.OP_FORWARD,
                         _packet_id=pkt_id,
                         buf=pkt.as_raw,
-                        direction=pkt.direction.value,
+                        direction=pkt.direction,
                         packet_flags=pkt.flags,
                         _rtt_ns=self._utob(time.perf_counter_ns()),
                         interest_id=client.interest.id,
@@ -869,7 +869,7 @@ class Broker:
                     pending_pkt = PendingPacket(
                         _op=PendingPacket.OP_FORWARD,
                         buf=pkt.as_raw,
-                        direction=pkt.direction.value,
+                        direction=pkt.direction,
                         packet_flags=pkt.flags,
                         interest_id=client.interest.id,
                     )
@@ -881,7 +881,7 @@ class Broker:
                     pending_pkt = PendingPacket(
                         _op=PendingPacket.OP_FORWARD,
                         buf=pkt.as_raw,
-                        direction=pkt.direction.value,
+                        direction=pkt.direction,
                         packet_flags=pkt.flags,
                         interest_id=client.interest.id,
                     )
@@ -904,7 +904,7 @@ class Broker:
                 _op=PendingPacket.OP_FORWARD,
                 _packet_id=chain_id,
                 buf=pkt.as_raw,
-                direction=pkt.direction.value,
+                direction=pkt.direction,
                 packet_flags=pkt.flags,
                 _rtt_ns=self._utob(time.perf_counter_ns()),
                 interest_id=chain[0].interest.id,

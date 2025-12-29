@@ -183,7 +183,7 @@ def test_process_non_block(request: pytest.FixtureRequest) -> None:
 
         res = ress[0]
         assert res is not None
-        assert res.direction.value == DIRECTION_UNSPECIFIED
+        assert res.direction == DIRECTION_UNSPECIFIED
         assert res.flags == ENetPacketFlag.NONE
         assert res.as_net.type == NetType.TANK_PACKET
         assert res.as_net.tank.net_id == compute_state(1, 1)
@@ -308,7 +308,7 @@ def test_finish_non_block() -> None:
 
         res = ress[0]
         assert res is not None
-        assert res.direction.value == DIRECTION_UNSPECIFIED
+        assert res.direction == DIRECTION_UNSPECIFIED
         assert res.flags == ENetPacketFlag.NONE
         assert res.as_net.type == NetType.TANK_PACKET
         assert res.as_net.tank.net_id == 1
@@ -929,7 +929,7 @@ def test_push_pull() -> None:
             if not pkt:
                 break
 
-            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
             assert pkt.flags == ENetPacketFlag.NONE
             assert pkt.as_net.tank.net_id == i
 
@@ -956,7 +956,7 @@ def test_push_pull_with_delay() -> None:
             if not pkt:
                 break
 
-            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
             assert pkt.flags == ENetPacketFlag.NONE
             assert pkt.as_net.tank.net_id == i
 
@@ -1031,7 +1031,7 @@ def test_push_pull_multi() -> None:
             if not pkt:
                 break
 
-            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
             assert pkt.flags == ENetPacketFlag.NONE
             if pkt.as_net.tank.target_net_id == 0:
                 assert pkt.as_net.tank.net_id == next(n1)
@@ -1067,7 +1067,7 @@ def test_push_pull_multi_one_delay() -> None:
             if not pkt:
                 break
 
-            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
             assert pkt.flags == ENetPacketFlag.NONE
             if pkt.as_net.tank.target_net_id == 0:
                 assert pkt.as_net.tank.net_id == next(n1)
@@ -1103,7 +1103,7 @@ def test_push_pull_multi_one_delay_the_other_one() -> None:
             if not pkt:
                 break
 
-            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
             assert pkt.flags == ENetPacketFlag.NONE
             if pkt.as_net.tank.target_net_id == 0:
                 assert pkt.as_net.tank.net_id == next(n1)
@@ -1139,7 +1139,7 @@ def test_push_pull_multi_both_delay() -> None:
             if not pkt:
                 break
 
-            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
             assert pkt.flags == ENetPacketFlag.NONE
             if pkt.as_net.tank.target_net_id == 0:
                 assert pkt.as_net.tank.net_id == next(n1)
@@ -1181,7 +1181,7 @@ def test_push_pull_multi_extension() -> None:
             if not pkt:
                 break
 
-            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
             assert pkt.flags == ENetPacketFlag.NONE
             assert next(n[pkt.as_net.tank.target_net_id]) == pkt.as_net.tank.net_id
 
@@ -1221,7 +1221,7 @@ def test_push_pull_multi_extension_wih_delay() -> None:
             if not pkt:
                 break
 
-            assert pkt.direction.value == DIRECTION_SERVER_TO_CLIENT
+            assert pkt.direction == DIRECTION_SERVER_TO_CLIENT
             assert pkt.flags == ENetPacketFlag.NONE
             assert next(n[pkt.as_net.tank.target_net_id]) == pkt.as_net.tank.net_id
 
@@ -1415,7 +1415,7 @@ def test_non_block_finish_should_continue() -> None:
         while not ress:
             time.sleep(0.1)
 
-        assert ress[0].direction.value == DIRECTION_UNSPECIFIED
+        assert ress[0].direction == DIRECTION_UNSPECIFIED
         assert ress[0].flags == ENetPacketFlag.NONE
         assert ress[0].as_net.tank.net_id == 1
 
@@ -1687,7 +1687,7 @@ def test_variant_match_and_extension_block_gazette() -> None:
         processed, cancelled = res
         assert not cancelled
         prepared = PreparedPacket.from_pending(processed)
-        assert prepared.direction.value == DIRECTION_CLIENT_TO_SERVER
+        assert prepared.direction == DIRECTION_CLIENT_TO_SERVER
         assert prepared.flags == ENetPacketFlag.RELIABLE
         assert prepared.as_net.type == NetType.GENERIC_TEXT
         assert prepared.as_raw == b"\x02\x00\x00\x00action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n\x00"
@@ -1717,7 +1717,7 @@ def test_utility_extension() -> None:
         pkt, cancelled = res
         assert not cancelled
         prepared = PreparedPacket.from_pending(pkt)
-        assert prepared.direction.value == DIRECTION_CLIENT_TO_SERVER
+        assert prepared.direction == DIRECTION_CLIENT_TO_SERVER
         assert prepared.flags == ENetPacketFlag.RELIABLE
         assert prepared.as_net.type == NetType.GENERIC_TEXT
         assert prepared.as_raw == b"\x02\x00\x00\x00action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n\x00"
@@ -1753,7 +1753,7 @@ def test_utility_extension() -> None:
         assert cancelled
         pkt = q.get(timeout=1.0)
         assert pkt
-        assert pkt.direction.value == DIRECTION_CLIENT_TO_SERVER
+        assert pkt.direction == DIRECTION_CLIENT_TO_SERVER
         assert pkt.flags == ENetPacketFlag.RELIABLE
         assert pkt.as_net.type == NetType.GENERIC_TEXT
         assert pkt.as_net.serialize() == b"\x02\x00\x00\x00action|dialog_return\ndialog_name|drop_item\nitemID|822|\ncount|17\n\x00"
@@ -1781,7 +1781,7 @@ def test_utility_extension() -> None:
         assert ext.should_block == True
         res = q.get(timeout=1.0)
         assert res
-        assert res.direction.value == DIRECTION_CLIENT_TO_SERVER
+        assert res.direction == DIRECTION_CLIENT_TO_SERVER
         assert res.flags == ENetPacketFlag.RELIABLE
         assert res.as_net.type == NetType.GAME_MESSAGE
         assert res.as_net.serialize() == b"\x03\x00\x00\x00action|quit_to_exit\x00"
@@ -1826,7 +1826,7 @@ def test_utility_extension() -> None:
         res = q.get(timeout=1.0)
         assert res
         assert res.as_net.type == NetType.GAME_MESSAGE
-        assert res.direction.value == DIRECTION_CLIENT_TO_SERVER
+        assert res.direction == DIRECTION_CLIENT_TO_SERVER
         assert res.flags == ENetPacketFlag.RELIABLE
         assert res.as_raw == b"\x03\x00\x00\x00action|quit_to_exit\x00"
         verify(res.as_raw, key="warp_seq1")
@@ -1857,7 +1857,7 @@ def test_utility_extension() -> None:
         res = q.get(timeout=2.0)
         assert res
         assert res.as_net.type == NetType.GAME_MESSAGE
-        assert res.direction.value == DIRECTION_CLIENT_TO_SERVER
+        assert res.direction == DIRECTION_CLIENT_TO_SERVER
         assert res.flags == ENetPacketFlag.RELIABLE
         assert res.as_raw == b"\x03\x00\x00\x00action|join_request\nname|MALISE\ninvitedWorld|0\n\x00"
         verify(res.as_raw, key="warp_seq3")

@@ -5,6 +5,7 @@ from typing import Callable, Iterator
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
+from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -124,7 +125,7 @@ def chat_seq(text: bytes, net_id: int, delay: float | tuple[float, float] | None
                 NetType.TANK_PACKET,
                 TankPacket(type=TankType.SET_ICON_STATE, net_id=net_id, int_x=1),
             ),
-            PreparedPacket.Direction.CLIENT_TO_SERVER,
+            DIRECTION_CLIENT_TO_SERVER,
             ENetPacketFlag.RELIABLE,
         )
     )
@@ -138,14 +139,14 @@ def chat_seq(text: bytes, net_id: int, delay: float | tuple[float, float] | None
                     net_id=net_id,
                 ),
             ),
-            PreparedPacket.Direction.CLIENT_TO_SERVER,
+            DIRECTION_CLIENT_TO_SERVER,
             ENetPacketFlag.RELIABLE,
         )
     )
     seq._send(
         PreparedPacket(
             chat(text),
-            PreparedPacket.Direction.CLIENT_TO_SERVER,
+            DIRECTION_CLIENT_TO_SERVER,
             ENetPacketFlag.RELIABLE,
         )
     )
