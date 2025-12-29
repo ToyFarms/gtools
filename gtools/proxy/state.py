@@ -8,6 +8,7 @@ from pyglm.glm import ivec2, vec2, vec4
 from gtools.core.buffer import Buffer
 from gtools.core.growtopia import world
 from gtools.core.growtopia.items_dat import ItemInfoType, item_database
+from gtools.core.growtopia.packet import TankFlags
 from gtools.core.protocol import Serializable
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.state_pb2 import ModifyItem, ModifyWorld, StateUpdate, StateUpdateWhat
@@ -136,6 +137,7 @@ class Player:
     mstate: int = 0
     smstate: int = 0
     online_id: bytes = b""
+    state: TankFlags = TankFlags.NONE
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Player) -> "Player":
@@ -158,6 +160,7 @@ class Player:
             mstate=proto.mstate,
             smstate=proto.smstate,
             online_id=proto.onlineID,
+            state=TankFlags(proto.state),
         )
 
     def to_proto(self) -> growtopia_pb2.Player:
@@ -183,6 +186,7 @@ class Player:
             mstate=self.mstate,
             smstate=self.smstate,
             onlineID=self.online_id,
+            state=self.state,
         )
 
 
@@ -307,6 +311,7 @@ class Me:
     build_range: int = 0
     punch_range: int = 0
     pos: vec2 = field(default_factory=lambda: vec2(0, 0))
+    state: TankFlags = TankFlags.NONE
     server_ping: int = 0
     client_ping: int = 0
     time_since_login: float = 0.0
@@ -319,6 +324,7 @@ class Me:
             build_range=proto.build_range,
             punch_range=proto.punch_range,
             pos=vec2(proto.pos.x, proto.pos.y),
+            state=TankFlags(proto.state),
             server_ping=proto.server_ping,
             client_ping=proto.client_ping,
             time_since_login=proto.time_since_login,
@@ -331,23 +337,12 @@ class Me:
             build_range=self.build_range,
             punch_range=self.punch_range,
             pos=growtopia_pb2.Vec2F(x=self.pos.x, y=self.pos.y),
+            state=self.state,
             server_ping=self.server_ping,
             client_ping=self.client_ping,
             time_since_login=self.time_since_login,
             time_in_world=self.time_in_world,
         )
-
-
-# DEBUG:proxy:[T+0.076] from gt client (<ENetPacketFlag.RELIABLE: 1>):
-# DEBUG:proxy:    <ENetEventType.RECEIVE: 3>
-# DEBUG:proxy:packet=PreparedPacket(packet=NetPacket[GENERIC_TEXT]({action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner}), direction=Direction.CLIENT_TO_SERVER, flags=1) flags=<ENetPacketFlag.RELIABLE: 1> from=CLIENT_TO_SERVER
-# DEBUG:proxy:HEXDUMP:
-#         00000000: 02 00 00 00 61 63 74 69  6F 6E 7C 64 69 61 6C 6F  ....action|dialo
-#         00000010: 67 5F 72 65 74 75 72 6E  0A 64 69 61 6C 6F 67 5F  g_return.dialog_
-#         00000020: 6E 61 6D 65 7C 67 61 7A  65 74 74 65 0A 62 75 74  name|gazette.but
-#         00000030: 74 6F 6E 43 6C 69 63 6B  65 64 7C 62 61 6E 6E 65  tonClicked|banne
-#         00000040: 72 0A 0A 19                                       r...
-# DEBUG:proxy:    b'\x02\x00\x00\x00action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n\x19'
 
 
 class Status(IntEnum):
@@ -393,21 +388,22 @@ class State:
                 self.me.client_ping = upd.set_my_telemetry.client_ping
                 self.me.time_since_login = upd.set_my_telemetry.time_since_login
                 self.me.time_in_world = upd.set_my_telemetry.time_in_world
-            case StateUpdateWhat.STATE_PLAYER_UPDATE_POS:
+            case StateUpdateWhat.STATE_PLAYER_UPDATE:
                 if not self.world:
                     self.logger.warning("player update, but world is not initialized")
                     return
 
-                pos = vec2(upd.player_update_pos.x, upd.player_update_pos.y)
-                net_id = upd.player_update_pos.net_id
+                pos = vec2(upd.player_update.x, upd.player_update.y)
+                net_id = upd.player_update.net_id
 
                 if net_id == 0:
-                    if self.me:
-                        self.me.pos = pos
-                        net_id = self.me.net_id
+                    self.me.pos = pos
+                    self.me.state = TankFlags(upd.player_update.state)
+                    net_id = self.me.net_id
 
                 if player := self.world.get_player(net_id):
                     player.pos = pos
+                    player.state = TankFlags(upd.player_update.state)
             case StateUpdateWhat.STATE_MODIFY_WORLD:
                 if not self.world:
                     self.logger.warning("modify world, but world is not initialized")

@@ -30,6 +30,7 @@ class Me(_message.Message):
     BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
     PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
     POS_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
     SERVER_PING_FIELD_NUMBER: _ClassVar[int]
     CLIENT_PING_FIELD_NUMBER: _ClassVar[int]
     TIME_SINCE_LOGIN_FIELD_NUMBER: _ClassVar[int]
@@ -38,11 +39,12 @@ class Me(_message.Message):
     build_range: int
     punch_range: int
     pos: Vec2F
+    state: int
     server_ping: int
     client_ping: int
     time_since_login: float
     time_in_world: float
-    def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., pos: _Optional[_Union[Vec2F, _Mapping]] = ..., server_ping: _Optional[int] = ..., client_ping: _Optional[int] = ..., time_since_login: _Optional[float] = ..., time_in_world: _Optional[float] = ...) -> None: ...
+    def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., pos: _Optional[_Union[Vec2F, _Mapping]] = ..., state: _Optional[int] = ..., server_ping: _Optional[int] = ..., client_ping: _Optional[int] = ..., time_since_login: _Optional[float] = ..., time_in_world: _Optional[float] = ...) -> None: ...
 
 class Item(_message.Message):
     __slots__ = ()
@@ -98,6 +100,7 @@ class Player(_message.Message):
     MSTATE_FIELD_NUMBER: _ClassVar[int]
     SMSTATE_FIELD_NUMBER: _ClassVar[int]
     ONLINEID_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
     spawn: bytes
     netID: int
     userID: int
@@ -112,7 +115,8 @@ class Player(_message.Message):
     mstate: int
     smstate: int
     onlineID: bytes
-    def __init__(self, spawn: _Optional[bytes] = ..., netID: _Optional[int] = ..., userID: _Optional[int] = ..., eid: _Optional[bytes] = ..., ip: _Optional[bytes] = ..., colrect: _Optional[_Union[Vec4I, _Mapping]] = ..., posXY: _Optional[_Union[Vec2F, _Mapping]] = ..., name: _Optional[bytes] = ..., titleIcon: _Optional[bytes] = ..., country: _Optional[bytes] = ..., invis: _Optional[int] = ..., mstate: _Optional[int] = ..., smstate: _Optional[int] = ..., onlineID: _Optional[bytes] = ...) -> None: ...
+    state: int
+    def __init__(self, spawn: _Optional[bytes] = ..., netID: _Optional[int] = ..., userID: _Optional[int] = ..., eid: _Optional[bytes] = ..., ip: _Optional[bytes] = ..., colrect: _Optional[_Union[Vec4I, _Mapping]] = ..., posXY: _Optional[_Union[Vec2F, _Mapping]] = ..., name: _Optional[bytes] = ..., titleIcon: _Optional[bytes] = ..., country: _Optional[bytes] = ..., invis: _Optional[int] = ..., mstate: _Optional[int] = ..., smstate: _Optional[int] = ..., onlineID: _Optional[bytes] = ..., state: _Optional[int] = ...) -> None: ...
 
 class DroppedItem(_message.Message):
     __slots__ = ()

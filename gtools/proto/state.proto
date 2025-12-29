@@ -6,7 +6,7 @@ import "growtopia.proto";
 
 enum StateUpdateWhat {
   STATE_UNSPECIFIED = 0;
-  STATE_PLAYER_UPDATE_POS = 1;
+  STATE_PLAYER_UPDATE = 1;
   STATE_SET_MY_PLAYER = 2;
   STATE_SEND_INVENTORY = 3;
   STATE_MODIFY_INVENTORY = 4;
@@ -24,7 +24,7 @@ enum StateUpdateWhat {
 message StateUpdate {
   StateUpdateWhat what = 1;
   oneof update {
-    PlayerUpdatePos player_update_pos = 2;
+    PlayerUpdate player_update = 2;
     uint32 set_my_player = 3;
     gtools.growtopia.Inventory send_inventory = 4;
     ModifyInventory modify_inventory = 5;
@@ -89,8 +89,9 @@ message ModifyInventory {
   int32 to_add = 2;
 }
 
-message PlayerUpdatePos {
+message PlayerUpdate {
   uint32 net_id = 1;
   float x = 2;
   float y = 3;
+  uint32 state = 4;
 }

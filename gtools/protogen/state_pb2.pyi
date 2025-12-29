@@ -10,7 +10,7 @@ DESCRIPTOR: _descriptor.FileDescriptor
 class StateUpdateWhat(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     STATE_UNSPECIFIED: _ClassVar[StateUpdateWhat]
-    STATE_PLAYER_UPDATE_POS: _ClassVar[StateUpdateWhat]
+    STATE_PLAYER_UPDATE: _ClassVar[StateUpdateWhat]
     STATE_SET_MY_PLAYER: _ClassVar[StateUpdateWhat]
     STATE_SEND_INVENTORY: _ClassVar[StateUpdateWhat]
     STATE_MODIFY_INVENTORY: _ClassVar[StateUpdateWhat]
@@ -24,7 +24,7 @@ class StateUpdateWhat(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     STATE_SET_MY_RANGE: _ClassVar[StateUpdateWhat]
     STATE_SET_MY_TELEMETRY: _ClassVar[StateUpdateWhat]
 STATE_UNSPECIFIED: StateUpdateWhat
-STATE_PLAYER_UPDATE_POS: StateUpdateWhat
+STATE_PLAYER_UPDATE: StateUpdateWhat
 STATE_SET_MY_PLAYER: StateUpdateWhat
 STATE_SEND_INVENTORY: StateUpdateWhat
 STATE_MODIFY_INVENTORY: StateUpdateWhat
@@ -41,7 +41,7 @@ STATE_SET_MY_TELEMETRY: StateUpdateWhat
 class StateUpdate(_message.Message):
     __slots__ = ()
     WHAT_FIELD_NUMBER: _ClassVar[int]
-    PLAYER_UPDATE_POS_FIELD_NUMBER: _ClassVar[int]
+    PLAYER_UPDATE_FIELD_NUMBER: _ClassVar[int]
     SET_MY_PLAYER_FIELD_NUMBER: _ClassVar[int]
     SEND_INVENTORY_FIELD_NUMBER: _ClassVar[int]
     MODIFY_INVENTORY_FIELD_NUMBER: _ClassVar[int]
@@ -54,7 +54,7 @@ class StateUpdate(_message.Message):
     MY_RANGE_FIELD_NUMBER: _ClassVar[int]
     SET_MY_TELEMETRY_FIELD_NUMBER: _ClassVar[int]
     what: StateUpdateWhat
-    player_update_pos: PlayerUpdatePos
+    player_update: PlayerUpdate
     set_my_player: int
     send_inventory: _growtopia_pb2.Inventory
     modify_inventory: ModifyInventory
@@ -66,7 +66,7 @@ class StateUpdate(_message.Message):
     update_status: int
     my_range: SetMyRange
     set_my_telemetry: SetMyTelemetry
-    def __init__(self, what: _Optional[_Union[StateUpdateWhat, str]] = ..., player_update_pos: _Optional[_Union[PlayerUpdatePos, _Mapping]] = ..., set_my_player: _Optional[int] = ..., send_inventory: _Optional[_Union[_growtopia_pb2.Inventory, _Mapping]] = ..., modify_inventory: _Optional[_Union[ModifyInventory, _Mapping]] = ..., enter_world: _Optional[_Union[EnterWorld, _Mapping]] = ..., player_join: _Optional[_Union[_growtopia_pb2.Player, _Mapping]] = ..., player_leave: _Optional[int] = ..., modify_world: _Optional[_Union[ModifyWorld, _Mapping]] = ..., modify_item: _Optional[_Union[ModifyItem, _Mapping]] = ..., update_status: _Optional[int] = ..., my_range: _Optional[_Union[SetMyRange, _Mapping]] = ..., set_my_telemetry: _Optional[_Union[SetMyTelemetry, _Mapping]] = ...) -> None: ...
+    def __init__(self, what: _Optional[_Union[StateUpdateWhat, str]] = ..., player_update: _Optional[_Union[PlayerUpdate, _Mapping]] = ..., set_my_player: _Optional[int] = ..., send_inventory: _Optional[_Union[_growtopia_pb2.Inventory, _Mapping]] = ..., modify_inventory: _Optional[_Union[ModifyInventory, _Mapping]] = ..., enter_world: _Optional[_Union[EnterWorld, _Mapping]] = ..., player_join: _Optional[_Union[_growtopia_pb2.Player, _Mapping]] = ..., player_leave: _Optional[int] = ..., modify_world: _Optional[_Union[ModifyWorld, _Mapping]] = ..., modify_item: _Optional[_Union[ModifyItem, _Mapping]] = ..., update_status: _Optional[int] = ..., my_range: _Optional[_Union[SetMyRange, _Mapping]] = ..., set_my_telemetry: _Optional[_Union[SetMyTelemetry, _Mapping]] = ...) -> None: ...
 
 class ModifyWorld(_message.Message):
     __slots__ = ()
@@ -150,12 +150,14 @@ class ModifyInventory(_message.Message):
     to_add: int
     def __init__(self, id: _Optional[int] = ..., to_add: _Optional[int] = ...) -> None: ...
 
-class PlayerUpdatePos(_message.Message):
+class PlayerUpdate(_message.Message):
     __slots__ = ()
     NET_ID_FIELD_NUMBER: _ClassVar[int]
     X_FIELD_NUMBER: _ClassVar[int]
     Y_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
     net_id: int
     x: float
     y: float
-    def __init__(self, net_id: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ...) -> None: ...
+    state: int
+    def __init__(self, net_id: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., state: _Optional[int] = ...) -> None: ...

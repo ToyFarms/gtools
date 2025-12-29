@@ -26,7 +26,7 @@ from gtools.protogen.state_pb2 import (
     STATE_MODIFY_WORLD,
     STATE_PLAYER_JOIN,
     STATE_PLAYER_LEAVE,
-    STATE_PLAYER_UPDATE_POS,
+    STATE_PLAYER_UPDATE,
     STATE_SEND_INVENTORY,
     STATE_SET_MY_PLAYER,
     STATE_SET_MY_RANGE,
@@ -36,7 +36,7 @@ from gtools.protogen.state_pb2 import (
     ModifyInventory,
     ModifyItem,
     ModifyWorld,
-    PlayerUpdatePos,
+    PlayerUpdate,
     SetMyRange,
     SetMyTelemetry,
     StateUpdate,
@@ -258,11 +258,12 @@ class Proxy:
                         # NOTE: net_id of 0 is self
                         self._send_state_update(
                             StateUpdate(
-                                what=STATE_PLAYER_UPDATE_POS,
-                                player_update_pos=PlayerUpdatePos(
+                                what=STATE_PLAYER_UPDATE,
+                                player_update=PlayerUpdate(
                                     net_id=pkt.tank.net_id,
                                     x=pkt.tank.vector_x,
                                     y=pkt.tank.vector_y,
+                                    state=pkt.tank.flags,
                                 ),
                             ),
                         )

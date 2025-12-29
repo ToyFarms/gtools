@@ -67,10 +67,6 @@ class AutoFishExtension(Extension):
             self.console_log(f"{self.state.status.name} {self.state.inventory.get(self.bait)}")
             time.sleep(1)
 
-    def in_range(self, p1: ivec2, p2: ivec2, range: int) -> bool:
-        d = abs(p1 - p2)
-        return d.x <= range and d.y <= range
-
     def process(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
         match event.interest_id:

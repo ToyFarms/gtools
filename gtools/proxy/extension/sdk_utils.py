@@ -1,18 +1,27 @@
 from abc import ABC, abstractmethod
+import logging
 from pyglm import glm
 from google.protobuf.any_pb2 import Any
 from typing import Any as TAny
 from gtools.core.convertible import ConvertibleToBytes, ConvertibleToFloat, ConvertibleToInt, ConvertibleToStr, SupportsLenAndGet, Vec2Like, Vec3Like
 from gtools.core.growtopia.create import console_message, particle
-from gtools.core.growtopia.packet import PreparedPacket, TankFlags
+from gtools.core.growtopia.packet import NetPacket, PreparedPacket, TankFlags
 from gtools.core.limits import INT32_MAX
-from gtools.protogen.extension_pb2 import BLOCKING_MODE_BLOCK, DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT, INTEREST_GENERIC_TEXT, Interest, InterestGenericText
+from gtools.protogen.extension_pb2 import (
+    BLOCKING_MODE_BLOCK,
+    DIRECTION_CLIENT_TO_SERVER,
+    DIRECTION_SERVER_TO_CLIENT,
+    INTEREST_GENERIC_TEXT,
+    Interest,
+    InterestGenericText,
+    PendingPacket,
+)
 from gtools.protogen.op_pb2 import OP_EQ, OP_STARTSWITH, BinOp, Op
 from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field, FieldValue
 from gtools.protogen.variant_pb2 import VariantClause
 from gtools.proxy.state import State
-from pyglm.glm import vec2
+from pyglm.glm import ivec2, vec2
 
 from thirdparty.enet.bindings import ENetPacketFlag
 
@@ -115,6 +124,7 @@ class ExtensionUtility(ABC):
     def push(self, pkt: PreparedPacket) -> None: ...
 
     state: State
+    logger = logging.getLogger("ext_utils")
 
     @property
     def variant(self) -> VariantProxy:
@@ -194,7 +204,12 @@ class ExtensionUtility(ABC):
 
         self.push(PreparedPacket(particle(id, pos[0], pos[1], f, f2), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
-    # TODO: improve command
+    def register_command(self, id: int, prefix: bytes) -> None:
+        if not hasattr(self, "_command_reg"):
+            self._command_reg = {}
+
+        self._command_reg[id] = prefix
+
     def command_toggle(self, cmd: str | bytes, id: int) -> Interest:
         """match all text"""
         cmd = cmd.encode() if isinstance(cmd, str) else cmd
@@ -217,6 +232,7 @@ class ExtensionUtility(ABC):
     def command(self, cmd: str | bytes, id: int) -> Interest:
         """match startswith"""
         cmd = cmd.encode() if isinstance(cmd, str) else cmd
+        self.register_command(id, cmd)
         return Interest(
             interest=INTEREST_GENERIC_TEXT,
             generic_text=InterestGenericText(
@@ -235,6 +251,17 @@ class ExtensionUtility(ABC):
 
     def facing_left(self, to: vec2) -> TankFlags:
         return TankFlags.FACING_LEFT if self.state.me.pos.x > ((to.x + 31) // 32) * 32 else TankFlags.NONE
+
+    def in_range(self, p1: ivec2, p2: ivec2, range: int) -> bool:
+        d = abs(p1 - p2)
+        return d.x <= range and d.y <= range
+
+    def parse_command(self, event: PendingPacket) -> str:
+        if event.interest_id not in self._command_reg:
+            self.logger.error(f"command not refistered for {event}")
+            return ""
+
+        return NetPacket.deserialize(event.buf).generic_text.relative[b"text", 1].removeprefix(self._command_reg[event.interest_id]).decode().strip()
 
     class Type:
         x: TAny
