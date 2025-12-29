@@ -252,7 +252,8 @@ class Extension(ExtensionUtility):
                         zmq.EVENT_MONITOR_STOPPED,
                         zmq.EVENT_CLOSED,
                     ):
-                        self.logger.debug(f"{source.name} disconnected")
+                        if source.connected:
+                            self.logger.debug(f"{source.name} disconnected")
                         source.connected.set(False)
 
         except Exception as e:
