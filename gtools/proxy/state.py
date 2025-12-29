@@ -221,7 +221,7 @@ class World(Serializable):
     def remove_player_by_id(self, net_id: int) -> None:
         self.player = [p for p in self.player if p.net_id != net_id]
 
-    def find_tile(self, pos: ivec2) -> world.Tile | None:
+    def get_tile(self, pos: ivec2) -> world.Tile | None:
         for tile in self.inner.tiles:
             if tile.pos == pos:
                 return tile
@@ -236,7 +236,7 @@ class World(Serializable):
         self.logger.warning(f"tile {pos} in {self.inner.name} does not exists")
 
     def destroy_tile(self, pos: ivec2) -> None:
-        if (tile := self.find_tile(pos)) is None:
+        if (tile := self.get_tile(pos)) is None:
             return
 
         if tile.fg_id != 0:
@@ -245,7 +245,7 @@ class World(Serializable):
             tile.bg_id = 0
 
     def place_tile(self, id: int, pos: ivec2) -> None:
-        if (tile := self.find_tile(pos)) is None:
+        if (tile := self.get_tile(pos)) is None:
             return
 
         if item_database.get(id).item_type in (

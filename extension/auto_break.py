@@ -55,8 +55,10 @@ class AutoBreakExtension(Extension):
 
     def thread_ping(self) -> None:
         while True:
-            if self.state.status == Status.IN_WORLD and not self.enabled:
+            if self.state.status == Status.IN_WORLD and self.state.world and not self.enabled:
                 for t in self.target:
+                    if tile := self.state.world.get_tile(t):
+                        self.console_log(f"{tile.fg_id}")
                     self.send_particle(ParticleID.LBOT_PLACE, tile=t)
                     time.sleep(0.1)
             time.sleep(1)
@@ -171,7 +173,7 @@ class AutoBreakExtension(Extension):
                     self.target.clear()
                     for x in range(2):
                         sign = -1 if self.state.me.state & TankFlags.FACING_LEFT else 1
-                        self.target.append(ivec2(self.state.me.pos // 32) + (x * sign, 0))
+                        self.target.append(ivec2(self.state.me.pos // 32) + ((x + 1) * sign, 0))
 
                 return self.cancel()
 

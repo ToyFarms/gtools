@@ -297,6 +297,11 @@ class PreparedPacket:
         SERVER_TO_CLIENT = DirectionProto.DIRECTION_SERVER_TO_CLIENT
         UNSPECIFIED = DirectionProto.DIRECTION_UNSPECIFIED
 
+        def __eq__(self, value: object, /) -> bool:
+            if isinstance(value, DirectionProto):
+                return self.value == value
+            return super().__eq__(value)
+
         @classmethod
         def from_proto(cls, dir: DirectionProto) -> "PreparedPacket.Direction":
             return cls(dir)
