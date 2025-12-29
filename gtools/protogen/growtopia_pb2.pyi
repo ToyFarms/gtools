@@ -24,6 +24,20 @@ class Inventory(_message.Message):
     items: _containers.RepeatedCompositeFieldContainer[Item]
     def __init__(self, items: _Optional[_Iterable[_Union[Item, _Mapping]]] = ...) -> None: ...
 
+class CharacterState(_message.Message):
+    __slots__ = ()
+    BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
+    PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
+    HACK_TYPE_FIELD_NUMBER: _ClassVar[int]
+    GRAVITY_FIELD_NUMBER: _ClassVar[int]
+    VELOCITY_FIELD_NUMBER: _ClassVar[int]
+    build_range: int
+    punch_range: int
+    hack_type: int
+    gravity: float
+    velocity: float
+    def __init__(self, build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., hack_type: _Optional[int] = ..., gravity: _Optional[float] = ..., velocity: _Optional[float] = ...) -> None: ...
+
 class Me(_message.Message):
     __slots__ = ()
     NET_ID_FIELD_NUMBER: _ClassVar[int]
@@ -31,6 +45,7 @@ class Me(_message.Message):
     PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
     POS_FIELD_NUMBER: _ClassVar[int]
     STATE_FIELD_NUMBER: _ClassVar[int]
+    CHARACTER_FIELD_NUMBER: _ClassVar[int]
     SERVER_PING_FIELD_NUMBER: _ClassVar[int]
     CLIENT_PING_FIELD_NUMBER: _ClassVar[int]
     TIME_SINCE_LOGIN_FIELD_NUMBER: _ClassVar[int]
@@ -40,11 +55,12 @@ class Me(_message.Message):
     punch_range: int
     pos: Vec2F
     state: int
+    character: CharacterState
     server_ping: int
     client_ping: int
     time_since_login: float
     time_in_world: float
-    def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., pos: _Optional[_Union[Vec2F, _Mapping]] = ..., state: _Optional[int] = ..., server_ping: _Optional[int] = ..., client_ping: _Optional[int] = ..., time_since_login: _Optional[float] = ..., time_in_world: _Optional[float] = ...) -> None: ...
+    def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., pos: _Optional[_Union[Vec2F, _Mapping]] = ..., state: _Optional[int] = ..., character: _Optional[_Union[CharacterState, _Mapping]] = ..., server_ping: _Optional[int] = ..., client_ping: _Optional[int] = ..., time_since_login: _Optional[float] = ..., time_in_world: _Optional[float] = ...) -> None: ...
 
 class Item(_message.Message):
     __slots__ = ()

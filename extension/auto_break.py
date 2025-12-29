@@ -40,7 +40,7 @@ class AutoBreakExtension(Extension):
                 Interest(interest=INTEREST_STATE_UPDATE),
                 self.command_toggle("/auto", Action.TOGGLE_AUTO),
                 self.command_toggle("/rec", Action.REC),
-                self.command("/templ", Action.TEMPLATE),
+                self.command("/t", Action.TEMPLATE),
             ],
         )
         self.enabled = False
@@ -58,10 +58,12 @@ class AutoBreakExtension(Extension):
             if self.state.status == Status.IN_WORLD and self.state.world and not self.enabled:
                 for t in self.target:
                     if tile := self.state.world.get_tile(t):
-                        self.console_log(f"{tile.fg_id}")
-                    self.send_particle(ParticleID.LBOT_PLACE, tile=t)
+                        self.console_log(f"{tile.fg_id} {self.state.me.punch_range}")
+
+                    if self.in_range(ivec2(self.state.me.pos // 32), t, self.state.me.punch_range):
+                        self.send_particle(ParticleID.LBOT_PLACE, tile=t)
                     time.sleep(0.1)
-            time.sleep(1)
+            time.sleep(0.5)
 
     def send_punch_packet(self, target_tile: ivec2) -> bool:
         if not self.in_range(ivec2(self.state.me.pos // 32), target_tile, self.state.me.punch_range) or self.state.status != Status.IN_WORLD:

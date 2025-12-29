@@ -306,12 +306,41 @@ class World(Serializable):
 
 
 @dataclass(slots=True)
+class CharacterState:
+    build_range: int = 0
+    punch_range: int = 0
+    hack_type: int = 0
+    gravity: float = 0.0
+    velocity: float = 0.0
+
+    @classmethod
+    def from_proto(cls, proto: growtopia_pb2.CharacterState) -> "CharacterState":
+        return cls(
+            build_range=proto.build_range,
+            punch_range=proto.punch_range,
+            hack_type=proto.hack_type,
+            gravity=proto.gravity,
+            velocity=proto.velocity,
+        )
+
+    def to_proto(self) -> growtopia_pb2.CharacterState:
+        return growtopia_pb2.CharacterState(
+            build_range=self.build_range,
+            punch_range=self.punch_range,
+            hack_type=self.hack_type,
+            gravity=self.gravity,
+            velocity=self.velocity,
+        )
+
+
+@dataclass(slots=True)
 class Me:
     net_id: int = 0
     build_range: int = 0
     punch_range: int = 0
-    pos: vec2 = field(default_factory=lambda: vec2(0, 0))
+    pos: vec2 = field(default_factory=vec2)
     state: TankFlags = TankFlags.NONE
+    character: CharacterState = field(default_factory=CharacterState)
     server_ping: int = 0
     client_ping: int = 0
     time_since_login: float = 0.0
@@ -325,6 +354,7 @@ class Me:
             punch_range=proto.punch_range,
             pos=vec2(proto.pos.x, proto.pos.y),
             state=TankFlags(proto.state),
+            character=CharacterState.from_proto(proto.character),
             server_ping=proto.server_ping,
             client_ping=proto.client_ping,
             time_since_login=proto.time_since_login,
@@ -338,6 +368,7 @@ class Me:
             punch_range=self.punch_range,
             pos=growtopia_pb2.Vec2F(x=self.pos.x, y=self.pos.y),
             state=self.state,
+            character=self.character.to_proto(),
             server_ping=self.server_ping,
             client_ping=self.client_ping,
             time_since_login=self.time_since_login,
@@ -438,6 +469,8 @@ class State:
                             self.inventory.add(item.id, item.amount)
             case StateUpdateWhat.STATE_SET_MY_PLAYER:
                 self.me.net_id = upd.set_my_player
+            case StateUpdateWhat.STATE_SET_CHARACTER_STATE:
+                self.me.character = CharacterState.from_proto(upd.character_state)
             case StateUpdateWhat.STATE_SEND_INVENTORY:
                 self.inventory = Inventory.from_proto(upd.send_inventory)
             case StateUpdateWhat.STATE_MODIFY_INVENTORY:

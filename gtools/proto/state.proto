@@ -17,7 +17,7 @@ enum StateUpdateWhat {
   STATE_MODIFY_WORLD = 10;
   STATE_MODIFY_ITEM = 11;
   STATE_UPDATE_STATUS = 12;
-  STATE_SET_MY_RANGE = 13;
+  STATE_SET_CHARACTER_STATE = 13;
   STATE_SET_MY_TELEMETRY = 14;
 }
 
@@ -34,7 +34,7 @@ message StateUpdate {
     ModifyWorld modify_world = 13;
     ModifyItem modify_item = 9;
     uint32 update_status = 10;
-    SetMyRange my_range = 11;
+    gtools.growtopia.CharacterState character_state = 11;
     SetMyTelemetry set_my_telemetry = 12;
   }
 }
@@ -55,11 +55,6 @@ message SetMyTelemetry {
   uint32 client_ping = 8;
   float time_since_login = 6;
   float time_in_world = 7;
-}
-
-message SetMyRange {
-  uint32 build_range = 1;
-  uint32 punch_range = 2;
 }
 
 message ModifyItem {

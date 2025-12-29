@@ -21,7 +21,7 @@ class StateUpdateWhat(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     STATE_MODIFY_WORLD: _ClassVar[StateUpdateWhat]
     STATE_MODIFY_ITEM: _ClassVar[StateUpdateWhat]
     STATE_UPDATE_STATUS: _ClassVar[StateUpdateWhat]
-    STATE_SET_MY_RANGE: _ClassVar[StateUpdateWhat]
+    STATE_SET_CHARACTER_STATE: _ClassVar[StateUpdateWhat]
     STATE_SET_MY_TELEMETRY: _ClassVar[StateUpdateWhat]
 STATE_UNSPECIFIED: StateUpdateWhat
 STATE_PLAYER_UPDATE: StateUpdateWhat
@@ -35,7 +35,7 @@ STATE_PLAYER_LEAVE: StateUpdateWhat
 STATE_MODIFY_WORLD: StateUpdateWhat
 STATE_MODIFY_ITEM: StateUpdateWhat
 STATE_UPDATE_STATUS: StateUpdateWhat
-STATE_SET_MY_RANGE: StateUpdateWhat
+STATE_SET_CHARACTER_STATE: StateUpdateWhat
 STATE_SET_MY_TELEMETRY: StateUpdateWhat
 
 class StateUpdate(_message.Message):
@@ -51,7 +51,7 @@ class StateUpdate(_message.Message):
     MODIFY_WORLD_FIELD_NUMBER: _ClassVar[int]
     MODIFY_ITEM_FIELD_NUMBER: _ClassVar[int]
     UPDATE_STATUS_FIELD_NUMBER: _ClassVar[int]
-    MY_RANGE_FIELD_NUMBER: _ClassVar[int]
+    CHARACTER_STATE_FIELD_NUMBER: _ClassVar[int]
     SET_MY_TELEMETRY_FIELD_NUMBER: _ClassVar[int]
     what: StateUpdateWhat
     player_update: PlayerUpdate
@@ -64,9 +64,9 @@ class StateUpdate(_message.Message):
     modify_world: ModifyWorld
     modify_item: ModifyItem
     update_status: int
-    my_range: SetMyRange
+    character_state: _growtopia_pb2.CharacterState
     set_my_telemetry: SetMyTelemetry
-    def __init__(self, what: _Optional[_Union[StateUpdateWhat, str]] = ..., player_update: _Optional[_Union[PlayerUpdate, _Mapping]] = ..., set_my_player: _Optional[int] = ..., send_inventory: _Optional[_Union[_growtopia_pb2.Inventory, _Mapping]] = ..., modify_inventory: _Optional[_Union[ModifyInventory, _Mapping]] = ..., enter_world: _Optional[_Union[EnterWorld, _Mapping]] = ..., player_join: _Optional[_Union[_growtopia_pb2.Player, _Mapping]] = ..., player_leave: _Optional[int] = ..., modify_world: _Optional[_Union[ModifyWorld, _Mapping]] = ..., modify_item: _Optional[_Union[ModifyItem, _Mapping]] = ..., update_status: _Optional[int] = ..., my_range: _Optional[_Union[SetMyRange, _Mapping]] = ..., set_my_telemetry: _Optional[_Union[SetMyTelemetry, _Mapping]] = ...) -> None: ...
+    def __init__(self, what: _Optional[_Union[StateUpdateWhat, str]] = ..., player_update: _Optional[_Union[PlayerUpdate, _Mapping]] = ..., set_my_player: _Optional[int] = ..., send_inventory: _Optional[_Union[_growtopia_pb2.Inventory, _Mapping]] = ..., modify_inventory: _Optional[_Union[ModifyInventory, _Mapping]] = ..., enter_world: _Optional[_Union[EnterWorld, _Mapping]] = ..., player_join: _Optional[_Union[_growtopia_pb2.Player, _Mapping]] = ..., player_leave: _Optional[int] = ..., modify_world: _Optional[_Union[ModifyWorld, _Mapping]] = ..., modify_item: _Optional[_Union[ModifyItem, _Mapping]] = ..., update_status: _Optional[int] = ..., character_state: _Optional[_Union[_growtopia_pb2.CharacterState, _Mapping]] = ..., set_my_telemetry: _Optional[_Union[SetMyTelemetry, _Mapping]] = ...) -> None: ...
 
 class ModifyWorld(_message.Message):
     __slots__ = ()
@@ -97,14 +97,6 @@ class SetMyTelemetry(_message.Message):
     time_since_login: float
     time_in_world: float
     def __init__(self, server_ping: _Optional[int] = ..., client_ping: _Optional[int] = ..., time_since_login: _Optional[float] = ..., time_in_world: _Optional[float] = ...) -> None: ...
-
-class SetMyRange(_message.Message):
-    __slots__ = ()
-    BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
-    PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
-    build_range: int
-    punch_range: int
-    def __init__(self, build_range: _Optional[int] = ..., punch_range: _Optional[int] = ...) -> None: ...
 
 class ModifyItem(_message.Message):
     __slots__ = ()
