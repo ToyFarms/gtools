@@ -28,6 +28,7 @@ from gtools.protogen.state_pb2 import (
     STATE_PLAYER_LEAVE,
     STATE_PLAYER_UPDATE,
     STATE_SEND_INVENTORY,
+    STATE_SET_CHARACTER_STATE,
     STATE_SET_MY_PLAYER,
     STATE_SET_MY_RANGE,
     STATE_SET_MY_TELEMETRY,
@@ -413,10 +414,13 @@ class Proxy:
                     case TankType.SET_CHARACTER_STATE:
                         self._send_state_update(
                             StateUpdate(
-                                what=STATE_SET_MY_RANGE,
-                                my_range=SetMyRange(
+                                what=STATE_SET_CHARACTER_STATE,
+                                character_state=growtopia_pb2.CharacterState(
                                     build_range=pkt.tank.jump_count - 126,
                                     punch_range=pkt.tank.animation_type - 126,
+                                    hack_type=pkt.tank.value,
+                                    gravity=pkt.tank.vector_x2,
+                                    velocity=pkt.tank.vector_y2,
                                 ),
                             ),
                         )
