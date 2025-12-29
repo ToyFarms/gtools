@@ -30,7 +30,6 @@ from gtools.protogen.state_pb2 import (
     STATE_SEND_INVENTORY,
     STATE_SET_CHARACTER_STATE,
     STATE_SET_MY_PLAYER,
-    STATE_SET_MY_RANGE,
     STATE_SET_MY_TELEMETRY,
     STATE_UPDATE_STATUS,
     EnterWorld,
@@ -38,7 +37,6 @@ from gtools.protogen.state_pb2 import (
     ModifyItem,
     ModifyWorld,
     PlayerUpdate,
-    SetMyRange,
     SetMyTelemetry,
     StateUpdate,
 )
