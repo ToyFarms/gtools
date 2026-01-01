@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import IntEnum, IntFlag
 import logging
 import struct
 from typing import Iterator, OrderedDict
@@ -308,6 +308,23 @@ class World(Serializable):
             inner=self.inner.to_proto(),
             player=[x.to_proto() for x in self.player],
         )
+
+
+class HackType(IntFlag):
+    NONE = 0
+    UNK1 = 1 << 0
+    UNK2 = 1 << 1
+    UNK3 = 1 << 2
+    UNK4 = 1 << 3
+    UNK5 = 1 << 4
+    UNK6 = 1 << 5
+    UNK7 = 1 << 6
+    UNK8 = 1 << 7
+    UNK9 = 1 << 8
+    UNK10 = 1 << 9
+    UNK11 = 1 << 10
+    CHARACTER_FROZEN = 1 << 11  # because of ghost
+    # there's probably more, but idk
 
 
 @dataclass(slots=True)

@@ -17,6 +17,7 @@ from gtools.protogen.extension_pb2 import (
     INTEREST_CALL_FUNCTION,
     INTEREST_STATE,
     INTEREST_STATE_UPDATE,
+    INTEREST_TILE_CHANGE_REQUEST,
     Interest,
     InterestCallFunction,
     InterestState,
@@ -24,7 +25,7 @@ from gtools.protogen.extension_pb2 import (
     PendingPacket,
 )
 from gtools.proxy.extension.sdk import Extension
-from gtools.proxy.state import Status
+from gtools.proxy.state import HackType, Status
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -36,6 +37,7 @@ class Action(IntEnum):
     BUILD = auto()
     PUNCH = auto()
     MAG_EMPTY = auto()
+    TILE_CHANGE_CONFIRM = auto()
 
 
 @dataclass(slots=True)
@@ -80,6 +82,12 @@ class AutoBreakExtension(Extension):
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
                     id=Action.MAG_EMPTY,
                 ),
+                Interest(
+                    interest=INTEREST_TILE_CHANGE_REQUEST,
+                    direction=DIRECTION_SERVER_TO_CLIENT,
+                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+                    id=Action.TILE_CHANGE_CONFIRM,
+                ),
             ],
         )
         self.enabled = False
@@ -89,6 +97,7 @@ class AutoBreakExtension(Extension):
 
         self._set_id_to_next = False
         self.item_id = 0
+        self.place_pending: dict[ivec2, float] = {}
 
     # def thread_ping(self) -> None:
     #     while True:
@@ -131,8 +140,11 @@ class AutoBreakExtension(Extension):
             for target in self.target:
                 if not self.in_range(target, punch=False) or not self.can_place(target, self.item_id):
                     continue
+                if target in self.place_pending and time.monotonic() - self.place_pending[target] < 1:
+                    continue
 
                 assert self.item_id != 0
+                self.place_pending[target] = time.monotonic()
                 return TileChangeRequest(self.item_id, target)
             self.auto_state = State.BREAKING
             return True
@@ -147,15 +159,27 @@ class AutoBreakExtension(Extension):
                 if time.monotonic() - last_tile_change > 0.3:
                     break
 
+                if self.state.me.character.hack_type & HackType.CHARACTER_FROZEN:
+                    print("waiting because character is frozen")
+                    time.sleep(0.01)
+                    continue
+
                 next = self.get_next_target()
                 if isinstance(next, bool) or not next:
+                    time.sleep(0.01)
                     continue
 
                 if not self.send_tile_change_request(next.item_id, next.target):
+                    time.sleep(0.01)
                     continue
 
                 last_tile_change = time.monotonic()
                 time.sleep(random.uniform(0.19, 0.21))
+
+            if self.enabled and self.state.status != Status.IN_WORLD:
+                self.punching_state = False
+                self.enabled = False
+                self.console_log("auto disabled")
 
             last_tile_change = math.inf
             self.reset_state()
@@ -236,6 +260,13 @@ class AutoBreakExtension(Extension):
             case Action.MAG_EMPTY:
                 self.enabled = False
                 self.console_log("auto disabled because of empty magplants")
+            case Action.TILE_CHANGE_CONFIRM:
+                if self.place_pending:
+                    pkt = NetPacket.deserialize(event.buf)
+                    target = ivec2(pkt.tank.int_x, pkt.tank.int_y)
+
+                    if target in self.place_pending and pkt.tank.value != 18:
+                        del self.place_pending[target]
 
     def destroy(self) -> None:
         pass
@@ -246,8 +277,6 @@ class AutoBreakExtension(Extension):
         if (id == 18 and self.block_destroyed(target_tile)) or (id != 18 and not self.can_place(target_tile, id)):
             return False
         if id != 18 and self.state.inventory.get(id) is None:
-            self.console_log(f"running out of item: disabling auto")
-            self.enabled = False
             return False
 
         print(f"tile change at {target_tile} {id=}")
