@@ -7,7 +7,7 @@ from pyglm.glm import ivec2, vec2, vec4
 
 from gtools.core.buffer import Buffer
 from gtools.core.growtopia import world
-from gtools.core.growtopia.items_dat import ItemInfoType, item_database
+from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import TankFlags
 from gtools.core.protocol import Serializable
 from gtools.protogen import growtopia_pb2
@@ -20,6 +20,8 @@ class Item(Serializable):
     id: int = 0
     amount: int = 0
     flags: int = 0
+    # NOTE: i just made this up, but some items like magplant remote is a ghost item for example (gets destroyed when leaving the world)
+    is_ghost = False
 
     @classmethod
     def deserialize(cls, data: bytes) -> "Item":
@@ -100,11 +102,15 @@ class Inventory(Serializable):
     def set_item(self, item: Item) -> None:
         self._items_map[item.id] = item
 
-    def add(self, id: int, to_add: int) -> Item:
+    def add(self, id: int, to_add: int, ghost: bool = False) -> Item:
         item = self._items_map.get(id)
         if item is None:
             item = Item(id=id)
+            item.is_ghost = ghost
             self._items_map[id] = item
+
+            if ghost:
+                return item
 
         if item.add(to_add) == 0:
             self._items_map.pop(id, None)
@@ -113,6 +119,9 @@ class Inventory(Serializable):
 
     def get(self, id: int, default: Item | None = None) -> Item | None:
         return self._items_map.get(id, default)
+
+    def clear_ghost_item(self) -> None:
+        self._items_map = OrderedDict((k, v) for k, v in self._items_map.items() if not v.is_ghost)
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Inventory) -> "Inventory":
@@ -248,11 +257,7 @@ class World(Serializable):
         if (tile := self.get_tile(pos)) is None:
             return
 
-        if item_database.get(id).item_type in (
-            ItemInfoType.BACKGROUND,
-            ItemInfoType.BACKGD_SFX_EXTRA_FRAME,
-            ItemInfoType.MUSICNOTE,
-        ):
+        if item_database.is_background(id):
             tile.bg_id = id
         else:
             tile.fg_id = id
@@ -474,13 +479,13 @@ class State:
             case StateUpdateWhat.STATE_SEND_INVENTORY:
                 self.inventory = Inventory.from_proto(upd.send_inventory)
             case StateUpdateWhat.STATE_MODIFY_INVENTORY:
-                if self.inventory[upd.modify_inventory.id].add(upd.modify_inventory.to_add) == 0:
-                    self.inventory.remove(upd.modify_inventory.id)
+                self.inventory.add(upd.modify_inventory.id, upd.modify_inventory.to_add, upd.modify_inventory.is_ghost)
             case StateUpdateWhat.STATE_ENTER_WORLD:
                 self.world = World.from_proto(upd.enter_world.enter_world)
                 self.world.door_id = upd.enter_world.door_id
             case StateUpdateWhat.STATE_EXIT_WORLD:
                 self.world = None
+                self.inventory.clear_ghost_item()
             case StateUpdateWhat.STATE_PLAYER_JOIN:
                 if not self.world:
                     self.logger.warning("player join, but world is not initialized")

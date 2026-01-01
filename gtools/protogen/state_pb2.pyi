@@ -138,9 +138,11 @@ class ModifyInventory(_message.Message):
     __slots__ = ()
     ID_FIELD_NUMBER: _ClassVar[int]
     TO_ADD_FIELD_NUMBER: _ClassVar[int]
+    IS_GHOST_FIELD_NUMBER: _ClassVar[int]
     id: int
     to_add: int
-    def __init__(self, id: _Optional[int] = ..., to_add: _Optional[int] = ...) -> None: ...
+    is_ghost: bool
+    def __init__(self, id: _Optional[int] = ..., to_add: _Optional[int] = ..., is_ghost: _Optional[bool] = ...) -> None: ...
 
 class PlayerUpdate(_message.Message):
     __slots__ = ()

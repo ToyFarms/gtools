@@ -406,6 +406,7 @@ class Proxy:
                                 modify_inventory=ModifyInventory(
                                     id=pkt.tank.value,
                                     to_add=-pkt.tank.jump_count,
+                                    is_ghost=pkt.tank.animation_type == 1,
                                 ),
                             ),
                         )

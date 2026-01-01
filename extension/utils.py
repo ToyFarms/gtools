@@ -32,6 +32,7 @@ class Action(IntEnum):
     FAST_DROP_REQUEST = auto()
 
     GAZETTE_DIALOG = auto()
+    PING_CMD = auto()
 
 
 class UtilityExtension(Extension):
@@ -81,6 +82,7 @@ class UtilityExtension(Extension):
                     ),
                     id=Action.GAZETTE_DIALOG,
                 ),
+                self.command_toggle("/ping", Action.PING_CMD),
             ],
         )
         self.should_block = False
@@ -103,6 +105,9 @@ class UtilityExtension(Extension):
     def process(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
         match event.interest_id:
+            case Action.PING_CMD:
+                self.console_log(f"server={self.state.me.server_ping} client={self.state.me.client_ping}")
+                return self.cancel()
             case Action.EXIT:
                 self.to_main_menu()
                 return self.cancel()
@@ -120,7 +125,7 @@ class UtilityExtension(Extension):
                 return self.cancel()
             case Action.EXITED:
                 if self.warp_target:
-                    time.sleep(random.uniform(0.929, 1.123))
+                    time.sleep(random.uniform(0.529, 0.723))
                     self.push(
                         PreparedPacket(
                             NetPacket(

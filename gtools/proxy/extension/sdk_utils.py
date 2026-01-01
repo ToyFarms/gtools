@@ -252,8 +252,9 @@ class ExtensionUtility(ABC):
     def facing_left(self, to: vec2) -> TankFlags:
         return TankFlags.FACING_LEFT if self.state.me.pos.x > ((to.x + 31) // 32) * 32 else TankFlags.NONE
 
-    def in_range(self, p1: ivec2, p2: ivec2, range: int) -> bool:
-        d = abs(p1 - p2)
+    def in_range(self, p2: ivec2, punch: bool) -> bool:
+        range = self.state.me.character.punch_range if punch else self.state.me.character.build_range
+        d = abs(ivec2(self.state.me.pos // 32) - p2)
         return d.x <= range and d.y <= range
 
     def parse_command(self, event: PendingPacket) -> str:

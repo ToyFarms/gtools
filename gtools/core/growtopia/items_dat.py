@@ -357,7 +357,7 @@ class ItemInfoColor:
     a: int = 0
     r: int = 0
     g: int = 0
-    b: int = 1
+    b: int = 0
 
     def __init__(self, x: int = 0) -> None:
         self.a = (x >> 24) & 0xFF
@@ -989,3 +989,11 @@ class item_database:
         if db is None:
             raise ValueError(f"no cached item database for version {version}")
         return db
+
+    @classmethod
+    def is_background(cls, item_id: int) -> bool:
+        return cls.get(item_id).item_type in (
+            ItemInfoType.BACKGROUND,
+            ItemInfoType.BACKGD_SFX_EXTRA_FRAME,
+            ItemInfoType.MUSICNOTE,
+        )

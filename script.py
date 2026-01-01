@@ -220,6 +220,7 @@ def main() -> None:
                         return i
 
             ref: list[tuple[str, list[str], int, str]] = []
+            abs_time = 0
 
             for pkt_num, (time, pkt) in enumerate(packets):
                 src = re.findall(r"from gt (server|client)", pkt[0])[0]
@@ -265,10 +266,8 @@ def main() -> None:
 
                     hash = hex(zlib.crc32(f"{pkt_num}{time}{pkt}".encode()))[2:].rjust(8, "0")
                     pkt_repr = ", ".join(f"{k}={v}" for k, v in values)
-                    if pkt_num % 2 == 0:
-                        repr = highlight(f"{hash} [T+{time:<7}] {pkt_num:2d}) from {src} ({net_type}) {pkt_repr}\n")
-                    else:
-                        repr = highlight(f"{hash} [T+{time:<7}] {pkt_num:2d}) from {src} ({net_type}) {pkt_repr}\n")
+                    repr = highlight(f"{hash} [T+{time:<7} / {abs_time:<7.3f}] {pkt_num:2d}) from {src} ({net_type}) {pkt_repr}\n")
+                    abs_time += float(time)
 
                     out.write(repr)
                     ref.append((hash, pkt, pkt_num, repr))

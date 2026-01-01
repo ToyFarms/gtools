@@ -92,7 +92,7 @@ class AutoFishExtension(Extension):
                         and self.bait != -1
                         and fish_pos == self.fish_pos
                         and self.state.me.pos != (0, 0)
-                        and self.in_range(ivec2(self.state.me.pos // 32), self.fish_pos, 2)
+                        and self.in_range(self.fish_pos, punch=False)
                     ):
                         facing_left = TankFlags.NONE
                         if int(self.state.me.pos.x // 32) > self.fish_pos.x:
