@@ -48,6 +48,7 @@ class Extension(ExtensionUtility):
 
         self._push_socket = self._context.socket(zmq.PUSH)
         self._push_socket.setsockopt(zmq.LINGER, 0)
+        self._push_lock = threading.Lock()
 
         self._worker_thread_id: threading.Thread | None = None
         self._monitor_thread_id: threading.Thread | None = None
@@ -81,7 +82,8 @@ class Extension(ExtensionUtility):
         # because without it, some packet will be clumped and batched which is a no no
         pending = pkt.to_pending()
         pending._rtt_ns = struct.pack("<Q", time.monotonic_ns())
-        self._push_socket.send(pending.SerializeToString())
+        with self._push_lock:
+            self._push_socket.send(pending.SerializeToString())
 
     # TODO: try pytest-xdist rather than pytest-forked
     # TODO: have a send_to() possibly?
