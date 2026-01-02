@@ -1,11 +1,14 @@
+import itertools
 from queue import Empty, Queue
 import socket
+import threading
 import time
 import pytest
 
 from extension.utils import UtilityExtension
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
+from gtools.core.highres_sleep import sleep_ns
 from tests import verify
 
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
@@ -1843,14 +1846,14 @@ def test_utility_extension() -> None:
         time.sleep(0.5)
         assert q.qsize() == 0  # nothing should come because we didnt send the exited packet yet
         # try sending bogus packet
-        req_buf = b'\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00]\x02\x00\x00\x03\x00\x02\x18\x00\x00\x00OnRequestWorldSelectMena\x01\x022\x02\x00\x00add_filter|\nadd_heading|Top Worlds<ROW2>|\nadd_floater|START|START|0|0.5|3529161471\nadd_heading|My Worlds<CR>|\nadd_floater|FOOBAR1234|0|0.5|2147418367\nadd_heading|Recently Visited Worlds<CR>|\nadd_floater|FOOBAR1234|0|0.5|3417414143\nadd_floater|MALISE|0|0.5|3417414143\nadd_floater|1234TESTS|0|0.5|3417414143\nadd_floater|AUCS|37|0.55|3417414143\nadd_floater|BUYPLOW|0|0.5|3417414143\nadd_floater|GROWCH|0|0.5|3417414143\nadd_floater|QWERTY|0|0.5|3417414143\nadd_floater|GYUIOOOOP|0|0.5|3417414143\nadd_floater|SURG|44|0.55|3417414143\nadd_floater|BLOCKU|0|0.5|3417414143\n\x02\t\x00\x00\x00\x00\x00'
+        req_buf = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00]\x02\x00\x00\x03\x00\x02\x18\x00\x00\x00OnRequestWorldSelectMena\x01\x022\x02\x00\x00add_filter|\nadd_heading|Top Worlds<ROW2>|\nadd_floater|START|START|0|0.5|3529161471\nadd_heading|My Worlds<CR>|\nadd_floater|FOOBAR1234|0|0.5|2147418367\nadd_heading|Recently Visited Worlds<CR>|\nadd_floater|FOOBAR1234|0|0.5|3417414143\nadd_floater|MALISE|0|0.5|3417414143\nadd_floater|1234TESTS|0|0.5|3417414143\nadd_floater|AUCS|37|0.55|3417414143\nadd_floater|BUYPLOW|0|0.5|3417414143\nadd_floater|GROWCH|0|0.5|3417414143\nadd_floater|QWERTY|0|0.5|3417414143\nadd_floater|GYUIOOOOP|0|0.5|3417414143\nadd_floater|SURG|44|0.55|3417414143\nadd_floater|BLOCKU|0|0.5|3417414143\n\x02\t\x00\x00\x00\x00\x00"
         req = NetPacket.deserialize(req_buf)
         res = b.process_event(PreparedPacket(req, DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
         assert not res
         time.sleep(0.5)
         assert q.qsize() == 0  # nothing should come because we didnt send the exited packet yet
         # send exited packet
-        req_buf = b'\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00]\x02\x00\x00\x03\x00\x02\x18\x00\x00\x00OnRequestWorldSelectMenu\x01\x022\x02\x00\x00add_filter|\nadd_heading|Top Worlds<ROW2>|\nadd_floater|START|START|0|0.5|3529161471\nadd_heading|My Worlds<CR>|\nadd_floater|FOOBAR1234|0|0.5|2147418367\nadd_heading|Recently Visited Worlds<CR>|\nadd_floater|FOOBAR1234|0|0.5|3417414143\nadd_floater|MALISE|0|0.5|3417414143\nadd_floater|1234TESTS|0|0.5|3417414143\nadd_floater|AUCS|37|0.55|3417414143\nadd_floater|BUYPLOW|0|0.5|3417414143\nadd_floater|GROWCH|0|0.5|3417414143\nadd_floater|QWERTY|0|0.5|3417414143\nadd_floater|GYUIOOOOP|0|0.5|3417414143\nadd_floater|SURG|44|0.55|3417414143\nadd_floater|BLOCKU|0|0.5|3417414143\n\x02\t\x00\x00\x00\x00\x00'
+        req_buf = b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00]\x02\x00\x00\x03\x00\x02\x18\x00\x00\x00OnRequestWorldSelectMenu\x01\x022\x02\x00\x00add_filter|\nadd_heading|Top Worlds<ROW2>|\nadd_floater|START|START|0|0.5|3529161471\nadd_heading|My Worlds<CR>|\nadd_floater|FOOBAR1234|0|0.5|2147418367\nadd_heading|Recently Visited Worlds<CR>|\nadd_floater|FOOBAR1234|0|0.5|3417414143\nadd_floater|MALISE|0|0.5|3417414143\nadd_floater|1234TESTS|0|0.5|3417414143\nadd_floater|AUCS|37|0.55|3417414143\nadd_floater|BUYPLOW|0|0.5|3417414143\nadd_floater|GROWCH|0|0.5|3417414143\nadd_floater|QWERTY|0|0.5|3417414143\nadd_floater|GYUIOOOOP|0|0.5|3417414143\nadd_floater|SURG|44|0.55|3417414143\nadd_floater|BLOCKU|0|0.5|3417414143\n\x02\t\x00\x00\x00\x00\x00"
         req = NetPacket.deserialize(req_buf)
         res = b.process_event(PreparedPacket(req, DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
         assert not res
@@ -1978,5 +1981,61 @@ def test_match_variant_contains() -> None:
         raise
     finally:
         assert ext.stop().wait_true(5)
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+def test_extension_packet_scheduler() -> None:
+    received_packets: list[tuple[int, PreparedPacket | None]] = []
+
+    def append(pkt: PreparedPacket | None) -> None:
+        received_packets.append((time.monotonic_ns(), pkt))
+
+    b = Broker(pull_queue=append)
+    b.start()
+
+    try:
+        ext = ExtensionNoOp("scheduler")
+        assert ext.start().wait_true(5)
+
+        deltas = [5, 10, 20, 50, 100]
+        deltas = list(itertools.chain.from_iterable(itertools.repeat(item, 5) for item in deltas))
+
+        for i, delta in enumerate(deltas):
+            pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=(i + 1)))
+            ext.push(PreparedPacket(pkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
+
+            sleep_ns(delta * 1e6)
+
+        time.sleep(0.5)
+        assert ext.stop().wait_true(5)
+
+        assert len(received_packets) >= len(deltas), f"expected at least {len(deltas)} packets, got {len(received_packets)}"
+
+        for idx in range(len(deltas)):
+            pkt = received_packets[idx][1]
+            assert pkt
+            assert pkt.as_net.type == NetType.TANK_PACKET
+            assert pkt.as_net.tank.net_id == (idx + 1)
+
+        result: list[float] = []
+        success = 0
+        total = 0
+
+        tolerance_ns = 3 * 1e6
+        for i in range(1, len(deltas)):
+            actual_receive_delta_ns = received_packets[i][0] - received_packets[i - 1][0]
+            expected_delta_ns = deltas[i - 1] * 1e6
+            diff_ns = abs(actual_receive_delta_ns - expected_delta_ns)
+
+            if diff_ns < tolerance_ns:
+                success += 1
+            total += 1
+            result.append(diff_ns)
+
+        if success / total < 0.8:
+            pytest.fail(f"packet success rate is less than 80% ({result}) with tolerance of {tolerance_ns / 1e6}ms")
+
+    finally:
         b.stop()
         assert not is_port_in_use(6712)

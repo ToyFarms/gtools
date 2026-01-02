@@ -79,7 +79,7 @@ class Extension(ExtensionUtility):
         self.logger.debug(f"   push \x1b[35m-->>\x1b[0m \x1b[35m>>\x1b[0m{pkt!r}\x1b[35m>>\x1b[0m")
 
         # NOTE: we use _rtt_ns to store the timestamp for strict packet ordering
-        # because without it, some packet will be clumped and batched which is a no no
+        # because without it, some packet will be clumped and batched causing ordering issues
         pending = pkt.to_pending()
         pending._rtt_ns = struct.pack("<Q", time.monotonic_ns())
         with self._push_lock:

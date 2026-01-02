@@ -492,70 +492,82 @@ class _PendingPacket:
 
 
 class PacketScheduler:
-    def __init__(self, out_queue: Queue[PreparedPacket | None] | Callable[[PreparedPacket | None], Any], clock_offset_ns: int = 0):
+    def __init__(self, out_queue: Queue[PreparedPacket | None] | Callable[[PreparedPacket | None], Any]) -> None:
         self._out_queue = out_queue
-        self._clock_offset_ns = clock_offset_ns
-        self._heap: list[tuple[int, PendingPacket]] = []
+
+        self._heap: list[tuple[int, int, PendingPacket]] = []
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
         self._seq = itertools.count()
+
+        self._first_src_ts_ns: int | None = None
+        self._playback_start_wall_ns: int | None = None
+
         self._stopped = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-        self.late_threshold_ns = 20_000_000
-
-    def stop(self):
+    def stop(self) -> None:
         with self._cond:
             self._stopped = True
             self._cond.notify_all()
-        self._thread.join()
 
-    def update_clock_offset(self, offset_ns: int):
-        with self._cond:
-            self._clock_offset_ns = offset_ns
-            self._cond.notify_all()
+        if self._thread.is_alive():
+            self._thread.join()
 
     def _put(self, pending: PendingPacket) -> None:
+        prepared = PreparedPacket.from_pending(pending)
         if callable(self._out_queue):
-            self._out_queue(PreparedPacket.from_pending(pending))
+            self._out_queue(prepared)
         else:
-            self._out_queue.put(PreparedPacket.from_pending(pending))
+            self._out_queue.put(prepared)
 
     def push(self, pkt: PendingPacket) -> None:
         try:
             send_ts_ns = struct.unpack("<Q", pkt._rtt_ns)[0]
-        except:
+        except Exception:
             self._put(pkt)
             return
 
+        seq = next(self._seq)
         with self._cond:
-            heapq.heappush(self._heap, (send_ts_ns, pkt))
+            heapq.heappush(self._heap, (send_ts_ns, seq, pkt))
             self._cond.notify()
 
-    def _run(self):
-        with self._cond:
-            while not self._stopped:
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                if self._stopped:
+                    break
+
                 if not self._heap:
                     self._cond.wait()
                     continue
 
-                send_ts_ns, pkt = self._heap[0]
-                scheduled_monotonic_ns = send_ts_ns - self._clock_offset_ns
-                now_ns = time.monotonic_ns()
-                wait_ns = scheduled_monotonic_ns - now_ns
+                send_ts_ns, _, pkt = self._heap[0]
 
-                if wait_ns <= 0:
+                if self._first_src_ts_ns is None:
                     heapq.heappop(self._heap)
-                    lateness_ns = now_ns - scheduled_monotonic_ns
-                    if lateness_ns > self.late_threshold_ns:
-                        pass
-                    self._put(pkt)
-                    continue
+                    self._first_src_ts_ns = send_ts_ns
+                    self._playback_start_wall_ns = time.monotonic_ns()
+                    packet_to_send = pkt
+                else:
+                    assert self._playback_start_wall_ns is not None and self._first_src_ts_ns is not None
+                    target_wall_ns = self._playback_start_wall_ns + (send_ts_ns - self._first_src_ts_ns)
+                    now_ns = time.monotonic_ns()
+                    wait_ns = target_wall_ns - now_ns
 
-                wait_s = wait_ns / 1_000_000_000.0
-                timeout = min(wait_s, 1.0)
-                self._cond.wait(timeout=timeout)
+                    if wait_ns > 0:
+                        self._cond.wait(timeout=wait_ns / 1e9)
+                        continue
+
+                    heapq.heappop(self._heap)
+                    packet_to_send = pkt
+
+            try:
+                self._put(packet_to_send)
+            except Exception:
+                pass
 
 
 @dataclass
@@ -967,6 +979,10 @@ class Broker:
             self._context.destroy(linger=0)
         except Exception as e:
             self.logger.debug(f"context term error: {e}")
+
+        if self._scheduler:
+            self.logger.debug(f"stopping packet scheduler")
+            self._scheduler.stop()
 
         self.logger.debug("broker has stopped")
 
