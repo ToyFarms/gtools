@@ -14,7 +14,7 @@ from gtools.protogen.extension_pb2 import (
     Interest,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension
+from gtools.proxy.extension.sdk import Extension, register_thread
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.proxy.state import Status
 from thirdparty.enet.bindings import ENetPacketFlag
@@ -58,6 +58,7 @@ class AutoFishExtension(Extension):
         self.fish_pos = ivec2(-1, -1)  # in tile space
         self.bait = -1
 
+    @register_thread
     def thread_info(self) -> None:
         while True:
             if self.state.status == Status.IN_WORLD:
