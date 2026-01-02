@@ -2,6 +2,7 @@ from abc import abstractmethod
 from argparse import ArgumentParser
 from dataclasses import dataclass
 import struct
+from typing import Callable
 from urllib.parse import urlparse
 import os
 import threading
@@ -31,6 +32,11 @@ from gtools.proxy.setting import _setting
 class SocketStatus:
     name: str
     connected: Signal[bool]
+
+
+def register_thread(fn: Callable) -> Callable:
+    fn._mark_thread = True
+    return fn
 
 
 class Extension(ExtensionUtility):
@@ -145,17 +151,19 @@ class Extension(ExtensionUtility):
         self._monitor_thread_id = threading.Thread(target=self._monitor_thread, daemon=True)
         self._monitor_thread_id.start()
 
-        for name in dir(self):
-            # TODO: use decorator rather than this
-            if not name.startswith("thread_"):
+        for name, obj in vars(type(self)).items():
+            if not getattr(obj, "_mark_thread", False):
+                continue
+            if not callable(obj):
                 continue
 
-            attr = getattr(self, name)
-            if callable(attr):
-                self.logger.debug(f"extension {self._name} starting job: {name}")
-                t = threading.Thread(target=attr, daemon=True)
-                t.start()
-                self._job_threads[name] = t
+            bound_method = getattr(self, name)
+
+            self.logger.debug(f"extension {self._name} starting job: {name}")
+
+            t = threading.Thread(target=bound_method, daemon=True)
+            t.start()
+            self._job_threads[name] = t
 
         self._socket.connect(self._broker_addr)
         mon = self._socket.get_monitor_socket()

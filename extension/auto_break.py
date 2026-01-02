@@ -1,12 +1,10 @@
 from dataclasses import dataclass
 from enum import IntEnum, auto
 import math
-from queue import Empty
 import random
 import time
 
 from pyglm.glm import ivec2, vec2
-from gtools.core.ack_queue import AckQueue
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
@@ -21,10 +19,9 @@ from gtools.protogen.extension_pb2 import (
     Interest,
     InterestCallFunction,
     InterestState,
-    InterestType,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension
+from gtools.proxy.extension.sdk import Extension, register_thread
 from gtools.proxy.state import HackType, Status
 from thirdparty.enet.bindings import ENetPacketFlag
 
@@ -99,18 +96,6 @@ class AutoBreakExtension(Extension):
         self.item_id = 0
         self.place_pending: dict[ivec2, float] = {}
 
-    # def thread_ping(self) -> None:
-    #     while True:
-    #         if self.state.status == Status.IN_WORLD and self.state.world and not self.enabled:
-    #             for t in self.target:
-    #                 if tile := self.state.world.get_tile(t):
-    #                     self.console_log(f"{tile.fg_id} {self.state.me.character.punch_range}")
-
-    #                 if self.in_range(ivec2(self.state.me.pos // 32), t, self.state.me.character.punch_range):
-    #                     self.send_particle(ParticleID.LBOT_PLACE, tile=t)
-    #                 time.sleep(0.1)
-    #         time.sleep(0.5)
-
     def find_next_target(self) -> bool:
         if self.state.world is None:
             return False
@@ -151,6 +136,7 @@ class AutoBreakExtension(Extension):
 
         return False
 
+    @register_thread
     def thread_punch(self) -> None:
         last_tile_change: float = math.inf
 
