@@ -1,5 +1,6 @@
 from queue import Empty, Queue
 import socket
+import threading
 import time
 import pytest
 
@@ -1980,3 +1981,116 @@ def test_match_variant_contains() -> None:
         assert ext.stop().wait_true(5)
         b.stop()
         assert not is_port_in_use(6712)
+
+
+class ExtensionPushPackets(Extension):
+    """Extension that pushes multiple packets with controlled timing for testing the scheduler."""
+
+    def __init__(self, name: str, priority: int = 0) -> None:
+        super().__init__(name=name, interest=[])
+
+    def process(self, event: PendingPacket) -> PendingPacket | None:
+        pass
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_packet_scheduler_with_broker(request: pytest.FixtureRequest) -> None:
+    """Test that packet scheduler correctly preserves timing when packets are batched.
+
+    Scenario:
+    - Extension pushes packet A
+    - Extension pushes packet B 10ms later
+    - Both packets are received by the broker
+    - The scheduler should deliver them with 10ms delta, even if they arrive batched
+
+    This test verifies the fix for timing issues when packets batch up.
+    """
+
+    # Use a callable instead of queue to capture exact delivery timestamps
+    received_packets: list[tuple[int, PreparedPacket]] = []
+    delivery_lock = threading.Lock()
+
+    def capture_packet(pkt: PreparedPacket) -> None:
+        receive_time_ns = time.perf_counter_ns()
+        with delivery_lock:
+            received_packets.append((receive_time_ns, pkt))
+
+    pull_queue: Queue[PreparedPacket | None] | None = None
+    b = Broker(pull_queue=capture_packet)
+    b.start()
+
+    try:
+        name = f"{request.node.name}-0"
+        ext = ExtensionPushPackets(name)
+        assert ext.start().wait_true(5)
+
+        # Record the time when we start pushing packets
+        push_start_time = time.perf_counter_ns()
+
+        # Push packet A
+        pkt_a = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
+        ext.push(PreparedPacket(pkt_a, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
+        push_time_a_ns = time.perf_counter_ns()
+
+        # Wait 10ms
+        expected_delta_ms = 10
+        time.sleep(expected_delta_ms / 1000.0)
+
+        # Push packet B
+        pkt_b = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=2))
+        ext.push(PreparedPacket(pkt_b, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
+        push_time_b_ns = time.perf_counter_ns()
+
+        # Verify the push delta was approximately correct
+        actual_push_delta_ns = push_time_b_ns - push_time_a_ns
+        actual_push_delta_ms = actual_push_delta_ns / 1_000_000
+        # Allow ±2ms tolerance on the push timing (system variance)
+        assert abs(actual_push_delta_ms - expected_delta_ms) < 2, (
+            f"Push timing issue: expected ~{expected_delta_ms}ms, got {actual_push_delta_ms:.2f}ms"
+        )
+
+        # Wait for packets to be scheduled and delivered by the scheduler
+        # We need to wait at least 20ms to ensure both packets have been delivered
+        time.sleep(0.05)
+
+        # Verify we received both packets
+        with delivery_lock:
+            assert len(received_packets) >= 2, f"Expected at least 2 packets, got {len(received_packets)}"
+
+            # Verify packet contents
+            first_pkt = received_packets[0][1]
+            second_pkt = received_packets[1][1]
+
+            assert first_pkt.as_net.type == NetType.TANK_PACKET
+            assert first_pkt.as_net.tank.net_id == 1
+
+            assert second_pkt.as_net.type == NetType.TANK_PACKET
+            assert second_pkt.as_net.tank.net_id == 2
+
+            # THIS IS THE CRITICAL PART: Verify the timing between delivered packets
+            # The scheduler should preserve the 10ms delta even if packets arrived batched
+            received_time_a_ns = received_packets[0][0]
+            received_time_b_ns = received_packets[1][0]
+
+            actual_receive_delta_ns = received_time_b_ns - received_time_a_ns
+            actual_receive_delta_ms = actual_receive_delta_ns / 1_000_000
+
+            # Allow ±3ms tolerance (the key test - the delta between packet deliveries)
+            tolerance_ms = 3
+            assert abs(actual_receive_delta_ms - expected_delta_ms) < tolerance_ms, (
+                f"Timing precision FAILED: "
+                f"Expected {expected_delta_ms}ms delta between packets, "
+                f"got {actual_receive_delta_ms:.2f}ms "
+                f"(error: {abs(actual_receive_delta_ms - expected_delta_ms):.2f}ms, "
+                f"tolerance: ±{tolerance_ms}ms)"
+            )
+
+        assert ext.stop().wait_true(5)
+    except:
+        raise
+    finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+

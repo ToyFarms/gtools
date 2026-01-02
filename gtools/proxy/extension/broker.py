@@ -502,6 +502,7 @@ class PacketScheduler:
         self._stopped = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+        self._last_scheduled_monotonic_ns: int | None = None
 
         self.late_threshold_ns = 20_000_000
 
@@ -524,13 +525,22 @@ class PacketScheduler:
 
     def push(self, pkt: PendingPacket) -> None:
         try:
-            send_ts_ns = struct.unpack("<Q", pkt._rtt_ns)[0]
+            delta_ns = struct.unpack("<Q", pkt._rtt_ns)[0]
         except:
             self._put(pkt)
             return
 
         with self._cond:
-            heapq.heappush(self._heap, (send_ts_ns, pkt))
+            # Calculate the absolute scheduled time based on accumulated deltas
+            if self._last_scheduled_monotonic_ns is None:
+                # First packet: use current time as baseline
+                scheduled_monotonic_ns = time.monotonic_ns() + delta_ns
+            else:
+                # Subsequent packets: add delta to the last scheduled time
+                scheduled_monotonic_ns = self._last_scheduled_monotonic_ns + delta_ns
+            
+            self._last_scheduled_monotonic_ns = scheduled_monotonic_ns
+            heapq.heappush(self._heap, (scheduled_monotonic_ns, pkt))
             self._cond.notify()
 
     def _run(self):
@@ -540,8 +550,7 @@ class PacketScheduler:
                     self._cond.wait()
                     continue
 
-                send_ts_ns, pkt = self._heap[0]
-                scheduled_monotonic_ns = send_ts_ns - self._clock_offset_ns
+                scheduled_monotonic_ns, pkt = self._heap[0]
                 now_ns = time.monotonic_ns()
                 wait_ns = scheduled_monotonic_ns - now_ns
 

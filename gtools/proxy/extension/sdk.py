@@ -49,6 +49,7 @@ class Extension(ExtensionUtility):
         self._push_socket = self._context.socket(zmq.PUSH)
         self._push_socket.setsockopt(zmq.LINGER, 0)
         self._push_lock = threading.Lock()
+        self._last_packet_ts_ns = time.monotonic_ns()
 
         self._worker_thread_id: threading.Thread | None = None
         self._monitor_thread_id: threading.Thread | None = None
@@ -78,10 +79,13 @@ class Extension(ExtensionUtility):
         # just for the fun of it
         self.logger.debug(f"   push \x1b[35m-->>\x1b[0m \x1b[35m>>\x1b[0m{pkt!r}\x1b[35m>>\x1b[0m")
 
-        # NOTE: we use _rtt_ns to store the timestamp for strict packet ordering
-        # because without it, some packet will be clumped and batched which is a no no
+        # NOTE: we use _rtt_ns to store the delta time from the previous packet
+        # this allows the broker scheduler to properly reconstruct timing even when packets batch up
         pending = pkt.to_pending()
-        pending._rtt_ns = struct.pack("<Q", time.monotonic_ns())
+        current_ts_ns = time.monotonic_ns()
+        delta_ns = current_ts_ns - self._last_packet_ts_ns
+        self._last_packet_ts_ns = current_ts_ns
+        pending._rtt_ns = struct.pack("<Q", delta_ns)
         with self._push_lock:
             self._push_socket.send(pending.SerializeToString())
 
