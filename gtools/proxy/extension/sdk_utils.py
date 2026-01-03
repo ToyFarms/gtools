@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import itertools
 import logging
 from pyglm import glm
 from google.protobuf.any_pb2 import Any
@@ -30,38 +31,38 @@ class BinOpSelector:
     def __init__(self, lvalue: Any) -> None:
         self.lvalue = lvalue
 
-    def _guess_type(self, other: TAny) -> "ExtensionUtility.Type":
-        if isinstance(other, ExtensionUtility.Type):
+    def _guess_type(self, other: TAny) -> "helper.Type":
+        if isinstance(other, helper.Type):
             return other
         elif isinstance(other, int):
             if other < 0:
-                return ExtensionUtility.int(other)
+                return helper.int(other)
             elif other > INT32_MAX:
-                return ExtensionUtility.uint(other)
+                return helper.uint(other)
             else:
-                return ExtensionUtility.int(other)
+                return helper.int(other)
         elif isinstance(other, float):
-            return ExtensionUtility.float(other)
+            return helper.float(other)
         elif isinstance(other, glm.vec2):
-            return ExtensionUtility.vec2(other)
+            return helper.vec2(other)
         elif isinstance(other, glm.vec3):
-            return ExtensionUtility.vec3(other)
+            return helper.vec3(other)
         elif isinstance(other, SupportsLenAndGet) and len(other) >= 2 and isinstance(other[0], float):
             if len(other) == 2:
-                return ExtensionUtility.vec2(glm.vec2(other))
+                return helper.vec2(glm.vec2(other))
             elif len(other) == 3:
-                return ExtensionUtility.vec3(glm.vec3(other))
+                return helper.vec3(glm.vec3(other))
             else:
                 raise ValueError(f"vec with {len(other)} components not supported")
         elif isinstance(other, bytes):
-            return ExtensionUtility.bytes(other)
+            return helper.bytes(other)
         elif isinstance(other, str):
-            return ExtensionUtility.str(other)
+            return helper.str(other)
         else:
             raise ValueError(f"value not handled {other}")
 
-    def _binop(self, other: "ExtensionUtility.Type | TAny", op: Op) -> BinOp:
-        if not isinstance(other, ExtensionUtility.Type):
+    def _binop(self, other: "helper.Type | TAny", op: Op) -> BinOp:
+        if not isinstance(other, helper.Type):
             other = self._guess_type(other)
 
         return BinOp(
@@ -70,40 +71,40 @@ class BinOpSelector:
             **other.make(),
         )
 
-    def __eq__(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def __eq__(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_EQ)
 
-    def __ne__(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def __ne__(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_NEQ)
 
-    def __gt__(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def __gt__(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_GT)
 
-    def __ge__(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def __ge__(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_GTE)
 
-    def __lt__(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def __lt__(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_LT)
 
-    def __le__(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def __le__(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_LTE)
 
-    def contains(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def contains(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_CONTAINS)
 
-    def eq_eps(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def eq_eps(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_EQ_EPS)
 
-    def bit_test(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def bit_test(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_BIT_TEST)
 
-    def startswith(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def startswith(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_STARTSWITH)
 
-    def endswith(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def endswith(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_ENDSWITH)
 
-    def like(self, other: "ExtensionUtility.Type | TAny") -> BinOp:
+    def like(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_LIKE)
 
 
@@ -119,12 +120,11 @@ class VariantProxy:
         return BinOpSelector(any(VariantClause(v=index)))
 
 
-class ExtensionUtility(ABC):
-    @abstractmethod
-    def push(self, pkt: PreparedPacket) -> None: ...
+class helper:
+    logger = logging.getLogger("ext_dispatch_helper")
 
-    state: State
-    logger = logging.getLogger("ext_utils")
+    def __init__(self) -> None:
+        self._counter = itertools.count()
 
     @property
     def variant(self) -> VariantProxy:
@@ -194,17 +194,7 @@ class ExtensionUtility(ABC):
     def tank_int_y(self) -> BinOpSelector:
         return BinOpSelector(any(FieldValue(v=Field.TANK_FIELD_INT_Y)))
 
-    def console_log(self, msg: str) -> None:
-        self.push(PreparedPacket(console_message(msg), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
-
-    def send_particle(self, id: int, f: int = 0, f2: int = 0, *, abs: glm.vec2 | None = None, tile: glm.ivec2 | None = None) -> None:
-        pos = abs if abs else tile * 32 + 16 if tile else None
-        if not pos:
-            return
-
-        self.push(PreparedPacket(particle(id, pos[0], pos[1], f, f2), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
-
-    def register_command(self, id: int, prefix: bytes) -> None:
+    def _register_command(self, id: int, prefix: bytes) -> None:
         if not hasattr(self, "_command_reg"):
             self._command_reg = {}
 
@@ -232,7 +222,7 @@ class ExtensionUtility(ABC):
     def command(self, cmd: str | bytes, id: int) -> Interest:
         """match startswith"""
         cmd = cmd.encode() if isinstance(cmd, str) else cmd
-        self.register_command(id, cmd)
+        self._register_command(id, cmd)
         return Interest(
             interest=INTEREST_GENERIC_TEXT,
             generic_text=InterestGenericText(
@@ -249,17 +239,9 @@ class ExtensionUtility(ABC):
             id=id,
         )
 
-    def facing_left(self, to: vec2) -> TankFlags:
-        return TankFlags.FACING_LEFT if self.state.me.pos.x > ((to.x + 31) // 32) * 32 else TankFlags.NONE
-
-    def in_range(self, p2: ivec2, punch: bool) -> bool:
-        range = self.state.me.character.punch_range if punch else self.state.me.character.build_range
-        d = abs(ivec2(self.state.me.pos // 32) - p2)
-        return d.x <= range and d.y <= range
-
     def parse_command(self, event: PendingPacket) -> str:
         if event.interest_id not in self._command_reg:
-            self.logger.error(f"command not refistered for {event}")
+            self.logger.error(f"command not registered for {event}")
             return ""
 
         return NetPacket.deserialize(event.buf).generic_text.relative[b"text", 1].removeprefix(self._command_reg[event.interest_id]).decode().strip()
@@ -270,6 +252,10 @@ class ExtensionUtility(ABC):
 
         def make(self) -> dict[str, TAny]:
             return {self.name: self.x}
+
+    @property
+    def auto(self) -> int:
+        return next(self._counter)
 
     # ====================== NOTE: this needs to be in the end as to not shadow the builtin types  ======================
     class uint(Type):
@@ -308,3 +294,32 @@ class ExtensionUtility(ABC):
             self.name = "vec3"
 
     # ====================== NOTE: this needs to be in the end as to not shadow the builtin types  ======================
+
+# NOTE: this will not be redefined even when imported multiple times
+s = helper()
+
+
+class ExtensionUtility(ABC):
+    @abstractmethod
+    def push(self, pkt: PreparedPacket) -> None: ...
+
+    state: State
+    logger = logging.getLogger("ext_utils")
+
+    def console_log(self, msg: str) -> None:
+        self.push(PreparedPacket(console_message(msg), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
+
+    def send_particle(self, id: int, f: int = 0, f2: int = 0, *, abs: glm.vec2 | None = None, tile: glm.ivec2 | None = None) -> None:
+        pos = abs if abs else tile * 32 + 16 if tile else None
+        if not pos:
+            return
+
+        self.push(PreparedPacket(particle(id, pos[0], pos[1], f, f2), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
+
+    def facing_left(self, to: vec2) -> TankFlags:
+        return TankFlags.FACING_LEFT if self.state.me.pos.x > ((to.x + 31) // 32) * 32 else TankFlags.NONE
+
+    def in_range(self, p2: ivec2, punch: bool) -> bool:
+        range = self.state.me.character.punch_range if punch else self.state.me.character.build_range
+        d = abs(ivec2(self.state.me.pos // 32) - p2)
+        return d.x <= range and d.y <= range

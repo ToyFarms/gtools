@@ -1,7 +1,6 @@
 import itertools
 from queue import Empty, Queue
 import socket
-import threading
 import time
 import pytest
 
@@ -9,6 +8,7 @@ from extension.utils import UtilityExtension
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.highres_sleep import sleep_ns
+from gtools.proxy.extension.sdk_utils import s
 from tests import verify
 
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
@@ -29,7 +29,7 @@ from gtools.protogen.extension_pb2 import (
     PendingPacket,
 )
 from gtools.proxy.extension.broker import Broker, PacketCallback
-from gtools.proxy.extension.sdk import Extension
+from gtools.proxy.extension.sdk import Extension, dispatch_fallback, register_thread
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -37,6 +37,7 @@ class ExtensionNextState(Extension):
     def __init__(self, name: str, priority: int = 0) -> None:
         super().__init__(name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)])
 
+    @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
         p = NetPacket.deserialize(event.buf)
         p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0xFFFFFFFF
@@ -52,7 +53,8 @@ class ExtensionNoOp(Extension):
     def __init__(self, name: str, priority: int = 0) -> None:
         super().__init__(name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)])
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         pass
 
     def destroy(self) -> None:
@@ -65,6 +67,7 @@ class ExtensionNextStateNonBlock(Extension):
             name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
         )
 
+    @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
         p = NetPacket.deserialize(event.buf)
         p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0xFFFFFFFF
@@ -82,7 +85,8 @@ class ExtensionNoOpNonBlock(Extension):
             name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
         )
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         pass
 
     def destroy(self) -> None:
@@ -235,7 +239,8 @@ class ExtensionCancelNonBlock(Extension):
             name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
         )
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         return self.cancel()
 
     def destroy(self) -> None:
@@ -278,6 +283,7 @@ class ExtensionFinishNonBlock(Extension):
             name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
         )
 
+    @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
         pkt.tank.int_x += 1
@@ -531,7 +537,8 @@ class ExtensionCancel(Extension):
     def __init__(self, name: str, priority: int = 0) -> None:
         super().__init__(name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)])
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         return self.cancel()
 
     def destroy(self) -> None:
@@ -591,6 +598,7 @@ class ExtensionFinish(Extension):
     def __init__(self, name: str, priority: int = 0) -> None:
         super().__init__(name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)])
 
+    @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
         pkt.tank.int_x += 1
@@ -660,10 +668,11 @@ class ExtensionCommand(Extension):
         super().__init__(
             name=name,
             interest=[
-                self.command("/should_work", 0),
+                s.command("/should_work", 0),
             ],
         )
 
+    @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
         print(NetPacket.deserialize(event.buf))
         return self.cancel()
@@ -730,7 +739,8 @@ class ExtensionPass(Extension):
     def __init__(self, name: str, priority: int = 0) -> None:
         super().__init__(name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)])
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         return self.pass_to_next()
 
     def destroy(self) -> None:
@@ -743,7 +753,8 @@ class ExtensionPassNonBlock(Extension):
             name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_UNSPECIFIED)]
         )
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         return self.pass_to_next()
 
     def destroy(self) -> None:
@@ -899,6 +910,7 @@ class ExtensionPush(Extension):
         self.delay = delay
         self.id = id
 
+    @register_thread
     def thread_1(self) -> None:
         for i in range(100):
             self.push(
@@ -911,7 +923,8 @@ class ExtensionPush(Extension):
             if self.delay:
                 time.sleep(self.delay)
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         pass
 
     def destroy(self) -> None:
@@ -983,6 +996,7 @@ class ExtensionPushMulti(Extension):
         self.delay1 = delay1
         self.delay2 = delay2
 
+    @register_thread
     def thread_1(self) -> None:
         for i in range(100):
             print(f"thread_1: {i} {self.broker_connected.get()}")
@@ -997,6 +1011,7 @@ class ExtensionPushMulti(Extension):
                 time.sleep(self.delay1)
             print(f"thread_1_end: {i}")
 
+    @register_thread
     def thread_2(self) -> None:
         for i in range(100):
             print(f"thread_2: {i} {self.broker_connected.get()}")
@@ -1011,7 +1026,8 @@ class ExtensionPushMulti(Extension):
                 time.sleep(self.delay2)
             print(f"thread_2_end: {i}")
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         pass
 
     def destroy(self) -> None:
@@ -1299,7 +1315,7 @@ class ExtensionMatch(Extension):
                     interest=INTEREST_STATE,
                     state=InterestState(
                         where=[
-                            self.tank_flags.bit_test(self.uint(TankFlags.PUNCH)),
+                            s.tank_flags.bit_test(s.uint(TankFlags.PUNCH)),
                         ]
                     ),
                     blocking_mode=BLOCKING_MODE_BLOCK,
@@ -1308,6 +1324,7 @@ class ExtensionMatch(Extension):
             ],
         )
 
+    @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
         pkt.tank.net_id += 1
@@ -1471,7 +1488,8 @@ class ExtensionTileChangeRequest(Extension):
             ],
         )
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         pass
 
     def destroy(self) -> None:
@@ -1535,7 +1553,8 @@ class ExtensionTileMatchAnyDirection(Extension):
             ],
         )
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         pass
 
     def destroy(self) -> None:
@@ -1597,15 +1616,16 @@ class ExtensionBlockGazette(Extension):
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
                         where=[
-                            self.variant[0] == b"OnDialogRequest",
-                            self.variant[1].contains(b"The Growtopia Gazette"),
+                            s.variant[0] == b"OnDialogRequest",
+                            s.variant[1].contains(b"The Growtopia Gazette"),
                         ]
                     ),
                 ),
             ],
         )
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         return self.forward(
             PendingPacket(
                 buf=NetPacket(
@@ -1885,15 +1905,16 @@ class MatchVariant(Extension):
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
                         where=[
-                            self.variant[0] == b"Test",
-                            self.variant[1] == b"Test2",
+                            s.variant[0] == b"Test",
+                            s.variant[1] == b"Test2",
                         ]
                     ),
                 ),
             ],
         )
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         pass
 
     def destroy(self) -> None:
@@ -1911,15 +1932,16 @@ class MatchVariantContains(Extension):
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
                         where=[
-                            self.variant[0] == b"Test",
-                            self.variant[1].contains(b"Hello World"),
+                            s.variant[0] == b"Test",
+                            s.variant[1].contains(b"Hello World"),
                         ]
                     ),
                 ),
             ],
         )
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch_fallback
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
         pass
 
     def destroy(self) -> None:
@@ -1964,7 +1986,7 @@ def test_match_variant_contains() -> None:
         )
         res = b.process_event(PreparedPacket(req, DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
         assert res
-        pkt, cancelled = res
+        _pkt, cancelled = res
         assert not cancelled
 
         req = NetPacket(

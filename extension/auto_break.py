@@ -21,7 +21,8 @@ from gtools.protogen.extension_pb2 import (
     InterestState,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension, register_thread
+from gtools.proxy.extension.sdk import Extension, dispatch, register_thread
+from gtools.proxy.extension.sdk_utils import helper
 from gtools.proxy.state import HackType, Status
 from thirdparty.enet.bindings import ENetPacketFlag
 
@@ -48,44 +49,14 @@ class State(IntEnum):
     BUILDING = auto()
 
 
+s = helper()
+
+
 class AutoBreakExtension(Extension):
     def __init__(self) -> None:
         super().__init__(
             name="auto_break",
-            interest=[
-                Interest(interest=INTEREST_STATE_UPDATE),
-                self.command_toggle("/auto", Action.TOGGLE_AUTO),
-                self.command_toggle("/rec", Action.REC),
-                self.command("/t", Action.TEMPLATE),
-                self.command("/id", Action.TOGGLE_NEXT_SET_ID),
-                Interest(
-                    interest=INTEREST_STATE,
-                    state=InterestState(where=[self.tank_flags.bit_test(self.uint(TankFlags.PUNCH))]),
-                    direction=DIRECTION_CLIENT_TO_SERVER,
-                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
-                    id=Action.PUNCH,
-                ),
-                Interest(
-                    interest=INTEREST_STATE,
-                    state=InterestState(where=[self.tank_flags.bit_test(self.uint(TankFlags.PLACE))]),
-                    direction=DIRECTION_CLIENT_TO_SERVER,
-                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
-                    id=Action.BUILD,
-                ),
-                Interest(
-                    interest=INTEREST_CALL_FUNCTION,
-                    call_function=InterestCallFunction(where=[self.variant[0] == b"OnTalkBubble", self.variant[2] == b"The `2MAGPLANT 5000`` is empty!"]),
-                    direction=DIRECTION_SERVER_TO_CLIENT,
-                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
-                    id=Action.MAG_EMPTY,
-                ),
-                Interest(
-                    interest=INTEREST_TILE_CHANGE_REQUEST,
-                    direction=DIRECTION_SERVER_TO_CLIENT,
-                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
-                    id=Action.TILE_CHANGE_CONFIRM,
-                ),
-            ],
+            interest=[Interest(interest=INTEREST_STATE_UPDATE)],
         )
         self.enabled = False
         self.target: list[ivec2] = []
@@ -198,61 +169,102 @@ class AutoBreakExtension(Extension):
     def stop_auto(self) -> None:
         self.enabled = False
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
-        match event.interest_id:
-            case Action.TOGGLE_AUTO:
-                if self.item_id != 0:
-                    self.enabled = not self.enabled
-                    self.console_log(f"auto is now {self.enabled}")
-                else:
-                    self.console_log(f"set item id first")
-                return self.cancel()
-            case Action.REC:
-                pass
-            case Action.TEMPLATE:
-                self.enabled = False
+    @dispatch(s.command_toggle("/auto", id=s.auto))
+    def _toggle_auto(self, _event: PendingPacket) -> PendingPacket | None:
+        if self.item_id != 0:
+            self.enabled = not self.enabled
+            self.console_log(f"auto is now {self.enabled}")
+        else:
+            self.console_log(f"set item id first")
 
-                template = self.parse_command(event)
-                if template == "bfg":
-                    self.target.clear()
-                    for x in range(2):
-                        sign = -1 if self.state.me.state & TankFlags.FACING_LEFT else 1
-                        target = ivec2(self.state.me.pos // 32) + ((x + 1) * sign, 0)
-                        self.target.append(target)
-                        self.send_particle(ParticleID.LBOT_PLACE, tile=target)
+        return self.cancel()
 
-                return self.cancel()
-            case Action.TOGGLE_NEXT_SET_ID:
-                id = self.parse_command(event)
-                if id:
-                    self.item_id = int(id)
-                    self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
-                else:
-                    self._set_id_to_next = True
-                return self.cancel()
-            case Action.BUILD:
-                if self._set_id_to_next:
-                    pkt = NetPacket.deserialize(event.buf)
-                    self.item_id = pkt.tank.value
-                    self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
-                    self._set_id_to_next = False
-            case Action.PUNCH:
-                if self._set_id_to_next and self.state.world:
-                    pkt = NetPacket.deserialize(event.buf)
-                    if tile := self.state.world.get_tile(ivec2(pkt.tank.int_x, pkt.tank.int_y)):
-                        self.item_id = tile.fg_id if tile.fg_id != 0 else tile.bg_id
-                        self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
-                        self._set_id_to_next = False
-            case Action.MAG_EMPTY:
-                self.enabled = False
-                self.console_log("auto disabled because of empty magplants")
-            case Action.TILE_CHANGE_CONFIRM:
-                if self.place_pending:
-                    pkt = NetPacket.deserialize(event.buf)
-                    target = ivec2(pkt.tank.int_x, pkt.tank.int_y)
+    @dispatch(s.command("/t", id=s.auto))
+    def _template(self, event: PendingPacket) -> PendingPacket | None:
+        self.enabled = False
 
-                    if target in self.place_pending and pkt.tank.value != 18:
-                        del self.place_pending[target]
+        template = s.parse_command(event)
+        if template == "bfg":
+            self.target.clear()
+            for x in range(2):
+                sign = -1 if self.state.me.state & TankFlags.FACING_LEFT else 1
+                target = ivec2(self.state.me.pos // 32) + ((x + 1) * sign, 0)
+                self.target.append(target)
+                self.send_particle(ParticleID.LBOT_PLACE, tile=target)
+
+        return self.cancel()
+
+    @dispatch(
+        Interest(
+            interest=INTEREST_STATE,
+            state=InterestState(where=[s.tank_flags.bit_test(s.uint(TankFlags.PUNCH))]),
+            direction=DIRECTION_CLIENT_TO_SERVER,
+            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+            id=s.auto,
+        )
+    )
+    def _on_punch(self, event: PendingPacket) -> PendingPacket | None:
+        if self._set_id_to_next and self.state.world:
+            pkt = NetPacket.deserialize(event.buf)
+            if tile := self.state.world.get_tile(ivec2(pkt.tank.int_x, pkt.tank.int_y)):
+                self.item_id = tile.fg_id if tile.fg_id != 0 else tile.bg_id
+                self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
+                self._set_id_to_next = False
+
+    @dispatch(s.command("/id", id=s.auto))
+    def _set_id(self, event: PendingPacket) -> PendingPacket | None:
+        id = s.parse_command(event)
+        if id:
+            self.item_id = int(id)
+            self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
+        else:
+            self._set_id_to_next = True
+        return self.cancel()
+
+    @dispatch(
+        Interest(
+            interest=INTEREST_STATE,
+            state=InterestState(where=[s.tank_flags.bit_test(s.uint(TankFlags.PLACE))]),
+            direction=DIRECTION_CLIENT_TO_SERVER,
+            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+            id=s.auto,
+        ),
+    )
+    def _on_build(self, event: PendingPacket) -> PendingPacket | None:
+        if self._set_id_to_next:
+            pkt = NetPacket.deserialize(event.buf)
+            self.item_id = pkt.tank.value
+            self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
+            self._set_id_to_next = False
+
+    @dispatch(
+        Interest(
+            interest=INTEREST_CALL_FUNCTION,
+            call_function=InterestCallFunction(where=[s.variant[0] == b"OnTalkBubble", s.variant[2] == b"The `2MAGPLANT 5000`` is empty!"]),
+            direction=DIRECTION_SERVER_TO_CLIENT,
+            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+            id=s.auto,
+        ),
+    )
+    def _mag_empty(self, _event: PendingPacket) -> PendingPacket | None:
+        self.enabled = False
+        self.console_log("auto disabled because of empty magplants")
+
+    @dispatch(
+        Interest(
+            interest=INTEREST_TILE_CHANGE_REQUEST,
+            direction=DIRECTION_SERVER_TO_CLIENT,
+            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+            id=s.auto,
+        ),
+    )
+    def _tile_change_confirm(self, event: PendingPacket) -> PendingPacket | None:
+        if self.place_pending:
+            pkt = NetPacket.deserialize(event.buf)
+            target = ivec2(pkt.tank.int_x, pkt.tank.int_y)
+
+            if target in self.place_pending and pkt.tank.value != 18:
+                del self.place_pending[target]
 
     def destroy(self) -> None:
         pass

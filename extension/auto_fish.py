@@ -4,6 +4,7 @@ import time
 
 from pyglm.glm import ivec2
 
+from gtools.core.growtopia.particles import ParticleID
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
@@ -16,6 +17,7 @@ from gtools.protogen.extension_pb2 import (
 )
 from gtools.proxy.extension.sdk import Extension, register_thread
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
+from gtools.proxy.extension.sdk_utils import helper
 from gtools.proxy.state import Status
 from thirdparty.enet.bindings import ENetPacketFlag
 
@@ -26,8 +28,7 @@ class Action(IntEnum):
     GOT_FISH = auto()
 
 
-GEIGER_PING = 114
-LBOT_BLOCK_PLACE = 88
+s = helper()
 
 
 class AutoFishExtension(Extension):
@@ -35,7 +36,7 @@ class AutoFishExtension(Extension):
         super().__init__(
             name="auto_fish",
             interest=[
-                self.command("/ft", Action.TOGGLE_AUTO),
+                s.command("/ft", Action.TOGGLE_AUTO),
                 Interest(
                     interest=INTEREST_TILE_CHANGE_REQUEST,
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
@@ -62,8 +63,8 @@ class AutoFishExtension(Extension):
     def thread_info(self) -> None:
         while True:
             if self.state.status == Status.IN_WORLD:
-                self.send_particle(GEIGER_PING, abs=self.state.me.pos)
-                self.send_particle(LBOT_BLOCK_PLACE, tile=self.fish_pos)
+                self.send_particle(ParticleID.GEIGER_PING_RED, abs=self.state.me.pos)
+                self.send_particle(ParticleID.LBOT_PLACE, tile=self.fish_pos)
 
             self.console_log(f"{self.state.status.name} {self.state.inventory.get(self.bait)}")
             time.sleep(1)
@@ -100,8 +101,8 @@ class AutoFishExtension(Extension):
                             facing_left |= TankFlags.FACING_LEFT
 
                         # NOTE: gone fishin net id can be used to identify
-                        self.send_particle(LBOT_BLOCK_PLACE, tile=self.fish_pos)
-                        self.send_particle(GEIGER_PING, abs=self.state.me.pos)
+                        self.send_particle(ParticleID.LBOT_PLACE, tile=self.fish_pos)
+                        self.send_particle(ParticleID.GEIGER_PING_RED, abs=self.state.me.pos)
 
                         self.send_reel_packet()
                         time.sleep(random.uniform(0.261, 0.400))

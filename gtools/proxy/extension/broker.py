@@ -1023,9 +1023,12 @@ class Broker:
         if pending.callback.any:
             pending.callback.any(PreparedPacket.from_pending(pending.current))
 
+    # TODO: don't have these if TRACE, create utils
+
     def _handle_packet(self, pkt: PendingPacket) -> None:
         assert pkt._packet_id, "invalid packet id"
         if (chain := self._pending_chain.get(pkt._packet_id)) is not None:
+            if TRACE: print(f"\t\t\tPACKET {PendingPacket.Op.Name(pkt._op)} IS {chain.current}")
             match pkt._op:
                 case PendingPacket.OP_FINISH:
                     chain.current = pkt
@@ -1043,6 +1046,7 @@ class Broker:
                 case _:
                     raise ValueError(f"invalid op: {pkt._op}")
         elif (pending := self._pending_packet.pop(pkt._packet_id, None)) is not None:
+            if TRACE: print(f"\t\t\tPACKET {PendingPacket.Op.Name(pkt._op)} IS {pending.current}")
             match pkt._op:
                 case PendingPacket.OP_FINISH:
                     self._finish(pending, pkt)

@@ -6,25 +6,27 @@ from gtools.protogen.extension_pb2 import (
     InterestState,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension
+from gtools.proxy.extension.sdk import Extension, dispatch
+from gtools.proxy.extension.sdk_utils import helper
+
+
+s = helper()
 
 
 class ________CHANGE_ME________(Extension):
     def __init__(self) -> None:
-        super().__init__(
-            name="________CHANGE_ME________",
-            interest=[
-                Interest(
-                    interest=INTEREST_STATE,
-                    state=InterestState(where=[]),
-                    direction=DIRECTION_CLIENT_TO_SERVER,
-                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
-                    id=0,
-                ),
-            ],
-        )
+        super().__init__(name="________CHANGE_ME________", interest=[])
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch(
+        Interest(
+            interest=INTEREST_STATE,
+            state=InterestState(where=[]),
+            direction=DIRECTION_CLIENT_TO_SERVER,
+            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+            id=s.auto,
+        ),
+    )
+    def on_something(self, event: PendingPacket) -> PendingPacket | None:
         pass
 
     def destroy(self) -> None:

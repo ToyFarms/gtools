@@ -2,7 +2,7 @@ from abc import abstractmethod
 from argparse import ArgumentParser
 from dataclasses import dataclass
 import struct
-from typing import Callable
+from typing import Callable, cast
 from urllib.parse import urlparse
 import os
 import threading
@@ -39,6 +39,29 @@ def register_thread(fn: Callable) -> Callable:
     return fn
 
 
+type DispatchHandle = Callable[[PendingPacket], PendingPacket | None]
+type UnboundDispatchHandle[S: Extension] = Callable[[S, PendingPacket], PendingPacket | None]
+
+
+def dispatch(interest: Interest) -> Callable[[UnboundDispatchHandle], UnboundDispatchHandle]:
+    def wrapper(fn: UnboundDispatchHandle) -> UnboundDispatchHandle:
+
+        interests: list[Interest] | object | None = getattr(fn, "__dispatch_interest_list", None)
+        if isinstance(interests, list):
+            interests.append(interest)
+        else:
+            setattr(fn, "__dispatch_interest_list", [interest])
+
+        return fn
+
+    return wrapper
+
+
+def dispatch_fallback(fn: UnboundDispatchHandle) -> UnboundDispatchHandle:
+    setattr(fn, "__dispatch_interest_fallback", True)
+    return fn
+
+
 class Extension(ExtensionUtility):
     logger = logging.getLogger("extension")
 
@@ -69,6 +92,8 @@ class Extension(ExtensionUtility):
         self.disconnected = Signal.derive(lambda: (not self.broker_connected.get()) and (not self.push_connected.get()), self.broker_connected, self.push_connected)
 
         self._job_threads: dict[str, threading.Thread] = {}
+        self._dispatch_routes: dict[int, DispatchHandle] = {}
+        self._dispatch_fallback: DispatchHandle | None = None
         self.state = State()
 
     # NOTE: because we set linger to 0, any messages queued when broker restarts will be dropped.
@@ -91,7 +116,6 @@ class Extension(ExtensionUtility):
         with self._push_lock:
             self._push_socket.send(pending.SerializeToString())
 
-    # TODO: try pytest-xdist rather than pytest-forked
     # TODO: have a send_to() possibly?
 
     def _send(self, pkt: Packet) -> None:
@@ -142,28 +166,38 @@ class Extension(ExtensionUtility):
         return pkt
 
     @abstractmethod
-    def process(self, event: PendingPacket) -> PendingPacket | None: ...
-
-    @abstractmethod
     def destroy(self) -> None: ...
+
+    def _resolve_decorator(self) -> None:
+        seen_id: set[int] = set()
+
+        for name, obj in vars(type(self)).items():
+            if not callable(obj):
+                continue
+
+            if dispatch := getattr(obj, "__dispatch_interest_list", []):
+                dispatch: list[Interest]
+                for interest in dispatch:
+                    assert interest.id not in seen_id, "duplicate id detected, something's wrong with the auto id system"
+                    seen_id.add(interest.id)
+
+                    self._dispatch_routes[interest.id] = cast(DispatchHandle, getattr(self, name))
+                    self._interest.append(interest)
+            elif getattr(obj, "__dispatch_interest_fallback", False):
+                self._dispatch_fallback = cast(DispatchHandle, getattr(self, name))
+            elif getattr(obj, "_mark_thread", False):
+                bound_method = getattr(self, name)
+
+                self.logger.debug(f"extension {self._name} starting job: {name}")
+
+                t = threading.Thread(target=bound_method, daemon=True)
+                t.start()
+                self._job_threads[name] = t
 
     def start(self, block: bool = False) -> Signal[bool]:
         self._monitor_thread_id = threading.Thread(target=self._monitor_thread, daemon=True)
         self._monitor_thread_id.start()
-
-        for name, obj in vars(type(self)).items():
-            if not getattr(obj, "_mark_thread", False):
-                continue
-            if not callable(obj):
-                continue
-
-            bound_method = getattr(self, name)
-
-            self.logger.debug(f"extension {self._name} starting job: {name}")
-
-            t = threading.Thread(target=bound_method, daemon=True)
-            t.start()
-            self._job_threads[name] = t
+        self._resolve_decorator()
 
         self._socket.connect(self._broker_addr)
         mon = self._socket.get_monitor_socket()
@@ -313,10 +347,23 @@ class Extension(ExtensionUtility):
                         start = time.perf_counter_ns()
                         response: PendingPacket | None = None
 
-                        try:
-                            response = self.process(pkt.pending_packet)
-                        except:
-                            traceback.print_exc()
+                        id = pkt.pending_packet.interest_id
+                        response = None
+
+                        if not id in self._dispatch_routes:
+                            if self._dispatch_fallback:
+                                try:
+                                    response = self._dispatch_fallback(pkt.pending_packet)
+                                except:
+                                    traceback.print_exc()
+                            else:
+                                self.logger.warning(f"unhandled interest id: {id}, available {self._dispatch_routes.keys()}")
+                        else:
+                            try:
+                                response = self._dispatch_routes[id](pkt.pending_packet)
+                            except:
+                                traceback.print_exc()
+
                         if not response:
                             response = self.pass_to_next()
 

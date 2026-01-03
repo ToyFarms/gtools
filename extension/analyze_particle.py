@@ -1,12 +1,9 @@
 from pyglm.glm import vec2
 
-from gtools.core.growtopia.create import particle
-from gtools.core.growtopia.packet import NetPacket, PreparedPacket, TankFlags
-from gtools.core.growtopia.particles import ParticleID
+from gtools.core.growtopia.packet import NetPacket, TankFlags
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
-    DIRECTION_SERVER_TO_CLIENT,
     INTEREST_STATE,
     INTEREST_STATE_UPDATE,
     Interest,
@@ -14,7 +11,9 @@ from gtools.protogen.extension_pb2 import (
     PendingPacket,
 )
 from gtools.proxy.extension.sdk import Extension
-from thirdparty.enet.bindings import ENetPacketFlag
+from gtools.proxy.extension.sdk_utils import helper
+
+s = helper()
 
 
 class Particle(Extension):
@@ -28,18 +27,18 @@ class Particle(Extension):
                 ),
                 Interest(
                     interest=INTEREST_STATE,
-                    state=InterestState(where=[self.tank_flags.bit_test(self.uint(TankFlags.PUNCH))]),
+                    state=InterestState(where=[s.tank_flags.bit_test(s.uint(TankFlags.PUNCH))]),
                     direction=DIRECTION_CLIENT_TO_SERVER,
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
                     id=0,
                 ),
-                self.command("/set", 1),  # set id
-                self.command("/c", 2),  # complete
-                self.command_toggle("/n", 3),  # next
-                self.command_toggle("/p", 4),  # prev
-                self.command("/a", 5),  # set the first args
-                self.command("/b", 6),  # set the second args
-                self.command("/s", 7),  # send
+                s.command("/set", 1),  # set id
+                s.command("/c", 2),  # complete
+                s.command_toggle("/n", 3),  # next
+                s.command_toggle("/p", 4),  # prev
+                s.command("/a", 5),  # set the first args
+                s.command("/b", 6),  # set the second args
+                s.command("/s", 7),  # send
             ],
         )
         self.id = 0

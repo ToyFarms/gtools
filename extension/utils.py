@@ -17,8 +17,9 @@ from gtools.protogen.extension_pb2 import (
     InterestType,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension
+from gtools.proxy.extension.sdk import Extension, dispatch, dispatch_fallback
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
+from gtools.proxy.extension.sdk_utils import helper
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -35,13 +36,16 @@ class Action(IntEnum):
     PING_CMD = auto()
 
 
+s = helper()
+
+
 class UtilityExtension(Extension):
     def __init__(self) -> None:
 
         super().__init__(
             name="utils",
             interest=[
-                self.command_toggle("/exit", Action.EXIT),
+                s.command_toggle("/exit", Action.EXIT),
                 Interest(
                     interest=InterestType.INTEREST_GAME_MESSAGE,
                     game_message=InterestGameMessage(action=b"quit_to_exit"),
@@ -49,23 +53,23 @@ class UtilityExtension(Extension):
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     id=Action.BLOCK_EXTRA_QUIT_TO_EXIT,
                 ),
-                self.command("/warp", Action.WARP),
+                s.command("/warp", Action.WARP),
                 Interest(
                     interest=InterestType.INTEREST_CALL_FUNCTION,
-                    call_function=InterestCallFunction(where=[self.variant[0] == b"OnRequestWorldSelectMenu"]),
+                    call_function=InterestCallFunction(where=[s.variant[0] == b"OnRequestWorldSelectMenu"]),
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
                     id=Action.EXITED,
                 ),
-                self.command("/fd", Action.FAST_DROP_TOGGLE),
+                s.command("/fd", Action.FAST_DROP_TOGGLE),
                 Interest(
                     interest=INTEREST_CALL_FUNCTION,
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
                         where=[
-                            self.variant[0] == b"OnDialogRequest",
-                            self.variant[1].contains(b"How many to drop"),
+                            s.variant[0] == b"OnDialogRequest",
+                            s.variant[1].contains(b"How many to drop"),
                         ]
                     ),
                     id=Action.FAST_DROP_REQUEST,
@@ -76,13 +80,13 @@ class UtilityExtension(Extension):
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
                         where=[
-                            self.variant[0] == b"OnDialogRequest",
-                            self.variant[1].contains(b"The Growtopia Gazette"),
+                            s.variant[0] == b"OnDialogRequest",
+                            s.variant[1].contains(b"The Growtopia Gazette"),
                         ]
                     ),
                     id=Action.GAZETTE_DIALOG,
                 ),
-                self.command_toggle("/ping", Action.PING_CMD),
+                s.command_toggle("/ping", Action.PING_CMD),
             ],
         )
         self.should_block = False
@@ -102,6 +106,7 @@ class UtilityExtension(Extension):
             )
         )
 
+    @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
         match event.interest_id:
@@ -196,4 +201,3 @@ class UtilityExtension(Extension):
 
 if __name__ == "__main__":
     UtilityExtension().standalone()
-
