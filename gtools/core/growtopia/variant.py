@@ -22,6 +22,9 @@ class Variant:
         def __repr__(self) -> str:
             return f"Variant.vfloat({self.value})"
 
+        def compact_repr(self) -> str:
+            return f"{self.value}f"
+
     @dataclass(frozen=True)
     class vstr:
         value: bytes = b""
@@ -29,6 +32,9 @@ class Variant:
 
         def __repr__(self) -> str:
             return f"Variant.vstr({self.value!r})"
+
+        def compact_repr(self) -> str:
+            return f"{self.value!r}"
 
     @dataclass(frozen=True)
     class vvec2:
@@ -39,6 +45,10 @@ class Variant:
             x, y = self.value
             return f"Variant.vvec2({x}, {y})"
 
+        def compact_repr(self) -> str:
+            x, y = self.value
+            return f"({x}, {y})"
+
     @dataclass(frozen=True)
     class vvec3:
         value: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -48,6 +58,10 @@ class Variant:
             x, y, z = self.value
             return f"Variant.vvec3({x}, {y}, {z})"
 
+        def compact_repr(self) -> str:
+            x, y, z = self.value
+            return f"({x}, {y}, {z})"
+
     @dataclass(frozen=True)
     class vuint:
         value: int = 0
@@ -56,6 +70,9 @@ class Variant:
         def __repr__(self) -> str:
             return f"Variant.vuint({self.value})"
 
+        def compact_repr(self) -> str:
+            return f"{self.value}u"
+
     @dataclass(frozen=True)
     class vint:
         value: int = 0
@@ -63,6 +80,9 @@ class Variant:
 
         def __repr__(self) -> str:
             return f"Variant.vint({self.value})"
+
+        def compact_repr(self) -> str:
+            return f"{self.value}i"
 
     Type = vfloat | vstr | vvec2 | vvec3 | vuint | vint
 
@@ -251,6 +271,10 @@ class Variant:
     def __repr__(self) -> str:
         vals = ", ".join(repr(v) for v in self._values)
         return f"Variant([{vals}])"
+
+    def compact_repr(self) -> str:
+        vals = ", ".join(v.compact_repr() for v in self._values)
+        return f"Variant({vals})"
 
 
 if __name__ == "__main__":

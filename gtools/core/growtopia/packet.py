@@ -230,7 +230,7 @@ class TankPacket(Serializable):
 
     def compact_repr(self) -> str:
         if self.type == TankType.CALL_FUNCTION:
-            return f"Call({Variant.deserialize(self.extended_data)})"
+            return f"Call({Variant.deserialize(self.extended_data).compact_repr()})"
 
         def filter_default_value(x: object) -> bool:
             if isinstance(x, str):
@@ -257,7 +257,7 @@ class TankPacket(Serializable):
                     ("animation_type", self.animation_type),
                     ("net_id", self.net_id),
                     ("target_net_id", self.target_net_id),
-                    ("flags", repr(self.flags)),
+                    ("flags", repr(self.flags) if self.flags != 0 else 0),
                     ("float_var", self.float_var),
                     ("value", self.value),
                     ("vector_x", self.vector_x),
@@ -268,7 +268,7 @@ class TankPacket(Serializable):
                     ("int_x", self.int_x),
                     ("int_y", self.int_y),
                     ("extended_len", self.extended_len),
-                    ("extended_data", self.extended_data),
+                    ("extended_data", self.extended_data[:100] + (b"..." if len(self.extended_data) > 100 else b"")),
                 ],
             )
         )
