@@ -187,7 +187,9 @@ class Proxy:
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug(f"{'[modified] ' if modified else '[fabricated]' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
         else:
-            self.logger.info(f"from {'\x1b[32mserver\x1b[0m' if pkt.direction == DIRECTION_SERVER_TO_CLIENT else '\x1b[31mclient\x1b[0m'} ({pkt.as_net.type.name}) {pkt.as_net.compact_repr()}")
+            self.logger.info(
+                f"from {'\x1b[32mserver\x1b[0m' if pkt.direction == DIRECTION_SERVER_TO_CLIENT else '\x1b[31mclient\x1b[0m'} ({pkt.as_net.type.name}) {pkt.as_net.compact_repr()}"
+            )
         if pkt.as_net.type == NetType.TANK_PACKET:
             if pkt.as_net.tank.type in (
                 TankType.APP_CHECK_RESPONSE,
@@ -530,6 +532,10 @@ class Proxy:
                     self.logger.info("waiting for server_data...")
                     while not self.server_data:
                         time.sleep(0.16)
+
+                if self.proxy_client.peer is not None:
+                    self.logger.info("disconnecting connection to growtopia server")
+                    self.proxy_client.disconnect_now()
 
                 self.logger.info("waiting for growtopia to connect...")
                 while not self.proxy_server.peer:
