@@ -170,6 +170,7 @@ class Packet(_message.Message):
         TYPE_STATE_REQUEST: _ClassVar[Packet.Type]
         TYPE_STATE_RESPONSE: _ClassVar[Packet.Type]
         TYPE_STATE_UPDATE: _ClassVar[Packet.Type]
+        TYPE_PUSH_PACKET: _ClassVar[Packet.Type]
     TYPE_UNSPECIFIED: Packet.Type
     TYPE_HANDSHAKE: Packet.Type
     TYPE_HANDSHAKE_ACK: Packet.Type
@@ -181,6 +182,7 @@ class Packet(_message.Message):
     TYPE_STATE_REQUEST: Packet.Type
     TYPE_STATE_RESPONSE: Packet.Type
     TYPE_STATE_UPDATE: Packet.Type
+    TYPE_PUSH_PACKET: Packet.Type
     TYPE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_FIELD_NUMBER: _ClassVar[int]
     HANDSHAKE_ACK_FIELD_NUMBER: _ClassVar[int]
@@ -192,6 +194,7 @@ class Packet(_message.Message):
     STATE_REQUEST_FIELD_NUMBER: _ClassVar[int]
     STATE_RESPONSE_FIELD_NUMBER: _ClassVar[int]
     STATE_UPDATE_FIELD_NUMBER: _ClassVar[int]
+    PUSH_PACKET_FIELD_NUMBER: _ClassVar[int]
     type: Packet.Type
     handshake: Handshake
     handshake_ack: HandshakeAck
@@ -203,7 +206,8 @@ class Packet(_message.Message):
     state_request: StateRequest
     state_response: StateResponse
     state_update: _state_pb2.StateUpdate
-    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., pending_packet: _Optional[_Union[PendingPacket, _Mapping]] = ..., state_request: _Optional[_Union[StateRequest, _Mapping]] = ..., state_response: _Optional[_Union[StateResponse, _Mapping]] = ..., state_update: _Optional[_Union[_state_pb2.StateUpdate, _Mapping]] = ...) -> None: ...
+    push_packet: PendingPacket
+    def __init__(self, type: _Optional[_Union[Packet.Type, str]] = ..., handshake: _Optional[_Union[Handshake, _Mapping]] = ..., handshake_ack: _Optional[_Union[HandshakeAck, _Mapping]] = ..., capability_request: _Optional[_Union[CapabilityRequest, _Mapping]] = ..., capability_response: _Optional[_Union[CapabilityResponse, _Mapping]] = ..., disconnect: _Optional[_Union[Disconnect, _Mapping]] = ..., connected: _Optional[_Union[Connected, _Mapping]] = ..., pending_packet: _Optional[_Union[PendingPacket, _Mapping]] = ..., state_request: _Optional[_Union[StateRequest, _Mapping]] = ..., state_response: _Optional[_Union[StateResponse, _Mapping]] = ..., state_update: _Optional[_Union[_state_pb2.StateUpdate, _Mapping]] = ..., push_packet: _Optional[_Union[PendingPacket, _Mapping]] = ...) -> None: ...
 
 class Handshake(_message.Message):
     __slots__ = ()

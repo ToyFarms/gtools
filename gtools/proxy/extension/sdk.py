@@ -3,7 +3,6 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 import struct
 from typing import Callable, cast
-from urllib.parse import urlparse
 import os
 import threading
 import traceback
@@ -74,10 +73,11 @@ class Extension(ExtensionUtility):
         self._socket = self._context.socket(zmq.DEALER)
         self._socket.setsockopt(zmq.IDENTITY, self._name)
         self._socket.setsockopt(zmq.LINGER, 0)
+        self._send_lock = threading.Lock()
 
-        self._push_socket = self._context.socket(zmq.PUSH)
-        self._push_socket.setsockopt(zmq.LINGER, 0)
-        self._push_lock = threading.Lock()
+        # self._push_socket = self._context.socket(zmq.PUSH)
+        # self._push_socket.setsockopt(zmq.LINGER, 0)
+        # self._push_lock = threading.Lock()
 
         self._worker_thread_id: threading.Thread | None = None
         self._monitor_thread_id: threading.Thread | None = None
@@ -87,9 +87,8 @@ class Extension(ExtensionUtility):
 
         self._stop_event = Signal(False)
         self.broker_connected = Signal(False)
-        self.push_connected = Signal(False)
-        self.connected = Signal.derive(lambda: self.broker_connected.get() and self.push_connected.get(), self.broker_connected, self.push_connected)
-        self.disconnected = Signal.derive(lambda: (not self.broker_connected.get()) and (not self.push_connected.get()), self.broker_connected, self.push_connected)
+        self.connected = Signal.derive(lambda: self.broker_connected.get(), self.broker_connected)
+        self.disconnected = Signal.derive(lambda: (not self.broker_connected.get()), self.broker_connected)
 
         self._job_threads: dict[str, threading.Thread] = {}
         self._dispatch_routes: dict[int, DispatchHandle] = {}
@@ -101,20 +100,10 @@ class Extension(ExtensionUtility):
     # send out of state packet.
     # or, we set the linger to -1 again, but then there may be issues with cleanup,
     def push(self, pkt: PreparedPacket) -> None:
-        self.push_connected.wait_true()
-        # NOTE: to_pending().SerializeToString() makes us go from 1.5m to 500k packet/s,
-        # AND hooking with the whole infra pushed it to 50k packet/s.
-        # is that normal? its still way overkill for this use case,
-        # but i might want to start thinking switching capnproto and shared memory ring buffer,
-        # just for the fun of it
         self.logger.debug(f"   push \x1b[35m-->>\x1b[0m \x1b[35m>>\x1b[0m{pkt!r}\x1b[35m>>\x1b[0m")
-
-        # NOTE: we use _rtt_ns to store the timestamp for strict packet ordering
-        # because without it, some packet will be clumped and batched causing ordering issues
         pending = pkt.to_pending()
         pending._rtt_ns = struct.pack("<Q", time.monotonic_ns())
-        with self._push_lock:
-            self._push_socket.send(pending.SerializeToString())
+        self._send(Packet(type=Packet.TYPE_PUSH_PACKET, push_packet=pending))
 
     # TODO: have a send_to() possibly?
 
@@ -123,12 +112,13 @@ class Extension(ExtensionUtility):
             return
 
         self.logger.debug(f"   send \x1b[31m-->>\x1b[0m \x1b[31m>>\x1b[0m{pkt!r}\x1b[31m>>\x1b[0m")
-        try:
-            if self._socket.poll(100, zmq.POLLOUT):
-                self._socket.send(pkt.SerializeToString(), zmq.NOBLOCK)
-        except zmq.error.ZMQError as e:
-            if not self._stop_event.get():
-                self.logger.debug(f"send error: {e}")
+        with self._send_lock:
+            try:
+                if self._socket.poll(100, zmq.POLLOUT):
+                    self._socket.send(pkt.SerializeToString(), zmq.NOBLOCK)
+            except zmq.error.ZMQError as e:
+                if not self._stop_event.get():
+                    self.logger.debug(f"send error: {e}")
 
     def _recv(self, expected: Packet.Type | None = None) -> Packet | None:
         if self._stop_event.get():
@@ -204,14 +194,6 @@ class Extension(ExtensionUtility):
         self._monitors[mon] = SocketStatus("broker", self.broker_connected)
         self._monitor_poller.register(mon)
 
-        addr = urlparse(self._broker_addr)
-        addr = addr._replace(netloc=f"{addr.hostname}:{(addr.port or 18192) + 1}")
-        self.logger.debug(f"push socket connecting to {addr.geturl()}")
-        self._push_socket.connect(addr.geturl())
-        mon = self._push_socket.get_monitor_socket()
-        self._monitors[mon] = SocketStatus("push", self.push_connected)
-        self._monitor_poller.register(mon)
-
         if block:
             try:
                 self._worker_thread()
@@ -243,11 +225,10 @@ class Extension(ExtensionUtility):
         except Exception as e:
             self.logger.debug(f"socket close error: {e}")
         self.broker_connected.set(False)
-        try:
-            self._push_socket.close()
-        except Exception as e:
-            self.logger.debug(f"socket close error: {e}")
-        self.push_connected.set(False)
+        # try:
+        #     self._push_socket.close()
+        # except Exception as e:
+        #     self.logger.debug(f"socket close error: {e}")
 
         if self._worker_thread_id and self._worker_thread_id.is_alive():
             self._worker_thread_id.join(timeout=2.0)
@@ -377,7 +358,6 @@ class Extension(ExtensionUtility):
                         self._send(Packet(type=Packet.TYPE_STATE_REQUEST))
                     case Packet.TYPE_DISCONNECT:
                         self.broker_connected.set(False)
-                        self.push_connected.set(False)
                     case Packet.TYPE_HANDSHAKE_ACK:
                         pass
                     case Packet.TYPE_CAPABILITY_REQUEST:

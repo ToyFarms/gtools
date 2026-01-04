@@ -955,7 +955,6 @@ def test_push_pull() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 def test_push_pull_with_delay() -> None:
@@ -982,7 +981,6 @@ def test_push_pull_with_delay() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 class ExtensionPushMulti(Extension):
@@ -1067,7 +1065,6 @@ def test_push_pull_multi() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 def test_push_pull_multi_one_delay() -> None:
@@ -1103,7 +1100,6 @@ def test_push_pull_multi_one_delay() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 def test_push_pull_multi_one_delay_the_other_one() -> None:
@@ -1139,7 +1135,6 @@ def test_push_pull_multi_one_delay_the_other_one() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 def test_push_pull_multi_both_delay() -> None:
@@ -1175,7 +1170,6 @@ def test_push_pull_multi_both_delay() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 def test_push_pull_multi_extension() -> None:
@@ -1215,7 +1209,6 @@ def test_push_pull_multi_extension() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 def test_push_pull_multi_extension_wih_delay() -> None:
@@ -1255,7 +1248,6 @@ def test_push_pull_multi_extension_wih_delay() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 def test_push_pull_restart() -> None:
@@ -1303,7 +1295,6 @@ def test_push_pull_restart() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 class ExtensionMatch(Extension):
@@ -1384,7 +1375,6 @@ def test_match() -> None:
     finally:
         b.stop()
         assert not is_port_in_use(6712)
-        assert not is_port_in_use(b._pull_port)
 
 
 def test_non_block_pass_should_cancel() -> None:
@@ -2056,7 +2046,7 @@ def test_extension_packet_scheduler() -> None:
             result.append(diff_ns)
 
         if success / total < 0.8:
-            pytest.fail(f"packet success rate is less than 80% ({result}) with tolerance of {tolerance_ns / 1e6}ms")
+            pytest.fail(f"packet success rate ({success / total * 100:.1f}%) is less than 80% ({result}) with tolerance of {tolerance_ns / 1e6}ms")
 
     finally:
         b.stop()

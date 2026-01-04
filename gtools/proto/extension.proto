@@ -19,6 +19,7 @@ message Packet {
     TYPE_STATE_REQUEST = 8;
     TYPE_STATE_RESPONSE = 9;
     TYPE_STATE_UPDATE = 10;
+    TYPE_PUSH_PACKET = 11;
   }
 
   Type type = 1;
@@ -33,6 +34,7 @@ message Packet {
     StateRequest state_request = 9;
     StateResponse state_response = 10;
     gtools.state.StateUpdate state_update = 11;
+    PendingPacket push_packet = 12;
   }
 }
 

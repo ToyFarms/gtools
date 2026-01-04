@@ -13,7 +13,6 @@ import threading
 import time
 from traceback import print_exc
 from typing import Any, Callable, Iterator, cast
-from urllib.parse import urlparse
 from google.protobuf.internal.containers import RepeatedCompositeFieldContainer
 from google.protobuf.message import Message
 import zmq
@@ -23,7 +22,7 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankPacket, Ta
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.signal import Signal
-from gtools.flags import BENCHMARK, PERF, TRACE
+from gtools.flags import PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_UNSPECIFIED,
@@ -604,18 +603,18 @@ class Broker:
             self._scheduler = PacketScheduler(self._pull_queue)
         else:
             self._scheduler = None
-        self._pull_socket = self._context.socket(zmq.PULL)
-        self._pull_socket.setsockopt(zmq.LINGER, 0)
+        # self._pull_socket = self._context.socket(zmq.PULL)
+        # self._pull_socket.setsockopt(zmq.LINGER, 0)
 
-        _addr = urlparse(addr)
-        _addr = _addr._replace(netloc=f"{_addr.hostname}:{(_addr.port or 18192) + 1}")
-        self._pull_socket.bind(_addr.geturl())
-        self._pull_port = cast(int, _addr.port)
+        # _addr = urlparse(addr)
+        # _addr = _addr._replace(netloc=f"{_addr.hostname}:{(_addr.port or 18192) + 1}")
+        # self._pull_socket.bind(_addr.geturl())
+        # self._pull_port = cast(int, _addr.port)
 
-        self.logger.debug(f"broker have push/pull capability, channel={_addr.geturl()}. starting pull thread...")
+        # self.logger.debug(f"broker have push/pull capability, channel={_addr.geturl()}. starting pull thread...")
 
-        self._pull_thread_id = threading.Thread(target=self._pull_thread)
-        self._pull_thread_id.start()
+        # self._pull_thread_id = threading.Thread(target=self._pull_thread)
+        # self._pull_thread_id.start()
 
         self._handler: dict[Packet.Type, HandleFunction] = {}
 
@@ -628,58 +627,58 @@ class Broker:
         finally:
             self._suppress_log = orig
 
-    def _pull(self) -> None:
-        if self._stop_event.is_set():
-            return
+    # def _pull(self) -> None:
+    #     if self._stop_event.is_set():
+    #         return
 
-        try:
-            if self._pull_socket.poll(100, zmq.POLLIN) == 0:
-                return
+    #     try:
+    #         if self._pull_socket.poll(100, zmq.POLLIN) == 0:
+    #             return
 
-            raw = self._pull_socket.recv()
-        except zmq.error.Again:
-            return
-        except zmq.error.ZMQError as e:
-            if self._stop_event.is_set():
-                return
+    #         raw = self._pull_socket.recv()
+    #     except zmq.error.Again:
+    #         return
+    #     except zmq.error.ZMQError as e:
+    #         if self._stop_event.is_set():
+    #             return
 
-            self.logger.error(f"zmq error: {e}")
-            return
+    #         self.logger.error(f"zmq error: {e}")
+    #         return
 
-        pkt = PendingPacket()
-        pkt.ParseFromString(raw)
+    #     pkt = PendingPacket()
+    #     pkt.ParseFromString(raw)
 
-        if self._scheduler:
-            self._scheduler.push(pkt)
-        else:
-            self.logger.warning(f"pull unhandled: {pkt}")
+    #     if self._scheduler:
+    #         self._scheduler.push(pkt)
+    #     else:
+    #         self.logger.warning(f"pull unhandled: {pkt}")
 
         # if not self._suppress_log and self.logger.isEnabledFor(logging.DEBUG):
         #     pkt = PreparedPacket.from_pending(pkt)
         #     self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
 
-    def _pull_thread(self) -> None:
-        if BENCHMARK:
-            _last = time.monotonic_ns()
-            i = 0
-            prev_i = 0
-            elapsed_total = 0
+    # def _pull_thread(self) -> None:
+    #     if BENCHMARK:
+    #         _last = time.monotonic_ns()
+    #         i = 0
+    #         prev_i = 0
+    #         elapsed_total = 0
 
-            while not self._stop_event.is_set():
-                self._pull()
+    #         while not self._stop_event.is_set():
+    #             self._pull()
 
-                elapsed_total += time.monotonic_ns() - _last
-                if elapsed_total >= 1e9:
-                    print(f"packet rate: {i - prev_i} / s")
-                    elapsed_total = 0
-                    prev_i = i
-                i += 1
-                _last = time.monotonic_ns()
-        else:
-            while not self._stop_event.is_set():
-                self._pull()
+    #             elapsed_total += time.monotonic_ns() - _last
+    #             if elapsed_total >= 1e9:
+    #                 print(f"packet rate: {i - prev_i} / s")
+    #                 elapsed_total = 0
+    #                 prev_i = i
+    #             i += 1
+    #             _last = time.monotonic_ns()
+    #     else:
+    #         while not self._stop_event.is_set():
+    #             self._pull()
 
-        self.logger.debug("pull thread exiting")
+    #     self.logger.debug("pull thread exiting")
 
     def _recv(self) -> tuple[bytes, Packet | None]:
         if self._stop_event.is_set():
@@ -970,9 +969,9 @@ class Broker:
             self._worker_thread_id.join(timeout=2.0)
             self.logger.debug("worker thread exited")
 
-        if self._pull_thread_id and self._pull_thread_id.is_alive():
-            self._pull_thread_id.join(timeout=2.0)
-            self.logger.debug("pull thread exited")
+        # if self._pull_thread_id and self._pull_thread_id.is_alive():
+        #     self._pull_thread_id.join(timeout=2.0)
+        #     self.logger.debug("pull thread exited")
 
         try:
             self.logger.debug("closing zmq context")
@@ -1069,6 +1068,9 @@ class Broker:
                     continue
 
                 match pkt.type:
+                    case Packet.TYPE_PUSH_PACKET:
+                        if self._scheduler:
+                            self._scheduler.push(pkt.push_packet)
                     case Packet.TYPE_HANDSHAKE:
                         self._send(id, Packet(type=Packet.TYPE_HANDSHAKE_ACK))
                         self._send(id, Packet(type=Packet.TYPE_CAPABILITY_REQUEST, capability_request=CapabilityRequest()))
