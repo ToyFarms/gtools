@@ -6,6 +6,7 @@ from typing import Literal, cast
 
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
+from gtools.core.convertible import ConvertibleToFloat, ConvertibleToInt
 from gtools.core.protocol import Serializable
 from gtools.protogen.extension_pb2 import Direction, PendingPacket
 from thirdparty.enet.bindings import ENetPacketFlag
@@ -231,9 +232,25 @@ class TankPacket(Serializable):
         if self.type == TankType.CALL_FUNCTION:
             return f"Call({Variant.deserialize(self.extended_data)})"
 
+        def filter_default_value(x: object) -> bool:
+            if isinstance(x, str):
+                return x != ""
+            elif isinstance(x, bytes):
+                return x != b""
+            elif isinstance(x, int):
+                return x != 0
+            elif isinstance(x, float):
+                return x != 0.0
+            elif isinstance(x, ConvertibleToInt):
+                return int(x) != 0
+            elif isinstance(x, ConvertibleToFloat):
+                return float(x) != 0
+
+            return True
+
         fields = {"type": self.type} | dict(
             filter(
-                lambda x: bool(x[1]),
+                filter_default_value,
                 [
                     ("object_type", self.object_type),
                     ("jump_count", self.jump_count),
@@ -298,7 +315,7 @@ class NetPacket(Serializable):
         return f"NetPacket[{self.type.name}]({self.data})"
 
     def compact_repr(self) -> str:
-        return f"{self.type.name}: {self.data}"
+        return f"{self.data}"
 
     @property
     def tank(self) -> "TankPacket":
