@@ -111,9 +111,6 @@ class Proxy:
         self.server_data = event
 
     def _dump_packet(self, data: bytes) -> None:
-        if self.logger.level > logging.DEBUG:
-            return
-
         if self.logger.isEnabledFor(logging.DEBUG):
             dump = cast(Generator[str, None, None], hexdump(data, result="generator"))
             self.logger.debug(f"HEXDUMP: \n\t{'\n\t'.join(dump)}")
@@ -187,7 +184,10 @@ class Proxy:
         except Exception as e:
             self.logger.error(f"FAILED UPDATING STATE: {e}")
 
-        self.logger.debug(f"{'[modified] ' if modified else '[fabricated]' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(f"{'[modified] ' if modified else '[fabricated]' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
+        else:
+            self.logger.info(f"from {'\x1b[32mserver\x1b[0m' if pkt.direction == DIRECTION_SERVER_TO_CLIENT else '\x1b[31mclient\x1b[0m'} ({pkt.as_net.type.name}) {pkt.as_net.compact_repr()}")
         if pkt.as_net.type == NetType.TANK_PACKET:
             if pkt.as_net.tank.type in (
                 TankType.APP_CHECK_RESPONSE,
@@ -460,10 +460,11 @@ class Proxy:
                 self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
                 event = proxy_event.inner
 
-                if proxy_event.direction == DIRECTION_CLIENT_TO_SERVER:
-                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({event.packet.flags!r}):")
-                elif proxy_event.direction == DIRECTION_SERVER_TO_CLIENT:
-                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({event.packet.flags!r}):")
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    if proxy_event.direction == DIRECTION_CLIENT_TO_SERVER:
+                        self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({event.packet.flags!r}):")
+                    elif proxy_event.direction == DIRECTION_SERVER_TO_CLIENT:
+                        self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({event.packet.flags!r}):")
 
                 if event.type == ENetEventType.DISCONNECT:
                     self._should_reconnect.set()
@@ -480,7 +481,8 @@ class Proxy:
                     )
                     self._dump_packet(event.packet.data)
 
-                print()
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    print()
 
                 self._last_event_time = time.monotonic()
 
@@ -496,14 +498,16 @@ class Proxy:
             with self._worker_lock:
                 self._event_elapsed = 0.0 if self._last_event_time == -1 else time.monotonic() - self._last_event_time
 
-                if pkt.direction == DIRECTION_CLIENT_TO_SERVER:
-                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({pkt.flags!r}):")
-                elif pkt.direction == DIRECTION_SERVER_TO_CLIENT:
-                    self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({pkt.flags!r}):")
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    if pkt.direction == DIRECTION_CLIENT_TO_SERVER:
+                        self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt client ({pkt.flags!r}):")
+                    elif pkt.direction == DIRECTION_SERVER_TO_CLIENT:
+                        self.logger.debug(f"[T+{self._event_elapsed:.3f}] from gt server ({pkt.flags!r}):")
 
                 self._handle(pkt, fabricated=True)
-                self._dump_packet(pkt.as_raw)
-                print()
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    self._dump_packet(pkt.as_raw)
+                    print()
 
                 self._last_event_time = time.monotonic()
 
