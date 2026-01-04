@@ -587,8 +587,7 @@ class Broker:
         self._socket = self._context.socket(zmq.ROUTER)
         self._socket.setsockopt(zmq.LINGER, 0)
         self._socket.bind(addr)
-        self._send_lock = threading.Lock()
-        self._recv_lock = threading.Lock()
+        self._socket_lock = threading.Lock()
         self._suppress_log = False
 
         self._extension_mgr = ExtensionManager()
@@ -682,7 +681,7 @@ class Broker:
     #     self.logger.debug("pull thread exiting")
 
     def _recv(self) -> tuple[bytes, Packet | None]:
-        with self._recv_lock:
+        with self._socket_lock:
             if self._stop_event.is_set():
                 return b"", None
 
@@ -716,7 +715,7 @@ class Broker:
                 continue
 
     def _send(self, extension: bytes, pkt: Packet) -> None:
-        with self._send_lock:
+        with self._socket_lock:
             if self._stop_event.is_set():
                 return
 
