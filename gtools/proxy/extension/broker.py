@@ -588,6 +588,7 @@ class Broker:
         self._socket.setsockopt(zmq.LINGER, 0)
         self._socket.bind(addr)
         self._send_lock = threading.Lock()
+        self._recv_lock = threading.Lock()
         self._suppress_log = False
 
         self._extension_mgr = ExtensionManager()
@@ -681,29 +682,30 @@ class Broker:
     #     self.logger.debug("pull thread exiting")
 
     def _recv(self) -> tuple[bytes, Packet | None]:
-        if self._stop_event.is_set():
-            return b"", None
-
-        try:
-            if self._socket.poll(100, zmq.POLLIN) == 0:
-                return b"", None
-
-            id, data = self._socket.recv_multipart(zmq.NOBLOCK)
-        except zmq.error.Again:
-            return b"", None
-        except zmq.error.ZMQError as e:
+        with self._recv_lock:
             if self._stop_event.is_set():
                 return b"", None
-            self.logger.error(f"recv error: {e}")
-            return b"", None
 
-        pkt = Packet()
-        pkt.ParseFromString(data)
+            try:
+                if self._socket.poll(100, zmq.POLLIN) == 0:
+                    return b"", None
 
-        if not self._suppress_log:
-            self.logger.debug(f"\x1b[31m<<--\x1b[0m recv    \x1b[31m<<\x1b[0m{pkt!r}\x1b[31m<<\x1b[0m")
+                id, data = self._socket.recv_multipart(zmq.NOBLOCK)
+            except zmq.error.Again:
+                return b"", None
+            except zmq.error.ZMQError as e:
+                if self._stop_event.is_set():
+                    return b"", None
+                self.logger.error(f"recv error: {e}")
+                return b"", None
 
-        return id, pkt
+            pkt = Packet()
+            pkt.ParseFromString(data)
+
+            if not self._suppress_log:
+                self.logger.debug(f"\x1b[31m<<--\x1b[0m recv    \x1b[31m<<\x1b[0m{pkt!r}\x1b[31m<<\x1b[0m")
+
+            return id, pkt
 
     def broadcast(self, pkt: Packet) -> None:
         for ext in self._extension_mgr.get_all_extension():
