@@ -248,16 +248,16 @@ class TankPacket(Serializable):
 
             return True
 
-        fields = {"type": self.type} | dict(
+        fields = {"type": self.type.name} | dict(
             filter(
-                filter_default_value,
+                lambda x: filter_default_value(x[1]),
                 [
                     ("object_type", self.object_type),
                     ("jump_count", self.jump_count),
                     ("animation_type", self.animation_type),
                     ("net_id", self.net_id),
                     ("target_net_id", self.target_net_id),
-                    ("flags", self.flags),
+                    ("flags", repr(self.flags)),
                     ("float_var", self.float_var),
                     ("value", self.value),
                     ("vector_x", self.vector_x),
@@ -273,7 +273,7 @@ class TankPacket(Serializable):
             )
         )
 
-        return f"TankPacket({', '.join(f'{k}={v}]' for k, v in fields.items())})"
+        return f"TankPacket({', '.join(f'{k}={v}' for k, v in fields.items())})"
 
 
 class EmptyPacket(Serializable):
