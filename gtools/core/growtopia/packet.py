@@ -273,7 +273,7 @@ class TankPacket(Serializable):
             )
         )
 
-        return f"TankType({', '.join(f'{k}={v}]' for k, v in fields.items())})"
+        return f"TankPacket({', '.join(f'{k}={v}]' for k, v in fields.items())})"
 
 
 class EmptyPacket(Serializable):
@@ -315,6 +315,9 @@ class NetPacket(Serializable):
         return f"NetPacket[{self.type.name}]({self.data})"
 
     def compact_repr(self) -> str:
+        if callable(repr := getattr(self.data, "compact_repr", None)):
+            return cast(str, repr())
+
         return f"{self.data}"
 
     @property
