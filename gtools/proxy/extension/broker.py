@@ -22,6 +22,7 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankPacket, Ta
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.signal import Signal
+from gtools.core.transport.zmq_router import Router
 from gtools.flags import PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
@@ -184,6 +185,66 @@ _OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
     Op.OP_STARTSWITH: lambda lval, rval: lval.startswith(rval),
     Op.OP_ENDSWITH: lambda lval, rval: lval.endswith(rval),
     Op.OP_CONTAINS: lambda lval, rval: rval in lval,
+}
+
+_PACKET_TO_INTEREST_TYPE: dict[NetType | TankType, InterestType] = {
+    NetType.SERVER_HELLO: InterestType.INTEREST_SERVER_HELLO,
+    NetType.GENERIC_TEXT: InterestType.INTEREST_GENERIC_TEXT,
+    NetType.GAME_MESSAGE: InterestType.INTEREST_GAME_MESSAGE,
+    NetType.TANK_PACKET: InterestType.INTEREST_TANK_PACKET,
+    NetType.ERROR: InterestType.INTEREST_ERROR,
+    NetType.TRACK: InterestType.INTEREST_TRACK,
+    NetType.CLIENT_LOG_REQUEST: InterestType.INTEREST_CLIENT_LOG_REQUEST,
+    NetType.CLIENT_LOG_RESPONSE: InterestType.INTEREST_CLIENT_LOG_RESPONSE,
+}
+_PACKET_TO_INTEREST_TYPE2: dict[NetType | TankType, InterestType] = {
+    TankType.STATE: InterestType.INTEREST_STATE,
+    TankType.CALL_FUNCTION: InterestType.INTEREST_CALL_FUNCTION,
+    TankType.UPDATE_STATUS: InterestType.INTEREST_UPDATE_STATUS,
+    TankType.TILE_CHANGE_REQUEST: InterestType.INTEREST_TILE_CHANGE_REQUEST,
+    TankType.SEND_MAP_DATA: InterestType.INTEREST_SEND_MAP_DATA,
+    TankType.SEND_TILE_UPDATE_DATA: InterestType.INTEREST_SEND_TILE_UPDATE_DATA,
+    TankType.SEND_TILE_UPDATE_DATA_MULTIPLE: InterestType.INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE,
+    TankType.TILE_ACTIVATE_REQUEST: InterestType.INTEREST_TILE_ACTIVATE_REQUEST,
+    TankType.TILE_APPLY_DAMAGE: InterestType.INTEREST_TILE_APPLY_DAMAGE,
+    TankType.SEND_INVENTORY_STATE: InterestType.INTEREST_SEND_INVENTORY_STATE,
+    TankType.ITEM_ACTIVATE_REQUEST: InterestType.INTEREST_ITEM_ACTIVATE_REQUEST,
+    TankType.ITEM_ACTIVATE_OBJECT_REQUEST: InterestType.INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST,
+    TankType.SEND_TILE_TREE_STATE: InterestType.INTEREST_SEND_TILE_TREE_STATE,
+    TankType.MODIFY_ITEM_INVENTORY: InterestType.INTEREST_MODIFY_ITEM_INVENTORY,
+    TankType.ITEM_CHANGE_OBJECT: InterestType.INTEREST_ITEM_CHANGE_OBJECT,
+    TankType.SEND_LOCK: InterestType.INTEREST_SEND_LOCK,
+    TankType.SEND_ITEM_DATABASE_DATA: InterestType.INTEREST_SEND_ITEM_DATABASE_DATA,
+    TankType.SEND_PARTICLE_EFFECT: InterestType.INTEREST_SEND_PARTICLE_EFFECT,
+    TankType.SET_ICON_STATE: InterestType.INTEREST_SET_ICON_STATE,
+    TankType.ITEM_EFFECT: InterestType.INTEREST_ITEM_EFFECT,
+    TankType.SET_CHARACTER_STATE: InterestType.INTEREST_SET_CHARACTER_STATE,
+    TankType.PING_REPLY: InterestType.INTEREST_PING_REPLY,
+    TankType.PING_REQUEST: InterestType.INTEREST_PING_REQUEST,
+    TankType.GOT_PUNCHED: InterestType.INTEREST_GOT_PUNCHED,
+    TankType.APP_CHECK_RESPONSE: InterestType.INTEREST_APP_CHECK_RESPONSE,
+    TankType.APP_INTEGRITY_FAIL: InterestType.INTEREST_APP_INTEGRITY_FAIL,
+    TankType.DISCONNECT: InterestType.INTEREST_DISCONNECT,
+    TankType.BATTLE_JOIN: InterestType.INTEREST_BATTLE_JOIN,
+    TankType.BATTLE_EVENT: InterestType.INTEREST_BATTLE_EVENT,
+    TankType.USE_DOOR: InterestType.INTEREST_USE_DOOR,
+    TankType.SEND_PARENTAL: InterestType.INTEREST_SEND_PARENTAL,
+    TankType.GONE_FISHIN: InterestType.INTEREST_GONE_FISHIN,
+    TankType.STEAM: InterestType.INTEREST_STEAM,
+    TankType.PET_BATTLE: InterestType.INTEREST_PET_BATTLE,
+    TankType.NPC: InterestType.INTEREST_NPC,
+    TankType.SPECIAL: InterestType.INTEREST_SPECIAL,
+    TankType.SEND_PARTICLE_EFFECT_V2: InterestType.INTEREST_SEND_PARTICLE_EFFECT_V2,
+    TankType.ACTIVATE_ARROW_TO_ITEM: InterestType.INTEREST_ACTIVATE_ARROW_TO_ITEM,
+    TankType.SELECT_TILE_INDEX: InterestType.INTEREST_SELECT_TILE_INDEX,
+    TankType.SEND_PLAYER_TRIBUTE_DATA: InterestType.INTEREST_SEND_PLAYER_TRIBUTE_DATA,
+    TankType.FTUE_SET_ITEM_TO_QUICK_INVENTORY: InterestType.INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY,
+    TankType.PVE_NPC: InterestType.INTEREST_PVE_NPC,
+    TankType.PVP_CARD_BATTLE: InterestType.INTEREST_PVP_CARD_BATTLE,
+    TankType.PVE_APPLY_PLAYER_DAMAGE: InterestType.INTEREST_PVE_APPLY_PLAYER_DAMAGE,
+    TankType.PVE_NPC_POSITION_UPDATE: InterestType.INTEREST_PVE_NPC_POSITION_UPDATE,
+    TankType.SET_EXTRA_MODS: InterestType.INTEREST_SET_EXTRA_MODS,
+    TankType.ON_STEP_TILE_MOD: InterestType.INTEREST_ON_STEP_TILE_MOD,
 }
 
 
@@ -583,12 +644,10 @@ class Broker:
     logger = logging.getLogger("broker")
 
     def __init__(self, pull_queue: Queue[PreparedPacket | None] | Callable[[PreparedPacket | None], Any] | None = None, addr: str = "tcp://127.0.0.1:6712") -> None:
-        self._context = zmq.Context()
-        self._socket = self._context.socket(zmq.ROUTER)
-        self._socket.setsockopt(zmq.LINGER, 0)
-        self._socket.bind(addr)
-        self._socket_lock = threading.Lock()
         self._suppress_log = False
+
+        self._context = zmq.Context()
+        self.router = Router(self._context, addr)
 
         self._extension_mgr = ExtensionManager()
         self._pending_chain: dict[bytes, PendingChain] = {}
@@ -653,9 +712,9 @@ class Broker:
     #     else:
     #         self.logger.warning(f"pull unhandled: {pkt}")
 
-        # if not self._suppress_log and self.logger.isEnabledFor(logging.DEBUG):
-        #     pkt = PreparedPacket.from_pending(pkt)
-        #     self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
+    # if not self._suppress_log and self.logger.isEnabledFor(logging.DEBUG):
+    #     pkt = PreparedPacket.from_pending(pkt)
+    #     self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
 
     # def _pull_thread(self) -> None:
     #     if BENCHMARK:
@@ -681,30 +740,28 @@ class Broker:
     #     self.logger.debug("pull thread exiting")
 
     def _recv(self) -> tuple[bytes, Packet | None]:
-        with self._socket_lock:
-            if self._stop_event.is_set():
-                return b"", None
+        if self._stop_event.is_set():
+            return b"", None
 
-            try:
-                if self._socket.poll(100, zmq.POLLIN) == 0:
-                    return b"", None
+        payload = self.router.recv()
+        if payload is None:
+            return b"", None
 
-                id, data = self._socket.recv_multipart(zmq.NOBLOCK)
-            except zmq.error.Again:
-                return b"", None
-            except zmq.error.ZMQError as e:
-                if self._stop_event.is_set():
-                    return b"", None
-                self.logger.error(f"recv error: {e}")
-                return b"", None
+        id, data = payload
+        assert id, "expected id"
+        pkt = Packet()
+        pkt.ParseFromString(data)
 
-            pkt = Packet()
-            pkt.ParseFromString(data)
+        if not self._suppress_log:
+            self.logger.debug(f"\x1b[31m<<--\x1b[0m recv    \x1b[31m<<\x1b[0m{pkt!r}\x1b[31m<<\x1b[0m")
 
-            if not self._suppress_log:
-                self.logger.debug(f"\x1b[31m<<--\x1b[0m recv    \x1b[31m<<\x1b[0m{pkt!r}\x1b[31m<<\x1b[0m")
+        return id, pkt
 
-            return id, pkt
+    def _send(self, extension: bytes, pkt: Packet) -> None:
+        if self._stop_event.is_set():
+            return
+
+        self.router.send((extension, pkt.SerializeToString()))
 
     def broadcast(self, pkt: Packet) -> None:
         for ext in self._extension_mgr.get_all_extension():
@@ -714,87 +771,13 @@ class Broker:
                 self.logger.error(f"failed to send packet to {ext.id}: {e}")
                 continue
 
-    def _send(self, extension: bytes, pkt: Packet) -> None:
-        with self._socket_lock:
-            if self._stop_event.is_set():
-                return
-
-            if not self._suppress_log:
-                self.logger.debug(f"   send \x1b[32m-->>\x1b[0m target={extension}: \x1b[32m>>\x1b[0m{pkt!r}\x1b[32m>>\x1b[0m")
-            try:
-                if self._socket.poll(100, zmq.POLLOUT):
-                    self._socket.send_multipart((extension, pkt.SerializeToString()))
-            except zmq.error.ZMQError as e:
-                if not self._stop_event.is_set():
-                    self.logger.error(f"Send error: {e}")
-
-    _PACKET_TO_INTEREST_TYPE: dict[NetType | TankType, InterestType] = {
-        NetType.SERVER_HELLO: InterestType.INTEREST_SERVER_HELLO,
-        NetType.GENERIC_TEXT: InterestType.INTEREST_GENERIC_TEXT,
-        NetType.GAME_MESSAGE: InterestType.INTEREST_GAME_MESSAGE,
-        NetType.TANK_PACKET: InterestType.INTEREST_TANK_PACKET,
-        NetType.ERROR: InterestType.INTEREST_ERROR,
-        NetType.TRACK: InterestType.INTEREST_TRACK,
-        NetType.CLIENT_LOG_REQUEST: InterestType.INTEREST_CLIENT_LOG_REQUEST,
-        NetType.CLIENT_LOG_RESPONSE: InterestType.INTEREST_CLIENT_LOG_RESPONSE,
-    }
-    _PACKET_TO_INTEREST_TYPE2: dict[NetType | TankType, InterestType] = {
-        TankType.STATE: InterestType.INTEREST_STATE,
-        TankType.CALL_FUNCTION: InterestType.INTEREST_CALL_FUNCTION,
-        TankType.UPDATE_STATUS: InterestType.INTEREST_UPDATE_STATUS,
-        TankType.TILE_CHANGE_REQUEST: InterestType.INTEREST_TILE_CHANGE_REQUEST,
-        TankType.SEND_MAP_DATA: InterestType.INTEREST_SEND_MAP_DATA,
-        TankType.SEND_TILE_UPDATE_DATA: InterestType.INTEREST_SEND_TILE_UPDATE_DATA,
-        TankType.SEND_TILE_UPDATE_DATA_MULTIPLE: InterestType.INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE,
-        TankType.TILE_ACTIVATE_REQUEST: InterestType.INTEREST_TILE_ACTIVATE_REQUEST,
-        TankType.TILE_APPLY_DAMAGE: InterestType.INTEREST_TILE_APPLY_DAMAGE,
-        TankType.SEND_INVENTORY_STATE: InterestType.INTEREST_SEND_INVENTORY_STATE,
-        TankType.ITEM_ACTIVATE_REQUEST: InterestType.INTEREST_ITEM_ACTIVATE_REQUEST,
-        TankType.ITEM_ACTIVATE_OBJECT_REQUEST: InterestType.INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST,
-        TankType.SEND_TILE_TREE_STATE: InterestType.INTEREST_SEND_TILE_TREE_STATE,
-        TankType.MODIFY_ITEM_INVENTORY: InterestType.INTEREST_MODIFY_ITEM_INVENTORY,
-        TankType.ITEM_CHANGE_OBJECT: InterestType.INTEREST_ITEM_CHANGE_OBJECT,
-        TankType.SEND_LOCK: InterestType.INTEREST_SEND_LOCK,
-        TankType.SEND_ITEM_DATABASE_DATA: InterestType.INTEREST_SEND_ITEM_DATABASE_DATA,
-        TankType.SEND_PARTICLE_EFFECT: InterestType.INTEREST_SEND_PARTICLE_EFFECT,
-        TankType.SET_ICON_STATE: InterestType.INTEREST_SET_ICON_STATE,
-        TankType.ITEM_EFFECT: InterestType.INTEREST_ITEM_EFFECT,
-        TankType.SET_CHARACTER_STATE: InterestType.INTEREST_SET_CHARACTER_STATE,
-        TankType.PING_REPLY: InterestType.INTEREST_PING_REPLY,
-        TankType.PING_REQUEST: InterestType.INTEREST_PING_REQUEST,
-        TankType.GOT_PUNCHED: InterestType.INTEREST_GOT_PUNCHED,
-        TankType.APP_CHECK_RESPONSE: InterestType.INTEREST_APP_CHECK_RESPONSE,
-        TankType.APP_INTEGRITY_FAIL: InterestType.INTEREST_APP_INTEGRITY_FAIL,
-        TankType.DISCONNECT: InterestType.INTEREST_DISCONNECT,
-        TankType.BATTLE_JOIN: InterestType.INTEREST_BATTLE_JOIN,
-        TankType.BATTLE_EVENT: InterestType.INTEREST_BATTLE_EVENT,
-        TankType.USE_DOOR: InterestType.INTEREST_USE_DOOR,
-        TankType.SEND_PARENTAL: InterestType.INTEREST_SEND_PARENTAL,
-        TankType.GONE_FISHIN: InterestType.INTEREST_GONE_FISHIN,
-        TankType.STEAM: InterestType.INTEREST_STEAM,
-        TankType.PET_BATTLE: InterestType.INTEREST_PET_BATTLE,
-        TankType.NPC: InterestType.INTEREST_NPC,
-        TankType.SPECIAL: InterestType.INTEREST_SPECIAL,
-        TankType.SEND_PARTICLE_EFFECT_V2: InterestType.INTEREST_SEND_PARTICLE_EFFECT_V2,
-        TankType.ACTIVATE_ARROW_TO_ITEM: InterestType.INTEREST_ACTIVATE_ARROW_TO_ITEM,
-        TankType.SELECT_TILE_INDEX: InterestType.INTEREST_SELECT_TILE_INDEX,
-        TankType.SEND_PLAYER_TRIBUTE_DATA: InterestType.INTEREST_SEND_PLAYER_TRIBUTE_DATA,
-        TankType.FTUE_SET_ITEM_TO_QUICK_INVENTORY: InterestType.INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY,
-        TankType.PVE_NPC: InterestType.INTEREST_PVE_NPC,
-        TankType.PVP_CARD_BATTLE: InterestType.INTEREST_PVP_CARD_BATTLE,
-        TankType.PVE_APPLY_PLAYER_DAMAGE: InterestType.INTEREST_PVE_APPLY_PLAYER_DAMAGE,
-        TankType.PVE_NPC_POSITION_UPDATE: InterestType.INTEREST_PVE_NPC_POSITION_UPDATE,
-        TankType.SET_EXTRA_MODS: InterestType.INTEREST_SET_EXTRA_MODS,
-        TankType.ON_STEP_TILE_MOD: InterestType.INTEREST_ON_STEP_TILE_MOD,
-    }
-
     def _get_interested_extension(self, pkt: PreparedPacket) -> Iterator[Client]:
-        interest_type = self._PACKET_TO_INTEREST_TYPE[pkt.as_net.type]
+        interest_type = _PACKET_TO_INTEREST_TYPE[pkt.as_net.type]
         interest_type2: list[Client] = []
         if pkt.as_net.type == NetType.TANK_PACKET:
             interest_type2.extend(
                 self._extension_mgr.get_interested_extension(
-                    self._PACKET_TO_INTEREST_TYPE2[pkt.as_net.tank.type],
+                    _PACKET_TO_INTEREST_TYPE2[pkt.as_net.tank.type],
                     pkt,
                 )
             )
@@ -951,6 +934,7 @@ class Broker:
             self._send(client.ext.id, pkt)
 
     def start(self, block: bool = False) -> None:
+        self.router.start(block=False)
         if block:
             self._worker_thread()
         else:
@@ -966,13 +950,19 @@ class Broker:
         self.broadcast(Packet(type=Packet.TYPE_DISCONNECT))
         self._stop_event.set()
 
+        try:
+            self.logger.debug("stopping router")
+            self.router.stop()
+        except Exception as e:
+            self.logger.debug(f"router error: {e}")
+
+        if self._scheduler:
+            self.logger.debug(f"stopping packet scheduler")
+            self._scheduler.stop()
+
         if self._worker_thread_id and self._worker_thread_id.is_alive():
             self._worker_thread_id.join(timeout=2.0)
             self.logger.debug("worker thread exited")
-
-        # if self._pull_thread_id and self._pull_thread_id.is_alive():
-        #     self._pull_thread_id.join(timeout=2.0)
-        #     self.logger.debug("pull thread exited")
 
         try:
             self.logger.debug("closing zmq context")
@@ -980,9 +970,9 @@ class Broker:
         except Exception as e:
             self.logger.debug(f"context term error: {e}")
 
-        if self._scheduler:
-            self.logger.debug(f"stopping packet scheduler")
-            self._scheduler.stop()
+        # if self._pull_thread_id and self._pull_thread_id.is_alive():
+        #     self._pull_thread_id.join(timeout=2.0)
+        #     self.logger.debug("pull thread exited")
 
         self.logger.debug("broker has stopped")
 
@@ -1028,7 +1018,8 @@ class Broker:
     def _handle_packet(self, pkt: PendingPacket) -> None:
         assert pkt._packet_id, "invalid packet id"
         if (chain := self._pending_chain.get(pkt._packet_id)) is not None:
-            if TRACE: print(f"\t\t\tPACKET {PendingPacket.Op.Name(pkt._op)} IS {chain.current}")
+            if TRACE:
+                print(f"\t\t\tPACKET {PendingPacket.Op.Name(pkt._op)} IS {chain.current}")
             match pkt._op:
                 case PendingPacket.OP_FINISH:
                     chain.current = pkt
@@ -1046,7 +1037,8 @@ class Broker:
                 case _:
                     raise ValueError(f"invalid op: {pkt._op}")
         elif (pending := self._pending_packet.pop(pkt._packet_id, None)) is not None:
-            if TRACE: print(f"\t\t\tPACKET {PendingPacket.Op.Name(pkt._op)} IS {pending.current}")
+            if TRACE:
+                print(f"\t\t\tPACKET {PendingPacket.Op.Name(pkt._op)} IS {pending.current}")
             match pkt._op:
                 case PendingPacket.OP_FINISH:
                     self._finish(pending, pkt)
@@ -1066,7 +1058,7 @@ class Broker:
             while not self._stop_event.is_set():
                 id, pkt = self._recv()
                 if pkt is None:
-                    continue
+                    break
 
                 match pkt.type:
                     case Packet.TYPE_PUSH_PACKET:
@@ -1114,7 +1106,6 @@ class Broker:
                             except Exception as e:
                                 self.logger.error(f"error in handler: {e}")
                                 print_exc()
-
         except (KeyboardInterrupt, InterruptedError):
             pass
         except zmq.error.ZMQError as e:

@@ -1,6 +1,5 @@
 from abc import abstractmethod
 from argparse import ArgumentParser
-from dataclasses import dataclass
 import struct
 from typing import Callable, cast
 import os
@@ -9,11 +8,11 @@ import traceback
 import zmq
 import logging
 import time
-from zmq.utils.monitor import recv_monitor_message
 
 from gtools.core.growtopia.packet import PreparedPacket
 from gtools.core.log import setup_logger
 from gtools.core.signal import Signal
+from gtools.core.transport.zmq_router import Dealer
 from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
     CapabilityResponse,
@@ -25,12 +24,6 @@ from gtools.protogen.state_pb2 import STATE_SET_MY_TELEMETRY
 from gtools.proxy.extension.sdk_utils import ExtensionUtility
 from gtools.proxy.state import State, Status
 from gtools.proxy.setting import _setting
-
-
-@dataclass
-class SocketStatus:
-    name: str
-    connected: Signal[bool]
 
 
 def register_thread(fn: Callable) -> Callable:
@@ -64,16 +57,13 @@ def dispatch_fallback(fn: UnboundDispatchHandle) -> UnboundDispatchHandle:
 class Extension(ExtensionUtility):
     logger = logging.getLogger("extension")
 
-    def __init__(self, name: str, interest: list[Interest], broker_addr: str | None = None) -> None:
-        self._name = name.encode()
+    def __init__(self, name: str | bytes, interest: list[Interest], broker_addr: str | None = None) -> None:
+        self._name = name.encode() if isinstance(name, str) else name
         self._interest = interest
         self._broker_addr = broker_addr if broker_addr else f"tcp://127.0.0.1:{os.getenv("PORT", 6712)}"
 
         self._context = zmq.Context()
-        self._socket = self._context.socket(zmq.DEALER)
-        self._socket.setsockopt(zmq.IDENTITY, self._name)
-        self._socket.setsockopt(zmq.LINGER, 0)
-        self._send_lock = threading.Lock()
+        self.dealer = Dealer(self._context, self._name, self._broker_addr)
 
         # self._push_socket = self._context.socket(zmq.PUSH)
         # self._push_socket.setsockopt(zmq.LINGER, 0)
@@ -81,9 +71,6 @@ class Extension(ExtensionUtility):
 
         self._worker_thread_id: threading.Thread | None = None
         self._monitor_thread_id: threading.Thread | None = None
-
-        self._monitors: dict[zmq.SyncSocket, SocketStatus] = {}
-        self._monitor_poller = zmq.Poller()
 
         self._stop_event = Signal(False)
         self.broker_connected = Signal(False)
@@ -95,52 +82,29 @@ class Extension(ExtensionUtility):
         self._dispatch_fallback: DispatchHandle | None = None
         self.state = State()
 
-    # NOTE: because we set linger to 0, any messages queued when broker restarts will be dropped.
-    # so either each extension needs to know the connectivity states, so it can reset it states as to not
-    # send out of state packet.
-    # or, we set the linger to -1 again, but then there may be issues with cleanup,
     def push(self, pkt: PreparedPacket) -> None:
         self.logger.debug(f"   push \x1b[35m-->>\x1b[0m \x1b[35m>>\x1b[0m{pkt!r}\x1b[35m>>\x1b[0m")
         pending = pkt.to_pending()
         pending._rtt_ns = struct.pack("<Q", time.monotonic_ns())
         self._send(Packet(type=Packet.TYPE_PUSH_PACKET, push_packet=pending))
 
-    # TODO: have a send_to() possibly?
-
     def _send(self, pkt: Packet) -> None:
         if self._stop_event.get():
             return
 
         self.logger.debug(f"   send \x1b[31m-->>\x1b[0m \x1b[31m>>\x1b[0m{pkt!r}\x1b[31m>>\x1b[0m")
-        with self._send_lock:
-            try:
-                if self._socket.poll(100, zmq.POLLOUT):
-                    self._socket.send(pkt.SerializeToString(), zmq.NOBLOCK)
-            except zmq.error.ZMQError as e:
-                if not self._stop_event.get():
-                    self.logger.debug(f"send error: {e}")
+        self.dealer.send(pkt.SerializeToString())
 
     def _recv(self, expected: Packet.Type | None = None) -> Packet | None:
         if self._stop_event.get():
             return None
 
-        try:
-            events = self._socket.poll(100, zmq.POLLIN)
-
-            if events == 0:
-                return None
-
-            data = self._socket.recv(zmq.NOBLOCK)
-        except zmq.error.Again:
-            return None
-        except zmq.error.ZMQError as e:
-            if self._stop_event.get():
-                return None
-            self.logger.debug(f"recv error: {e}")
-            return None
+        payload = self.dealer.recv()
+        if payload is None:
+            return
 
         pkt = Packet()
-        pkt.ParseFromString(data)
+        pkt.ParseFromString(payload)
 
         if expected and pkt.type != expected:
             raise TypeError(f"expected type {expected!r} got {pkt.type!r}")
@@ -189,10 +153,7 @@ class Extension(ExtensionUtility):
         self._monitor_thread_id.start()
         self._resolve_decorator()
 
-        self._socket.connect(self._broker_addr)
-        mon = self._socket.get_monitor_socket()
-        self._monitors[mon] = SocketStatus("broker", self.broker_connected)
-        self._monitor_poller.register(mon)
+        self.dealer.start()
 
         if block:
             try:
@@ -221,9 +182,10 @@ class Extension(ExtensionUtility):
         self._stop_event.set(True)
 
         try:
-            self._socket.close()
+            self.dealer.stop()
         except Exception as e:
-            self.logger.debug(f"socket close error: {e}")
+            self.logger.debug(f"dealer close error: {e}")
+        # TODO: ensure broker_connected only set to false if its guaranteed that its already removed from the extension_mgr in broker
         self.broker_connected.set(False)
         # try:
         #     self._push_socket.close()
@@ -250,48 +212,18 @@ class Extension(ExtensionUtility):
     def _monitor_thread(self) -> None:
         try:
             while not self._stop_event.get():
-                events = dict(self._monitor_poller.poll(100))
-
-                for mon, _ in events.items():
-                    try:
-                        evt = recv_monitor_message(mon, zmq.NOBLOCK)
-                    except zmq.error.Again:
-                        continue
-
-                    if not evt:
-                        continue
-
-                    event = evt["event"]
-                    source = self._monitors[mon]
-
-                    # print(source, zmq.Event(event).name)
-                    if event == zmq.EVENT_CONNECTED:
-                        self.logger.debug(f"{source.name} connected")
-                        if source.name == "broker":
-                            self._send(Packet(type=Packet.TYPE_HANDSHAKE))
-                        elif source.name == "push":
-                            source.connected.set(True)
-
-                    elif event in (
-                        zmq.EVENT_DISCONNECTED,
-                        zmq.EVENT_MONITOR_STOPPED,
-                        zmq.EVENT_CLOSED,
-                    ):
-                        if source.connected:
-                            self.logger.debug(f"{source.name} disconnected")
-                        source.connected.set(False)
-
+                event = self.dealer.recv_event()
+                if event["event"] == zmq.EVENT_CONNECTED:
+                    self.logger.debug(f"connected")
+                    self._send(Packet(type=Packet.TYPE_HANDSHAKE))
+                elif event["event"] in (
+                    zmq.EVENT_DISCONNECTED,
+                    zmq.EVENT_MONITOR_STOPPED,
+                    zmq.EVENT_CLOSED,
+                ):
+                    self.broker_connected.set(False)
         except Exception as e:
             self.logger.debug(f"monitor thread error: {e}")
-
-        finally:
-            for mon in self._monitors:
-                try:
-                    self._monitor_poller.unregister(mon)
-                    mon.close()
-                except Exception:
-                    pass
-            self.logger.debug("monitor thread exiting")
 
     def forward(self, new: PendingPacket) -> PendingPacket:
         new._op = PendingPacket.OP_FORWARD
@@ -316,12 +248,8 @@ class Extension(ExtensionUtility):
         try:
             while not self._stop_event.get():
                 pkt = self._recv()
-
                 if pkt is None:
-                    if self._stop_event.get():
-                        break
-
-                    continue
+                    break
 
                 match pkt.type:
                     case Packet.TYPE_PENDING_PACKET:
