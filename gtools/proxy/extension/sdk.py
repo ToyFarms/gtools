@@ -346,7 +346,6 @@ class Extension(ExtensionUtility):
                             )
                         )
                     case Packet.TYPE_STATE_RESPONSE:
-                        print(pkt.state_response.state)
                         self.state = State.from_proto(pkt.state_response.state)
                         if self.state.status == Status.IN_WORLD:
                             self.console_log(f"extension {self._name.decode(errors='backslashreplace')} connected")
