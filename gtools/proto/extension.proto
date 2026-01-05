@@ -14,12 +14,14 @@ message Packet {
     TYPE_CAPABILITY_REQUEST = 3;
     TYPE_CAPABILITY_RESPONSE = 4;
     TYPE_DISCONNECT = 5;
+    TYPE_DISCONNECT_ACK = 12;
     TYPE_CONNECTED = 6;
     TYPE_PENDING_PACKET = 7;
     TYPE_STATE_REQUEST = 8;
     TYPE_STATE_RESPONSE = 9;
     TYPE_STATE_UPDATE = 10;
     TYPE_PUSH_PACKET = 11;
+    TYPE_HEARTBEAT = 13;
   }
 
   Type type = 1;
@@ -29,14 +31,20 @@ message Packet {
     CapabilityRequest capability_request = 4;
     CapabilityResponse capability_response = 5;
     Disconnect disconnect = 6;
+    DisconnectAck disconnect_ack = 13;
     Connected connected = 7;
     PendingPacket pending_packet = 8;
     StateRequest state_request = 9;
     StateResponse state_response = 10;
     gtools.state.StateUpdate state_update = 11;
     PendingPacket push_packet = 12;
+    HeartBeat heart_beat = 14;
   }
 }
+
+message HeartBeat {}
+
+message DisconnectAck {}
 
 message Handshake { string name = 1; }
 
@@ -67,11 +75,11 @@ message PendingPacket {
   uint32 _hit_count = 6;
 
   // TODO:
-  // is it necessary to store this in bytes? no. unless this project still holds for the next 5 centuries
-  // overflow int64: 2262 apr
-  // overflow uint64: 2554 jul
+  // is it necessary to store this in bytes? no. unless this project still holds
+  // for the next 5 centuries overflow int64: 2262 apr overflow uint64: 2554 jul
   // convert to use uint64
-  // repeated for each extension, each pending handle in broker will append the amount of time taken for that specific extension
+  // repeated for each extension, each pending handle in broker will append the
+  // amount of time taken for that specific extension
   bytes _rtt_ns = 7;
   uint32 interest_id = 8;
 }
@@ -142,8 +150,8 @@ enum InterestType {
   INTEREST_SET_EXTRA_MODS = 56;
   INTEREST_ON_STEP_TILE_MOD = 57;
 
-  // TODO: we should segment this further, but for now we just send all state update
-  // INTEREST_STATE_ME = 58;           // receive update about me
+  // TODO: we should segment this further, but for now we just send all state
+  // update INTEREST_STATE_ME = 58;           // receive update about me
   // INTEREST_STATE_WORLD = 59;        // init, place, break
   // INTEREST_STATE_OTHER_PLAYER = 60; // when player join, exit.
   INTEREST_STATE_UPDATE = 61;
@@ -160,7 +168,8 @@ enum BlockingMode {
   BLOCKING_MODE_UNSPECIFIED = 0;
   BLOCKING_MODE_BLOCK = 1;
   BLOCKING_MODE_SEND_AND_FORGET = 2;
-  BLOCKING_MODE_SEND_AND_CANCEL = 4;  // like send and forget, but cancel the original packet
+  BLOCKING_MODE_SEND_AND_CANCEL =
+      4; // like send and forget, but cancel the original packet
   BLOCKING_MODE_ONESHOT = 3;
   BLOCKING_MODE_ONESHOT_AND_CANCEL = 5;
 }
@@ -248,9 +257,7 @@ message InterestClientLogRequest {}
 message InterestClientLogResponse {}
 
 message InterestState { repeated gtools.op.BinOp where = 1; }
-message InterestCallFunction {
-  repeated gtools.op.BinOp where = 1;
-}
+message InterestCallFunction { repeated gtools.op.BinOp where = 1; }
 message InterestUpdateStatus { repeated gtools.op.BinOp where = 1; }
 message InterestTileChangeRequest { repeated gtools.op.BinOp where = 1; }
 message InterestSendMapData { repeated gtools.op.BinOp where = 1; }

@@ -8,7 +8,7 @@ import ssl
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.network import resolve_doh
 from gtools.proxy.event import UpdateServerData
-from gtools.proxy.setting import _setting
+from gtools.proxy.setting import setting
 
 # TODO: rename file to server_data.py
 
@@ -32,7 +32,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         context.check_hostname = False
         context.verify_mode = ssl.VerifyMode.CERT_NONE
 
-        conn = http.client.HTTPSConnection(resolve_doh(_setting.server_data_url)[0], context=context)
+        conn = http.client.HTTPSConnection(resolve_doh(setting.server_data_url)[0], context=context)
         conn.request("POST", "/growtopia/server_data.php", body, headers)
 
         resp = conn.getresponse()
@@ -53,8 +53,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         orig_server = kv["server", 1].decode()
         orig_port = int(kv["port", 1].decode())
 
-        kv["server", 1] = _setting.proxy_server
-        kv["port", 1] = _setting.proxy_port
+        kv["server", 1] = setting.proxy_server
+        kv["port", 1] = setting.proxy_port
         kv["type2", 1] = 1
 
         body = kv.serialize()

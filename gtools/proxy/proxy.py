@@ -45,7 +45,7 @@ from gtools.proxy.event import UpdateServerData
 from gtools.proxy.extension.broker import Broker, BrokerFunction, PacketCallback
 from gtools.proxy.proxy_client import ProxyClient
 from gtools.proxy.proxy_server import ProxyServer
-from gtools.proxy.setting import _setting
+from gtools.proxy.setting import setting
 from gtools.proxy.state import Inventory, State, Status, World
 from thirdparty.enet.bindings import ENetEventType, ENetPeer, enet_host_flush
 from thirdparty.hexdump import hexdump
@@ -60,8 +60,8 @@ class Proxy:
     logger = logging.getLogger("proxy")
 
     def __init__(self) -> None:
-        self.proxy_server = ProxyServer(_setting.proxy_server, _setting.proxy_port)
-        self.logger.info(f"proxy server listening on {_setting.proxy_server}:{_setting.proxy_port}")
+        self.proxy_server = ProxyServer(setting.proxy_server, setting.proxy_port)
+        self.logger.info(f"proxy server listening on {setting.proxy_server}:{setting.proxy_port}")
         self.proxy_client = ProxyClient()
         self.logger.debug("proxy client initialized")
 
@@ -134,8 +134,8 @@ class Proxy:
                     )
                     self.logger.info(f"redirecting to {self.server_data.server}:{self.server_data.port}")
 
-                    server_data[0, 0] = _setting.proxy_server
-                    v[1] = Variant.vint(_setting.proxy_port)
+                    server_data[0, 0] = setting.proxy_server
+                    v[1] = Variant.vint(setting.proxy_port)
                     v[4] = Variant.vstr(server_data.serialize())
 
                     pkt.as_net.tank.extended_data = v.serialize()
@@ -427,7 +427,7 @@ class Proxy:
                         )
                     case TankType.SEND_MAP_DATA:
                         world = World.deserialize(pkt.tank.extended_data).to_proto()
-                        write_async(pkt.serialize(), _setting.appdir / "worlds" / world.inner.name.decode(), "wb")
+                        write_async(pkt.serialize(), setting.appdir / "worlds" / world.inner.name.decode(), "wb")
 
                         self._send_state_update(
                             StateUpdate(

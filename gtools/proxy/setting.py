@@ -13,12 +13,14 @@ class _Setting:
     proxy_port: int
     appdir_name: Path
     appdir: Path
+    broker_addr: str
 
 
-_setting = _Setting(
+setting = _Setting(
     server_data_url="www.growtopia1.com",
     proxy_server="127.0.0.1",
     proxy_port=16999,
     appdir_name=Path(".gtools"),
     appdir=Path.home() / ".gtools",
+    broker_addr="tcp://127.0.0.1:6712",
 )

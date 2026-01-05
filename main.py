@@ -22,10 +22,10 @@ from gtools.protogen.extension_pb2 import (
 )
 from gtools.proxy import login
 from gtools.proxy.extension.broker import Broker
-from gtools.proxy.extension.sdk import Extension
+from gtools.proxy.extension.sdk import Extension, register_thread
 from gtools.proxy.proxy import Proxy
 from thirdparty.enet.bindings import ENetPacketFlag
-from gtools.proxy.setting import _setting
+from gtools.proxy.setting import setting
 from extension.utils import UtilityExtension
 
 
@@ -95,7 +95,7 @@ if __name__ == "__main__":
             pass
 
     level = logging.DEBUG if args.v else logging.INFO
-    setup_logger(log_dir=_setting.appdir / "logs", level=level)
+    setup_logger(log_dir=setting.appdir / "logs", level=level)
 
     if args.cmd == "test":
         test_server()
@@ -143,6 +143,7 @@ if __name__ == "__main__":
             def __init__(self) -> None:
                 super().__init__(name="stress", interest=[Interest(interest=INTEREST_TANK_PACKET, priority=0, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)])
 
+            @register_thread
             def thread_spam(self) -> None:
                 p = PreparedPacket(packet=NetPacket(type=NetType.GAME_MESSAGE, data=StrKV([[b"test", b"1"]])), direction=DIRECTION_SERVER_TO_CLIENT, flags=ENetPacketFlag.RELIABLE)
                 while True:

@@ -1,5 +1,6 @@
 import json
 import socket
+from urllib.parse import urlparse, urlunparse
 import urllib.request
 
 
@@ -23,3 +24,26 @@ def is_up(host, port=80, timeout=2):
             return True
     except Exception:
         return False
+
+
+def increment_port(url: str) -> str:
+    parsed = urlparse(url)
+
+    hostname = parsed.hostname
+    if hostname is None:
+        raise ValueError("invalid URL")
+
+    new_port = (parsed.port or 0) + 1
+
+    if ":" in hostname and not hostname.startswith("["):
+        netloc = f"[{hostname}]:{new_port}"
+    else:
+        netloc = f"{hostname}:{new_port}"
+
+    if parsed.username:
+        auth = parsed.username
+        if parsed.password:
+            auth += f":{parsed.password}"
+        netloc = f"{auth}@{netloc}"
+
+    return urlunparse(parsed._replace(netloc=netloc))

@@ -13,7 +13,7 @@ import xxhash
 from zmq import IntFlag
 
 from gtools.core.buffer import Buffer
-from gtools.proxy.setting import _setting
+from gtools.proxy.setting import setting
 
 
 SECRET = b"PBG892FXX982ABC*"
@@ -643,7 +643,7 @@ class item_database:
             candidate: list[Path] = [
                 Path.home() / "AppData" / "Local" / "Growtopia" / "cache" / "items.dat",
                 Path(os.getenv("ITEMS", "items.dat")),
-                _setting.appdir / "resources" / "items.dat",
+                setting.appdir / "resources" / "items.dat",
             ]
             for path in candidate:
                 if not path.is_file() or path.stat().st_size == 0:
@@ -663,7 +663,7 @@ class item_database:
 
     @classmethod
     def _save_cache(cls, hash: str, db: ItemDatabase, source_path: Path | None = None, source_bytes: bytes | None = None) -> None:
-        version_dir = _setting.appdir / "item_database" / f"v{db.version}"
+        version_dir = setting.appdir / "item_database" / f"v{db.version}"
         version_dir.mkdir(parents=True, exist_ok=True)
 
         existing = next(version_dir.glob(f"*_{hash}.pkl"), None)
@@ -709,7 +709,7 @@ class item_database:
         if (cached := cls._version_cache.get(version)) is not None:
             return cached
 
-        version_dir = _setting.appdir / "item_database" / f"v{version}"
+        version_dir = setting.appdir / "item_database" / f"v{version}"
         if not version_dir.is_dir():
             return None
 
@@ -735,7 +735,7 @@ class item_database:
         if (cached := cls._version_cache.get(version)) is not None:
             return cached
 
-        version_dir = _setting.appdir / "item_database" / f"v{version}"
+        version_dir = setting.appdir / "item_database" / f"v{version}"
         if not version_dir.is_dir():
             return
 
@@ -977,7 +977,7 @@ class item_database:
         if version in cls._version_cache:
             return True
 
-        version_dir = _setting.appdir / "item_database" / f"v{version}"
+        version_dir = setting.appdir / "item_database" / f"v{version}"
         if not version_dir.is_dir():
             return False
 

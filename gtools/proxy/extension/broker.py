@@ -21,9 +21,11 @@ import xxhash
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
+from gtools.core.network import increment_port
 from gtools.core.signal import Signal
-from gtools.core.transport.zmq_router import Router
-from gtools.flags import PERF, TRACE
+from gtools.core.transport.protocol import Event
+from gtools.core.transport.zmq_transport import Pull, Router
+from gtools.flags import BENCHMARK, PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_UNSPECIFIED,
@@ -40,6 +42,7 @@ from gtools.protogen.op_pb2 import BinOp, Op
 from gtools.protogen.strkv_pb2 import FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field, FieldValue
 from gtools.protogen.variant_pb2 import VariantClause
+from gtools.proxy.setting import setting
 
 
 def hash_interest(interest: Interest) -> int:
@@ -67,6 +70,7 @@ class Extension:
     def __init__(self, id: bytes, interest: list[Interest]) -> None:
         self.id = id
         self.interest = interest
+        self.last_heartbeat = 0.0
 
     def __repr__(self) -> str:
         return f"Extension(id={self.id}, interest({len(self.interest)})={list(map(hash_interest, self.interest))})"
@@ -314,6 +318,20 @@ class ExtensionManager:
         self._lock = threading.Lock()
         self._extensions: dict[bytes, Extension] = {}
         self._interest_map: defaultdict[InterestType, list[Client]] = defaultdict(list)
+
+    def im_fine(self, id: bytes) -> None:
+        if id not in self._extensions:
+            return
+
+        self._extensions[id].last_heartbeat = time.time()
+
+    def sweep(self) -> None:
+        to_remove: set[bytes] = set()
+        for id, ext in self._extensions.items():
+            if time.time() - ext.last_heartbeat > 1:
+                to_remove.add(id)
+
+        [self.remove_extension(ext) for ext in to_remove]
 
     def add_extension(self, extension: Extension) -> None:
         with self._lock:
@@ -643,11 +661,11 @@ HandleFunction = Callable[[bytes, Packet, BrokerFunction], Any]
 class Broker:
     logger = logging.getLogger("broker")
 
-    def __init__(self, pull_queue: Queue[PreparedPacket | None] | Callable[[PreparedPacket | None], Any] | None = None, addr: str = "tcp://127.0.0.1:6712") -> None:
+    def __init__(self, pull_queue: Queue[PreparedPacket | None] | Callable[[PreparedPacket | None], Any] | None = None, addr: str = setting.broker_addr) -> None:
         self._suppress_log = False
 
         self._context = zmq.Context()
-        self.router = Router(self._context, addr)
+        self._router = Router(self._context, addr)
 
         self._extension_mgr = ExtensionManager()
         self._pending_chain: dict[bytes, PendingChain] = {}
@@ -662,20 +680,31 @@ class Broker:
             self._scheduler = PacketScheduler(self._pull_queue)
         else:
             self._scheduler = None
-        # self._pull_socket = self._context.socket(zmq.PULL)
-        # self._pull_socket.setsockopt(zmq.LINGER, 0)
 
-        # _addr = urlparse(addr)
-        # _addr = _addr._replace(netloc=f"{_addr.hostname}:{(_addr.port or 18192) + 1}")
-        # self._pull_socket.bind(_addr.geturl())
-        # self._pull_port = cast(int, _addr.port)
-
-        # self.logger.debug(f"broker have push/pull capability, channel={_addr.geturl()}. starting pull thread...")
-
-        # self._pull_thread_id = threading.Thread(target=self._pull_thread)
-        # self._pull_thread_id.start()
-
+        pull_addr = increment_port(addr)
+        self._pull = Pull(self._context, pull_addr)
+        self.logger.debug(f"starting pull thread on {pull_addr}")
+        self._pull_thread_id = threading.Thread(target=self._pull_thread)
+        self._pull_thread_id.start()
         self._handler: dict[Packet.Type, HandleFunction] = {}
+        self._monitor_thread_id = threading.Thread(target=self._monitor_thread)
+
+    def _monitor_thread(self) -> None:
+        last_heartbeat = 0
+        interval = 0.5
+
+        try:
+            while not self._stop_event:
+                self._extension_mgr.sweep()
+
+                now = time.time()
+                if now - last_heartbeat > interval:
+                    self.broadcast(Packet(type=Packet.TYPE_HEARTBEAT))
+                    last_heartbeat = now
+
+                time.sleep(0.1)
+        except Exception as e:
+            self.logger.debug(f"monitor thread error: {e}")
 
     @contextmanager
     def suppressed_log(self) -> Iterator["Broker"]:
@@ -686,69 +715,63 @@ class Broker:
         finally:
             self._suppress_log = orig
 
-    # def _pull(self) -> None:
-    #     if self._stop_event.is_set():
-    #         return
+    def _pull_one(self) -> bool:
+        if self._stop_event.is_set():
+            return False
 
-    #     try:
-    #         if self._pull_socket.poll(100, zmq.POLLIN) == 0:
-    #             return
+        payload = self._pull.recv()
+        if not payload:
+            return False
 
-    #         raw = self._pull_socket.recv()
-    #     except zmq.error.Again:
-    #         return
-    #     except zmq.error.ZMQError as e:
-    #         if self._stop_event.is_set():
-    #             return
+        pkt = PendingPacket()
+        pkt.ParseFromString(payload)
 
-    #         self.logger.error(f"zmq error: {e}")
-    #         return
+        if self._scheduler:
+            self._scheduler.push(pkt)
+        else:
+            self.logger.warning(f"pull unhandled: {pkt}")
 
-    #     pkt = PendingPacket()
-    #     pkt.ParseFromString(raw)
+        # TODO: this thing gets in the middle of normal logging, same with push on sdk
+        # if not self._suppress_log and self.logger.isEnabledFor(logging.DEBUG):
+        #     pkt = PreparedPacket.from_pending(pkt)
+        #     self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
 
-    #     if self._scheduler:
-    #         self._scheduler.push(pkt)
-    #     else:
-    #         self.logger.warning(f"pull unhandled: {pkt}")
+        return True
 
-    # if not self._suppress_log and self.logger.isEnabledFor(logging.DEBUG):
-    #     pkt = PreparedPacket.from_pending(pkt)
-    #     self.logger.debug(f"\x1b[34m<<--\x1b[0m pull    \x1b[34m<<\x1b[0m{pkt!r}\x1b[34m<<\x1b[0m")
+    def _pull_thread(self) -> None:
+        if BENCHMARK:
+            _last = time.monotonic_ns()
+            i = 0
+            prev_i = 0
+            elapsed_total = 0
 
-    # def _pull_thread(self) -> None:
-    #     if BENCHMARK:
-    #         _last = time.monotonic_ns()
-    #         i = 0
-    #         prev_i = 0
-    #         elapsed_total = 0
+            while not self._stop_event.is_set():
+                if not self._pull_one():
+                    break
 
-    #         while not self._stop_event.is_set():
-    #             self._pull()
+                elapsed_total += time.monotonic_ns() - _last
+                if elapsed_total >= 1e9:
+                    print(f"packet rate: {i - prev_i} / s")
+                    elapsed_total = 0
+                    prev_i = i
+                i += 1
+                _last = time.monotonic_ns()
+        else:
+            while not self._stop_event.is_set():
+                if not self._pull_one():
+                    break
 
-    #             elapsed_total += time.monotonic_ns() - _last
-    #             if elapsed_total >= 1e9:
-    #                 print(f"packet rate: {i - prev_i} / s")
-    #                 elapsed_total = 0
-    #                 prev_i = i
-    #             i += 1
-    #             _last = time.monotonic_ns()
-    #     else:
-    #         while not self._stop_event.is_set():
-    #             self._pull()
-
-    #     self.logger.debug("pull thread exiting")
+        self.logger.debug("pull thread exiting")
 
     def _recv(self) -> tuple[bytes, Packet | None]:
         if self._stop_event.is_set():
             return b"", None
 
-        payload = self.router.recv()
+        payload = self._router.recv()
         if payload is None:
             return b"", None
 
         id, data = payload
-        assert id, "expected id"
         pkt = Packet()
         pkt.ParseFromString(data)
 
@@ -761,7 +784,7 @@ class Broker:
         if self._stop_event.is_set():
             return
 
-        self.router.send((extension, pkt.SerializeToString()))
+        self._router.send((extension, pkt.SerializeToString()))
 
     def broadcast(self, pkt: Packet) -> None:
         for ext in self._extension_mgr.get_all_extension():
@@ -934,7 +957,8 @@ class Broker:
             self._send(client.ext.id, pkt)
 
     def start(self, block: bool = False) -> None:
-        self.router.start(block=False)
+        self._router.start(block=False)
+        self._pull.start(block=False)
         if block:
             self._worker_thread()
         else:
@@ -952,9 +976,15 @@ class Broker:
 
         try:
             self.logger.debug("stopping router")
-            self.router.stop()
+            self._router.stop()
         except Exception as e:
             self.logger.debug(f"router error: {e}")
+
+        try:
+            self.logger.debug("stopping pull")
+            self._pull.stop()
+        except Exception as e:
+            self.logger.debug(f"pull error: {e}")
 
         if self._scheduler:
             self.logger.debug(f"stopping packet scheduler")
@@ -970,9 +1000,9 @@ class Broker:
         except Exception as e:
             self.logger.debug(f"context term error: {e}")
 
-        # if self._pull_thread_id and self._pull_thread_id.is_alive():
-        #     self._pull_thread_id.join(timeout=2.0)
-        #     self.logger.debug("pull thread exited")
+        if self._pull_thread_id and self._pull_thread_id.is_alive():
+            self._pull_thread_id.join(timeout=2.0)
+            self.logger.debug("pull thread exited")
 
         self.logger.debug("broker has stopped")
 
@@ -1061,6 +1091,8 @@ class Broker:
                     break
 
                 match pkt.type:
+                    case Packet.TYPE_HEARTBEAT:
+                        self._extension_mgr.im_fine(id)
                     case Packet.TYPE_PUSH_PACKET:
                         if self._scheduler:
                             self._scheduler.push(pkt.push_packet)
@@ -1079,6 +1111,7 @@ class Broker:
                     case Packet.TYPE_DISCONNECT:
                         self._extension_mgr.remove_extension(id)
                         self.extension_len.update(lambda x: x - 1)
+                        self._send(id, Packet(type=Packet.TYPE_DISCONNECT_ACK))
                     case Packet.TYPE_PENDING_PACKET:
                         if TRACE:
                             print(f"\t\trecv from {id}: {pkt}")

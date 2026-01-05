@@ -1,8 +1,12 @@
 import itertools
+import logging
+import math
 from queue import Empty, Queue
 import socket
+import statistics
 import time
 import pytest
+from matplotlib import pyplot as plt
 
 from extension.utils import UtilityExtension
 from gtools.core.growtopia.strkv import StrKV
@@ -1997,6 +2001,116 @@ def test_match_variant_contains() -> None:
         assert not is_port_in_use(6712)
 
 
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("packet_timing_stats")
+
+
+def compute_packet_timing_stats(received_packets: list[tuple[int, object]], deltas: list[float], tolerance_ns: float = 3 * 1e6, verbose: bool = True) -> dict[str, object]:
+    n_received = len(received_packets)
+    n_expected_intervals = max(0, min(n_received, len(deltas)))
+    if n_expected_intervals < 2:
+        raise ValueError("not enough received packets to compute intervals")
+
+    actual_intervals_ns: list[float] = []
+    expected_intervals_ns: list[float] = []
+    errors_ns: list[float] = []
+
+    comparisons = min(n_received, len(deltas) + 1)
+    for i in range(1, comparisons):
+        actual_ns = received_packets[i][0] - received_packets[i - 1][0]
+        expected_ns = deltas[i - 1] * 1e6
+        err_ns = actual_ns - expected_ns
+
+        actual_intervals_ns.append(actual_ns)
+        expected_intervals_ns.append(expected_ns)
+        errors_ns.append(err_ns)
+
+    def ns_to_ms(x: float) -> float:
+        return x / 1e6
+
+    total = len(errors_ns)
+    within_tolerance_count = sum(1 for e in errors_ns if abs(e) <= tolerance_ns)
+    late_count = sum(1 for e in errors_ns if e > 0)
+    early_count = sum(1 for e in errors_ns if e < 0)
+    exact_count = sum(1 for e in errors_ns if e == 0)
+
+    percent_within_tolerance = within_tolerance_count / total if total else 0.0
+    percent_late = late_count / total if total else 0.0
+    percent_early = early_count / total if total else 0.0
+
+    abs_errors_ns = [abs(e) for e in errors_ns]
+    mean_abs_error_ns = statistics.mean(abs_errors_ns) if abs_errors_ns else float("nan")
+    mean_signed_error_ns = statistics.mean(errors_ns) if errors_ns else float("nan")
+    median_abs_error_ns = statistics.median(abs_errors_ns) if abs_errors_ns else float("nan")
+    stdev_error_ns = statistics.pstdev(errors_ns) if errors_ns else float("nan")  # population stdev
+    rms_error_ns = math.sqrt(statistics.mean([e * e for e in errors_ns])) if errors_ns else float("nan")
+    min_error_ns = min(errors_ns) if errors_ns else float("nan")
+    max_error_ns = max(errors_ns) if errors_ns else float("nan")
+
+    indexed_errors = list(enumerate(errors_ns, start=1))
+    worst_abs = sorted(indexed_errors, key=lambda x: abs(x[1]), reverse=True)[:5]
+
+    metrics = {
+        "total_intervals": total,
+        "within_tolerance_count": within_tolerance_count,
+        "percent_within_tolerance": percent_within_tolerance,
+        "late_count": late_count,
+        "early_count": early_count,
+        "percent_late": percent_late,
+        "percent_early": percent_early,
+        "mean_abs_error_ns": mean_abs_error_ns,
+        "mean_signed_error_ns": mean_signed_error_ns,
+        "median_abs_error_ns": median_abs_error_ns,
+        "stdev_error_ns": stdev_error_ns,
+        "rms_error_ns": rms_error_ns,
+        "min_error_ns": min_error_ns,
+        "max_error_ns": max_error_ns,
+        "worst_abs_errors": worst_abs,
+        "errors_ns": errors_ns,
+        "actual_intervals_ns": actual_intervals_ns,
+        "expected_intervals_ns": expected_intervals_ns,
+    }
+
+    if verbose:
+        logger.info("packet timing statistics:")
+        logger.info("  intervals compared: %d", total)
+        logger.info("  within tolerance: %d / %d (%.1f%%) [tolerance = %.3f ms]", within_tolerance_count, total, percent_within_tolerance * 100.0, ns_to_ms(tolerance_ns))
+        logger.info("  late: %d (%.1f%%), Early: %d (%.1f%%), Exact: %d", late_count, percent_late * 100.0, early_count, percent_early * 100.0, exact_count)
+        logger.info("  mean absolute error: %.3f ms", ns_to_ms(mean_abs_error_ns))
+        logger.info("  mean signed error: %.3f ms (positive => slower/late)", ns_to_ms(mean_signed_error_ns))
+        logger.info("  median absolute error: %.3f ms", ns_to_ms(median_abs_error_ns))
+        logger.info("  rMS error: %.3f ms", ns_to_ms(rms_error_ns))
+        logger.info("  stddev of errors: %.3f ms", ns_to_ms(stdev_error_ns))
+        logger.info("  min error: %.3f ms, Max error: %.3f ms", ns_to_ms(min_error_ns), ns_to_ms(max_error_ns))
+        logger.info("  top %d worst absolute errors (interval_index, error_ms):", len(worst_abs))
+        for idx, err in worst_abs:
+            logger.info("    interval %d: %.3f ms (signed)", idx, ns_to_ms(err))
+
+        logger.debug("per-interval (index, expected_ms, actual_ms, error_ms):")
+        for i, (exp_ns, act_ns, err_ns) in enumerate(zip(expected_intervals_ns, actual_intervals_ns, errors_ns), start=1):
+            logger.debug("  %3d: expected=%.3f ms, actual=%.3f ms, error=%.3f ms", i, ns_to_ms(exp_ns), ns_to_ms(act_ns), ns_to_ms(err_ns))
+
+    return metrics
+
+
+def plot_packet_timing_errors_with_tolerance(metrics: dict, tolerance_ns: float) -> None:
+    errors_ns = metrics["errors_ns"]
+    errors_ms = [e / 1e6 for e in errors_ns]
+    tolerance_ms = tolerance_ns / 1e6
+    x = list(range(1, len(errors_ms) + 1))
+
+    plt.figure()
+    plt.plot(x, errors_ms, marker="o")
+    plt.axhline(0)
+    plt.axhline(tolerance_ms)
+    plt.axhline(-tolerance_ms)
+    plt.xlabel("interval index")
+    plt.ylabel("timing error (ms)")
+    plt.title("packet scheduling timing error per interval (with tolerance)")
+
+    plt.show()
+
+
 def test_extension_packet_scheduler() -> None:
     received_packets: list[tuple[int, PreparedPacket | None]] = []
 
@@ -2035,6 +2149,11 @@ def test_extension_packet_scheduler() -> None:
         total = 0
 
         tolerance_ns = 3 * 1e6
+
+        # metrics = compute_packet_timing_stats(received_packets, deltas, tolerance_ns=tolerance_ns, verbose=True)
+        # plot_packet_timing_errors_with_tolerance(metrics, tolerance_ns)
+        # print(metrics)
+
         for i in range(1, len(deltas)):
             actual_receive_delta_ns = received_packets[i][0] - received_packets[i - 1][0]
             expected_delta_ns = deltas[i - 1] * 1e6

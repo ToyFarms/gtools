@@ -9,11 +9,11 @@ from gtools.core.growtopia.world import World
 from gtools.core.growtopia.rttex import RtTexManager
 import urllib.parse
 from gtools.core.wsl import windows_home
-from gtools.proxy.setting import _setting
+from gtools.proxy.setting import setting
 
 manager = RtTexManager()
 
-WORLD_DIR = windows_home() / _setting.appdir_name / "worlds"
+WORLD_DIR = windows_home() / setting.appdir_name / "worlds"
 
 
 def render_world(name: str) -> Image.Image:

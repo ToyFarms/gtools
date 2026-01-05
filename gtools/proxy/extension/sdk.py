@@ -1,5 +1,6 @@
 from abc import abstractmethod
 from argparse import ArgumentParser
+from queue import Empty
 import struct
 from typing import Callable, cast
 import os
@@ -11,8 +12,10 @@ import time
 
 from gtools.core.growtopia.packet import PreparedPacket
 from gtools.core.log import setup_logger
+from gtools.core.network import increment_port
 from gtools.core.signal import Signal
-from gtools.core.transport.zmq_router import Dealer
+from gtools.core.transport.protocol import Event
+from gtools.core.transport.zmq_transport import Push, Dealer
 from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
     CapabilityResponse,
@@ -23,7 +26,7 @@ from gtools.protogen.extension_pb2 import (
 from gtools.protogen.state_pb2 import STATE_SET_MY_TELEMETRY
 from gtools.proxy.extension.sdk_utils import ExtensionUtility
 from gtools.proxy.state import State, Status
-from gtools.proxy.setting import _setting
+from gtools.proxy.setting import setting
 
 
 def register_thread(fn: Callable) -> Callable:
@@ -63,43 +66,54 @@ class Extension(ExtensionUtility):
         self._broker_addr = broker_addr if broker_addr else f"tcp://127.0.0.1:{os.getenv("PORT", 6712)}"
 
         self._context = zmq.Context()
-        self.dealer = Dealer(self._context, self._name, self._broker_addr)
-
-        # self._push_socket = self._context.socket(zmq.PUSH)
-        # self._push_socket.setsockopt(zmq.LINGER, 0)
-        # self._push_lock = threading.Lock()
+        self._dealer = Dealer(self._context, self._name, self._broker_addr)
+        self._push = Push(self._context, increment_port(self._broker_addr))
 
         self._worker_thread_id: threading.Thread | None = None
-        self._monitor_thread_id: threading.Thread | None = None
 
         self._stop_event = Signal(False)
         self.broker_connected = Signal(False)
-        self.connected = Signal.derive(lambda: self.broker_connected.get(), self.broker_connected)
-        self.disconnected = Signal.derive(lambda: (not self.broker_connected.get()), self.broker_connected)
+        self.push_connected = Signal(False)
+        self.connected = Signal.derive(lambda: self.broker_connected.get() and self.push_connected.get(), self.broker_connected, self.push_connected)
+        self.disconnected = Signal.derive(lambda: not self.broker_connected.get() and not self.push_connected.get(), self.broker_connected, self.push_connected)
 
         self._job_threads: dict[str, threading.Thread] = {}
         self._dispatch_routes: dict[int, DispatchHandle] = {}
         self._dispatch_fallback: DispatchHandle | None = None
         self.state = State()
+        self._last_heartbeat = 0
+
+        self.__push_fallback_called = 0
+        self.__push_fallback_warned = 0
 
     def push(self, pkt: PreparedPacket) -> None:
-        self.logger.debug(f"   push \x1b[35m-->>\x1b[0m \x1b[35m>>\x1b[0m{pkt!r}\x1b[35m>>\x1b[0m")
+        self.push_connected.wait_true(timeout=5.0)
+        # self.logger.debug(f"   push \x1b[35m-->>\x1b[0m \x1b[35m>>\x1b[0m{pkt!r}\x1b[35m>>\x1b[0m")
         pending = pkt.to_pending()
         pending._rtt_ns = struct.pack("<Q", time.monotonic_ns())
-        self._send(Packet(type=Packet.TYPE_PUSH_PACKET, push_packet=pending))
+
+        if not self.push_connected:
+            if not self.__push_fallback_called and self.__push_fallback_warned > 10:
+                self.logger.warning("push/pull socket is not enabled, fallback to a slower path using broker")
+                self.__push_fallback_called = True
+            self.__push_fallback_called += 1
+
+            self._send(Packet(type=Packet.TYPE_PUSH_PACKET, push_packet=pending))
+        else:
+            self._push.send(pending.SerializeToString())
 
     def _send(self, pkt: Packet) -> None:
         if self._stop_event.get():
             return
 
         self.logger.debug(f"   send \x1b[31m-->>\x1b[0m \x1b[31m>>\x1b[0m{pkt!r}\x1b[31m>>\x1b[0m")
-        self.dealer.send(pkt.SerializeToString())
+        self._dealer.send(pkt.SerializeToString())
 
     def _recv(self, expected: Packet.Type | None = None) -> Packet | None:
         if self._stop_event.get():
             return None
 
-        payload = self.dealer.recv()
+        payload = self._dealer.recv()
         if payload is None:
             return
 
@@ -153,7 +167,8 @@ class Extension(ExtensionUtility):
         self._monitor_thread_id.start()
         self._resolve_decorator()
 
-        self.dealer.start()
+        self._dealer.start()
+        self._push.start()
 
         if block:
             try:
@@ -179,18 +194,22 @@ class Extension(ExtensionUtility):
         except Exception:
             pass
 
+        self.broker_connected.wait_false(timeout=2.0)
+        self.push_connected.wait_false(timeout=2.0)
+
         self._stop_event.set(True)
 
         try:
-            self.dealer.stop()
+            self._dealer.stop()
         except Exception as e:
             self.logger.debug(f"dealer close error: {e}")
-        # TODO: ensure broker_connected only set to false if its guaranteed that its already removed from the extension_mgr in broker
+        try:
+            self._push.stop()
+        except Exception as e:
+            self.logger.debug(f"push close error: {e}")
+
         self.broker_connected.set(False)
-        # try:
-        #     self._push_socket.close()
-        # except Exception as e:
-        #     self.logger.debug(f"socket close error: {e}")
+        self.push_connected.set(False)
 
         if self._worker_thread_id and self._worker_thread_id.is_alive():
             self._worker_thread_id.join(timeout=2.0)
@@ -210,18 +229,44 @@ class Extension(ExtensionUtility):
         return self.disconnected
 
     def _monitor_thread(self) -> None:
-        try:
-            while not self._stop_event.get():
-                event = self.dealer.recv_event()
-                if event["event"] == zmq.EVENT_CONNECTED:
-                    self.logger.debug(f"connected")
+        def handle(source: str, event: Event) -> None:
+            if event == Event.CONNECTED:
+                self.logger.debug(f" {source} connected")
+                if source == "broker":
                     self._send(Packet(type=Packet.TYPE_HANDSHAKE))
-                elif event["event"] in (
-                    zmq.EVENT_DISCONNECTED,
-                    zmq.EVENT_MONITOR_STOPPED,
-                    zmq.EVENT_CLOSED,
-                ):
+                elif source == "push":
+                    self.push_connected.set(True)
+            elif event == Event.DISCONNECTED:
+                if source == "broker":
                     self.broker_connected.set(False)
+                if source == "push":
+                    self.push_connected.set(False)
+
+        last_heartbeat = 0
+        interval = 0.5
+
+        try:
+            while not self._stop_event:
+                event = None
+                try:
+                    if event := self._dealer.recv_event(block=False, timeout=0.1):
+                        handle("broker", event)
+                except Empty:
+                    pass
+
+                event = None
+                try:
+                    if event := self._push.recv_event(block=False, timeout=0.1):
+                        handle("push", event)
+                except Empty:
+                    pass
+
+                now = time.time()
+                if now - last_heartbeat > interval:
+                    self._send(Packet(type=Packet.TYPE_HEARTBEAT))
+                    last_heartbeat = now
+
+                time.sleep(0.1)
         except Exception as e:
             self.logger.debug(f"monitor thread error: {e}")
 
@@ -252,6 +297,8 @@ class Extension(ExtensionUtility):
                     break
 
                 match pkt.type:
+                    case Packet.TYPE_HEARTBEAT:
+                        self._last_heartbeat = time.time()
                     case Packet.TYPE_PENDING_PACKET:
                         start = time.perf_counter_ns()
                         response: PendingPacket | None = None
@@ -284,8 +331,9 @@ class Extension(ExtensionUtility):
                     case Packet.TYPE_CONNECTED:
                         self.broker_connected.set(True)
                         self._send(Packet(type=Packet.TYPE_STATE_REQUEST))
-                    case Packet.TYPE_DISCONNECT:
+                    case Packet.TYPE_DISCONNECT | Packet.TYPE_DISCONNECT_ACK:
                         self.broker_connected.set(False)
+                        self.push_connected.set(False)
                     case Packet.TYPE_HANDSHAKE_ACK:
                         pass
                     case Packet.TYPE_CAPABILITY_REQUEST:
@@ -311,7 +359,6 @@ class Extension(ExtensionUtility):
             self.logger.debug("worker thread exiting")
 
     # helper
-
     def standalone(self) -> None:
         """call this only in `if __name__ == '__main__'`"""
         parser = ArgumentParser()
@@ -322,7 +369,7 @@ class Extension(ExtensionUtility):
         level = logging.DEBUG if args.v else logging.INFO
         setup_logger(
             self._name.decode(errors="surrogateescape"),
-            log_dir=_setting.appdir / "logs" / "extension",
+            log_dir=setting.appdir / "logs" / "extension",
             level=level,
         )
 
