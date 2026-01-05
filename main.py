@@ -2,13 +2,22 @@ import argparse
 import logging
 import multiprocessing as mp
 import os
+from pathlib import Path
+from pprint import pprint
 from queue import Queue
 import sys
 import threading
+import time
+
+from PIL import Image
+import numpy as np
+from pyglm.glm import ivec4
 
 from gtools import flags
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
+from gtools.core.growtopia.renderer.world_renderer import WorldRenderer
 from gtools.core.growtopia.strkv import StrKV
+from gtools.core.growtopia.world import World
 from gtools.core.log import setup_logger
 from gtools.core.block_sigint import block_sigint
 from gtools.core.network import is_up, resolve_doh
@@ -77,6 +86,9 @@ if __name__ == "__main__":
     subparser.add_parser("ext_test")
     subparser.add_parser("test")
     subparser.add_parser("stress")
+
+    render = subparser.add_parser("render")
+    render.add_argument("world")
 
     args = parser.parse_args()
 
@@ -171,3 +183,18 @@ if __name__ == "__main__":
         p.terminate()
         p.join()
         b.stop()
+    elif args.cmd == "render":
+        renderer = WorldRenderer()
+        world = World.from_tank(Path(args.world).read_bytes())
+
+        img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
+        start = time.perf_counter()
+        for cmd in renderer.batch_render_cmd(world.tiles):
+            for dst in cmd.dst:
+                dst = ivec4(dst)
+                alpha_mask = cmd.buffer[:, :, 3] > 4
+                dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                dst_slice[alpha_mask] = cmd.buffer[:, :, : dst_slice.shape[2]][alpha_mask]
+        print(f"rendering took {time.perf_counter() - start:.1f}s")
+
+        Image.fromarray(img).show()

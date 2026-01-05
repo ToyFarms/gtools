@@ -2,7 +2,8 @@ from pathlib import Path
 from sys import argv
 import zlib
 from dataclasses import dataclass
-from PIL import Image
+import numpy as np
+import numpy.typing as npt
 
 from gtools.core.buffer import Buffer
 
@@ -90,7 +91,7 @@ class RtTexMipHeader:
         return mip_header
 
 
-def get_image_buffer(path: str) -> Image.Image | None:
+def get_image_buffer(path: str) -> npt.NDArray[np.uint8] | None:
     with open(path, "rb") as f:
         data = f.read()
 
@@ -117,32 +118,43 @@ def get_image_buffer(path: str) -> Image.Image | None:
             pixel_count = tex_header.width * tex_header.height * 4
             pixel_data = ts.read_bytes(pixel_count)
 
-            img = Image.frombytes("RGBA", (tex_header.width, tex_header.height), pixel_data)
-            img = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-            img = img.rotate(180)
-            return img.convert("RGBA")
+            arr = np.frombuffer(pixel_data, dtype=np.uint8).reshape(tex_header.height, tex_header.width, 4)[:, ::-1, :]
+            arr = np.rot90(arr, k=2)
+            return np.ascontiguousarray(arr)
 
     return None
 
 
 class RtTexManager:
-    _cache: dict[str, Image.Image] = {}
+    _atlas_cache: dict[str, npt.NDArray[np.uint8]] = {}
+    _tex_cache: dict[tuple[str, int, int, int, int], npt.NDArray[np.uint8]] = {}
 
-    def get(self, file: str | Path, x: int, y: int, w: int, h: int) -> Image.Image:
+    def get(self, file: str | Path, x: int, y: int, w: int, h: int) -> npt.NDArray[np.uint8]:
         file = str(file)
-        crop = None if (x < 0 or y < 0) else (x, y, x + w, y + h)
 
-        cached = RtTexManager._cache.get(file)
-        if cached:
-            return cached.crop(crop)
+        key = (file, x, y, w, h)
+        if key in self._tex_cache:
+            return self._tex_cache[key]
+
+        cached = RtTexManager._atlas_cache.get(file)
+        if cached is not None:
+            cropped = cached[y : y + h, x : x + w, :]
+            self._tex_cache[key] = cropped
+            return cropped
 
         img = get_image_buffer(file)
-        if not img:
+        if img is None:
             raise ValueError("failed to get texture")
-        RtTexManager._cache[file] = img
+        RtTexManager._atlas_cache[file] = img
 
-        return img.crop(crop)
+        cropped = img[y : y + h, x : x + w, :]
+        self._tex_cache[key] = cropped
+        return cropped
 
 
 if __name__ == "__main__":
-    get_image_buffer(argv[1]).show()
+    from PIL import Image
+
+    arr = get_image_buffer(argv[1])
+    if arr is not None:
+        Image.fromarray(arr).show()
