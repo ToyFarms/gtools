@@ -126,7 +126,7 @@ if __name__ == "__main__":
         processed, cancelled = res
 
         print(processed, f"cancelled={cancelled}")
-        print(f"elapsed={int.from_bytes(processed._rtt_ns) / 1e6}us")
+        print(f"elapsed={processed._rtt_ns / 1e6}us")
         print(processed.buf)
 
         for ext in exts:

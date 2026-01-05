@@ -601,15 +601,13 @@ class PacketScheduler:
             self._out_queue.put(prepared)
 
     def push(self, pkt: PendingPacket) -> None:
-        try:
-            send_ts_ns = struct.unpack("<Q", pkt._rtt_ns)[0]
-        except Exception:
+        if pkt._rtt_ns == 0:
             self._put(pkt)
             return
 
         seq = next(self._seq)
         with self._cond:
-            heapq.heappush(self._heap, (send_ts_ns, seq, pkt))
+            heapq.heappush(self._heap, (pkt._rtt_ns, seq, pkt))
             self._cond.notify()
 
     def _run(self) -> None:
@@ -829,7 +827,7 @@ class Broker:
 
     # if it returns none, then either there is no extension, or no extension matched
     def process_event(self, pkt: PreparedPacket, callback: PacketCallback | None = None) -> tuple[PendingPacket, bool] | None:
-        start = time.perf_counter_ns()
+        start = time.monotonic_ns()
         chain: deque[Client] = deque()
         for client in self._get_interested_extension(pkt):
             if TRACE:
@@ -846,7 +844,7 @@ class Broker:
                         buf=pkt.as_raw,
                         direction=pkt.direction,
                         packet_flags=pkt.flags,
-                        _rtt_ns=self._utob(time.perf_counter_ns()),
+                        _rtt_ns=time.monotonic_ns(),
                         interest_id=client.interest.id,
                     )
                     self._send(
@@ -867,7 +865,7 @@ class Broker:
                         buf=pkt.as_raw,
                         direction=pkt.direction,
                         packet_flags=pkt.flags,
-                        _rtt_ns=self._utob(time.perf_counter_ns()),
+                        _rtt_ns=time.monotonic_ns(),
                         interest_id=client.interest.id,
                     )
                     self._send(
@@ -924,7 +922,7 @@ class Broker:
                 buf=pkt.as_raw,
                 direction=pkt.direction,
                 packet_flags=pkt.flags,
-                _rtt_ns=self._utob(time.perf_counter_ns()),
+                _rtt_ns=time.monotonic_ns(),
                 interest_id=chain[0].interest.id,
             )
 
@@ -944,10 +942,10 @@ class Broker:
                 )
 
             if PERF:
-                self.logger.debug(f"broker processing: {(time.perf_counter_ns() - start) / 1e6}us")
+                self.logger.debug(f"broker processing: {(time.monotonic_ns() - start) / 1e6}us")
             self._pending_chain[chain_id].finished_event.wait()
             finished = self._pending_chain.pop(chain_id)
-            finished.current._rtt_ns = self._utob(time.perf_counter_ns() - int.from_bytes(finished.current._rtt_ns))
+            finished.current._rtt_ns = time.monotonic_ns() - finished.current._rtt_ns
             return finished.current, finished.cancelled
 
     # this version of process_event doesn't work with prepared packet, but with arbitrary packet, thus

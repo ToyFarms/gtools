@@ -171,7 +171,7 @@ class Proxy:
 
                     self.logger.debug(f"[original] packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
                     _pkt_replace = PreparedPacket.from_pending(processed)
-                    self.logger.debug(f"[{processed._packet_id}] processed packet: hit={processed._hit_count} rtt={int.from_bytes(processed._rtt_ns) / 1e6}us")
+                    self.logger.debug(f"[{processed._packet_id}] processed packet: hit={processed._hit_count} rtt={processed._rtt_ns / 1e6}us")
                     modified = True
 
                 if _pkt_replace:

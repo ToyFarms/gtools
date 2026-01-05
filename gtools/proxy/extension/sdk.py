@@ -90,7 +90,7 @@ class Extension(ExtensionUtility):
         self.push_connected.wait_true(timeout=5.0)
         # self.logger.debug(f"   push \x1b[35m-->>\x1b[0m \x1b[35m>>\x1b[0m{pkt!r}\x1b[35m>>\x1b[0m")
         pending = pkt.to_pending()
-        pending._rtt_ns = struct.pack("<Q", time.monotonic_ns())
+        pending._rtt_ns = time.monotonic_ns()
 
         if not self.push_connected:
             if not self.__push_fallback_called and self.__push_fallback_warned > 10:
@@ -300,7 +300,7 @@ class Extension(ExtensionUtility):
                     case Packet.TYPE_HEARTBEAT:
                         self._last_heartbeat = time.time()
                     case Packet.TYPE_PENDING_PACKET:
-                        start = time.perf_counter_ns()
+                        start = time.monotonic_ns()
                         response: PendingPacket | None = None
 
                         id = pkt.pending_packet.interest_id
@@ -326,7 +326,7 @@ class Extension(ExtensionUtility):
                         self._copy_meta_fields(response, pkt.pending_packet)
                         response._hit_count += 1
                         if PERF:
-                            self.logger.debug(f"extension processing time: {(time.perf_counter_ns() - start) / 1e6}us")
+                            self.logger.debug(f"extension processing time: {(time.monotonic_ns() - start) / 1e6}us")
                         self._send(Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=response))
                     case Packet.TYPE_CONNECTED:
                         self.broker_connected.set(True)

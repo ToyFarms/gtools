@@ -67,21 +67,14 @@ message PendingPacket {
     OP_PASS = 4;
   }
 
-  Op _op = 1;
-  bytes _packet_id = 2;
   bytes buf = 3;
   uint32 packet_flags = 4;
-  Direction direction = 5;
-  uint32 _hit_count = 6;
-
-  // TODO:
-  // is it necessary to store this in bytes? no. unless this project still holds
-  // for the next 5 centuries overflow int64: 2262 apr overflow uint64: 2554 jul
-  // convert to use uint64
-  // repeated for each extension, each pending handle in broker will append the
-  // amount of time taken for that specific extension
-  bytes _rtt_ns = 7;
   uint32 interest_id = 8;
+  Direction direction = 5;
+  Op _op = 1;
+  bytes _packet_id = 2;
+  uint32 _hit_count = 6;
+  uint64 _rtt_ns = 7;
 }
 
 message StateRequest {}

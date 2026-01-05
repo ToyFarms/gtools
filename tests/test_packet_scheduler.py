@@ -15,7 +15,7 @@ def test_packet_scheduler_delta_time() -> None:
         sleep = 10 * 1e6  # 10ms
         net_pkt_a = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=1))
         pkt_a = PendingPacket()
-        pkt_a._rtt_ns = struct.pack("<Q", time.monotonic_ns())
+        pkt_a._rtt_ns = time.monotonic_ns()
         pkt_a.buf = net_pkt_a.serialize()
         scheduler.push(pkt_a)
 
@@ -23,7 +23,7 @@ def test_packet_scheduler_delta_time() -> None:
 
         net_pkt_b = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=2))
         pkt_b = PendingPacket()
-        pkt_b._rtt_ns = struct.pack("<Q", time.monotonic_ns())
+        pkt_b._rtt_ns = time.monotonic_ns()
         pkt_b.buf = net_pkt_b.serialize()
         scheduler.push(pkt_b)
 
@@ -57,7 +57,7 @@ def test_packet_scheduler_multiple_delta_times() -> None:
 
         for i, delta in enumerate(deltas):
             pkt = PendingPacket()
-            pkt._rtt_ns = struct.pack("<Q", time.monotonic_ns())
+            pkt._rtt_ns = time.monotonic_ns()
             pkt.buf = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=i)).serialize()
             scheduler.push(pkt)
 
