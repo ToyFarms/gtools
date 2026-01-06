@@ -16,6 +16,8 @@ import threading
 import types
 import reprlib
 
+from gtools.core.block_sigint import block_sigint
+
 try:
     import resource
 except Exception:
@@ -546,90 +548,91 @@ def setup_logger(name: str = "app", log_dir: str | Path = "logs", level: int = l
     root_logger._session_log_stats = log_stats_handler  # type: ignore
 
     def _log_session_end():
-        if getattr(root_logger, "_session_end_logged", False):
-            return
-        end_ts = datetime.now()
-        final_mem = _get_memory_usage_kb()
-        peak_mem = _get_peak_memory_kb()
-        disk = _get_disk_usage(".")
-        exception_info = getattr(root_logger, "_session_exception_info", None)  # type: ignore
+        with block_sigint():
+            if getattr(root_logger, "_session_end_logged", False):
+                return
+            end_ts = datetime.now()
+            final_mem = _get_memory_usage_kb()
+            peak_mem = _get_peak_memory_kb()
+            disk = _get_disk_usage(".")
+            exception_info = getattr(root_logger, "_session_exception_info", None)  # type: ignore
 
-        recent = None
-        try:
-            recent = root_logger._last_log_handler.get_records()  # type: ignore
-        except Exception:
             recent = None
+            try:
+                recent = root_logger._last_log_handler.get_records()  # type: ignore
+            except Exception:
+                recent = None
 
-        all_threads = None
-        modules = None
-        psutil_info = None
-        if exception_info and isinstance(exception_info, dict):
-            all_threads = exception_info.get("all_threads")
-            modules = exception_info.get("modules")
-            psutil_info = exception_info.get("psutil_info")
-        else:
-            try:
-                cf = {}
-                current_frames = sys._current_frames()
-                for tid, frame in current_frames.items():
-                    try:
-                        tname = None
-                        for t in threading.enumerate():
-                            if getattr(t, "ident", None) == tid:
-                                tname = f"{t.name} (ident={tid})"
-                                break
-                        if tname is None:
-                            tname = f"unknown (ident={tid})"
-                        stack_lines = traceback.format_stack(frame)
-                        cf[tname] = [sl.rstrip() for sl in stack_lines]
-                    except Exception:
-                        cf[f"thread_{tid}"] = ["<failed to format thread stack>"]
-                all_threads = cf
-            except Exception:
-                all_threads = None
-            try:
-                modules = _gather_modules()
-            except Exception:
-                modules = None
-            try:
-                psutil_info = _gather_psutil_info()
-            except Exception:
-                psutil_info = None
+            all_threads = None
+            modules = None
+            psutil_info = None
+            if exception_info and isinstance(exception_info, dict):
+                all_threads = exception_info.get("all_threads")
+                modules = exception_info.get("modules")
+                psutil_info = exception_info.get("psutil_info")
+            else:
+                try:
+                    cf = {}
+                    current_frames = sys._current_frames()
+                    for tid, frame in current_frames.items():
+                        try:
+                            tname = None
+                            for t in threading.enumerate():
+                                if getattr(t, "ident", None) == tid:
+                                    tname = f"{t.name} (ident={tid})"
+                                    break
+                            if tname is None:
+                                tname = f"unknown (ident={tid})"
+                            stack_lines = traceback.format_stack(frame)
+                            cf[tname] = [sl.rstrip() for sl in stack_lines]
+                        except Exception:
+                            cf[f"thread_{tid}"] = ["<failed to format thread stack>"]
+                    all_threads = cf
+                except Exception:
+                    all_threads = None
+                try:
+                    modules = _gather_modules()
+                except Exception:
+                    modules = None
+                try:
+                    psutil_info = _gather_psutil_info()
+                except Exception:
+                    psutil_info = None
 
-        stats = None
-        try:
-            stats_handler = getattr(root_logger, "_session_log_stats", None)
-            if stats_handler:
-                stats = stats_handler.snapshot()
-        except Exception:
             stats = None
-
-        end_block = _format_exception_block(
-            root_logger._session_start_ts,  # type: ignore
-            end_ts,
-            getattr(root_logger, "_session_id", ""),
-            final_mem,
-            peak_mem,
-            disk,
-            exception_info=exception_info,
-            recent_logs=recent,
-            all_threads=all_threads,
-            modules=modules,
-            psutil_info=psutil_info,
-            log_stats=stats,
-        )
-
-        try:
-            file_handler.stream.write("\n" + end_block + "\n")
-            file_handler.flush()
-        except Exception:
             try:
-                console_handler.stream.write("\n" + end_block + "\n")
-                console_handler.flush()
+                stats_handler = getattr(root_logger, "_session_log_stats", None)
+                if stats_handler:
+                    stats = stats_handler.snapshot()
             except Exception:
-                pass
+                stats = None
 
-        root_logger._session_end_logged = True  # type: ignore
+            end_block = _format_exception_block(
+                root_logger._session_start_ts,  # type: ignore
+                end_ts,
+                getattr(root_logger, "_session_id", ""),
+                final_mem,
+                peak_mem,
+                disk,
+                exception_info=exception_info,
+                recent_logs=recent,
+                all_threads=all_threads,
+                modules=modules,
+                psutil_info=psutil_info,
+                log_stats=stats,
+            )
+
+            try:
+                file_handler.stream.write("\n" + end_block + "\n")
+                file_handler.flush()
+            except Exception:
+                try:
+                    console_handler.stream.write("\n" + end_block + "\n")
+                    console_handler.flush()
+                except Exception:
+                    pass
+
+            root_logger._session_end_logged = True  # type: ignore
 
     atexit.register(_log_session_end)
 
