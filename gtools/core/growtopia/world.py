@@ -629,14 +629,12 @@ class PetBattleCageTile(TileExtra):
     ID = 36
     name: bytes = b""
     unk1: bytes = b""
-    cbor: dict = field(default_factory=dict)
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "PetBattleCageTile":
         t = cls()
         t.name = s.read_pascal_bytes("H")
         t.unk1 = s.read_bytes(12)
-        t.cbor = cbor2.loads(s.read_pascal_bytes("I"))
         return t
 
 
@@ -1282,6 +1280,7 @@ class Tile:
             15546,  # Auction Block
             14666,  # Auto Surgeon
             14662,  # Operating Table
+            3548,  # Battle Pet Cage
         ]
 
         if tile.fg_id in cbor_ids:
