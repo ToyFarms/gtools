@@ -11,10 +11,6 @@ from tests import verify
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
-def _pkt_size() -> int:
-    return struct.calcsize(TankPacket._FMT)
-
-
 def _make_basic_tank() -> TankPacket:
     return TankPacket(
         type=TankType.STATE,
@@ -71,10 +67,10 @@ def test_deserialize_strict_mode_mismatch_raises() -> None:
     pkt.extended_data = b"abc"
     s = pkt.serialize()
 
-    size = _pkt_size()
-    header_vals = list(struct.unpack(TankPacket._FMT, s[:size]))
+    size = TankPacket._Struct.size
+    header_vals = list(TankPacket._Struct.unpack(s[:size]))
     header_vals[-1] = header_vals[-1] + 10
-    new_header = struct.pack(TankPacket._FMT, *header_vals)
+    new_header = TankPacket._Struct.pack(*header_vals)
     tampered = new_header + s[size:]
 
     with pytest.raises(RuntimeError, match="extended data size does not match"):
@@ -95,11 +91,11 @@ def test_deserialize_relaxed_mode_truncation_and_warning(caplog: pytest.LogCaptu
     pkt.extended_data = b"ABCDEFGHIJ"
     s = pkt.serialize()
 
-    size = _pkt_size()
-    header_vals = list(struct.unpack(TankPacket._FMT, s[:size]))
+    size = TankPacket._Struct.size
+    header_vals = list(TankPacket._Struct.unpack(s[:size]))
 
     header_vals[-1] = 4
-    new_header = struct.pack(TankPacket._FMT, *header_vals)
+    new_header = TankPacket._Struct.pack(*header_vals)
     tampered = new_header + s[size:]
 
     caplog.clear()
@@ -127,18 +123,18 @@ def test_sample_deserialize_relaxed_mode_truncation_and_warning(caplog: pytest.L
 
 
 def test_tank_size() -> None:
-    assert _pkt_size() == 56
+    assert TankPacket._Struct.size == 56
 
 
 def test_net_tank_size() -> None:
-    assert len(NetPacket(type=NetType.TANK_PACKET, data=TankPacket()).serialize()) == _pkt_size() + 4 + 1
+    assert len(NetPacket(type=NetType.TANK_PACKET, data=TankPacket()).serialize()) == TankPacket._Struct.size + 4 + 1
 
 
 def test_tankpacket_serialize_minimal_appends_single_zero() -> None:
     pkt = _make_basic_tank()
     s = pkt.serialize()
 
-    size = _pkt_size()
+    size = TankPacket._Struct.size
     assert len(s) == size
 
     verify(s)
@@ -552,7 +548,7 @@ def test_tankpacket_maximal_values() -> None:
         jump_count=255,
         animation_type=255,
         net_id=0xFFFFFFFF,
-        target_net_id=0X7FFFFFFF,
+        target_net_id=0x7FFFFFFF,
         flags=0xFFFF,
         float_var=3.4028234663852886e38,
         value=0x7FFFFFFF,

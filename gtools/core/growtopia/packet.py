@@ -110,7 +110,7 @@ class TankFlags(IntFlag):
 # TODO: have constructor for variant
 class TankPacket(Serializable):
     logger = logging.getLogger("tank_packet")
-    _FMT: str = "<BBBBIiIfIfffffiiI"
+    _Struct: struct.Struct = struct.Struct("<BBBBIiIfIfffffiiI")
 
     def __init__(
         self,
@@ -169,8 +169,7 @@ class TankPacket(Serializable):
 
         buf = bytearray()
         buf.extend(
-            struct.pack(
-                TankPacket._FMT,
+            TankPacket._Struct.pack(
                 self.type.value,
                 self.object_type,
                 self.jump_count,
@@ -201,11 +200,11 @@ class TankPacket(Serializable):
         data: bytes,
         mode: Literal["strict", "relaxed"] = "relaxed",
     ) -> "TankPacket":
-        pkt_size = struct.calcsize(TankPacket._FMT)
-        values = struct.unpack(TankPacket._FMT, data[:pkt_size])
+        tank_size = TankPacket._Struct.size
+        values = TankPacket._Struct.unpack(data[:tank_size])
         extended_data = b""
-        if len(data) > pkt_size:
-            extended_data = data[pkt_size:]
+        if len(data) > tank_size:
+            extended_data = data[tank_size :]
 
         extended_size = values[-1]
         if extended_size != len(extended_data):
