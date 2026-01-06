@@ -8,6 +8,7 @@ from pyglm.glm import ivec2, vec2
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
+from gtools.core.growtopia.player import HackType
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
@@ -23,7 +24,7 @@ from gtools.protogen.extension_pb2 import (
 )
 from gtools.proxy.extension.sdk import Extension, dispatch, register_thread
 from gtools.proxy.extension.sdk_utils import helper
-from gtools.proxy.state import HackType, Status
+from gtools.proxy.state import Status
 from thirdparty.enet.bindings import ENetPacketFlag
 
 

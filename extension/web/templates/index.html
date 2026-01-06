@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+  <script>
+    const socket = new WebSocket("ws://localhost:8000");
+
+    socket.onopen = () => {
+      console.log("WebSocket connected");
+    };
+    socket.onclose = () => {
+      console.log("WebSocket disconnected");
+    };
+    socket.onmessage = async (event) => {
+      const blob = event.data;
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      console.log(bytes.toHex());
+    };
+
+  </script>
+</body>
+</html>
