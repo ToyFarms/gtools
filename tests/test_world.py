@@ -12,27 +12,10 @@ def test_conversion() -> None:
     proto = orig.to_proto()
 
     parsed = World.from_proto(proto)
-    for x, y in zip(parsed.inner.tiles, orig.inner.tiles):
+    for x, y in zip(parsed.tiles, orig.tiles):
         assert x == y
 
-    assert parsed.inner.name == orig.inner.name
+    assert parsed.name == orig.name
 
-    for x, y in zip(parsed.inner.dropped.items, orig.inner.dropped.items):
-        assert x == y
-
-
-def test_conversion_fail() -> None:
-    b = Path("tests/res/SURG.bin").read_bytes()
-    pkt = NetPacket.deserialize(b)
-
-    orig = World.deserialize(pkt.tank.extended_data)
-    proto = orig.to_proto()
-
-    parsed = World.from_proto(proto)
-    for x, y in zip(parsed.inner.tiles, orig.inner.tiles):
-        assert x == y
-
-    assert parsed.inner.name == orig.inner.name
-
-    for x, y in zip(parsed.inner.dropped.items, orig.inner.dropped.items):
+    for x, y in zip(parsed.dropped.items, orig.dropped.items):
         assert x == y

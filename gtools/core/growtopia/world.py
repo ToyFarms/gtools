@@ -13,6 +13,7 @@ import cbor2
 
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import TankPacket
+from gtools.core.growtopia.player import Player
 from gtools.protogen import growtopia_pb2
 
 
@@ -1361,8 +1362,91 @@ class World:
     dropped: Dropped = field(default_factory=Dropped)
     unk4: bytes = b"\x00" * 12
 
+    # state (not in data)
+    player: list[Player] = field(default_factory=list)
     garbage_start: int = -1
     logger = logging.getLogger("world")
+
+    def get_player(self, net_id: int) -> Player | None:
+        for p in self.player:
+            if p.net_id == net_id:
+                return p
+        self.logger.warning(f"player with net_id={net_id} does not exists in world {self.name}")
+
+    def add_player(self, player: Player) -> None:
+        self.player.append(player)
+
+    def remove_player(self, player: Player) -> None:
+        self.player.remove(player)
+
+    def remove_player_by_id(self, net_id: int) -> None:
+        self.player = [p for p in self.player if p.net_id != net_id]
+
+    def get_tile(self, pos: ivec2) -> Tile | None:
+        for tile in self.tiles:
+            if tile.pos == pos:
+                return tile
+
+        self.logger.warning(f"tile {pos} in {self.name} does not exists")
+
+    def index_tile(self, pos: ivec2) -> int | None:
+        for i, tile in enumerate(self.tiles):
+            if tile.pos == pos:
+                return i
+
+        self.logger.warning(f"tile {pos} in {self.name} does not exists")
+
+    def destroy_tile(self, pos: ivec2) -> None:
+        if (tile := self.get_tile(pos)) is None:
+            return
+
+        if tile.fg_id != 0:
+            tile.fg_id = 0
+        else:
+            tile.bg_id = 0
+
+    def place_tile(self, id: int, pos: ivec2) -> None:
+        if (tile := self.get_tile(pos)) is None:
+            return
+
+        if item_database.is_background(id):
+            tile.bg_id = id
+        else:
+            tile.fg_id = id
+            if id % 2 != 0:
+                tile.extra = SeedTile()
+
+    def replace_tile(self, tile: Tile) -> None:
+        if idx := self.index_tile(tile.pos):
+            self.tiles[idx] = tile
+
+    def create_dropped(self, id: int, pos: vec2, amount: int, flags: int) -> None:
+        dropped = DroppedItem(
+            id=id,
+            pos=pos,
+            amount=amount,
+            flags=flags,
+            uid=self.dropped.last_uid + 1,
+        )
+        self.dropped.last_uid += 1
+        self.dropped.items.append(dropped)
+        self.dropped.nb_items += 1
+
+    def remove_dropped(self, uid: int) -> DroppedItem | None:
+        for i, item in enumerate(self.dropped.items):
+            if item.uid != uid:
+                continue
+
+            self.dropped.items.pop(i)
+            self.dropped.nb_items -= 1
+            return item
+
+    def set_dropped(self, uid: int, amount: int) -> None:
+        for item in self.dropped.items:
+            if item.uid != uid:
+                continue
+
+            item.amount = amount
 
     @classmethod
     def from_tank(cls, tank: TankPacket | bytes) -> "World":
@@ -1371,6 +1455,10 @@ class World:
     @classmethod
     def from_extended(cls, extended: bytes) -> "World":
         return cls.deserialize(Buffer(extended))
+
+    def serialize(self) -> bytes:
+        # TODO:
+        return b""
 
     @classmethod
     def deserialize(cls, s: bytes | Buffer, offset: int = 0) -> "World":
@@ -1469,15 +1557,19 @@ class World:
             tiles=list(map(lambda x: Tile.from_proto(x), proto.inner.tiles)),
             dropped=Dropped.from_proto(proto.inner.dropped),
             garbage_start=proto.inner.garbage_start,
+            player=[Player.from_proto(x) for x in proto.player],
         )
 
-    def to_proto(self) -> growtopia_pb2.WorldInner:
-        return growtopia_pb2.WorldInner(
-            name=self.name,
-            width=self.width,
-            height=self.height,
-            nb_tiles=self.nb_tiles,
-            tiles=list(map(lambda x: x.to_proto(), self.tiles)),
-            dropped=self.dropped.to_proto(),
-            garbage_start=self.garbage_start,
+    def to_proto(self) -> growtopia_pb2.World:
+        return growtopia_pb2.World(
+            inner=growtopia_pb2.WorldInner(
+                name=self.name,
+                width=self.width,
+                height=self.height,
+                nb_tiles=self.nb_tiles,
+                tiles=list(map(lambda x: x.to_proto(), self.tiles)),
+                dropped=self.dropped.to_proto(),
+                garbage_start=self.garbage_start,
+            ),
+            player=[x.to_proto() for x in self.player],
         )

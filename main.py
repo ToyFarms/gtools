@@ -3,7 +3,6 @@ import logging
 import multiprocessing as mp
 import os
 from pathlib import Path
-from pprint import pprint
 from queue import Queue
 import sys
 import threading
