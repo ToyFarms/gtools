@@ -1,8 +1,9 @@
 from abc import abstractmethod
 from argparse import ArgumentParser
+from contextlib import contextmanager
 from queue import Empty
 import struct
-from typing import Callable, cast
+from typing import Callable, Iterator, cast
 import os
 import threading
 import traceback
@@ -83,6 +84,7 @@ class Extension(ExtensionUtility):
         self.state = State()
         self._last_heartbeat = 0
 
+        self._suppress_log = False
         self.__push_fallback_called = 0
         self.__push_fallback_warned = 0
 
@@ -106,7 +108,8 @@ class Extension(ExtensionUtility):
         if self._stop_event.get():
             return
 
-        self.logger.debug(f"   send \x1b[31m-->>\x1b[0m \x1b[31m>>\x1b[0m{pkt!r}\x1b[31m>>\x1b[0m")
+        if not self._suppress_log:
+            self.logger.debug(f"   send \x1b[31m-->>\x1b[0m \x1b[31m>>\x1b[0m{pkt!r}\x1b[31m>>\x1b[0m")
         self._dealer.send(pkt.SerializeToString())
 
     def _recv(self, expected: Packet.Type | None = None) -> Packet | None:
@@ -263,12 +266,22 @@ class Extension(ExtensionUtility):
 
                 now = time.time()
                 if now - last_heartbeat > interval:
-                    self._send(Packet(type=Packet.TYPE_HEARTBEAT))
+                    with self.suppressed_log():
+                        self._send(Packet(type=Packet.TYPE_HEARTBEAT))
                     last_heartbeat = now
 
                 time.sleep(0.1)
         except Exception as e:
             self.logger.debug(f"monitor thread error: {e}")
+
+    @contextmanager
+    def suppressed_log(self) -> Iterator["Extension"]:
+        orig = self._suppress_log
+        try:
+            self._suppress_log = True
+            yield self
+        finally:
+            self._suppress_log = orig
 
     def forward(self, new: PendingPacket) -> PendingPacket:
         new._op = PendingPacket.OP_FORWARD

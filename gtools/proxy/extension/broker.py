@@ -697,7 +697,8 @@ class Broker:
 
                 now = time.time()
                 if now - last_heartbeat > interval:
-                    self.broadcast(Packet(type=Packet.TYPE_HEARTBEAT))
+                    with self.suppressed_log():
+                        self.broadcast(Packet(type=Packet.TYPE_HEARTBEAT))
                     last_heartbeat = now
 
                 time.sleep(0.1)
