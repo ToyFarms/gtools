@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import IntFlag
+from inspect import isabstract
 import logging
 from typing import Any, ClassVar
 
@@ -23,7 +24,7 @@ class SilkwormColor:
     b: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer):
+    def deserialize(cls, s: Buffer) -> "SilkwormColor":
         color = int.from_bytes(s.read_bytes(4))
         t = SilkwormColor(
             a=(color >> 24) & 0xFF,
@@ -56,7 +57,7 @@ class StorageBlockItemInfo:
     amount: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer):
+    def deserialize(cls, s: Buffer) -> "StorageBlockItemInfo":
         t = cls()
         t.unk1 = s.read_bytes(3)
         t.id = s.read_u32()
@@ -113,23 +114,20 @@ class TileExtra(ABC):
 
     @classmethod
     @abstractmethod
-    def deserialize(cls, _: Buffer) -> "TileExtra": ...
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "TileExtra": ...
 
     @classmethod
-    def dispatch(cls, s: Buffer, fg: int = -1, _bg: int = -1) -> "TileExtra":
+    def dispatch(cls, s: Buffer, fg: int = -1, bg: int = -1) -> "TileExtra":
         type = s.read_u8()
         if type not in TileExtra._registry:
             raise NotImplementedError(f"no tile extra for id {type}")
 
         t = TileExtra._registry[type]
-        if not callable(getattr(t, "deserialize")):
+
+        if isabstract(t):
             raise NotImplementedError(f"parser for object {t.__name__} is not implemented")
 
-        if fg != -1:
-            if type == 3 and fg == 5814:
-                s.rpos += 16
-
-        return t.deserialize(s)
+        return t.deserialize(s, fg, bg)
 
 
 @dataclass(slots=True)
@@ -139,7 +137,7 @@ class DoorTile(TileExtra):
     unk1: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "DoorTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "DoorTile":
         t = cls()
         t.text = s.read_pascal_bytes("H")
         t.unk1 = s.read_u8()
@@ -154,7 +152,7 @@ class SignTile(TileExtra):
     unk1: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "SignTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "SignTile":
         t = cls()
         t.text = s.read_pascal_bytes("H")
         t.unk1 = s.read_u32()
@@ -172,7 +170,7 @@ class LockTile(TileExtra):
     minimum_level: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "LockTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "LockTile":
         t = cls()
         t.flags = s.read_u8()
         t.owner_uid = s.read_u32()
@@ -184,6 +182,9 @@ class LockTile(TileExtra):
 
         _ = s.read_bytes(7)
 
+        if fg_id == 5814:
+            s.rpos += 16
+
         return t
 
 
@@ -194,7 +195,7 @@ class SeedTile(TileExtra):
     item_on_tree: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "SeedTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "SeedTile":
         t = cls()
         t.time_passed = s.read_u32()
         t.item_on_tree = s.read_u8()
@@ -232,9 +233,12 @@ class ChemicalSourceTile(TileExtra):
     time_passed: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "ChemicalSourceTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "ChemicalSourceTile":
         t = cls()
         t.time_passed = s.read_u32()
+
+        if fg_id == 10656:
+            s.rpos += 4
 
         return t
 
@@ -246,7 +250,7 @@ class AchievementBlockTile(TileExtra):
     tile_type: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "AchievementBlockTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "AchievementBlockTile":
         t = cls()
         t.unk1 = s.read_u32()
         t.tile_type = s.read_u8()
@@ -261,7 +265,7 @@ class HeartMonitorTile(TileExtra):
     player_name: bytes = b""
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "HeartMonitorTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "HeartMonitorTile":
         t = cls()
         t.unk1 = s.read_u32()
         t.player_name = s.read_pascal_bytes("H")
@@ -295,7 +299,7 @@ class MannequinTile(TileExtra):
     clothing_10: int = 0  # u16
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "MannequinTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "MannequinTile":
         t = cls()
         t.text = s.read_pascal_bytes("H")
         t.unk1 = s.read_u8()
@@ -319,7 +323,7 @@ class BunnyEggTile(TileExtra):
     eggs_placed: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "BunnyEggTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "BunnyEggTile":
         t = cls()
         t.eggs_placed = s.read_u32()
 
@@ -337,7 +341,7 @@ class GameGeneratorTile(TileExtra):
     ID = 17
 
     @classmethod
-    def deserialize(cls, _s: Buffer) -> "GameGeneratorTile":
+    def deserialize(cls, _s: Buffer, fg_id: int, bg_id: int) -> "GameGeneratorTile":
         t = cls()
         return t
 
@@ -350,7 +354,7 @@ class XenoniteCrystalTile(TileExtra):
     unk2: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "XenoniteCrystalTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "XenoniteCrystalTile":
         t = cls()
         t.unk1 = s.read_u8()
         t.unk2 = s.read_u32()
@@ -372,7 +376,7 @@ class PhoneBoothTile(TileExtra):
     clothing_9: int = 0  # u16
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "PhoneBoothTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "PhoneBoothTile":
         t = cls()
         t.clothing_1 = s.read_u16()
         t.clothing_2 = s.read_u16()
@@ -401,7 +405,7 @@ class CrimeInProgressTile(TileExtra):
     unk3: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "CrimeInProgressTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "CrimeInProgressTile":
         t = CrimeInProgressTile()
         t.unk1 = s.read_pascal_bytes("H")
         t.unk2 = s.read_u32()
@@ -415,7 +419,7 @@ class DisplayBlockTile(TileExtra):
     item_id: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "DisplayBlockTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "DisplayBlockTile":
         t = cls()
         t.item_id = s.read_u32()
 
@@ -429,7 +433,7 @@ class VendingMachineTile(TileExtra):
     price: int = 0  # i32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "VendingMachineTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "VendingMachineTile":
         t = cls()
         t.item_id = s.read_u32()
         t.price = s.read_i32()
@@ -444,7 +448,7 @@ class GivingTreeTile(TileExtra):
     unk2: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "GivingTreeTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "GivingTreeTile":
         t = cls()
         t.unk1 = s.read_u16()
         t.unk2 = s.read_u32()
@@ -457,7 +461,7 @@ class CountryFlagTile(TileExtra):
     country: bytes = b""
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "CountryFlagTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "CountryFlagTile":
         t = cls()
         t.country = s.read_pascal_bytes("H")
 
@@ -470,7 +474,7 @@ class WeatherMachineTile(TileExtra):
     settings: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "WeatherMachineTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "WeatherMachineTile":
         t = cls()
         t.settings = s.read_u32()
 
@@ -482,7 +486,7 @@ class DataBedrockTile(TileExtra):
     ID = 42
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "DataBedrockTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "DataBedrockTile":
         t = cls()
         _ = s.read_bytes(21)
         return t
@@ -493,7 +497,7 @@ class SpotlightTile(TileExtra):
     ID = 22
 
     @classmethod
-    def deserialize(cls, _s: Buffer) -> "SpotlightTile":
+    def deserialize(cls, _s: Buffer, fg_id: int, bg_id: int) -> "SpotlightTile":
         t = SpotlightTile()
         return t
 
@@ -505,7 +509,7 @@ class FishTankPortTile(TileExtra):
     fishes: list[FishInfo] = field(default_factory=list)
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "FishTankPortTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "FishTankPortTile":
         t = cls()
         t.flags = s.read_u8()
 
@@ -521,7 +525,7 @@ class SolarCollectorTile(TileExtra):
     unk1: bytes = b""  # [u8; 5]
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "SolarCollectorTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "SolarCollectorTile":
         t = SolarCollectorTile()
         t.unk1 = s.read_bytes(5)
         return t
@@ -563,7 +567,7 @@ class SilkwormTile(TileExtra):
     sick_duration: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "SilkwormTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "SilkwormTile":
         t = cls()
 
         t.flags = s.read_u8()
@@ -586,7 +590,7 @@ class SewingMachineTile(TileExtra):
     bolt_id_list: list[int] = field(default_factory=list)  # Vec<u32>
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "SewingMachineTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "SewingMachineTile":
         t = cls()
 
         for _ in range(s.read_u32()):
@@ -600,7 +604,7 @@ class LobsterTrapTile(TileExtra):
     ID = 34
 
     @classmethod
-    def deserialize(cls, _s: Buffer) -> "LobsterTrapTile":
+    def deserialize(cls, _s: Buffer, fg_id: int, bg_id: int) -> "LobsterTrapTile":
         t = LobsterTrapTile()
         return t
 
@@ -612,7 +616,7 @@ class PaintingEaselTile(TileExtra):
     label: bytes = b""
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "PaintingEaselTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "PaintingEaselTile":
         t = cls()
         t.item_id = s.read_u32()
         t.label = s.read_pascal_bytes("H")
@@ -628,7 +632,7 @@ class PetBattleCageTile(TileExtra):
     cbor: dict = field(default_factory=dict)
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "PetBattleCageTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "PetBattleCageTile":
         t = cls()
         t.name = s.read_pascal_bytes("H")
         t.unk1 = s.read_bytes(12)
@@ -645,7 +649,7 @@ class PetTrainerTile(TileExtra):
     pets_id: list[int] = field(default_factory=list)  # Vec<u32>
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "PetTrainerTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "PetTrainerTile":
         t = cls()
         t.name = s.read_pascal_bytes("H")
         t.pet_total_count = s.read_u32()
@@ -669,7 +673,7 @@ class LockBotTile(TileExtra):
     time_passed: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "LockBotTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "LockBotTile":
         t = cls()
         t.time_passed = s.read_u32()
 
@@ -691,7 +695,7 @@ class ShelfTile(TileExtra):
     bottom_right_item_id: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "ShelfTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "ShelfTile":
         t = cls()
         t.top_left_item_id = s.read_u32()
         t.top_right_item_id = s.read_u32()
@@ -709,7 +713,7 @@ class VipEntranceTile(TileExtra):
     access_uids: list[int] = field(default_factory=list)  # Vec<u32>
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "VipEntranceTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "VipEntranceTile":
         t = cls()
         t.unk1 = s.read_u8()
         t.owner_uid = s.read_u32()
@@ -734,7 +738,7 @@ class FishWallMountTile(TileExtra):
     lb: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "FishWallMountTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "FishWallMountTile":
         t = cls()
         t.label = s.read_pascal_bytes("H")
         t.item_id = s.read_u32()
@@ -758,7 +762,7 @@ class PortraitTile(TileExtra):
     unk6: int = 0  # u16
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "PortraitTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "PortraitTile":
         t = cls()
         t.label = s.read_pascal_bytes("H")
         t.unk1 = s.read_u32()
@@ -782,7 +786,7 @@ class GuildWeatherMachineTile(TileExtra):
     flags: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "GuildWeatherMachineTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "GuildWeatherMachineTile":
         t = cls()
         t.unk1 = s.read_u32()
         t.gravity = s.read_u32()
@@ -797,7 +801,7 @@ class FossilPrepStationTile(TileExtra):
     unk1: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "FossilPrepStationTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "FossilPrepStationTile":
         t = cls()
         t.unk1 = s.read_u32()
         return t
@@ -808,7 +812,7 @@ class DnaExtractorTile(TileExtra):
     ID = 51
 
     @classmethod
-    def deserialize(cls, _s: Buffer) -> "DnaExtractorTile":
+    def deserialize(cls, _s: Buffer, fg_id: int, bg_id: int) -> "DnaExtractorTile":
         t = cls()
         return t
 
@@ -818,7 +822,7 @@ class HowlerTile(TileExtra):
     ID = 52
 
     @classmethod
-    def deserialize(cls, _s: Buffer) -> "HowlerTile":
+    def deserialize(cls, _s: Buffer, fg_id: int, bg_id: int) -> "HowlerTile":
         t = cls()
         return t
 
@@ -830,7 +834,7 @@ class ChemsynthTankTile(TileExtra):
     target_chem: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "ChemsynthTankTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "ChemsynthTankTile":
         t = cls()
         t.current_chem = s.read_u32()
         t.target_chem = s.read_u32()
@@ -844,7 +848,7 @@ class StorageBlockTile(TileExtra):
     items: list[StorageBlockItemInfo] = field(default_factory=list)
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "StorageBlockTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "StorageBlockTile":
         t = cls()
         for _ in range(s.read_u16() // 13):
             t.items.append(StorageBlockItemInfo.deserialize(s))
@@ -862,7 +866,7 @@ class CookingOvenTile(TileExtra):
     unk3: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "CookingOvenTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "CookingOvenTile":
         t = cls()
         t.temperature_level = s.read_u32()
 
@@ -883,7 +887,7 @@ class AudioRackTile(TileExtra):
     volume: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "AudioRackTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "AudioRackTile":
         t = cls()
         t.note = s.read_pascal_bytes("H")
         t.volume = s.read_u32()
@@ -897,7 +901,7 @@ class GeigerChargerTile(TileExtra):
     unk1: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "GeigerChargerTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "GeigerChargerTile":
         t = cls()
         t.unk1 = s.read_u32()
         return t
@@ -908,7 +912,7 @@ class AdventureBeginsTile(TileExtra):
     ID = 58
 
     @classmethod
-    def deserialize(cls, _s: Buffer) -> "AdventureBeginsTile":
+    def deserialize(cls, _s: Buffer, fg_id: int, bg_id: int) -> "AdventureBeginsTile":
         t = cls()
         return t
 
@@ -918,7 +922,7 @@ class TombRobberTile(TileExtra):
     ID = 59
 
     @classmethod
-    def deserialize(cls, _s: Buffer):
+    def deserialize(cls, _s: Buffer, fg_id: int, bg_id: int) -> "TombRobberTile":
         return TombRobberTile()
 
 
@@ -927,6 +931,14 @@ class BalloonOMaticTile(TileExtra):
     ID = 60
     total_rarity: int = 0  # u32
     team_type: int = 0  # u8
+
+    @classmethod
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "BalloonOMaticTile":
+        t = BalloonOMaticTile()
+        t.total_rarity = s.read_u32()
+        t.team_type = s.read_u8()
+
+        return t
 
 
 @dataclass(slots=True)
@@ -938,6 +950,20 @@ class TrainingPortTile(TileExtra):
     fish_total_exp: int = 0  # u32
     fish_level: int = 0  # u32
     unk2: int = 0  # u32
+    unk3: bytes = b""  # u8 * 13
+
+    @classmethod
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "TrainingPortTile":
+        t = TrainingPortTile()
+        t.fish_lb = s.read_u32()
+        t.fish_status = s.read_u16()
+        t.fish_id = s.read_u32()
+        t.fish_total_exp = s.read_u32()
+        t.fish_level = s.read_u32()
+        t.unk2 = s.read_u32()
+        t.unk3 = s.read_bytes(13)
+
+        return t
 
 
 @dataclass(slots=True)
@@ -949,7 +975,7 @@ class ItemSuckerTile(TileExtra):
     limit: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "ItemSuckerTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "ItemSuckerTile":
         t = cls()
         t.item_id_to_suck = s.read_u32()
         t.item_amount = s.read_u32()
@@ -967,7 +993,7 @@ class CyBotTile(TileExtra):
     activated: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "CyBotTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "CyBotTile":
         t = cls()
 
         for _ in range(s.read_u32()):
@@ -985,7 +1011,7 @@ class GuildItemTile(TileExtra):
     unk1: bytes = b""  # 17
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "GuildItemTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "GuildItemTile":
         t = cls()
         t.unk1 = s.read_bytes(17)
         return t
@@ -997,7 +1023,7 @@ class GrowscanTile(TileExtra):
     unk1: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "GrowscanTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "GrowscanTile":
         t = cls()
         t.unk1 = s.read_u8()
         return t
@@ -1010,7 +1036,7 @@ class ContainmentFieldPowerNodeTile(TileExtra):
     unk1: list[int] = field(default_factory=list)  # Vec<u32>
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "ContainmentFieldPowerNodeTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "ContainmentFieldPowerNodeTile":
         t = cls()
         t.ghost_jar_count = s.read_u32()
         for _ in range(s.read_u32()):
@@ -1026,7 +1052,7 @@ class SpiritBoardTile(TileExtra):
     unk3: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "SpiritBoardTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "SpiritBoardTile":
         t = cls()
         t.unk1 = s.read_u32()
         t.unk2 = s.read_u32()
@@ -1042,7 +1068,7 @@ class StormyCloudTile(TileExtra):
     non_solid_duration: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "StormyCloudTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "StormyCloudTile":
         t = cls()
         t.sting_duration = s.read_u32()
         t.is_solid = s.read_u32()
@@ -1057,7 +1083,7 @@ class TemporaryPlatformTile(TileExtra):
     unk1: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "TemporaryPlatformTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "TemporaryPlatformTile":
         t = cls()
         t.unk1 = s.read_u32()
         return TemporaryPlatformTile()
@@ -1068,7 +1094,7 @@ class SafeVaultTile(TileExtra):
     ID = 74
 
     @classmethod
-    def deserialize(cls, _s: Buffer) -> "SafeVaultTile":
+    def deserialize(cls, _s: Buffer, fg_id: int, bg_id: int) -> "SafeVaultTile":
         t = SafeVaultTile()
         return t
 
@@ -1081,7 +1107,7 @@ class AngelicCountingCloudTile(TileExtra):
     ascii_code: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "AngelicCountingCloudTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "AngelicCountingCloudTile":
         t = cls()
         t.is_raffling = s.read_u32()
         t.unk1 = s.read_u16()
@@ -1096,7 +1122,7 @@ class InfinityWeatherMachineTile(TileExtra):
     weather_machine_list: list[int] = field(default_factory=list)  # Vec<u32>
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "InfinityWeatherMachineTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "InfinityWeatherMachineTile":
         t = cls()
         t.interval_minutes = s.read_u32()
         size = s.read_u32()
@@ -1111,7 +1137,7 @@ class PineappleGuzzlerTile(TileExtra):
     ID = 79
 
     @classmethod
-    def deserialize(cls, _s: Buffer) -> "PineappleGuzzlerTile":
+    def deserialize(cls, _s: Buffer, fg_id: int, bg_id: int) -> "PineappleGuzzlerTile":
         t = cls()
         return t
 
@@ -1126,7 +1152,7 @@ class KrakenGalaticBlockTile(TileExtra):
     b: int = 0  # u8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "KrakenGalaticBlockTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "KrakenGalaticBlockTile":
         t = cls()
         t.pattern_index = s.read_u8()
         t.unk1 = s.read_u32()
@@ -1144,7 +1170,7 @@ class FriendsEntranceTile(TileExtra):
     unk2: int = 0  # u16
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "FriendsEntranceTile":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "FriendsEntranceTile":
         t = cls()
         t.owner_user_id = s.read_u32()
         t.unk1 = s.read_u16()
@@ -1161,7 +1187,7 @@ class TesseractManipulator(TileExtra):
     unk3: int = 0  # u32
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "TesseractManipulator":
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int) -> "TesseractManipulator":
         t = cls()
         t.gems = s.read_u32()
         t.unk1 = s.read_u32()
@@ -1254,10 +1280,11 @@ class Tile:
             15376,  # Party Projector
             8642,  # Bountiful Lattice Fence Roots
             15546,  # Auction Block
+            14666,  # Auto Surgeon
+            14662,  # Operating Table
         ]
 
-        tile_has_xml = item_database.get(tile.fg_id).extra_file.endswith(b".xml")
-        if tile_has_xml or tile.fg_id in cbor_ids:
+        if tile.fg_id in cbor_ids:
             tile.cbor_data = cbor2.loads(s.read_pascal_bytes("I"))
 
         return tile
@@ -1297,6 +1324,14 @@ class Dropped:
     nb_items: int = 0
     last_uid: int = 0
     items: list[DroppedItem] = field(default_factory=list)
+
+    def get_total(self, id: int) -> int:
+        total = 0
+        for item in self.items:
+            if item.id == id:
+                total += item.amount
+
+        return total
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Dropped) -> "Dropped":

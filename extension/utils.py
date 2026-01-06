@@ -2,6 +2,7 @@ from enum import IntEnum, auto
 import random
 import time
 
+from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.task_scheduler import schedule_task
@@ -45,6 +46,7 @@ class UtilityExtension(Extension):
         super().__init__(
             name="utils",
             interest=[
+                Interest(interest=InterestType.INTEREST_STATE_UPDATE),
                 s.command_toggle("/exit", Action.EXIT),
                 Interest(
                     interest=InterestType.INTEREST_GAME_MESSAGE,
@@ -172,7 +174,7 @@ class UtilityExtension(Extension):
                         ENetPacketFlag.RELIABLE,
                     )
 
-                    schedule_task(lambda: self.push(res), random.uniform(0.712, 0.9812))
+                    self.push(res)
                     return self.cancel()
             case Action.GAZETTE_DIALOG:
                 time.sleep(random.uniform(0.518, 0.812))
@@ -194,6 +196,23 @@ class UtilityExtension(Extension):
                         packet_flags=ENetPacketFlag.RELIABLE,
                     )
                 )
+
+    @dispatch(s.command("/item", id=100))
+    def _item(self, event: PendingPacket) -> PendingPacket | None:
+        if self.state.world:
+            id = s.parse_command(event)
+            if id:
+                self.console_log(f"{self.state.world.inner.dropped.get_total(int(id))}")
+            else:
+                self.console_log(f"{self.state.world.inner.dropped}")
+        return self.cancel()
+
+    @dispatch(s.command("/search", id=101))
+    def _search(self, event: PendingPacket) -> PendingPacket | None:
+        search = s.parse_command(event).strip()
+        for item in item_database.search(search):
+            self.console_log(f"{item.name.decode()}: rarity={item.rarity}, id={item.id}")
+        return self.cancel()
 
     def destroy(self) -> None:
         pass

@@ -204,6 +204,7 @@ class Proxy:
             if pkt.as_net.game_message["action", 1] == b"quit":
                 self.disconnect_all()
                 self.running = False
+                self._should_reconnect.set()
 
                 return
         elif pkt.as_net.type == NetType.SERVER_HELLO:

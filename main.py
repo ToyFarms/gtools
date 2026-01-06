@@ -195,6 +195,7 @@ if __name__ == "__main__":
                 alpha_mask = cmd.buffer[:, :, 3] > 4
                 dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
                 dst_slice[alpha_mask] = cmd.buffer[:, :, : dst_slice.shape[2]][alpha_mask]
-        print(f"rendering took {time.perf_counter() - start:.1f}s")
+        print(f"rendering took {time.perf_counter() - start:.3f}s")
 
         Image.fromarray(img).show()
+

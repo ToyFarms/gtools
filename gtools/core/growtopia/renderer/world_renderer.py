@@ -5,17 +5,23 @@ from gtools.core.growtopia.renderer.renderer import RenderCommand
 from gtools.core.growtopia.rttex import RtTexManager
 from gtools.core.growtopia.world import Tile
 from gtools.proxy.setting import setting
+import numpy as np
+import numpy.typing as npt
 
 
 class WorldRenderer:
     def __init__(self) -> None:
         self._tex_mgr = RtTexManager()
 
-    def render_tile(self, id: int, pos: vec2 | ivec2) -> RenderCommand:
-        item = item_database.get(id)
-        tex = self._tex_mgr.get(setting.asset_path / item.texture_file.decode(), item.tex_coord_x * 32, item.tex_coord_y * 32, 32, 32)
+    def get_tex(self, id: int) -> npt.NDArray[np.uint8]:
+        try:
+            item = item_database.get(id)
+        except:
+            item = item_database.get(2)
+        return self._tex_mgr.get(setting.asset_path / item.texture_file.decode(), item.tex_coord_x * 32, item.tex_coord_y * 32, 32, 32)
 
-        return RenderCommand(tex, [vec4(pos.x, pos.y, 32, 32)])
+    def render_tile(self, id: int, pos: vec2 | ivec2) -> RenderCommand:
+        return RenderCommand(self.get_tex(id), [vec4(pos.x, pos.y, 32, 32)])
 
     def get_render_cmd(self, tile: Tile) -> list[RenderCommand]:
         r: list[RenderCommand] = []
@@ -35,12 +41,9 @@ class WorldRenderer:
             bg_tile_by_types[tile.bg_id].append(tile.pos * 32)
             fg_tile_by_types[tile.fg_id].append(tile.pos * 32)
 
-        for id, poss in bg_tile_by_types.items():
-            for pos in poss:
-                r.append(self.render_tile(id, pos))
-
-        for id, poss in fg_tile_by_types.items():
-            for pos in poss:
-                r.append(self.render_tile(id, pos))
+        for id, pos_list in bg_tile_by_types.items():
+            r.append(RenderCommand(self.get_tex(id), list(map(lambda x: vec4(x.x, x.y, 32, 32), pos_list))))
+        for id, pos_list in fg_tile_by_types.items():
+            r.append(RenderCommand(self.get_tex(id), list(map(lambda x: vec4(x.x, x.y, 32, 32), pos_list))))
 
         return r

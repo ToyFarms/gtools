@@ -328,3 +328,14 @@ class Buffer:
             yield self
         finally:
             self.rpos = saved
+
+    def offset_to(self, seq: bytes) -> int:
+        with self.temp():
+            start = self.rpos
+            try:
+                while True:
+                    if self.peek(len(seq)) == seq:
+                        return self.rpos - start
+                    self.rpos += 1
+            except EOFError:
+                return -1
