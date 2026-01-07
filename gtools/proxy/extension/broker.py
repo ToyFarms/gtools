@@ -774,7 +774,7 @@ class Broker:
         pkt = Packet()
         pkt.ParseFromString(data)
 
-        if not self._suppress_log:
+        if not self._suppress_log and not pkt.type == Packet.TYPE_HEARTBEAT:
             self.logger.debug(f"\x1b[31m<<--\x1b[0m recv    \x1b[31m<<\x1b[0m{pkt!r}\x1b[31m<<\x1b[0m")
 
         return id, pkt
