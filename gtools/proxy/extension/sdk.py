@@ -87,6 +87,7 @@ class Extension(ExtensionUtility):
         self._suppress_log = False
         self.__push_fallback_called = 0
         self.__push_fallback_warned = 0
+        self._running = False
 
     def push(self, pkt: PreparedPacket) -> None:
         self.push_connected.wait_true(timeout=5.0)
@@ -197,8 +198,13 @@ class Extension(ExtensionUtility):
         except Exception:
             pass
 
-        self.broker_connected.wait_false(timeout=2.0)
-        self.push_connected.wait_false(timeout=2.0)
+        if not self._running:
+            if self._recv(Packet.TYPE_DISCONNECT_ACK):
+                self.broker_connected.set(False)
+                self.push_connected.set(False)
+        else:
+            self.broker_connected.wait_false(timeout=2.0)
+            self.push_connected.wait_false(timeout=2.0)
 
         self._stop_event.set(True)
 
@@ -303,6 +309,7 @@ class Extension(ExtensionUtility):
         dst._rtt_ns = src._rtt_ns
 
     def _worker_thread(self) -> None:
+        self._running = True
         try:
             while not self._stop_event.get():
                 pkt = self._recv()
@@ -369,6 +376,7 @@ class Extension(ExtensionUtility):
                 self.logger.debug(f"ZMQ error in main loop: {e}")
         finally:
             self.logger.debug("worker thread exiting")
+            self._running = False
 
     # helper
     def standalone(self) -> None:
