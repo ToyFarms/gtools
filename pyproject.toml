@@ -26,3 +26,6 @@ include = "gtools"
 
 [tool.black]
 line-length = 180
+
+[tool.mypy]
+disable_error_code = ["import-untyped", "import-not-found"]

@@ -9,8 +9,6 @@ from ctypes import (
 )
 from typing import Literal, Protocol
 
-class STATIC_ARRAY[T, N](Array): ...
-
 c_char_p = bytes
 c_int = int
 c_size_t = int
@@ -150,7 +148,7 @@ class ENetPeer(Structure):
     reserved: c_uint16
     incomingUnsequencedGroup: c_uint16
     outgoingUnsequencedGroup: c_uint16
-    unsequencedWindow: STATIC_ARRAY[c_uint32, Literal[32]]
+    unsequencedWindow: Array  # c_uint32 * 32
     eventData: c_uint32
     totalWaitingData: c_size_t
 
@@ -169,7 +167,7 @@ ENET_PROTOCOL_MAXIMUM_WINDOW_SIZE = Literal[65536]
 ENET_PROTOCOL_MINIMUM_CHANNEL_COUNT = Literal[1]
 ENET_PROTOCOL_MAXIMUM_CHANNEL_COUNT = Literal[255]
 ENET_PROTOCOL_MAXIMUM_PEER_ID = Literal[0xFFF]
-ENET_PROTOCOL_MAXIMUM_FRAGMENT_COUNT = Literal[1024 * 1024]
+ENET_PROTOCOL_MAXIMUM_FRAGMENT_COUNT = Literal[1048576]  # 1024 * 1024
 
 ENET_PROTOCOL_COMMAND_NONE = Literal[0]
 ENET_PROTOCOL_COMMAND_ACKNOWLEDGE = Literal[1]
@@ -205,7 +203,7 @@ class _ENetSocks5Ipv4InnerStruct(Structure):
 
 class _ENetSocks5Ipv4Union(Union):
     addr: c_uint32
-    parts: STATIC_ARRAY[c_uint8, Literal[4]]
+    parts: Array  # c_uint8 * 4
     s: _ENetSocks5Ipv4InnerStruct
 
 class ENetSocks5Ipv4(Structure):
@@ -243,7 +241,7 @@ class ENetProtocolHeader(Structure):
     sentTime: c_uint16
 
 class ENetNewProtocolHeader(Structure):
-    integrity: STATIC_ARRAY[c_uint16, Literal[3]]
+    integrity: Array  # c_uint16 * 3
     peerID: c_uint16
     sentTime: c_uint16
 
@@ -407,13 +405,13 @@ class ENetHost(Structure):
     totalQueued: c_uint32
     packetSize: c_size_t
     headerFlags: c_uint16
-    commands: STATIC_ARRAY[ENetProtocol, ENET_PROTOCOL_MAXIMUM_PACKET_COMMANDS]
+    commands: Array  # ENetProtocol * ENET_PROTOCOL_MAXIMUM_PACKET_COMMANDS
     commandCount: c_size_t
-    buffers: STATIC_ARRAY[ENetBuffer, ENET_BUFFER_MAXIMUM]
+    buffers: Array  # ENetBuffer * ENET_BUFFER_MAXIMUM
     bufferCount: c_size_t
     checksum: ENetChecksumCallback
     compressor: ENetCompressor
-    packetData: STATIC_ARRAY[STATIC_ARRAY[c_uint8, Literal[2]], Literal[ENET_PROTOCOL_MAXIMUM_MTU]]
+    packetData: Array  # STATIC_ARRAY[STATIC_ARRAY[c_uint8, 2], ENET_PROTOCOL_MAXIMUM_MTU]
     receivedAddress: ENetAddress
     receivedData: Pointer[ctypes.c_uint8]
     receivedDataLength: c_size_t
