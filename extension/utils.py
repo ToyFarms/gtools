@@ -202,9 +202,9 @@ class UtilityExtension(Extension):
         if self.state.world:
             id = s.parse_command(event)
             if id:
-                self.console_log(f"{self.state.world.inner.dropped.get_total(int(id))}")
+                self.console_log(f"{self.state.world.dropped.get_total(int(id))}")
             else:
-                self.console_log(f"{self.state.world.inner.dropped}")
+                self.console_log(f"{self.state.world.dropped}")
         return self.cancel()
 
     @dispatch(s.command("/search", id=101))
