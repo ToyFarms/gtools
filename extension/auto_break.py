@@ -14,8 +14,10 @@ from gtools.protogen.extension_pb2 import (
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
     INTEREST_CALL_FUNCTION,
+    INTEREST_PING_REPLY,
     INTEREST_STATE,
     INTEREST_STATE_UPDATE,
+    INTEREST_TILE_APPLY_DAMAGE,
     INTEREST_TILE_CHANGE_REQUEST,
     Interest,
     InterestCallFunction,
@@ -26,17 +28,6 @@ from gtools.proxy.extension.sdk import Extension, dispatch, register_thread
 from gtools.proxy.extension.sdk_utils import helper
 from gtools.proxy.state import Status
 from thirdparty.enet.bindings import ENetPacketFlag
-
-
-class Action(IntEnum):
-    TOGGLE_AUTO = auto()
-    REC = auto()
-    TEMPLATE = auto()
-    TOGGLE_NEXT_SET_ID = auto()
-    BUILD = auto()
-    PUNCH = auto()
-    MAG_EMPTY = auto()
-    TILE_CHANGE_CONFIRM = auto()
 
 
 @dataclass(slots=True)
@@ -67,6 +58,15 @@ class AutoBreakExtension(Extension):
         self._set_id_to_next = False
         self.item_id = 0
         self.place_pending: dict[ivec2, float] = {}
+        self.last_confirmation = 0
+
+    @dispatch(Interest(interest=INTEREST_TILE_APPLY_DAMAGE, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_SERVER_TO_CLIENT, id=s.auto))
+    def _apply_damange(self, _event: PendingPacket) -> PendingPacket | None:
+        self.last_confirmation = time.time()
+
+    @dispatch(Interest(interest=INTEREST_PING_REPLY, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_SERVER_TO_CLIENT, id=s.auto))
+    def _ping_reply(self, _event: PendingPacket) -> PendingPacket | None:
+        self.last_confirmation = time.time()
 
     def find_next_target(self) -> bool:
         if self.state.world is None:
@@ -111,6 +111,7 @@ class AutoBreakExtension(Extension):
     @register_thread
     def thread_punch(self) -> None:
         last_tile_change: float = math.inf
+        printed = False
 
         while True:
             while self.state.status == Status.IN_WORLD and self.state.world and self.enabled:
@@ -118,9 +119,20 @@ class AutoBreakExtension(Extension):
                     break
 
                 if self.state.me.character.hack_type & HackType.CHARACTER_FROZEN:
-                    print("waiting because character is frozen")
+                    if not printed:
+                        print("waiting because character is frozen")
+                        printed = True
                     time.sleep(0.01)
                     continue
+                printed = False
+
+                if self.last_confirmation != 0 and time.time() - self.last_confirmation > 3:
+                    if not printed:
+                        print("server not responding in a while, waiting...")
+                        printed = True
+                    time.sleep(0.01)
+                    continue
+                printed = False
 
                 next = self.get_next_target()
                 if isinstance(next, bool) or not next:
@@ -139,6 +151,7 @@ class AutoBreakExtension(Extension):
                 self.enabled = False
                 self.console_log("auto disabled")
 
+            self.last_confirmation = 0
             last_tile_change = math.inf
             self.reset_state()
             time.sleep(0.1)
@@ -260,6 +273,7 @@ class AutoBreakExtension(Extension):
         ),
     )
     def _tile_change_confirm(self, event: PendingPacket) -> PendingPacket | None:
+        self.last_confirmation = time.time()
         if self.place_pending:
             pkt = NetPacket.deserialize(event.buf)
             target = ivec2(pkt.tank.int_x, pkt.tank.int_y)
