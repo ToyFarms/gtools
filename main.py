@@ -13,6 +13,7 @@ import numpy as np
 from pyglm.glm import ivec4
 
 from gtools import flags
+from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.renderer.world_renderer import WorldRenderer
 from gtools.core.growtopia.strkv import StrKV
@@ -75,6 +76,7 @@ def _run(e: type[Extension], *args) -> None:
 
 
 if __name__ == "__main__":
+    _ = item_database.items()  # trigger cache
     parser = argparse.ArgumentParser()
 
     parser.add_argument("-v", action="store_true")
