@@ -360,7 +360,7 @@ class Extension(ExtensionUtility):
                         )
                     case Packet.TYPE_STATE_RESPONSE:
                         self.state = State.from_proto(pkt.state_response.state)
-                        if self.state.status == Status.IN_WORLD:
+                        if self.state.status == Status.CONNECTED or self.state.status == Status.IN_WORLD:
                             self.console_log(f"extension {self._name.decode(errors='backslashreplace')} connected")
                     case Packet.TYPE_STATE_UPDATE:
                         self.state.update(pkt.state_update)

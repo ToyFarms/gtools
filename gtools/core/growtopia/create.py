@@ -24,9 +24,17 @@ def console_message(text: str | bytes) -> NetPacket:
     return NetPacket(NetType.TANK_PACKET, call)
 
 
+def play_positioned(path: str | bytes, net_id: int) -> NetPacket:
+    call = call_function(b"OnPlayPositioned", Variant.vstr(path.encode() if isinstance(path, str) else path))
+    call.net_id = net_id
+
+    return NetPacket(NetType.TANK_PACKET, call)
+
+
 def chat(text: str | bytes) -> NetPacket:
     text = text if isinstance(text, bytes) else text.encode()
     return NetPacket(NetType.GENERIC_TEXT, StrKV([[b"action", b"input"], [b"", b"text", text]]))
+
 
 def particle(id: int, x: float, y: float, f: int = 0, f2: int = 0) -> NetPacket:
     call = call_function(

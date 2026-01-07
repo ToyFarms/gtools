@@ -5,7 +5,7 @@ from pyglm import glm
 from google.protobuf.any_pb2 import Any
 from typing import Any as TAny
 from gtools.core.convertible import ConvertibleToBytes, ConvertibleToFloat, ConvertibleToInt, ConvertibleToStr, SupportsLenAndGet, Vec2Like, Vec3Like
-from gtools.core.growtopia.create import console_message, particle
+from gtools.core.growtopia.create import console_message, particle, play_positioned
 from gtools.core.growtopia.packet import NetPacket, PreparedPacket, TankFlags
 from gtools.core.limits import INT32_MAX
 from gtools.protogen.extension_pb2 import (
@@ -295,6 +295,7 @@ class helper:
 
     # ====================== NOTE: this needs to be in the end as to not shadow the builtin types  ======================
 
+
 # NOTE: this will not be redefined even when imported multiple times
 s = helper()
 
@@ -308,6 +309,9 @@ class ExtensionUtility(ABC):
 
     def console_log(self, msg: str) -> None:
         self.push(PreparedPacket(console_message(msg), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
+
+    def play_sound(self, path: str) -> None:
+        self.push(PreparedPacket(play_positioned(path, self.state.me.net_id), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
     def send_particle(self, id: int, f: int = 0, f2: int = 0, *, abs: glm.vec2 | None = None, tile: glm.ivec2 | None = None) -> None:
         pos = abs if abs else tile * 32 + 16 if tile else None
