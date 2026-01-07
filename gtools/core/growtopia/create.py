@@ -36,16 +36,18 @@ def chat(text: str | bytes) -> NetPacket:
     return NetPacket(NetType.GENERIC_TEXT, StrKV([[b"action", b"input"], [b"", b"text", text]]))
 
 
-def particle(id: int, x: float, y: float, f: int = 0, f2: int = 0) -> NetPacket:
-    call = call_function(
-        b"OnParticleEffect",
-        Variant.vuint(id),
-        Variant.vvec2((x, y)),
-        Variant.vint(f),
-        Variant.vint(f2),
+def particle(id: int, x: float, y: float, alternate: int = 0) -> NetPacket:
+    return NetPacket(
+        NetType.TANK_PACKET,
+        TankPacket(
+            TankType.SEND_PARTICLE_EFFECT,
+            vector_x=x,
+            vector_y=y,
+            net_id=id,
+            vector_y2=id,
+            vector_x2=alternate,
+        ),
     )
-    call.net_id = 4294967295
-    return NetPacket(NetType.TANK_PACKET, call)
 
 
 class PacketSequence:

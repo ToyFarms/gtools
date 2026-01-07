@@ -5,3 +5,4 @@ cachegrind.out
 .coverage*
 !.coveragerc
 analyze/
+smh.py

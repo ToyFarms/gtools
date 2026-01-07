@@ -313,12 +313,12 @@ class ExtensionUtility(ABC):
     def play_sound(self, path: str) -> None:
         self.push(PreparedPacket(play_positioned(path, self.state.me.net_id), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
-    def send_particle(self, id: int, f: int = 0, f2: int = 0, *, abs: glm.vec2 | None = None, tile: glm.ivec2 | None = None) -> None:
+    def send_particle(self, id: int, alternate: int = 0, *, abs: glm.vec2 | None = None, tile: glm.ivec2 | None = None) -> None:
         pos = abs if abs else tile * 32 + 16 if tile else None
         if not pos:
             return
 
-        self.push(PreparedPacket(particle(id, pos[0], pos[1], f, f2), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
+        self.push(PreparedPacket(particle(id, pos[0], pos[1], alternate), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
     def facing_left(self, to: vec2) -> TankFlags:
         return TankFlags.FACING_LEFT if self.state.me.pos.x > ((to.x + 31) // 32) * 32 else TankFlags.NONE
