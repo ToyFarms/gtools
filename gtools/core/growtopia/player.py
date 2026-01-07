@@ -75,16 +75,43 @@ class Player:
         )
 
 
-class HackType(IntFlag):
+# https://github.com/RebillionXX/GTServer/blob/654ecd9bb0e4c74b3cb0a3be4c392b851db85e17/src/player/objects/character_state.h
+# https://github.com/zKaan/GTOSLatest/blob/d2108f6e6c60f69f6e02cf1ae4cff98b375352bf/player.h#L361
+class CharacterFlags(IntFlag):
     NONE = 0
-    CHARACTER_FROZEN = 1 << 11
+    NOCLIP = 1 << 0
+    DOUBLE_JUMP = 1 << 1
+    INVISIBLE = 1 << 2
+    NO_HAND = 1 << 3
+    NO_EYE = 1 << 4
+    NO_BODY = 1 << 5
+    DEVIL_HORN = 1 << 6
+    GOLDEN_HALO = 1 << 7
+    UNKNOWN_8 = 1 << 8
+    UNKNOWN_9 = 1 << 9
+    UNKNOWN_10 = 1 << 10
+    FROZEN = 1 << 11
+    CURSED = 1 << 12
+    DUCT_TAPE = 1 << 13
+    CIGAR = 1 << 14
+    SHINING = 1 << 15
+    ZOMBIE = 1 << 16
+    RED_BODY = 1 << 17
+    HAUNTED_SHADOWS = 1 << 18
+    GEIGER_RADIATION = 1 << 19
+    SPOTLIGHT = 1 << 20
+    YELLOW_BODY = 1 << 21
+    PINEAPPLE_FLAG = 1 << 22
+    FLYING_PINEAPPLE = 1 << 23
+    SUPER_SUPPORTER_NAME = 1 << 24
+    SUPER_PINEAPPLE = 1 << 25
 
 
 @dataclass(slots=True)
 class CharacterState:
     build_range: int = 0
     punch_range: int = 0
-    hack_type: int = 0
+    flags: CharacterFlags = CharacterFlags.NONE
     gravity: float = 0.0
     velocity: float = 0.0
 
@@ -93,7 +120,7 @@ class CharacterState:
         return cls(
             build_range=proto.build_range,
             punch_range=proto.punch_range,
-            hack_type=proto.hack_type,
+            flags=CharacterFlags(proto.flags),
             gravity=proto.gravity,
             velocity=proto.velocity,
         )
@@ -102,7 +129,7 @@ class CharacterState:
         return growtopia_pb2.CharacterState(
             build_range=self.build_range,
             punch_range=self.punch_range,
-            hack_type=self.hack_type,
+            flags=self.flags,
             gravity=self.gravity,
             velocity=self.velocity,
         )

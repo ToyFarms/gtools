@@ -420,7 +420,7 @@ class Proxy:
                                 character_state=growtopia_pb2.CharacterState(
                                     build_range=pkt.tank.jump_count - 126,
                                     punch_range=pkt.tank.animation_type - 126,
-                                    hack_type=pkt.tank.value,
+                                    flags=pkt.tank.value,
                                     gravity=pkt.tank.vector_x2,
                                     velocity=pkt.tank.vector_y2,
                                 ),

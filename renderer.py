@@ -29,6 +29,7 @@ def render_world(name: str) -> Image.Image:
                     continue
                 i = item_database.get(id)
                 tex = manager.get(windows_home() / f"AppData/Local/Growtopia/game/{i.texture_file.decode()}", i.tex_coord_x * 32, i.tex_coord_y * 32, 32, 32)
+                # TODO: rewrite to use render command
                 img.paste(tex, (tile.pos.x * 32, tile.pos.y * 32))
                 if w.garbage_start != -1 and idx >= w.garbage_start:
                     draw = ImageDraw.Draw(img)

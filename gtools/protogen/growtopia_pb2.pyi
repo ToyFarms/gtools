@@ -28,15 +28,15 @@ class CharacterState(_message.Message):
     __slots__ = ()
     BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
     PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
-    HACK_TYPE_FIELD_NUMBER: _ClassVar[int]
+    FLAGS_FIELD_NUMBER: _ClassVar[int]
     GRAVITY_FIELD_NUMBER: _ClassVar[int]
     VELOCITY_FIELD_NUMBER: _ClassVar[int]
     build_range: int
     punch_range: int
-    hack_type: int
+    flags: int
     gravity: float
     velocity: float
-    def __init__(self, build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., hack_type: _Optional[int] = ..., gravity: _Optional[float] = ..., velocity: _Optional[float] = ...) -> None: ...
+    def __init__(self, build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., flags: _Optional[int] = ..., gravity: _Optional[float] = ..., velocity: _Optional[float] = ...) -> None: ...
 
 class Me(_message.Message):
     __slots__ = ()

@@ -8,7 +8,7 @@ from pyglm.glm import ivec2, vec2
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
-from gtools.core.growtopia.player import HackType
+from gtools.core.growtopia.player import CharacterFlags
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
@@ -118,7 +118,7 @@ class AutoBreakExtension(Extension):
                 if time.monotonic() - last_tile_change > 0.3:
                     break
 
-                if self.state.me.character.hack_type & HackType.CHARACTER_FROZEN:
+                if self.state.me.character.flags & CharacterFlags.FROZEN:
                     if not printed:
                         print("waiting because character is frozen")
                         printed = True
