@@ -21,6 +21,7 @@ from gtools.core.growtopia.world import World
 from gtools.core.log import setup_logger
 from gtools.core.block_sigint import block_sigint
 from gtools.core.network import is_up, resolve_doh
+from gtools.core.wsl import windows_home
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_SERVER_TO_CLIENT,
@@ -87,6 +88,7 @@ if __name__ == "__main__":
     subparser.add_parser("ext_test")
     subparser.add_parser("test")
     subparser.add_parser("stress")
+    subparser.add_parser("world_test")
 
     render = subparser.add_parser("render")
     render.add_argument("world")
@@ -184,6 +186,12 @@ if __name__ == "__main__":
         p.terminate()
         p.join()
         b.stop()
+    elif args.cmd == "world_test":
+        for f in (windows_home() / ".gtools/world").glob("*"):
+            try:
+                World.from_tank(f.read_bytes())
+            except:
+                print(f"parsing {f} failed")
     elif args.cmd == "render":
         renderer = WorldRenderer()
         world = World.from_tank(Path(args.world).read_bytes())

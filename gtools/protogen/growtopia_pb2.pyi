@@ -170,7 +170,6 @@ class Tile(_message.Message):
     X_FIELD_NUMBER: _ClassVar[int]
     Y_FIELD_NUMBER: _ClassVar[int]
     LOCK_BLOCK_INDEX_FIELD_NUMBER: _ClassVar[int]
-    CBOR_DATA_FIELD_NUMBER: _ClassVar[int]
     fg_id: int
     bg_id: int
     parent_block_index: int
@@ -179,8 +178,7 @@ class Tile(_message.Message):
     x: int
     y: int
     lock_block_index: int
-    cbor_data: bytes
-    def __init__(self, fg_id: _Optional[int] = ..., bg_id: _Optional[int] = ..., parent_block_index: _Optional[int] = ..., flags: _Optional[int] = ..., extra: _Optional[bytes] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., lock_block_index: _Optional[int] = ..., cbor_data: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, fg_id: _Optional[int] = ..., bg_id: _Optional[int] = ..., parent_block_index: _Optional[int] = ..., flags: _Optional[int] = ..., extra: _Optional[bytes] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., lock_block_index: _Optional[int] = ...) -> None: ...
 
 class WorldInner(_message.Message):
     __slots__ = ()
