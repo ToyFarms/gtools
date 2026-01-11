@@ -110,7 +110,7 @@ class CParser:
 
         return acc
 
-    def _parse_declarator(self):
+    def parse_declarator(self):
         pointer_level = 0
         while self.peek().type == "TIMES":
             self.next()
@@ -186,7 +186,7 @@ class CParser:
         while self.peek().type in TYPE_TOKS:
             type_tokens.append(self.next())
 
-        id_tok, pointer_level, array_dims = self._parse_declarator()
+        id_tok, pointer_level, array_dims = self.parse_declarator()
         var_name = id_tok.value
 
         initializer: ast.expr | None = None
@@ -276,6 +276,60 @@ class CParser:
         self.expect_and_next("SEMI")
 
         return ast.Call(ident.value, args)
+
+    def parse_fundef(self) -> ast.stmt:
+        retypes: list[Token] = []
+        while self.has_next():
+            if self.peek().type not in ("ID", "TIMES"):
+                break
+
+            retypes.append(self.next())
+
+        args: list[ast.arg] = []
+        self.expect_and_next("LPAREN")
+        while self.peek().type != "RPAREN":
+            type_tokens: list[Token] = [self.next()]
+            TYPE_TOKS = {
+                "UNSIGNED",
+                "SIGNED",
+                "INT",
+                "CHAR",
+                "FLOAT",
+                "DOUBLE",
+                "VOID",
+                "TYPE_NAME",
+                "STRUCT",
+                "UNION",
+                "ENUM",
+                "CONST",
+                "VOLATILE",
+                "LONG",
+                "SHORT",
+                "SIGNED",
+                "UNSIGNED",
+            }
+            while self.peek().type in TYPE_TOKS:
+                type_tokens.append(self.next())
+
+            id_tok, pointer_level, array_dims = self.parse_declarator()
+            mods = ""
+            if pointer_level > 0 or array_dims:
+                mods = "*" * pointer_level if pointer_level else "".join(ast.unparse(x) for x in array_dims if x)
+            annotations = ast.Constant("_".join(x.value for x in type_tokens) + mods)
+
+            args.append(ast.arg(id_tok.value, annotations))
+
+            if self.peek().type == "RPAREN":
+                self.next()
+                break
+
+            self.expect_and_next("COMMA")
+
+        *retypes, name = retypes
+        fn = ast.FunctionDef(name.value, ast.arguments(args), [], returns=ast.Constant("_".join(x.value for x in retypes)))
+
+        fn.body = self.parse_body()
+        return fn
 
     def get_op_info(self, token_type: str) -> tuple[int, int, str]:
         return OP_DEF.get(token_type, (-1, -1, "none"))
@@ -516,6 +570,17 @@ class CParser:
 
         assert False, f"unhandled led: op={op_tok}, left={ast.dump(left)}"
 
+    def parse_body(self) -> list[ast.stmt]:
+        if self.peek().type == "SEMI":
+            return [ast.Pass()]
+
+        self.expect("LBRACE")
+        body_tokens = self.read_scope()
+        if not body_tokens:
+            return [ast.Pass()]
+        sub = CParser(body_tokens)
+        return sub.parse().body
+
     def parse_stmt(self) -> ast.stmt:
         if DEBUG:
             print(
@@ -548,6 +613,15 @@ class CParser:
                     assign = cast(ast.Compare, self.parse_expr())
                     self.expect_and_next("SEMI")
                     return ast.Assign([assign.left], assign.comparators[0])
+
+                i = 0
+                while self.has_next():
+                    if self.peek(i).type != "ID":
+                        break
+                    i += 1
+
+                if self.has_next() and self.peek(i).type == "LPAREN":
+                    return self.parse_fundef()
 
                 if looks_like_declaration():
                     return self.parse_variable_decl()

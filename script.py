@@ -478,8 +478,11 @@ class ItemID(IntEnum):
                 # its not c but it should be fine
                 f.write(f"    {to_c_ident(item.name.decode(), ctx).upper()} = {id}\n")
     elif args.cmd == "ctopy":
-        code = args.code.replace("\\n", "\n")
+        code = args.code
+        if Path(args.code).exists():
+            code = Path(args.code).read_text()
 
+        code = code.replace("\\n", "\n")
         print(ctopy(code).replace("\\n", "\n"))
 
 
