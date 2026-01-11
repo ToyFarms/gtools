@@ -77,7 +77,8 @@ class CParser:
 
         i = self.i
         self.i += 1
-        print(f"NEXT: {self._tokens[i]}")
+        if DEBUG:
+            print(f"NEXT: {self._tokens[i]}")
         return self._tokens[i]
 
     def peek(self, offset: int = 0) -> Token:
