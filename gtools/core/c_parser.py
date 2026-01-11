@@ -1,5 +1,7 @@
 import ast
+from collections import deque
 from dataclasses import dataclass
+import itertools
 import re
 from typing import Any, cast
 from pycparser.c_lexer import CLexer
@@ -67,6 +69,8 @@ class CParser:
         self._tokens = tokens
         self._code = code
         self.i = 0
+        self.match_i = itertools.count()
+        self.match_q = deque[int]()
 
     def next(self) -> Token:
         if self.i > len(self._tokens) - 1:
@@ -245,11 +249,7 @@ class CParser:
         self.expect_and_next("RPAREN")
 
         if self.peek().type == "LBRACE":
-            body_tokens = self.read_scope()
-            if not body_tokens:
-                return ast.Pass()
-            sub = CParser(body_tokens)
-            body = sub.parse().body
+            body = self.parse_body()
         else:
             body = [self.parse_stmt()]
 
@@ -257,11 +257,7 @@ class CParser:
         if self.peek().type == "ELSE":
             self.next()
             if self.peek().type == "LBRACE":
-                body_tokens = self.read_scope()
-                if not body_tokens:
-                    return ast.Pass()
-                sub = CParser(body_tokens)
-                orelse = sub.parse().body
+                orelse = self.parse_body()
             else:
                 orelse = [self.parse_stmt()]
 
@@ -594,7 +590,7 @@ class CParser:
         sub = CParser(body_tokens)
         return sub.parse().body
 
-    def parse_stmt(self, skip: Skip = Skip()) -> ast.stmt:
+    def parse_stmt(self, skip: Skip | None = None) -> ast.stmt:
         if DEBUG:
             print(
                 "parse_stmt peek:",
@@ -612,7 +608,8 @@ class CParser:
 
         match tok_type:
             case "SEMI":
-                skip.skip = True
+                if skip:
+                    skip.skip = True
                 self.next()
                 return ast.Pass()
             case "INT" | "VOID" | "FLOAT" | "DOUBLE" | "CHAR" | "STRUCT" | "UNION" | "ENUM" | "CONST" | "VOLATILE" | "SIGNED" | "UNSIGNED":
@@ -646,11 +643,7 @@ class CParser:
                     value=ast.Call(func=ast.Name("goto", ast.Store()), args=[ast.Constant(label.value)], keywords=[]),
                 )
             case "LBRACE":
-                body_tokens = self.read_scope()
-                if not body_tokens:
-                    return ast.Pass()
-                sub = CParser(body_tokens)
-                return ast.With(items=[], body=sub.parse().body)
+                return ast.With(items=[], body=self.parse_body())
             case "BREAK":
                 self.next()
                 self.expect_and_next("SEMI")
@@ -665,22 +658,14 @@ class CParser:
                 cond = self.parse_expr()
                 self.expect_and_next("RPAREN")
                 if self.peek().type == "LBRACE":
-                    body_tokens = self.read_scope()
-                    if not body_tokens:
-                        return ast.Pass()
-                    sub = CParser(body_tokens)
-                    body = sub.parse().body
+                    body = self.parse_body()
                 else:
                     body = [self.parse_stmt()]
                 return ast.While(test=cond, body=body, orelse=[])
             case "DO":
                 self.expect_and_next("DO")
                 if self.peek().type == "LBRACE":
-                    body_tokens = self.read_scope()
-                    if not body_tokens:
-                        return ast.Pass()
-                    sub = CParser(body_tokens)
-                    body = sub.parse().body
+                    body = self.parse_body()
                 else:
                     body = [self.parse_stmt()]
                 self.expect_and_next("WHILE")
@@ -716,34 +701,95 @@ class CParser:
                     post_expr = None
                 self.expect_and_next("RPAREN")
                 if self.peek().type == "LBRACE":
-                    body_tokens = self.read_scope()
-                    sub = CParser(body_tokens)
-                    body = sub.parse().body
+                    body = self.parse_body()
                 else:
                     body = [self.parse_stmt()]
                 loop_body = list(body)
                 if post_expr is not None:
                     loop_body.append(ast.Expr(value=post_expr))
-                if not loop_body:
-                    loop_body.append(ast.Pass())
                 while_node = ast.While(test=cond_expr if cond_expr is not None else ast.Constant(True), body=loop_body, orelse=[])
                 if init_stmt is not None:
                     # TODO: return multiple statement
                     return ast.With(items=[], body=[init_stmt, while_node])
                 return while_node
             case "SWITCH":
-                # TODO: handle fallthrough
                 self.expect_and_next("SWITCH")
                 self.expect_and_next("LPAREN")
                 switch_expr = self.parse_expr()
                 self.expect_and_next("RPAREN")
                 if self.peek().type == "LBRACE":
-                    body_tokens = self.read_scope()
-                    if not body_tokens:
-                        return ast.Pass()
-                    sub = CParser(body_tokens)
-                    body = sub.parse().body
-                    return ast.Match(switch_expr, cases=cast(list[ast.match_case], body))
+                    self.match_q.appendleft(next(self.match_i))
+                    parsed_cases = self.parse_body()
+
+                    switch_temp_name = f"__switch_on{self.match_q[0]}"
+                    matched_name = f"__matched{self.match_q[0]}"
+                    matched_any_name = f"_switch_matched_any{self.match_q[0]}"
+
+                    assign_switch = ast.Assign(
+                        targets=[ast.Name(id=switch_temp_name, ctx=ast.Store())],
+                        value=switch_expr,
+                    )
+
+                    init_matched_any = ast.Assign(
+                        targets=[ast.Name(id=matched_any_name, ctx=ast.Store())],
+                        value=ast.Constant(False),
+                    )
+                    init_matched = ast.Assign(
+                        targets=[ast.Name(id=matched_name, ctx=ast.Store())],
+                        value=ast.Constant(False),
+                    )
+
+                    while_body: list[ast.stmt] = []
+                    for case_node in parsed_cases:
+                        if not isinstance(case_node, ast.match_case):
+                            while_body.append(case_node if isinstance(case_node, ast.stmt) else ast.Expr(case_node))
+                            continue
+
+                        pattern = case_node.pattern
+
+                        is_default = isinstance(pattern, ast.MatchAs) and getattr(pattern, "name", None) is None
+
+                        switch_val_load = ast.Name(id=switch_temp_name, ctx=ast.Load())
+                        matched_load = ast.Name(id=matched_name, ctx=ast.Load())
+                        matched_any_load = ast.Name(id=matched_any_name, ctx=ast.Load())
+
+                        if not is_default:
+                            compare = ast.Compare(left=switch_val_load, ops=[ast.Eq()], comparators=[cast(ast.expr, pattern)])
+                            test = ast.BoolOp(op=ast.Or(), values=[matched_load, compare])
+
+                            set_matched_any_cond = ast.BoolOp(
+                                op=ast.And(),
+                                values=[
+                                    ast.UnaryOp(op=ast.Not(), operand=matched_load),
+                                    compare,
+                                ],
+                            )
+                            set_matched_any = ast.Assign(
+                                targets=[ast.Name(id=matched_any_name, ctx=ast.Store())],
+                                value=ast.Constant(True),
+                            )
+
+                            prologue: list[ast.stmt] = [
+                                ast.If(test=set_matched_any_cond, body=[set_matched_any], orelse=[]),
+                                ast.Assign(targets=[ast.Name(id=matched_name, ctx=ast.Store())], value=ast.Constant(True)),
+                            ]
+                        else:
+                            test = ast.BoolOp(
+                                op=ast.Or(),
+                                values=[matched_load, ast.UnaryOp(op=ast.Not(), operand=matched_any_load)],
+                            )
+                            prologue = [
+                                ast.Assign(targets=[ast.Name(id=matched_name, ctx=ast.Store())], value=ast.Constant(True)),
+                            ]
+
+                        if_block = ast.If(test=test, body=prologue + list(case_node.body), orelse=[])
+                        while_body.append(if_block)
+
+                    while_body = [assign_switch, init_matched_any, init_matched] + while_body
+                    while_node = ast.While(test=ast.Constant(True), body=while_body + [ast.Break()], orelse=[])
+
+                    self.match_q.popleft()
+                    return while_node
                 else:
                     raise ValueError("malformed switch: expected block")
             case "CASE":
@@ -756,8 +802,9 @@ class CParser:
                     while self.has_next():
                         if self.peek().type in ("CASE", "DEFAULT"):
                             break
-                        stmt = self.parse_stmt()
-                        if not isinstance(stmt, ast.Break):
+                        skip = Skip()
+                        stmt = self.parse_stmt(skip)
+                        if not skip.skip:
                             cond.body.append(stmt)
                 return cast(ast.stmt, cond)
             case "DEFAULT":
