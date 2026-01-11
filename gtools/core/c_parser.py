@@ -26,7 +26,7 @@ class Skip:
 OP_DEF = {
     "LPAREN": (160, 0, "postfix_call"),
     "LBRACKET": (160, 0, "postfix_index"),
-    "DOT": (160, 0, "postfix_member"),
+    "PERIOD": (160, 0, "postfix_member"),
     "ARROW": (160, 0, "postfix_member"),
     "PLUSPLUS": (160, 0, "postfix_inc"),
     "MINUSMINUS": (160, 0, "postfix_dec"),
@@ -41,8 +41,6 @@ OP_DEF = {
     "LE": (90, 89, "binary_left"),
     "GT": (90, 89, "binary_left"),
     "GE": (90, 89, "binary_left"),
-    "EQ": (80, 79, "binary_left"),
-    "EQUALS": (80, 79, "binary_left"),
     "EQ": (80, 79, "binary_left"),
     "NE": (80, 79, "binary_left"),
     "AND": (70, 69, "binary_left"),
@@ -65,12 +63,13 @@ OP_DEF = {
 
 
 class CParser:
+    match_i = itertools.count()
+    match_q = deque[int]()
+
     def __init__(self, tokens: list[Token], code: str | None = None) -> None:
         self._tokens = tokens
         self._code = code
         self.i = 0
-        self.match_i = itertools.count()
-        self.match_q = deque[int]()
 
     def next(self) -> Token:
         if self.i > len(self._tokens) - 1:
@@ -78,7 +77,7 @@ class CParser:
 
         i = self.i
         self.i += 1
-        # print(f"NEXT: {self._tokens[i]}")
+        print(f"NEXT: {self._tokens[i]}")
         return self._tokens[i]
 
     def peek(self, offset: int = 0) -> Token:
@@ -193,54 +192,36 @@ class CParser:
             "SIGNED",
             "UNSIGNED",
         }
-        while self.peek().type in TYPE_TOKS:
+        while self.peek().type in TYPE_TOKS | {"ID", "TIMES"}:
             type_tokens.append(self.next())
 
-        id_tok, pointer_level, array_dims = self.parse_declarator()
-        var_name = id_tok.value
+        *type_tokens, var_name = type_tokens
 
         if len(type_tokens) >= 1 and self.has_next() and self.peek().type == "LPAREN":
             self.i = saved
             return self.parse_fundef()
 
-        initializer: ast.expr | None = None
-        if self.peek().type in ("ASSIGN", "EQUALS"):
-            self.next()
-            if self.peek().type == "LBRACE":
-                initializer = self._parse_brace_initializer()
-            else:
-                initializer = self.parse_expr(0)
-        elif self.peek().type == "LBRACE":
-            initializer = self._parse_brace_initializer()
+        types = "".join(x.value for x in type_tokens)
 
-        self.expect_and_next("SEMI")
+        # int x[]
+        if self.peek().type == "LBRACKET":
+            self.expect_and_next("LBRACKET")
+            subscript = self.parse_expr()
+            types = types + f"[{ast.unparse(subscript)}]"
+            self.expect_and_next("RBRACKET")
 
-        simple_scalar = pointer_level == 0 and len(array_dims) == 0
+        # int x;
+        if self.peek().type == "SEMI":
+            return ast.AnnAssign(ast.Name(var_name.value, ast.Store()), ast.Constant(types), ast.Constant(value=None), simple=1)
 
-        if simple_scalar:
-            if initializer is None:
-                return ast.Assign(targets=[ast.Name(var_name, ast.Store())], value=ast.Constant(None))
-            else:
-                return ast.Assign(targets=[ast.Name(var_name, ast.Store())], value=initializer)
+        # int x = ...
+        if self.peek().type == "EQUALS":
+            self.expect_and_next("EQUALS")
+            value = self.parse_expr()
+        else:
+            self.expect_and_next("SEMI")
 
-        type_str = " ".join(tok.type for tok in type_tokens)
-        dims_elts: list[ast.expr] = []
-        for d in array_dims:
-            if d is None:
-                dims_elts.append(ast.Constant(None))
-            else:
-                dims_elts.append(d)
-
-        declare_args = [
-            ast.Constant(type_str),
-            ast.Constant(var_name),
-            ast.Constant(pointer_level),
-            ast.List(elts=dims_elts, ctx=ast.Load()),
-            initializer if initializer is not None else ast.Constant(None),
-        ]
-
-        declare_call = ast.Call(func=ast.Name(id="declare", ctx=ast.Load()), args=declare_args, keywords=[])
-        return ast.Assign(targets=[ast.Name(var_name, ast.Store())], value=declare_call)
+        return ast.AnnAssign(ast.Name(var_name.value, ast.Store()), ast.Constant(types), value, simple=1)
 
     def parse_if(self) -> ast.stmt:
         self.expect_and_next("IF")
@@ -363,6 +344,8 @@ class CParser:
 
             op_tok = self.next()
             left = self.led(op_tok, left, rbp)
+            if DEBUG:
+                print(f"led: {ast.dump(left)}")
 
         return left
 
@@ -396,6 +379,8 @@ class CParser:
 
         if t == "LPAREN":
             if self._lookahead_is_type_name(self.i):
+                types: list[Token] = []
+
                 depth = 1
                 while depth > 0:
                     nxt = self.next()
@@ -403,8 +388,11 @@ class CParser:
                         depth += 1
                     elif nxt.type == "RPAREN":
                         depth -= 1
+                    if depth != 0:
+                        types.append(nxt)
+
                 right = self.parse_expr(130)
-                return ast.Call(func=ast.Name(id="cast", ctx=ast.Load()), args=[right])
+                return ast.Call(func=ast.Name(id="cast", ctx=ast.Load()), args=[ast.Constant("".join(x.value for x in types)), right])
             else:
                 expr = self.parse_expr(0)
                 self.expect_and_next("RPAREN")
@@ -421,18 +409,28 @@ class CParser:
         if t == "CHAR_CONST":
             return ast.Constant(str(v).strip("'"))
         if t == "CASE":
-            right = cast(ast.pattern, self.parse_expr(0))
+            right = cast(ast.pattern, self.parse_expr())
             return cast(ast.expr, ast.match_case(pattern=right, body=[]))
+        if t == "LBRACE":
+            right = self.parse_expr()
+            self.expect_and_next("RBRACE")
+            self.expect_and_next("SEMI")
+            return right
+        if t == "PERIOD":
+            name = self.next()
+            self.expect_and_next("EQUALS")
+            right = self.parse_expr()
+            return ast.Call(ast.Name("init"), [ast.Name(name.value), right])
 
         # unary
-        if t in ("PLUS", "MINUS", "LNOT", "TILDE", "STAR", "AMP", "INCREMENT", "DECREMENT", "SIZEOF", "AND"):
+        if t in ("PLUS", "MINUS", "LNOT", "TILDE", "TIMES", "AMP", "INCREMENT", "DECREMENT", "SIZEOF", "AND"):
             right = self.parse_expr(130)
             op_map = {
                 "PLUS": ast.UAdd(),
                 "MINUS": ast.USub(),
                 "LNOT": ast.Not(),
                 "TILDE": ast.Invert(),
-                "STAR": "deref",
+                "TIMES": "deref",
                 "AND": "ref",
                 "INCREMENT": "inc",
                 "DECREMENT": "dec",
@@ -475,8 +473,12 @@ class CParser:
             return ast.Call(ast.Name("postfix_inc"), args=[left])
         if t == "DECREMENT_POST":
             return ast.Call(ast.Name("postfix_dec"), args=[left])
+        if t == "EQUALS":
+            right = self.parse_expr()
+            return ast.Call(ast.Name("assign"), [left, right])
 
         _, _, kind = self.get_op_info(t)
+
         if kind == "binary_left":
             binop_map = {
                 "TIMES": ast.Mult,
@@ -496,7 +498,7 @@ class CParser:
                 "LE": ast.LtE,
                 "GT": ast.Gt,
                 "GE": ast.GtE,
-                "EQUALS": ast.Eq,
+                "EQ": ast.Eq,
                 "EQ": ast.Eq,
                 "NE": ast.NotEq,
             }
@@ -623,10 +625,12 @@ class CParser:
                         targets=[ast.Name("_", ast.Store())],
                         value=ast.Call(func=ast.Name("LABEL", ast.Load()), args=[ast.Constant(label.value)], keywords=[]),
                     )
-                elif self.peek(1).type in ("EQUALS", "EQ"):
-                    assign = cast(ast.Compare, self.parse_expr())
+                elif self.peek(1).type == "EQUALS":
+                    left = self.parse_expr()
+                    self.expect_and_next("EQUALS")
+                    right = self.parse_expr()
                     self.expect_and_next("SEMI")
-                    return ast.Assign([assign.left], assign.comparators[0])
+                    return ast.Assign([left], right)
 
                 if looks_like_declaration():
                     return self.parse_variable_decl()
@@ -718,12 +722,12 @@ class CParser:
                 switch_expr = self.parse_expr()
                 self.expect_and_next("RPAREN")
                 if self.peek().type == "LBRACE":
-                    self.match_q.appendleft(next(self.match_i))
+                    CParser.match_q.appendleft(next(CParser.match_i))
                     parsed_cases = self.parse_body()
 
-                    switch_temp_name = f"__switch_on{self.match_q[0]}"
-                    matched_name = f"__matched{self.match_q[0]}"
-                    matched_any_name = f"_switch_matched_any{self.match_q[0]}"
+                    switch_temp_name = f"__switch_on{CParser.match_q[0]}"
+                    matched_name = f"__matched{CParser.match_q[0]}"
+                    matched_any_name = f"_switch_matched_any{CParser.match_q[0]}"
 
                     assign_switch = ast.Assign(
                         targets=[ast.Name(id=switch_temp_name, ctx=ast.Store())],
@@ -892,4 +896,3 @@ def ctopy_ast(c: str) -> ast.Module:
     module = parser.parse()
 
     return ast.fix_missing_locations(module)
-
