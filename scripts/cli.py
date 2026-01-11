@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --script
 import importlib
 import pkgutil
+from traceback import print_exc
 import click
 
 import scripts
@@ -34,7 +35,9 @@ def _discover_commands() -> None:
                     cli.add_command(attr, name=command_name)
                     break
         except Exception:
-            pass
+            print(f"MODULE: \x1b[31m{module_name}\x1b[0m", "=" * 50)
+            print_exc()
+            print("=" * 50)
 
 
 _discover_commands()

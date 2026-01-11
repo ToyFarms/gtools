@@ -17,13 +17,7 @@ def bake(path: str | None) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.unlink(missing_ok=True)
     with open(p, "w") as f:
-        f.write(
-            """from enum import IntEnum
-
-class ItemID(IntEnum):
-"""
-        )
         ctx = IdentifierRegistry()
         for id, item in db.items.items():
             # its not c but it should be fine
-            f.write(f"    {to_c_ident(item.name.decode(), ctx).upper()} = {id}\n")
+            f.write(f"{to_c_ident(item.name.decode(), ctx).upper()} = {id}\n")

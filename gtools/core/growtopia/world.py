@@ -15,8 +15,7 @@ from gtools.core.growtopia.items_dat import Item, ItemInfoFlag2, ItemInfoTexture
 from gtools.core.growtopia.packet import TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.protogen import growtopia_pb2
-from gtools.baked.items import ItemID
-
+from gtools.baked import items
 
 @dataclass(slots=True)
 class SilkwormColor:
@@ -1794,12 +1793,12 @@ class World:
 
     def is_item_steam(self, item: Item) -> bool:
         return item.item_type in (ItemInfoType.STEAMPUNK, ItemInfoType.STEAM_LAVA_IF_ON, ItemInfoType.STEAM_ORGAN) or item.id in (
-            ItemID.STEAM_DOOR,
-            ItemID.STEAM_LAUNCHER,
-            ItemID.STEAM_PIPE,
-            ItemID.SPIRIT_STORAGE_UNIT,
-            ItemID.STEAM_SPIKES,
-            ItemID.STEAM_LAMP,
+            items.STEAM_DOOR,
+            items.STEAM_LAUNCHER,
+            items.STEAM_PIPE,
+            items.SPIRIT_STORAGE_UNIT,
+            items.STEAM_SPIKES,
+            items.STEAM_LAMP,
         )
 
     def is_tile_candidate_for_connectivity(self, tile: Tile, item_id: int, cave_related: int) -> bool:
@@ -1813,55 +1812,55 @@ class World:
         if tile.front and (tile.front & 1) == 0 and tile.flags & TileFlags.GLUED != 0:
             return True
 
-        if cave_related and item.id == ItemID.CAVE_DIRT and tile.front == ItemID.CAVE_COLUMN:
+        if cave_related and item.id == items.CAVE_DIRT and tile.front == items.CAVE_COLUMN:
             return True
 
         def label_29() -> bool:
-            if tile.front >= ItemID.PURPLE_CAVE_CRYSTAL and tile.front <= ItemID.AQUA_CAVE_CRYSTAL:
+            if tile.front >= items.PURPLE_CAVE_CRYSTAL and tile.front <= items.AQUA_CAVE_CRYSTAL:
                 return True
             return label_31()
 
         def label_31() -> bool:
-            if not cave_related and item.id == ItemID.CAVE_DIRT:
-                if tile.front == ItemID.CLIMBING_WALL:
+            if not cave_related and item.id == items.CAVE_DIRT:
+                if tile.front == items.CLIMBING_WALL:
                     return True
                 return tile.front == item.id
             return label_35()
 
         def label_35() -> bool:
-            if item.id == ItemID.STEAM_PIPE:
+            if item.id == items.STEAM_PIPE:
                 if item.is_steam():
                     return True
                 # falls through to label_60
-            if item.id == ItemID.STONE_PAGODA:
-                if tile.front == ItemID.MASTER_PENG_STONEWORK:
+            if item.id == items.STONE_PAGODA:
+                if tile.front == items.MASTER_PENG_STONEWORK:
                     return True
-                elif tile.front == ItemID.STONE_PAGODA_BASE:
+                elif tile.front == items.STONE_PAGODA_BASE:
                     return cave_related != 2
                 # falls through to label_60
 
             if item.id != 4202:
                 match item.id:
-                    case ItemID.BEDROCK:
-                        if tile.front == ItemID.DATA_BEDROCK:
+                    case items.BEDROCK:
+                        if tile.front == items.DATA_BEDROCK:
                             return True
-                    case ItemID.DATA_BEDROCK:
-                        if tile.front == ItemID.BEDROCK:
+                    case items.DATA_BEDROCK:
+                        if tile.front == items.BEDROCK:
                             return True
-                        if tile.front == ItemID.MONOCHROMATIC_BEDROCK:
+                        if tile.front == items.MONOCHROMATIC_BEDROCK:
                             return True
-                    case ItemID.MONOCHROMATIC_BEDROCK:
-                        if tile.front == ItemID.DATA_BEDROCK:
+                    case items.MONOCHROMATIC_BEDROCK:
+                        if tile.front == items.DATA_BEDROCK:
                             return True
-                    case ItemID.ANCIENT_BLOCK:
-                        if tile.front == ItemID.MYSTERY_DOOR:
+                    case items.ANCIENT_BLOCK:
+                        if tile.front == items.MYSTERY_DOOR:
                             return True
                     case _:
-                        if item.id == 2 and tile.front == ItemID.FISSURE:
+                        if item.id == 2 and tile.front == items.FISSURE:
                             return True
                 # falls through to label_60
             else:
-                if tile.front != ItemID.STONE_PAGODA_BASE:
+                if tile.front != items.STONE_PAGODA_BASE:
                     # goto LABEL_60
                     pass  # Falls through
                 else:
@@ -1873,75 +1872,75 @@ class World:
         def label_60() -> bool:
             if (
                 cave_related
-                and ((item.id - ItemID.GUILD_FLAG_POLE_SPEAR) & 0xFFFFFFFD) == 0
-                and ItemID.GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE >= tile.front >= ItemID.GUILD_FLAG_TATTERS
-                or item.id == ItemID.MANOR_HOUSE_SANDSTONE
-                and tile.front == ItemID.MANOR_HOUSE_SANDSTONE_STEPS
+                and ((item.id - items.GUILD_FLAG_POLE_SPEAR) & 0xFFFFFFFD) == 0
+                and items.GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE >= tile.front >= items.GUILD_FLAG_TATTERS
+                or item.id == items.MANOR_HOUSE_SANDSTONE
+                and tile.front == items.MANOR_HOUSE_SANDSTONE_STEPS
             ):
                 return True
 
             if cave_related == 2:
                 match item.id:
-                    case ItemID.WEEPING_WILLOW_STREAMERS:
-                        if tile.front == ItemID.WEEPING_WILLOW_FOLIAGE:
+                    case items.WEEPING_WILLOW_STREAMERS:
+                        if tile.front == items.WEEPING_WILLOW_FOLIAGE:
                             return True
                         return tile.front == item.id
-                    case ItemID.LOVEWILLOW_S_LACE:
-                        if tile.front == ItemID.LOVEWILLOW:
+                    case items.LOVEWILLOW_S_LACE:
+                        if tile.front == items.LOVEWILLOW:
                             return True
                         return tile.front == item.id
-                    case ItemID.PILLAR_OF_THE_DEAD:
-                        if tile.front == ItemID.BONE_CHECKPOINT:
+                    case items.PILLAR_OF_THE_DEAD:
+                        if tile.front == items.BONE_CHECKPOINT:
                             return True
                         return tile.front == item.id
 
             match item.id:
-                case ItemID.MAGIC_INFUSED_VEIN:
-                    if tile.front != ItemID.PURE_MAGIC_ORE:
-                        if tile.front == ItemID.MAGIC_INFUSED_STONE:
+                case items.MAGIC_INFUSED_VEIN:
+                    if tile.front != items.PURE_MAGIC_ORE:
+                        if tile.front == items.MAGIC_INFUSED_STONE:
                             return True
                         return tile.front == item.id
                     return True
-                case ItemID.MAGIC_INFUSED_STONE:
-                    if tile.front == ItemID.PURE_MAGIC_ORE:
+                case items.MAGIC_INFUSED_STONE:
+                    if tile.front == items.PURE_MAGIC_ORE:
                         return True
-                case ItemID.PURE_MAGIC_ORE:
-                    if tile.front == ItemID.MAGIC_INFUSED_STONE:
+                case items.PURE_MAGIC_ORE:
+                    if tile.front == items.MAGIC_INFUSED_STONE:
                         return True
                 case _:
-                    if item.id == 10596 and tile.front == ItemID.GREAT_TURRET_OF_GROWTOPIA:
+                    if item.id == 10596 and tile.front == items.GREAT_TURRET_OF_GROWTOPIA:
                         return True
                     return tile.front == item.id
 
-            if tile.front == ItemID.MAGIC_INFUSED_VEIN:
+            if tile.front == items.MAGIC_INFUSED_VEIN:
                 return True
 
             return tile.front == item.id
 
         match cave_related:
             case 2:
-                if item.id == ItemID.CAVE_DIRT:
-                    if tile.front == ItemID.STALAGMITE:
+                if item.id == items.CAVE_DIRT:
+                    if tile.front == items.STALAGMITE:
                         return True
                     return label_29()
-                if item.id == ItemID.CAVE_COLUMN:
-                    if tile.front == ItemID.CAVE_PLATFORM:
+                if item.id == items.CAVE_COLUMN:
+                    if tile.front == items.CAVE_PLATFORM:
                         return True
                     return tile.front == item.id
             case 1:
-                if item.id != ItemID.CAVE_DIRT:
+                if item.id != items.CAVE_DIRT:
                     return label_35()
-                if tile.front == ItemID.STALACTITE:
+                if tile.front == items.STALACTITE:
                     return True
                 return label_29()
             case 0:
-                if item.id != ItemID.CAVE_DIRT:
+                if item.id != items.CAVE_DIRT:
                     return label_35()
-                if tile.front == ItemID.CAVE_PLATFORM:
+                if tile.front == items.CAVE_PLATFORM:
                     return True
                 return label_29()
 
-        if item.id == ItemID.CAVE_DIRT:
+        if item.id == items.CAVE_DIRT:
             return label_29()
 
         return label_31()

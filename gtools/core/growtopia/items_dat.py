@@ -13,7 +13,7 @@ import xxhash
 from zmq import IntFlag
 
 if not os.environ.get("NO_BAKED", None):
-    from gtools.baked.items import ItemID
+    from gtools.baked import items
 from gtools.core.buffer import Buffer
 from gtools.proxy.setting import setting
 
@@ -514,12 +514,12 @@ class Item:
             ItemInfoType.STEAM_LAVA_IF_ON,
             ItemInfoType.STEAM_ORGAN,
         ) or self.id in (
-            ItemID.STEAM_DOOR,
-            ItemID.STEAM_LAUNCHER,
-            ItemID.STEAM_PIPE,
-            ItemID.SPIRIT_STORAGE_UNIT,
-            ItemID.STEAM_SPIKES,
-            ItemID.STEAM_LAMP,
+            items.STEAM_DOOR,
+            items.STEAM_LAUNCHER,
+            items.STEAM_PIPE,
+            items.SPIRIT_STORAGE_UNIT,
+            items.STEAM_SPIKES,
+            items.STEAM_LAMP,
         )
 
     @classmethod
