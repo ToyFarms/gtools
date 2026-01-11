@@ -14,6 +14,9 @@ import sys
 from typing import IO, Callable, Protocol
 import zlib
 
+from gtools.core.c import IdentifierRegistry, to_c_ident
+from gtools.core.c_parser import ctopy
+
 try:
     from gtools.core.growtopia.items_dat import Item, item_database
     from gtools.core.growtopia.packet import NetPacket
@@ -83,6 +86,12 @@ def main() -> None:
     recipe = sub.add_parser("recipe")
     recipe.add_argument("id", type=int)
     recipe.add_argument("-n", type=int, default=1)
+
+    bake = sub.add_parser("bake")
+    bake.add_argument("--path", default=None, help="items.dat path")
+
+    _ctopy = sub.add_parser("ctopy")
+    _ctopy.add_argument("code")
 
     args = parser.parse_args()
 
@@ -448,6 +457,30 @@ def main() -> None:
                 print(f"  {ing.ljust(max_len)}   {out} ({n * args.n:_})")
             else:
                 print(f"  {ing.ljust(max_len, '.')}...{out} ({n * args.n:_})")
+    elif args.cmd == "bake":
+        if args.path:
+            db = item_database.deserialize(args.path)
+        else:
+            db = item_database.db()
+
+        p = Path("gtools/baked/items.py")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.unlink(missing_ok=True)
+        with open(p, "w") as f:
+            f.write(
+                """from enum import IntEnum
+
+class ItemID(IntEnum):
+"""
+            )
+            ctx = IdentifierRegistry()
+            for id, item in db.items.items():
+                # its not c but it should be fine
+                f.write(f"    {to_c_ident(item.name.decode(), ctx).upper()} = {id}\n")
+    elif args.cmd == "ctopy":
+        code = args.code.replace("\\n", "\n")
+
+        print(ctopy(code).replace("\\n", "\n"))
 
 
 if __name__ == "__main__":

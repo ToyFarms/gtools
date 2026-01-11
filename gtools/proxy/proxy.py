@@ -185,7 +185,7 @@ class Proxy:
             self.logger.error(f"FAILED UPDATING STATE: {e}")
 
         if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug(f"{'[modified] ' if modified else '[fabricated]' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
+            self.logger.debug(f"{'[modified] ' if modified else '[fabricated] ' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
         else:
             self.logger.info(
                 f"from {'\x1b[32mserver\x1b[0m' if pkt.direction == DIRECTION_SERVER_TO_CLIENT else '\x1b[31mclient\x1b[0m'} ({pkt.as_net.type.name}) {pkt.as_net.compact_repr()}"

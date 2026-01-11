@@ -12,6 +12,8 @@ from typing import Any, Hashable, Literal, Sequence, overload
 import xxhash
 from zmq import IntFlag
 
+if not os.environ.get("NO_BAKED", None):
+    from gtools.baked.items import ItemID
 from gtools.core.buffer import Buffer
 from gtools.proxy.setting import setting
 
@@ -502,6 +504,23 @@ class Item:
     info: bytes = b""  # lpchar
     ingredients: tuple[int, int] = field(default_factory=lambda: (0, 0))  # u16 (2)
     unk9: int = 0  # u8
+
+    def is_seed(self) -> bool:
+        return self.id % 2 == 1
+
+    def is_steam(self) -> bool:
+        return self.item_type in (
+            ItemInfoType.STEAMPUNK,
+            ItemInfoType.STEAM_LAVA_IF_ON,
+            ItemInfoType.STEAM_ORGAN,
+        ) or self.id in (
+            ItemID.STEAM_DOOR,
+            ItemID.STEAM_LAUNCHER,
+            ItemID.STEAM_PIPE,
+            ItemID.SPIRIT_STORAGE_UNIT,
+            ItemID.STEAM_SPIKES,
+            ItemID.STEAM_LAMP,
+        )
 
     @classmethod
     def deserialize(cls, s: Buffer, version: int = 99999999999) -> "Item":
