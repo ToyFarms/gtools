@@ -481,13 +481,14 @@ class ItemID(IntEnum):
                 f.write(f"    {to_c_ident(item.name.decode(), ctx).upper()} = {id}\n")
     elif args.cmd == "ctopy":
         code = args.code
-        if Path(args.code).exists():
-            code = Path(args.code).read_text()
+        try:
+            if Path(args.code).exists():
+                code = Path(args.code).read_text()
+        except:
+            pass
 
         code = code.replace("\\n", "\n")
         tree = ctopy_ast(code)
-        print(ast.unparse(ast.fix_missing_locations(tree)))
-        print("=" * 50)
 
         tree = GotoResolver().visit(tree)
         ast.fix_missing_locations(tree)

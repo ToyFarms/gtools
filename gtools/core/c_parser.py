@@ -168,6 +168,7 @@ class CParser:
         return ast.List(elts=elements, ctx=ast.Load())
 
     def parse_variable_decl(self) -> ast.stmt:
+        saved = self.i
         type_tokens: list[Token] = [self.next()]
         TYPE_TOKS = {
             "UNSIGNED",
@@ -193,6 +194,10 @@ class CParser:
 
         id_tok, pointer_level, array_dims = self.parse_declarator()
         var_name = id_tok.value
+
+        if len(type_tokens) >= 1 and self.has_next() and self.peek().type == "LPAREN":
+            self.i = saved
+            return self.parse_fundef()
 
         initializer: ast.expr | None = None
         if self.peek().type in ("ASSIGN", "EQUALS"):
@@ -285,14 +290,17 @@ class CParser:
     def parse_fundef(self) -> ast.stmt:
         retypes: list[Token] = []
         while self.has_next():
-            if self.peek().type not in ("ID", "TIMES"):
-                break
-
             retypes.append(self.next())
+            if self.peek().type == "LPAREN":
+                break
 
         args: list[ast.arg] = []
         self.expect_and_next("LPAREN")
-        while self.peek().type != "RPAREN":
+        while True:
+            if self.peek().type == "RPAREN":
+                self.next()
+                break
+
             type_tokens: list[Token] = [self.next()]
             TYPE_TOKS = {
                 "UNSIGNED",
@@ -622,15 +630,6 @@ class CParser:
                     assign = cast(ast.Compare, self.parse_expr())
                     self.expect_and_next("SEMI")
                     return ast.Assign([assign.left], assign.comparators[0])
-
-                i = 0
-                while self.has_next():
-                    if self.peek(i).type != "ID":
-                        break
-                    i += 1
-
-                if i > 1 and self.has_next() and self.peek(i).type == "LPAREN":
-                    return self.parse_fundef()
 
                 if looks_like_declaration():
                     return self.parse_variable_decl()

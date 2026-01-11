@@ -31,7 +31,6 @@ class GotoResolver(ast.NodeTransformer):
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
         has_goto = self._contains_goto_or_label(node)
-
         if not has_goto:
             return node
 
@@ -51,6 +50,13 @@ class GotoResolver(ast.NodeTransformer):
         return ast.copy_location(new_func, node)
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
+        non_fn = [node for node in node.body if not isinstance(node, ast.FunctionDef)]
+
+        non_fn_mod = ast.Module(body=non_fn)
+        has_goto = self._contains_goto_or_label(non_fn_mod)
+        if not has_goto:
+            return node
+
         self._collect_all_labels(node.body)
         self._extract_label_blocks(node.body)
         transformed_body = self._create_state_machine(node.body)
@@ -83,6 +89,9 @@ class GotoResolver(ast.NodeTransformer):
                 self._collect_all_labels(stmt.finalbody)
                 for handler in stmt.handlers:
                     self._collect_all_labels(handler.body)
+            elif isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    self._collect_all_labels(case.body)
 
     def _extract_label_blocks(self, stmts: list[ast.stmt], continuation: list[ast.stmt] | None = None) -> None:
         if continuation is None:
@@ -113,6 +122,10 @@ class GotoResolver(ast.NodeTransformer):
                 self._extract_label_blocks(stmt.finalbody, after_try)
                 for handler in stmt.handlers:
                     self._extract_label_blocks(handler.body, after_try)
+            elif isinstance(stmt, ast.Match):
+                after_match = stmts[i + 1 :] + continuation
+                for case in stmt.cases:
+                    self._extract_label_blocks(case.body, after_match)
 
     def _is_label_def(self, stmt: ast.stmt) -> tuple[bool, str | None]:
         if isinstance(stmt, ast.Assign):
