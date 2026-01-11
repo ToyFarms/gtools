@@ -6,3 +6,4 @@ cachegrind.out
 !.coveragerc
 analyze/
 smh.py
+test.c
