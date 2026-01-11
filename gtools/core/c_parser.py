@@ -15,6 +15,11 @@ class Token:
     lexpos: int
 
 
+@dataclass
+class Skip:
+    skip: bool = False
+
+
 # NOTE: the operation name is probably mostly wrong
 OP_DEF = {
     "LPAREN": (160, 0, "postfix_call"),
@@ -408,9 +413,9 @@ class CParser:
         if t == "FLOAT_CONST":
             return ast.Constant(float(v))
         if t == "STRING_LITERAL":
-            return ast.Constant(str(v))
+            return ast.Constant(str(v).strip('"'))
         if t == "CHAR_CONST":
-            return ast.Constant(str(v))
+            return ast.Constant(str(v).strip("'"))
         if t == "CASE":
             right = cast(ast.pattern, self.parse_expr(0))
             return cast(ast.expr, ast.match_case(pattern=right, body=[]))
@@ -581,7 +586,7 @@ class CParser:
         sub = CParser(body_tokens)
         return sub.parse().body
 
-    def parse_stmt(self) -> ast.stmt:
+    def parse_stmt(self, skip: Skip = Skip()) -> ast.stmt:
         if DEBUG:
             print(
                 "parse_stmt peek:",
@@ -598,6 +603,10 @@ class CParser:
         tok_type = self.peek().type
 
         match tok_type:
+            case "SEMI":
+                skip.skip = True
+                self.next()
+                return ast.Pass()
             case "INT" | "VOID" | "FLOAT" | "DOUBLE" | "CHAR" | "STRUCT" | "UNION" | "ENUM" | "CONST" | "VOLATILE" | "SIGNED" | "UNSIGNED":
                 return self.parse_variable_decl()
 
@@ -620,7 +629,7 @@ class CParser:
                         break
                     i += 1
 
-                if self.has_next() and self.peek(i).type == "LPAREN":
+                if i > 1 and self.has_next() and self.peek(i).type == "LPAREN":
                     return self.parse_fundef()
 
                 if looks_like_declaration():
@@ -635,7 +644,7 @@ class CParser:
                 self.expect_and_next("SEMI")
                 return ast.Assign(
                     targets=[ast.Name("_", ast.Store())],
-                    value=ast.Call(func=ast.Name("goto", ast.Load()), args=[ast.Constant(label.value)], keywords=[]),
+                    value=ast.Call(func=ast.Name("goto", ast.Store()), args=[ast.Constant(label.value)], keywords=[]),
                 )
             case "LBRACE":
                 body_tokens = self.read_scope()
@@ -724,6 +733,7 @@ class CParser:
                     return ast.With(items=[], body=[init_stmt, while_node])
                 return while_node
             case "SWITCH":
+                # TODO: handle fallthrough
                 self.expect_and_next("SWITCH")
                 self.expect_and_next("LPAREN")
                 switch_expr = self.parse_expr()
@@ -773,8 +783,11 @@ class CParser:
 
     def parse(self) -> ast.Module:
         body: list[ast.stmt] = []
-        while self.i < len(self._tokens) - 1:
-            body.append(self.parse_stmt())
+        while self.has_next():
+            skip = Skip()
+            stmt = self.parse_stmt(skip)
+            if not skip.skip:
+                body.append(stmt)
 
         return ast.Module(body)
 

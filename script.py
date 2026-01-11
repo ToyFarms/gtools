@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # TODO: make a directory scripts/ keep stuff separated out there so its not so cluttered
 import argparse
+import ast
 from collections import defaultdict
 from functools import cache
 import itertools
@@ -15,7 +16,8 @@ from typing import IO, Callable, Protocol
 import zlib
 
 from gtools.core.c import IdentifierRegistry, to_c_ident
-from gtools.core.c_parser import ctopy
+from gtools.core.c_parser import ctopy_ast
+from gtools.core.transformer import GotoResolver
 
 try:
     from gtools.core.growtopia.items_dat import Item, item_database
@@ -483,7 +485,14 @@ class ItemID(IntEnum):
             code = Path(args.code).read_text()
 
         code = code.replace("\\n", "\n")
-        print(ctopy(code).replace("\\n", "\n"))
+        tree = ctopy_ast(code)
+        print(ast.unparse(ast.fix_missing_locations(tree)))
+        print("=" * 50)
+
+        tree = GotoResolver().visit(tree)
+        ast.fix_missing_locations(tree)
+        code = ast.unparse(tree)
+        print(code)
 
 
 if __name__ == "__main__":
