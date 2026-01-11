@@ -33,7 +33,6 @@ def _discover_commands() -> None:
                 if isinstance(attr, click.Command) and not isinstance(attr, click.Group):
                     command_name = attr_name.replace("_", "-")
                     cli.add_command(attr, name=command_name)
-                    break
         except Exception:
             print(f"MODULE: \x1b[31m{module_name}\x1b[0m", "=" * 50)
             print_exc()

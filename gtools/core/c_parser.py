@@ -62,14 +62,20 @@ OP_DEF = {
 }
 
 
+@dataclass
+class Setting:
+    preserve_cast: bool = True
+
+
 class CParser:
     match_i = itertools.count()
     match_q = deque[int]()
 
-    def __init__(self, tokens: list[Token], code: str | None = None) -> None:
+    def __init__(self, tokens: list[Token], code: str | None = None, setting: Setting | None = None) -> None:
         self._tokens = tokens
         self._code = code
         self.i = 0
+        self.s = setting if setting else Setting()
 
     def next(self) -> Token:
         if self.i > len(self._tokens) - 1:
@@ -213,7 +219,7 @@ class CParser:
 
         # int x;
         if self.peek().type == "SEMI":
-            return ast.AnnAssign(ast.Name(var_name.value, ast.Store()), ast.Constant(types), ast.Constant(value=None), simple=1)
+            return ast.AnnAssign(ast.Name(var_name.value, ast.Store()), ast.Constant(value=None), simple=1)
 
         # int x = ...
         if self.peek().type == "EQUALS":
@@ -393,7 +399,10 @@ class CParser:
                         types.append(nxt)
 
                 right = self.parse_expr(130)
-                return ast.Call(func=ast.Name(id="cast", ctx=ast.Load()), args=[ast.Constant("".join(x.value for x in types)), right])
+                if self.s.preserve_cast:
+                    return ast.Call(func=ast.Name(id="cast", ctx=ast.Load()), args=[ast.Constant("".join(x.value for x in types)), right])
+                else:
+                    return right
             else:
                 expr = self.parse_expr(0)
                 self.expect_and_next("RPAREN")
@@ -590,7 +599,7 @@ class CParser:
         body_tokens = self.read_scope()
         if not body_tokens:
             return [ast.Pass()]
-        sub = CParser(body_tokens)
+        sub = CParser(body_tokens, self._code, self.s)
         return sub.parse().body
 
     def parse_stmt(self, skip: Skip | None = None) -> ast.stmt:
@@ -801,8 +810,7 @@ class CParser:
                 cond = cast(ast.match_case, self.parse_expr())
                 self.expect_and_next("COLON")
                 if self.peek().type == "LBRACE":
-                    sub = CParser(self.read_scope())
-                    cond.body = sub.parse().body
+                    cond.body = self.parse_body()
                 else:
                     while self.has_next():
                         if self.peek().type in ("CASE", "DEFAULT"):
@@ -817,8 +825,7 @@ class CParser:
                 self.expect_and_next("COLON")
                 cond = ast.match_case(ast.MatchAs(None), body=[])
                 if self.peek().type == "LBRACE":
-                    sub = CParser(self.read_scope())
-                    cond.body = sub.parse().body
+                    cond.body = self.parse_body()
                 else:
                     while self.has_next():
                         if self.peek().type in ("CASE", "DEFAULT"):
@@ -867,7 +874,7 @@ def preprocess(c: str) -> str:
     return c
 
 
-def ctopy(c: str) -> str:
+def ctopy(c: str, setting: Setting | None = None) -> str:
     c = preprocess(c)
     lex = CLexer(error_func=lambda *a, **k: None, on_lbrace_func=lambda: None, on_rbrace_func=lambda: None, type_lookup_func=lambda typ: False)
     lex.build()
@@ -877,13 +884,13 @@ def ctopy(c: str) -> str:
     while tok := lex.token():
         tokens.append(tok)
 
-    parser = CParser(tokens, c)
+    parser = CParser(tokens, c, setting)
     module = parser.parse()
 
     return ast.unparse(ast.fix_missing_locations(module))
 
 
-def ctopy_ast(c: str) -> ast.Module:
+def ctopy_ast(c: str, setting: Setting | None = None) -> ast.Module:
     c = preprocess(c)
     lex = CLexer(error_func=lambda *a, **k: None, on_lbrace_func=lambda: None, on_rbrace_func=lambda: None, type_lookup_func=lambda typ: False)
     lex.build()
@@ -893,7 +900,7 @@ def ctopy_ast(c: str) -> ast.Module:
     while tok := lex.token():
         tokens.append(tok)
 
-    parser = CParser(tokens, c)
+    parser = CParser(tokens, c, setting)
     module = parser.parse()
 
     return ast.fix_missing_locations(module)
