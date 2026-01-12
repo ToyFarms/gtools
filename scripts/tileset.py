@@ -57,10 +57,8 @@ def check_if_tile_is_empty(world: World, tile_x: int, tile_y: int, item_id: int,
                     return 1
                 width = world.width
                 if tile_x >= width:
-                    breakpoint()
                     return 1
                 if tile_y >= world.height:
-                    breakpoint()
                     return 1
                 tile = cast(Tile, world.get_tile(ivec2(tile_x, tile_y)))
                 assert tile
