@@ -11,11 +11,16 @@ from pyglm.glm import ivec2, vec2
 from gtools.core.buffer import Buffer
 import cbor2
 
-from gtools.core.growtopia.items_dat import Item, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, item_database
+from gtools.core.growtopia.items_dat import ItemInfoFlag2, item_database
 from gtools.core.growtopia.packet import TankPacket
 from gtools.core.growtopia.player import Player
+from gtools.core.growtopia.rttex import RtTexManager
 from gtools.protogen import growtopia_pb2
-from gtools.baked import items
+import numpy as np
+import numpy.typing as npt
+
+from gtools.proxy.setting import setting
+
 
 @dataclass(slots=True)
 class SilkwormColor:
@@ -1585,6 +1590,18 @@ class Tile:
 
     logger = logging.getLogger("tile")
 
+    def get_texture(self, mgr: RtTexManager, id: int, tex_index: int) -> npt.NDArray[np.uint8]:
+        item = item_database.get(id)
+        off = ivec2(tex_index % max(item.get_tex_stride(), 1), tex_index // item.get_tex_stride())
+        tex = (ivec2(item.tex_coord_x, item.tex_coord_y) + off) * 32
+        return mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32)
+
+    def get_fg_texture(self, mgr: RtTexManager) -> npt.NDArray[np.uint8]:
+        return self.get_texture(mgr, self.fg_id, self.fg_tex_index)
+
+    def get_bg_texture(self, mgr: RtTexManager) -> npt.NDArray[np.uint8]:
+        return self.get_texture(mgr, self.bg_id, self.bg_tex_index)
+
     @property
     def front(self) -> int:
         return self.fg_id if self.fg_id > 0 else self.bg_id if self.bg_id > 0 else 0
@@ -1733,14 +1750,8 @@ class World:
         """adjust width, height, nb_tiles based on the tiles list. also fills in any gap, and sort it"""
         xs = [t.pos.x for t in self.tiles]
         ys = [t.pos.y for t in self.tiles]
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
-        width = max_x - min_x + 1
-        height = max_y - min_y + 1
-
-        self.width = width
-        self.height = height
-        self.nb_tiles = len(self.tiles)
+        self.width = max(xs) + 1
+        self.height = max(ys) + 1
 
         for y in range(self.height):
             for x in range(self.width):
@@ -1748,6 +1759,7 @@ class World:
                 if not self.tile_exists(pos):
                     self.tiles.append(Tile(pos=pos))
 
+        self.nb_tiles = len(self.tiles)
         self.tiles.sort(key=lambda tile: (tile.pos.x, -tile.pos.y))
 
     def tile_exists(self, pos: ivec2) -> bool:
@@ -1757,12 +1769,15 @@ class World:
 
         return False
 
-    def get_tile(self, pos: ivec2) -> Tile | None:
+    def get_tile(self, pos: ivec2 | int) -> Tile:
+        if isinstance(pos, int):
+            pos = ivec2(pos % self.width, pos // self.width)
         for tile in self.tiles:
             if tile.pos == pos:
                 return tile
 
-        self.logger.warning(f"tile {pos} in {self.name} does not exists")
+        # self.logger.warning(f"tile {pos} in {self.name} does not exists")
+        raise IndexError(f"tile {pos} in {self.name} does not exists")
 
     def index_tile(self, pos: ivec2) -> int | None:
         for i, tile in enumerate(self.tiles):

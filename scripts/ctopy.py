@@ -82,7 +82,7 @@ def ctopy8(code: str) -> None:
     code = re.sub(r"get_foreground_or_background_id\(([^)]*)\)", r"\1.front", code)
     code = re.sub(r"GLUED", r"TileFlags.GLUED", code)
     code = re.sub(r"world_view", r"world", code)
-    code = re.sub(r"world.tilesBegin\[([^\]]*)\]", r"world.get_tile(\1)", code)
+    code = re.sub(r"tilesBegin\[([^\]]*)\]", r"get_tile(ivec2(tile_x, tile_y))", code)
     code = re.sub(r"is_tile_steam_type\(([^)]*)\)", r"item_database.get(\1.front).is_steam()", code)
     code = re.sub(r"GUILD_FLAG_SHIELD_DIVISION", r"GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE", code)
     code = re.sub(r"tile\.tileX", r"tile.pos.x", code)

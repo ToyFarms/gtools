@@ -12,97 +12,172 @@ class GotoResolver(ast.NodeTransformer):
         self.in_function = False
 
     def _collapse_nested_labels(self) -> None:
+        def transform_block_with_nested_label(stmts: list[ast.stmt], target_label: str) -> tuple[list[ast.stmt], bool]:
+            result = []
 
-        def find_label_in_stmt(stmt: ast.stmt) -> tuple[str | None, bool]:
-            is_label, label_name = self._is_label_def(stmt)
-            if is_label:
-                return label_name, True
+            for i, stmt in enumerate(stmts):
+                is_label, label_name = self._is_label_def(stmt)
 
-            # Recurse into compound statements in the same way _collect_all_labels does.
-            # Return the first found label name (pre-order).
-            if isinstance(stmt, ast.If):
-                for s in stmt.body:
-                    ln, found = find_label_in_stmt(s)
-                    if found:
-                        return ln, True
-                for s in stmt.orelse:
-                    ln, found = find_label_in_stmt(s)
-                    if found:
-                        return ln, True
-            elif isinstance(stmt, (ast.For, ast.While)):
-                for s in stmt.body:
-                    ln, found = find_label_in_stmt(s)
-                    if found:
-                        return ln, True
-                for s in stmt.orelse:
-                    ln, found = find_label_in_stmt(s)
-                    if found:
-                        return ln, True
-            elif isinstance(stmt, ast.With):
-                for s in stmt.body:
-                    ln, found = find_label_in_stmt(s)
-                    if found:
-                        return ln, True
-            elif isinstance(stmt, ast.Try):
-                for s in stmt.body:
-                    ln, found = find_label_in_stmt(s)
-                    if found:
-                        return ln, True
-                for s in stmt.orelse:
-                    ln, found = find_label_in_stmt(s)
-                    if found:
-                        return ln, True
-                for s in stmt.finalbody:
-                    ln, found = find_label_in_stmt(s)
-                    if found:
-                        return ln, True
-                for handler in stmt.handlers:
-                    for s in handler.body:
-                        ln, found = find_label_in_stmt(s)
-                        if found:
-                            return ln, True
-            elif isinstance(stmt, ast.Match):
-                for case in stmt.cases:
-                    for s in case.body:
-                        ln, found = find_label_in_stmt(s)
-                        if found:
-                            return ln, True
-
-            return None, False
-
-        changed = True
-        # Keep looping until no nested label occurrences remain (collapse them iteratively).
-        while changed:
-            changed = False
-            # Work on a snapshot of keys because we may add new labels later (we don't here, but safe).
-            for label in list(self.label_blocks.keys()):
-                stmts = self.label_blocks[label]
-                # find first top-level statement index that either is a LABEL or contains a LABEL
-                cut_index = None
-                inner_label_name = None
-                for idx, top_stmt in enumerate(stmts):
-                    ln, found = find_label_in_stmt(top_stmt)
-                    if found and ln in self.label_blocks:
-                        cut_index = idx
-                        inner_label_name = ln
-                        break
-                if cut_index is not None:
-                    # Replace stmts[cut_index:] with a single goto(inner_label_name)
-                    # Use the original top_stmt's lineno/col_offset for better location info.
-                    sample_stmt = stmts[cut_index]
+                if is_label and label_name == target_label:
                     goto_assign = ast.Assign(
                         targets=[ast.Name(id="__unused", ctx=ast.Store())],
-                        value=ast.Call(func=ast.Name(id="goto", ctx=ast.Load()), args=[ast.Constant(value=inner_label_name)], keywords=[]),
-                        lineno=getattr(sample_stmt, "lineno", 0),
-                        col_offset=getattr(sample_stmt, "col_offset", 0),
+                        value=ast.Call(func=ast.Name(id="goto", ctx=ast.Load()), args=[ast.Constant(value=target_label)], keywords=[]),
+                        lineno=getattr(stmt, "lineno", 0),
+                        col_offset=getattr(stmt, "col_offset", 0),
                     )
-                    # Keep the prefix before the containing statement; drop the containing statement and everything after it.
-                    new_block = stmts[:cut_index] + [goto_assign]
-                    self.label_blocks[label] = new_block
-                    # Note: no need to add the inner label to self.labels — it already exists.
-                    changed = True
-                    # break so we restart scanning labels from the beginning (makes iteration simpler)
-                    break
+                    result.append(goto_assign)
+                    return result, True
+
+                transformed_stmt, found = transform_compound_stmt(stmt, target_label)
+                result.append(transformed_stmt)
+
+                if found:
+                    result.extend(stmts[i + 1 :])
+                    return result, True
+
+            return result, False
+
+        def transform_compound_stmt(stmt: ast.stmt, target_label: str) -> tuple[ast.stmt, bool]:
+            found = False
+
+            if isinstance(stmt, ast.If):
+                new_body, found_in_body = transform_block_with_nested_label(stmt.body, target_label)
+                if found_in_body:
+                    stmt.body = new_body
+                    found = True
+
+                if not found and stmt.orelse:
+                    new_orelse, found_in_orelse = transform_block_with_nested_label(stmt.orelse, target_label)
+                    if found_in_orelse:
+                        stmt.orelse = new_orelse
+                        found = True
+
+            elif isinstance(stmt, (ast.For, ast.While)):
+                new_body, found_in_body = transform_block_with_nested_label(stmt.body, target_label)
+                if found_in_body:
+                    stmt.body = new_body
+                    found = True
+
+                if not found and stmt.orelse:
+                    new_orelse, found_in_orelse = transform_block_with_nested_label(stmt.orelse, target_label)
+                    if found_in_orelse:
+                        stmt.orelse = new_orelse
+                        found = True
+
+            elif isinstance(stmt, ast.With):
+                new_body, found_in_body = transform_block_with_nested_label(stmt.body, target_label)
+                if found_in_body:
+                    stmt.body = new_body
+                    found = True
+
+            elif isinstance(stmt, ast.Try):
+                new_body, found_in_body = transform_block_with_nested_label(stmt.body, target_label)
+                if found_in_body:
+                    stmt.body = new_body
+                    found = True
+
+                if not found and stmt.orelse:
+                    new_orelse, found_in_orelse = transform_block_with_nested_label(stmt.orelse, target_label)
+                    if found_in_orelse:
+                        stmt.orelse = new_orelse
+                        found = True
+
+                if not found and stmt.finalbody:
+                    new_finalbody, found_in_finalbody = transform_block_with_nested_label(stmt.finalbody, target_label)
+                    if found_in_finalbody:
+                        stmt.finalbody = new_finalbody
+                        found = True
+
+                if not found:
+                    for handler in stmt.handlers:
+                        new_handler_body, found_in_handler = transform_block_with_nested_label(handler.body, target_label)
+                        if found_in_handler:
+                            handler.body = new_handler_body
+                            found = True
+                            break
+
+            elif isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    new_case_body, found_in_case = transform_block_with_nested_label(case.body, target_label)
+                    if found_in_case:
+                        case.body = new_case_body
+                        found = True
+                        break
+
+            return stmt, found
+
+        def find_nested_label_in_block(stmts: list[ast.stmt]) -> str | None:
+            for stmt in stmts:
+                is_label, label_name = self._is_label_def(stmt)
+                if is_label and label_name and label_name in self.label_blocks:
+                    return label_name
+
+                nested_label = find_nested_label_in_stmt(stmt)
+                if nested_label:
+                    return nested_label
+
+            return None
+
+        def find_nested_label_in_stmt(stmt: ast.stmt) -> str | None:
+            if isinstance(stmt, ast.If):
+                label = find_nested_label_in_block(stmt.body)
+                if label:
+                    return label
+                label = find_nested_label_in_block(stmt.orelse)
+                if label:
+                    return label
+
+            elif isinstance(stmt, (ast.For, ast.While)):
+                label = find_nested_label_in_block(stmt.body)
+                if label:
+                    return label
+                label = find_nested_label_in_block(stmt.orelse)
+                if label:
+                    return label
+
+            elif isinstance(stmt, ast.With):
+                label = find_nested_label_in_block(stmt.body)
+                if label:
+                    return label
+
+            elif isinstance(stmt, ast.Try):
+                label = find_nested_label_in_block(stmt.body)
+                if label:
+                    return label
+                label = find_nested_label_in_block(stmt.orelse)
+                if label:
+                    return label
+                label = find_nested_label_in_block(stmt.finalbody)
+                if label:
+                    return label
+                for handler in stmt.handlers:
+                    label = find_nested_label_in_block(handler.body)
+                    if label:
+                        return label
+
+            elif isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    label = find_nested_label_in_block(case.body)
+                    if label:
+                        return label
+
+            return None
+
+        changed = True
+        while changed:
+            changed = False
+
+            for label in list(self.label_blocks.keys()):
+                stmts = self.label_blocks[label]
+
+                nested_label = find_nested_label_in_block(stmts)
+
+                if nested_label:
+                    new_stmts, found = transform_block_with_nested_label(stmts, nested_label)
+                    if found:
+                        self.label_blocks[label] = new_stmts
+                        changed = True
+                        break
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         has_goto = self._contains_goto_or_label(node)

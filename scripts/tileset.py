@@ -5,12 +5,14 @@ from pyglm.glm import ivec2, ivec4
 import numpy as np
 
 from gtools.core.growtopia.items_dat import ItemInfoTextureType, item_database
+from gtools.core.growtopia.renderer.world_renderer import WorldRenderer
 from gtools.core.growtopia.rttex import get_image_buffer
 from gtools.core.growtopia.world import Tile, TileFlags, World
 from gtools.core.wsl import windows_home
 from gtools.baked.items import (
     AQUA_CAVE_CRYSTAL,
     BEDROCK,
+    BLANK,
     BONE_CHECKPOINT,
     CAVE_COLUMN,
     CAVE_DIRT,
@@ -39,13 +41,14 @@ from gtools.baked.items import (
     STEAM_PIPE,
     STONE_PAGODA,
     STONE_PAGODA_BASE,
+    TWISTED_ROOF,
     TWISTED_WINDOWS,
     WEEPING_WILLOW,
     WEEPING_WILLOW_FOLIAGE,
 )
 
 
-def check_if_tile_is_empty(world: World, tile_x: int, tile_y: int, item_id: int, maybe_cave_stuff: int, /) -> int:
+def tile_should_connect(world: World, tile_x: int, tile_y: int, item_id: int, maybe_cave_stuff: int, /) -> int:
     tile: Tile
     __goto_label = "start"
     while True:
@@ -60,8 +63,7 @@ def check_if_tile_is_empty(world: World, tile_x: int, tile_y: int, item_id: int,
                     return 1
                 if tile_y >= world.height:
                     return 1
-                tile = cast(Tile, world.get_tile(ivec2(tile_x, tile_y)))
-                assert tile
+                tile = world.get_tile(ivec2(tile_x, tile_y))
                 if not tile or (tile.front and (tile.front & 1 == 0 and tile.flags & TileFlags.GLUED != 0)):
                     return 1
                 if maybe_cave_stuff and (item_id == CAVE_DIRT and tile.front == CAVE_COLUMN):
@@ -339,10 +341,10 @@ def check_if_tile_is_empty(world: World, tile_x: int, tile_y: int, item_id: int,
             if "__GOTO_BREAK__" in str(__goto_except):
                 break
             raise __goto_except
-    return 0
+    assert False
 
 
-def sub_140565_df0(a1: World, tile_x: int, tile_y: int, /) -> int:
+def is_steam_or_something(a1: World, tile_x: int, tile_y: int, /) -> int:
     if tile_x < 0:
         return 0
     if tile_y < 0:
@@ -361,7 +363,7 @@ def sub_140565_df0(a1: World, tile_x: int, tile_y: int, /) -> int:
     return item_database.get(v5.front).is_steam() and v5.front != STEAM_LAUNCHER
 
 
-def determine_tile_index_from_neighbor(world: World, tile: Tile, a3: int, /) -> int:
+def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
     __goto_label = "start"
     while True:
         try:
@@ -374,7 +376,7 @@ def determine_tile_index_from_neighbor(world: World, tile: Tile, a3: int, /) -> 
                 if a3 == 1:
                     width = world.width
                     v9 = tile_x + 1
-                    bg = tile.bg
+                    bg = tile.bg_id
                     if tile_x + 1 >= width:
                         __goto_label = "LABEL_10"
                         raise Exception("__GOTO_CONTINUE__")
@@ -647,14 +649,14 @@ def determine_tile_index_from_neighbor(world: World, tile: Tile, a3: int, /) -> 
                 if a3:
                     if a3 == 2:
                         v57 = tile_x + 1
-                        east_tile = sub_140565_df0(world, tile_x + 1, tile.pos.y)
-                        v72 = sub_140565_df0(world, tile_x + 1, tile_y + 1)
-                        v75 = sub_140565_df0(world, tile_x, tile_y + 1)
-                        south_west_tile = sub_140565_df0(world, tile_x - 1, tile_y + 1)
-                        west_tile = sub_140565_df0(world, tile_x - 1, tile_y)
-                        north_west_tile = sub_140565_df0(world, tile_x - 1, tile_y_1 - 1)
-                        north_tile = sub_140565_df0(world, tile_x, tile_y_1 - 1)
-                        north_east_tile = sub_140565_df0(world, v57, tile_y_1 - 1)
+                        east_tile = is_steam_or_something(world, tile_x + 1, tile.pos.y)
+                        v72 = is_steam_or_something(world, tile_x + 1, tile_y + 1)
+                        v75 = is_steam_or_something(world, tile_x, tile_y + 1)
+                        south_west_tile = is_steam_or_something(world, tile_x - 1, tile_y + 1)
+                        west_tile = is_steam_or_something(world, tile_x - 1, tile_y)
+                        north_west_tile = is_steam_or_something(world, tile_x - 1, tile_y_1 - 1)
+                        north_tile = is_steam_or_something(world, tile_x, tile_y_1 - 1)
+                        north_east_tile = is_steam_or_something(world, v57, tile_y_1 - 1)
                         south_east_tile_1 = v72
                         south_tile_1 = v75
                         v14 = east_tile
@@ -666,32 +668,32 @@ def determine_tile_index_from_neighbor(world: World, tile: Tile, a3: int, /) -> 
                         # south_west_tile = BYTE3(tile)
                         # south_tile_1 = BYTE2(tile)
                         # south_east_tile_1 = BYTE1(tile)
-                        north_east_tile   = bool(tile)
-                        north_tile        = bool(tile)
-                        north_west_tile   = bool(tile)
-                        west_tile         = bool(tile)
-                        south_west_tile   = bool(tile)
-                        south_tile_1      = bool(tile)
+                        north_east_tile = bool(tile)
+                        north_tile = bool(tile)
+                        north_west_tile = bool(tile)
+                        west_tile = bool(tile)
+                        south_west_tile = bool(tile)
+                        south_tile_1 = bool(tile)
                         south_east_tile_1 = bool(tile)
                         v14 = bool(tile)
                 else:
                     tile_x__plus__one = tile_x + 1
                     foreground_or_background_id = tile.front
-                    east_tile_1 = check_if_tile_is_empty(world, tile_x + 1, tile_y, foreground_or_background_id, 0)
+                    east_tile_1 = tile_should_connect(world, tile_x + 1, tile_y, foreground_or_background_id, 0)
                     v50 = tile.front
-                    south_east_tile = check_if_tile_is_empty(world, tile_x + 1, tile_y + 1, v50, 0)
+                    south_east_tile = tile_should_connect(world, tile_x + 1, tile_y + 1, v50, 0)
                     v51 = tile.front
-                    south_tile = check_if_tile_is_empty(world, tile_x, tile_y + 1, v51, 0)
+                    south_tile = tile_should_connect(world, tile_x, tile_y + 1, v51, 0)
                     v52 = tile.front
-                    south_west_tile = check_if_tile_is_empty(world, tile_x - 1, tile_y + 1, v52, 0)
+                    south_west_tile = tile_should_connect(world, tile_x - 1, tile_y + 1, v52, 0)
                     v53 = tile.front
-                    west_tile = check_if_tile_is_empty(world, tile_x - 1, tile_y, v53, 0)
+                    west_tile = tile_should_connect(world, tile_x - 1, tile_y, v53, 0)
                     v54 = tile.front
-                    north_west_tile = check_if_tile_is_empty(world, tile_x - 1, tile_y_1 - 1, v54, 0)
+                    north_west_tile = tile_should_connect(world, tile_x - 1, tile_y_1 - 1, v54, 0)
                     v55 = tile.front
-                    north_tile = check_if_tile_is_empty(world, tile_x, tile_y_1 - 1, v55, 0)
+                    north_tile = tile_should_connect(world, tile_x, tile_y_1 - 1, v55, 0)
                     v56 = tile.front
-                    north_east_tile = check_if_tile_is_empty(world, tile_x__plus__one, tile_y_1 - 1, v56, 0)
+                    north_east_tile = tile_should_connect(world, tile_x__plus__one, tile_y_1 - 1, v56, 0)
                     south_east_tile_1 = south_east_tile
                     south_tile_1 = south_tile
                     v14 = east_tile_1
@@ -1162,22 +1164,384 @@ def determine_tile_index_from_neighbor(world: World, tile: Tile, a3: int, /) -> 
             if "__GOTO_BREAK__" in str(__goto_except):
                 break
             raise __goto_except
+    assert False
+
+
+def handle_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
+    __goto_label = "start"
+    while True:
+        try:
+            if __goto_label == "start":
+                v3 = 0
+                tile_y = a2.pos.y
+                tile_x = a2.pos.x
+                if not a3:
+                    foreground_or_background_id = a2.front
+                    east_tile = tile_should_connect(a1, tile_x + 1, tile_y, foreground_or_background_id, 0)
+                    v28 = a2.front
+                    south_tile = tile_should_connect(a1, tile_x, tile_y + 1, v28, 1)
+                    v29 = a2.front
+                    west_tile = tile_should_connect(a1, tile_x - 1, tile_y, v29, 0)
+                    v30 = a2.front
+                    north_tile = tile_should_connect(a1, tile_x, tile_y - 1, v30, 2)
+                    __goto_label = "LABEL_59"
+                    raise Exception("__GOTO_CONTINUE__")
+                width = a1.width
+                bg = a2.bg_id
+                if tile_x + 1 >= width:
+                    __goto_label = "LABEL_10"
+                    raise Exception("__GOTO_CONTINUE__")
+                if tile_y >= a1.height:
+                    __goto_label = "LABEL_10"
+                    raise Exception("__GOTO_CONTINUE__")
+                v10 = a1.get_tile(ivec2(tile_x, tile_y))
+                if not v10:
+                    __goto_label = "LABEL_10"
+                    raise Exception("__GOTO_CONTINUE__")
+                v11 = v10.bg_id
+                if v11:
+                    if v10.flags & 2048 != 0:
+                        __goto_label = "LABEL_10"
+                        raise Exception("__GOTO_CONTINUE__")
+                if bg == 8930:
+                    v12 = v11 == WEEPING_WILLOW
+                else:
+                    if bg != 1194:
+                        if bg == 3556 and v11 == DWARVEN_BACKGROUND:
+                            __goto_label = "LABEL_10"
+                            raise Exception("__GOTO_CONTINUE__")
+                        east_tile = v11 == bg
+                        __goto_label = "LABEL_11"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v12 = v11 == TWISTED_WINDOWS
+                if not v12:
+                    __goto_label = "LABEL_40"
+                    raise Exception("__GOTO_CONTINUE__")
+                east_tile = 1
+                v14 = tile_y + 1
+                if tile_x >= width:
+                    __goto_label = "LABEL_18"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v14 >= a1.height:
+                    __goto_label = "LABEL_18"
+                    raise Exception("__GOTO_CONTINUE__")
+                v15 = a1.get_tile(ivec2(tile_x, tile_y))
+                if not v15:
+                    __goto_label = "LABEL_18"
+                    raise Exception("__GOTO_CONTINUE__")
+                v16 = v15.bg_id
+                if v16:
+                    if v15.flags & 2048 != 0:
+                        __goto_label = "LABEL_18"
+                        raise Exception("__GOTO_CONTINUE__")
+                if bg != 1194:
+                    if bg == 3556 and v16 == DWARVEN_BACKGROUND:
+                        __goto_label = "LABEL_18"
+                        raise Exception("__GOTO_CONTINUE__")
+                    __goto_label = "LABEL_43"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v16 != TWISTED_WINDOWS:
+                    __goto_label = "LABEL_43"
+                    raise Exception("__GOTO_CONTINUE__")
+                south_tile = 1
+                v18 = tile_x - 1
+                if tile_x - 1 < 0:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v18 >= width:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                if tile_y >= a1.height:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                v19 = a1.get_tile(ivec2(tile_x, tile_y))
+                if not v19:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                v20 = v19.bg_id
+                if v20:
+                    if v19.flags & 2048 != 0:
+                        __goto_label = "LABEL_28"
+                        raise Exception("__GOTO_CONTINUE__")
+                if bg == 8930:
+                    v21 = v20 == WEEPING_WILLOW
+                else:
+                    if bg != 1194:
+                        if bg == 3556 and v20 == DWARVEN_BACKGROUND:
+                            __goto_label = "LABEL_28"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_48"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v21 = v20 == TWISTED_WINDOWS
+                if v21:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                west_tile = v20 == bg
+                v23 = tile_y - 1
+                if v23 < 0 or (
+                    tile_x >= width or (v23 >= a1.height or ((v24 := a1.get_tile(ivec2(tile_x, tile_y))) == 0 or ((v25 := v24.bg_id) != BLANK and v24.flags & 2048 != 0)))
+                ):
+                    north_tile = 1
+                    __goto_label = "LABEL_59"
+                    raise Exception("__GOTO_CONTINUE__")
+                if bg == 1194:
+                    if v25 == TWISTED_ROOF:
+                        north_tile = 1
+                        __goto_label = "LABEL_59"
+                        raise Exception("__GOTO_CONTINUE__")
+                    if v25 == TWISTED_WINDOWS:
+                        north_tile = 1
+                        __goto_label = "LABEL_59"
+                        raise Exception("__GOTO_CONTINUE__")
+                elif bg == 3556 and v25 == DWARVEN_BACKGROUND:
+                    north_tile = 1
+                    __goto_label = "LABEL_59"
+                    raise Exception("__GOTO_CONTINUE__")
+                north_tile = v25 == bg
+                if not east_tile:
+                    __goto_label = "LABEL_70"
+                    raise Exception("__GOTO_CONTINUE__")
+                if south_tile:
+                    if west_tile:
+                        if not north_tile:
+                            return 1
+                        return v3
+                elif west_tile and north_tile:
+                    return 2
+                if south_tile:
+                    if north_tile:
+                        return 3
+                    __goto_label = "LABEL_70"
+                    raise Exception("__GOTO_CONTINUE__")
+                if east_tile:
+                    if south_tile:
+                        return 5
+                    elif west_tile:
+                        return 13
+                    elif north_tile:
+                        return 7
+                    else:
+                        return 14
+                elif south_tile:
+                    if west_tile:
+                        return 6
+                    elif north_tile:
+                        return 9
+                    else:
+                        return 10
+                else:
+                    if not west_tile:
+                        return 12 - north_tile
+                    if north_tile:
+                        return 8
+                    else:
+                        return 15
+            elif __goto_label == "LABEL_10":
+                east_tile = 1
+                __goto_label = "LABEL_11"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_11":
+                v14 = tile_y + 1
+                assert tile_x and width
+                if tile_x >= width:
+                    __goto_label = "LABEL_18"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v14 >= a1.height:
+                    __goto_label = "LABEL_18"
+                    raise Exception("__GOTO_CONTINUE__")
+                v15 = a1.get_tile(ivec2(tile_x, tile_y))
+                if not v15:
+                    __goto_label = "LABEL_18"
+                    raise Exception("__GOTO_CONTINUE__")
+                v16 = v15.bg_id
+                if v16:
+                    if v15.flags & 2048 != 0:
+                        __goto_label = "LABEL_18"
+                        raise Exception("__GOTO_CONTINUE__")
+                if bg != 1194:
+                    if bg == 3556 and v16 == DWARVEN_BACKGROUND:
+                        __goto_label = "LABEL_18"
+                        raise Exception("__GOTO_CONTINUE__")
+                    __goto_label = "LABEL_43"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v16 != TWISTED_WINDOWS:
+                    __goto_label = "LABEL_43"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_18"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_18":
+                south_tile = 1
+                __goto_label = "LABEL_19"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_19":
+                v18 = tile_x - 1
+                if tile_x - 1 < 0:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v18 >= width:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                if tile_y >= a1.height:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                v19 = a1.get_tile(ivec2(tile_x, tile_y))
+                if not v19:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                v20 = v19.bg_id
+                if v20:
+                    if v19.flags & 2048 != 0:
+                        __goto_label = "LABEL_28"
+                        raise Exception("__GOTO_CONTINUE__")
+                if bg == 8930:
+                    v21 = v20 == WEEPING_WILLOW
+                else:
+                    if bg != 1194:
+                        if bg == 3556 and v20 == DWARVEN_BACKGROUND:
+                            __goto_label = "LABEL_28"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_48"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v21 = v20 == TWISTED_WINDOWS
+                if v21:
+                    __goto_label = "LABEL_28"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_48"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_28":
+                west_tile = 1
+                __goto_label = "LABEL_29"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_29":
+                v23 = tile_y - 1
+                assert tile_x and width
+                if v23 < 0 or (
+                    tile_x >= width or (v23 >= a1.height or ((v24 := a1.get_tile(ivec2(tile_x, tile_y))) == 0 or ((v25 := v24.bg_id) != BLANK and v24.flags & 2048 != 0)))
+                ):
+                    north_tile = 1
+                    __goto_label = "LABEL_59"
+                    raise Exception("__GOTO_CONTINUE__")
+                if bg == 1194:
+                    if v25 == TWISTED_ROOF:
+                        north_tile = 1
+                        __goto_label = "LABEL_59"
+                        raise Exception("__GOTO_CONTINUE__")
+                    if v25 == TWISTED_WINDOWS:
+                        north_tile = 1
+                        __goto_label = "LABEL_59"
+                        raise Exception("__GOTO_CONTINUE__")
+                elif bg == 3556 and v25 == DWARVEN_BACKGROUND:
+                    north_tile = 1
+                    __goto_label = "LABEL_59"
+                    raise Exception("__GOTO_CONTINUE__")
+                north_tile = v25 == bg
+                __goto_label = "LABEL_59"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_40":
+                assert v11
+                east_tile = v11 == bg
+                __goto_label = "LABEL_11"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_43":
+                assert v16
+                south_tile = v16 == bg
+                __goto_label = "LABEL_19"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_48":
+                assert v20
+                west_tile = v20 == bg
+                __goto_label = "LABEL_29"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_59":
+                if not east_tile:
+                    __goto_label = "LABEL_70"
+                    raise Exception("__GOTO_CONTINUE__")
+                if south_tile:
+                    if west_tile:
+                        if not north_tile:
+                            return 1
+                        return v3
+                elif west_tile and north_tile:
+                    return 2
+                if south_tile:
+                    if north_tile:
+                        return 3
+                    __goto_label = "LABEL_70"
+                    raise Exception("__GOTO_CONTINUE__")
+                if east_tile:
+                    if south_tile:
+                        return 5
+                    elif west_tile:
+                        return 13
+                    elif north_tile:
+                        return 7
+                    else:
+                        return 14
+                elif south_tile:
+                    if west_tile:
+                        return 6
+                    elif north_tile:
+                        return 9
+                    else:
+                        return 10
+                else:
+                    if not west_tile:
+                        return 12 - north_tile
+                    if north_tile:
+                        return 8
+                    else:
+                        return 15
+            elif __goto_label == "LABEL_70":
+                if south_tile and (west_tile and north_tile):
+                    return 4
+                if east_tile:
+                    if south_tile:
+                        return 5
+                    elif west_tile:
+                        return 13
+                    elif north_tile:
+                        return 7
+                    else:
+                        return 14
+                elif south_tile:
+                    if west_tile:
+                        return 6
+                    elif north_tile:
+                        return 9
+                    else:
+                        return 10
+                else:
+                    if not west_tile:
+                        return 12 - north_tile
+                    if north_tile:
+                        return 8
+                    else:
+                        return 15
+            else:
+                raise Exception("__GOTO_BREAK__")
+        except Exception as __goto_except:
+            if "__GOTO_CONTINUE__" in str(__goto_except):
+                continue
+            if "__GOTO_BREAK__" in str(__goto_except):
+                break
+            raise __goto_except
+    assert False
 
 
 def update_tile_connectivity(world: World, tile: Tile, /):
-    __goto_label = 'start'
+    __goto_label = "start"
     while True:
         try:
-            if __goto_label == 'start':
-                'ItemID ForegroundOrBackgroundId'
-                'ItemManager * ItemManager'
-                'ItemDat * ItemById'
-                '__int64 bg'
-                'ItemDat * v8'
-                '__int64 v9'
-                'WorldView * v10'
-                'bool v11'
-                'Tile * v12'
+            if __goto_label == "start":
+                "ItemID ForegroundOrBackgroundId"
+                "ItemManager * ItemManager"
+                "ItemDat * ItemById"
+                "__int64 bg"
+                "ItemDat * v8"
+                "__int64 v9"
+                "WorldView * v10"
+                "bool v11"
+                "Tile * v12"
                 if tile:
                     foreground_or_background_id = tile.front
                     item_by_id = item_database.get(foreground_or_background_id)
@@ -1185,8 +1549,16 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                         __switch_on0 = item_by_id.texture_type
                         _switch_matched_any0 = False
                         __matched0 = False
-                        if __matched0 or (__switch_on0 == ItemInfoTextureType.SINGLE_FRAME_ALONE or __switch_on0 == ItemInfoTextureType.SINGLE_FRAME or __switch_on0 == ItemInfoTextureType.SMART_OUTER):
-                            if not __matched0 and (__switch_on0 == ItemInfoTextureType.SINGLE_FRAME_ALONE or __switch_on0 == ItemInfoTextureType.SINGLE_FRAME or __switch_on0 == ItemInfoTextureType.SMART_OUTER):
+                        if __matched0 or (
+                            __switch_on0 == ItemInfoTextureType.SINGLE_FRAME_ALONE
+                            or __switch_on0 == ItemInfoTextureType.SINGLE_FRAME
+                            or __switch_on0 == ItemInfoTextureType.SMART_OUTER
+                        ):
+                            if not __matched0 and (
+                                __switch_on0 == ItemInfoTextureType.SINGLE_FRAME_ALONE
+                                or __switch_on0 == ItemInfoTextureType.SINGLE_FRAME
+                                or __switch_on0 == ItemInfoTextureType.SMART_OUTER
+                            ):
                                 _switch_matched_any0 = True
                             __matched0 = True
                             tile.fg_tex_index = 0
@@ -1195,7 +1567,7 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                             if not __matched0 and __switch_on0 == ItemInfoTextureType.SMART_EDGE:
                                 _switch_matched_any0 = True
                             __matched0 = True
-                            tile.fg_tex_index = determine_tile_index_from_neighbor(world, tile, 0)
+                            tile.fg_tex_index = handle_smart_edge_texture(world, tile, 0)
                             break
                         if __matched0 or __switch_on0 == ItemInfoTextureType.SMART_EDGE_HORIZ:
                             if not __matched0 and __switch_on0 == ItemInfoTextureType.SMART_EDGE_HORIZ:
@@ -1210,7 +1582,7 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                             if not __matched0 and __switch_on0 == ItemInfoTextureType.SMART_CLING2:
                                 _switch_matched_any0 = True
                             __matched0 = True
-                            tile.fg_tex_index = sub_140563_ca0(world, tile, 0)
+                            tile.fg_tex_index = handle_cling2_texture(world, tile, 0)
                             break
                         if __matched0 or __switch_on0 == ItemInfoTextureType.RANDOM:
                             if not __matched0 and __switch_on0 == ItemInfoTextureType.RANDOM:
@@ -1243,8 +1615,16 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                         __switch_on1 = v8.texture_type
                         _switch_matched_any1 = False
                         __matched1 = False
-                        if __matched1 or (__switch_on1 == ItemInfoTextureType.SINGLE_FRAME_ALONE or __switch_on1 == ItemInfoTextureType.SINGLE_FRAME or __switch_on1 == ItemInfoTextureType.SMART_OUTER):
-                            if not __matched1 and (__switch_on1 == ItemInfoTextureType.SINGLE_FRAME_ALONE or __switch_on1 == ItemInfoTextureType.SINGLE_FRAME or __switch_on1 == ItemInfoTextureType.SMART_OUTER):
+                        if __matched1 or (
+                            __switch_on1 == ItemInfoTextureType.SINGLE_FRAME_ALONE
+                            or __switch_on1 == ItemInfoTextureType.SINGLE_FRAME
+                            or __switch_on1 == ItemInfoTextureType.SMART_OUTER
+                        ):
+                            if not __matched1 and (
+                                __switch_on1 == ItemInfoTextureType.SINGLE_FRAME_ALONE
+                                or __switch_on1 == ItemInfoTextureType.SINGLE_FRAME
+                                or __switch_on1 == ItemInfoTextureType.SMART_OUTER
+                            ):
                                 _switch_matched_any1 = True
                             __matched1 = True
                             tile.bg_tex_index = 0
@@ -1253,7 +1633,7 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                             if not __matched1 and __switch_on1 == ItemInfoTextureType.SMART_EDGE:
                                 _switch_matched_any1 = True
                             __matched1 = True
-                            tile.bg_tex_index = determine_tile_index_from_neighbor(world, tile, 1)
+                            tile.bg_tex_index = handle_smart_edge_texture(world, tile, 1)
                             break
                         if __matched1 or __switch_on1 == ItemInfoTextureType.SMART_EDGE_HORIZ:
                             if not __matched1 and __switch_on1 == ItemInfoTextureType.SMART_EDGE_HORIZ:
@@ -1263,8 +1643,8 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                             v11 = v8.flags2 & 1 == 0
                             v12 = tile
                             if not v11:
-                                __goto_label = 'LABEL_19'
-                                raise Exception('__GOTO_CONTINUE__')
+                                __goto_label = "LABEL_19"
+                                raise Exception("__GOTO_CONTINUE__")
                             tile.bg_tex_index = sub_1405633_c0(world, tile, 1)
                             break
                         if __matched1 or __switch_on1 == ItemInfoTextureType.SMART_CLING2:
@@ -1272,7 +1652,7 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                                 _switch_matched_any1 = True
                             __matched1 = True
                             # (LOBYTE(v9) := 1)
-                            tile.bg_tex_index = sub_140563_ca0(world, tile, v9)
+                            tile.bg_tex_index = handle_cling2_texture(world, tile, v9)
                             break
                         if __matched1 or __switch_on1 == ItemInfoTextureType.RANDOM:
                             if not __matched1 and __switch_on1 == ItemInfoTextureType.RANDOM:
@@ -1299,16 +1679,16 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                             __matched1 = True
                             return
                         break
-                raise Exception('__GOTO_BREAK__')
-            elif __goto_label == 'LABEL_19':
+                raise Exception("__GOTO_BREAK__")
+            elif __goto_label == "LABEL_19":
                 tile.bg_tex_index = check_tile_connectivity_left_and_right_for_seed(v10, v12, 1)
                 break
             else:
-                raise Exception('__GOTO_BREAK__')
+                raise Exception("__GOTO_BREAK__")
         except Exception as __goto_except:
-            if '__GOTO_CONTINUE__' in str(__goto_except):
+            if "__GOTO_CONTINUE__" in str(__goto_except):
                 continue
-            if '__GOTO_BREAK__' in str(__goto_except):
+            if "__GOTO_BREAK__" in str(__goto_except):
                 break
             raise __goto_except
 
@@ -1486,22 +1866,17 @@ def tileset(id: int) -> None:
     if arr is None:
         return
 
-    tile_configuration = len(autotile_47)
-    img_width = tile_configuration * 32 * 3 + (tile_configuration - 1) * 32
-    img_height = 32 * 3
-
-    img = np.zeros((img_height, img_width, 4), dtype=np.uint8)
     for tile in world.tiles:
         update_tile_connectivity(world, tile)
-        off = ivec2(tile.fg_tex_index % 8, tile.fg_tex_index // 8)
 
-        item = item_database.get(tile.front)
-        base = (ivec2(item.tex_coord_x, item.tex_coord_y) + off) * 32
-        tile_tex = arr[base.y : base.y + 32, base.x : base.x + 32, :]
-
-        x, y = tile.pos.xy
-        dst = ivec4(x * 32, y * 32, 32, 32)
-
-        img[dst.y : dst.y + 32, dst.x : dst.x + 32, :] = tile_tex
+    renderer = WorldRenderer()
+    img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
+    for tile in world.tiles:
+        for cmd in renderer.get_render_cmd(tile):
+            for dst in cmd.dst:
+                dst = ivec4(dst)
+                alpha_mask = cmd.buffer[:, :, 3] > 4
+                dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                dst_slice[alpha_mask] = cmd.buffer[:, :, : dst_slice.shape[2]][alpha_mask]
 
     Image.fromarray(img).show()

@@ -13,22 +13,21 @@ class WorldRenderer:
     def __init__(self) -> None:
         self._tex_mgr = RtTexManager()
 
-    def get_tex(self, id: int) -> npt.NDArray[np.uint8]:
+    def get_tex_from_id(self, id: int, offset: int = 0, stride: int = 0) -> npt.NDArray[np.uint8]:
         try:
             item = item_database.get(id)
         except:
-            item = item_database.get(2)
-        return self._tex_mgr.get(setting.asset_path / item.texture_file.decode(), item.tex_coord_x * 32, item.tex_coord_y * 32, 32, 32)
+            item = item_database.get(18)
 
-    def render_tile(self, id: int, pos: vec2 | ivec2) -> RenderCommand:
-        return RenderCommand(self.get_tex(id), [vec4(pos.x, pos.y, 32, 32)])
+        tex = (ivec2(item.tex_coord_x, item.tex_coord_y) + ivec2(offset % stride, offset // stride)) * 32
+        return self._tex_mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32)
 
     def get_render_cmd(self, tile: Tile) -> list[RenderCommand]:
         r: list[RenderCommand] = []
         if tile.bg_id != 0:
-            r.append(self.render_tile(tile.bg_id, tile.pos * 32))
+            r.append(RenderCommand(tile.get_bg_texture(self._tex_mgr), [vec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)]))
         if tile.fg_id != 0:
-            r.append(self.render_tile(tile.fg_id, tile.pos * 32))
+            r.append(RenderCommand(tile.get_fg_texture(self._tex_mgr), [vec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)]))
         return r
 
     # TODO: batch_render is not really faster than normal, probably because its just the same thing rebranded
@@ -41,6 +40,7 @@ class WorldRenderer:
             bg_tile_by_types[tile.bg_id].append(tile.pos * 32)
             fg_tile_by_types[tile.fg_id].append(tile.pos * 32)
 
+        # TODO: we cannot batch with different tex index
         for id, pos_list in bg_tile_by_types.items():
             r.append(RenderCommand(self.get_tex(id), list(map(lambda x: vec4(x.x, x.y, 32, 32), pos_list))))
         for id, pos_list in fg_tile_by_types.items():

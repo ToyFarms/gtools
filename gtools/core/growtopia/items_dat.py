@@ -522,6 +522,31 @@ class Item:
             items.STEAM_LAMP,
         )
 
+    def get_tex_stride(self) -> int:
+        match self.texture_type:
+            case ItemInfoTextureType.SINGLE_FRAME_ALONE:
+                return 0
+            case ItemInfoTextureType.SINGLE_FRAME:
+                return 0
+            case ItemInfoTextureType.SMART_EDGE:
+                return 8
+            case ItemInfoTextureType.SMART_EDGE_HORIZ:
+                return 0
+            case ItemInfoTextureType.SMART_CLING:
+                return 0
+            case ItemInfoTextureType.SMART_CLING2:
+                return 8
+            case ItemInfoTextureType.SMART_OUTER:
+                return 0
+            case ItemInfoTextureType.RANDOM:
+                return 0
+            case ItemInfoTextureType.SMART_EDGE_VERT:
+                return 0
+            case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
+                return 0
+            case ItemInfoTextureType.SMART_EDGE_DIAGON:
+                return 0
+
     @classmethod
     def deserialize(cls, s: Buffer, version: int = 99999999999) -> "Item":
         item = cls()

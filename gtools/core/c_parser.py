@@ -2,11 +2,12 @@ import ast
 from collections import deque
 from dataclasses import dataclass
 import itertools
+import os
 import re
 from typing import Any, cast
 from pycparser.c_lexer import CLexer
 
-DEBUG = 0
+DEBUG = "DEBUG" in os.environ
 
 
 @dataclass
@@ -661,6 +662,8 @@ class CParser:
                     #     args.append(self.parse_expr())
 
                     return ast.Expr(self.parse_expr())
+                else:
+                    return self.parse_variable_decl()
             case "IF":
                 return self.parse_if()
             case "RETURN":
@@ -942,9 +945,13 @@ def ctopy(c: str, setting: Setting | None = None) -> str:
         tokens.append(tok)
 
     parser = CParser(tokens, c, setting)
-    module = parser.parse()
+    module = ast.fix_missing_locations(parser.parse())
 
-    return ast.unparse(ast.fix_missing_locations(module))
+    code = ast.unparse(module)
+    if "PYOUT" in os.environ:
+        print(code)
+
+    return code
 
 
 def ctopy_ast(c: str, setting: Setting | None = None) -> ast.Module:
@@ -958,6 +965,9 @@ def ctopy_ast(c: str, setting: Setting | None = None) -> ast.Module:
         tokens.append(tok)
 
     parser = CParser(tokens, c, setting)
-    module = parser.parse()
+    module = ast.fix_missing_locations(parser.parse())
 
-    return ast.fix_missing_locations(module)
+    if "PYOUT" in os.environ:
+        print(ast.unparse(module))
+
+    return module
