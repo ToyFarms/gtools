@@ -531,20 +531,27 @@ class Item:
             case ItemInfoTextureType.SMART_EDGE:
                 return 8
             case ItemInfoTextureType.SMART_EDGE_HORIZ:
+                print("SMART_EDGE_HORIZ is not implemented")
                 return 0
             case ItemInfoTextureType.SMART_CLING:
+                print("SMART_CLING is not implemented")
                 return 0
             case ItemInfoTextureType.SMART_CLING2:
                 return 8
             case ItemInfoTextureType.SMART_OUTER:
+                print("SMART_OUTER is not implemented")
                 return 0
             case ItemInfoTextureType.RANDOM:
+                print("RANDOM is not implemented")
                 return 0
             case ItemInfoTextureType.SMART_EDGE_VERT:
+                print("SMART_EDGE_VERT is not implemented")
                 return 0
             case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
+                print("SMART_EDGE_HORIZ_CAVE is not implemented")
                 return 0
             case ItemInfoTextureType.SMART_EDGE_DIAGON:
+                print("SMART_EDGE_DIAGON is not implemented")
                 return 0
 
     @classmethod

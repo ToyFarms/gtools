@@ -1592,7 +1592,7 @@ class Tile:
 
     def get_texture(self, mgr: RtTexManager, id: int, tex_index: int) -> npt.NDArray[np.uint8]:
         item = item_database.get(id)
-        off = ivec2(tex_index % max(item.get_tex_stride(), 1), tex_index // item.get_tex_stride())
+        off = ivec2(tex_index % max(item.get_tex_stride(), 1), (tex_index // item.get_tex_stride()) if tex_index else 0)
         tex = (ivec2(item.tex_coord_x, item.tex_coord_y) + off) * 32
         return mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32)
 
