@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --script
 import importlib
 import pkgutil
+import sys
 from traceback import print_exc
 import click
 

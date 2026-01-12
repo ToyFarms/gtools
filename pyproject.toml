@@ -11,6 +11,7 @@ dependencies = [
     "numpy>=2.4.0",
     "pillow>=12.0.0",
     "protobuf>=6.33.2",
+    "pudb>=2025.1.5",
     "pycparser>=2.23",
     "pyglm>=2.8.3",
     "pytest>=9.0.2",

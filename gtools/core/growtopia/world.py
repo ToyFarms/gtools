@@ -1579,6 +1579,10 @@ class Tile:
     pos: ivec2 = field(default_factory=ivec2)
     lock_block_index: int = 0
 
+    # data
+    fg_tex_index: int = 0
+    bg_tex_index: int = 0
+
     logger = logging.getLogger("tile")
 
     @property
@@ -1725,6 +1729,34 @@ class World:
     def remove_player_by_id(self, net_id: int) -> None:
         self.player = [p for p in self.player if p.net_id != net_id]
 
+    def fix(self) -> None:
+        """adjust width, height, nb_tiles based on the tiles list. also fills in any gap, and sort it"""
+        xs = [t.pos.x for t in self.tiles]
+        ys = [t.pos.y for t in self.tiles]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        width = max_x - min_x + 1
+        height = max_y - min_y + 1
+
+        self.width = width
+        self.height = height
+        self.nb_tiles = len(self.tiles)
+
+        for y in range(self.height):
+            for x in range(self.width):
+                pos = ivec2(x, y)
+                if not self.tile_exists(pos):
+                    self.tiles.append(Tile(pos=pos))
+
+        self.tiles.sort(key=lambda tile: (tile.pos.x, -tile.pos.y))
+
+    def tile_exists(self, pos: ivec2) -> bool:
+        for tile in self.tiles:
+            if tile.pos == pos:
+                return True
+
+        return False
+
     def get_tile(self, pos: ivec2) -> Tile | None:
         for tile in self.tiles:
             if tile.pos == pos:
@@ -1790,169 +1822,6 @@ class World:
                 continue
 
             item.amount = amount
-
-    def is_item_steam(self, item: Item) -> bool:
-        return item.item_type in (ItemInfoType.STEAMPUNK, ItemInfoType.STEAM_LAVA_IF_ON, ItemInfoType.STEAM_ORGAN) or item.id in (
-            items.STEAM_DOOR,
-            items.STEAM_LAUNCHER,
-            items.STEAM_PIPE,
-            items.SPIRIT_STORAGE_UNIT,
-            items.STEAM_SPIKES,
-            items.STEAM_LAMP,
-        )
-
-    def is_tile_candidate_for_connectivity(self, tile: Tile, item_id: int, cave_related: int) -> bool:
-        if tile.pos.x < 0 or tile.pos.y < 0:
-            return True
-        if tile.pos.x >= self.width or tile.pos.y >= self.height:
-            return True
-
-        item = item_database.get(item_id)
-
-        if tile.front and (tile.front & 1) == 0 and tile.flags & TileFlags.GLUED != 0:
-            return True
-
-        if cave_related and item.id == items.CAVE_DIRT and tile.front == items.CAVE_COLUMN:
-            return True
-
-        def label_29() -> bool:
-            if tile.front >= items.PURPLE_CAVE_CRYSTAL and tile.front <= items.AQUA_CAVE_CRYSTAL:
-                return True
-            return label_31()
-
-        def label_31() -> bool:
-            if not cave_related and item.id == items.CAVE_DIRT:
-                if tile.front == items.CLIMBING_WALL:
-                    return True
-                return tile.front == item.id
-            return label_35()
-
-        def label_35() -> bool:
-            if item.id == items.STEAM_PIPE:
-                if item.is_steam():
-                    return True
-                # falls through to label_60
-            if item.id == items.STONE_PAGODA:
-                if tile.front == items.MASTER_PENG_STONEWORK:
-                    return True
-                elif tile.front == items.STONE_PAGODA_BASE:
-                    return cave_related != 2
-                # falls through to label_60
-
-            if item.id != 4202:
-                match item.id:
-                    case items.BEDROCK:
-                        if tile.front == items.DATA_BEDROCK:
-                            return True
-                    case items.DATA_BEDROCK:
-                        if tile.front == items.BEDROCK:
-                            return True
-                        if tile.front == items.MONOCHROMATIC_BEDROCK:
-                            return True
-                    case items.MONOCHROMATIC_BEDROCK:
-                        if tile.front == items.DATA_BEDROCK:
-                            return True
-                    case items.ANCIENT_BLOCK:
-                        if tile.front == items.MYSTERY_DOOR:
-                            return True
-                    case _:
-                        if item.id == 2 and tile.front == items.FISSURE:
-                            return True
-                # falls through to label_60
-            else:
-                if tile.front != items.STONE_PAGODA_BASE:
-                    # goto LABEL_60
-                    pass  # Falls through
-                else:
-                    return cave_related == 0
-
-            # LABEL_60 starts here
-            return label_60()
-
-        def label_60() -> bool:
-            if (
-                cave_related
-                and ((item.id - items.GUILD_FLAG_POLE_SPEAR) & 0xFFFFFFFD) == 0
-                and items.GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE >= tile.front >= items.GUILD_FLAG_TATTERS
-                or item.id == items.MANOR_HOUSE_SANDSTONE
-                and tile.front == items.MANOR_HOUSE_SANDSTONE_STEPS
-            ):
-                return True
-
-            if cave_related == 2:
-                match item.id:
-                    case items.WEEPING_WILLOW_STREAMERS:
-                        if tile.front == items.WEEPING_WILLOW_FOLIAGE:
-                            return True
-                        return tile.front == item.id
-                    case items.LOVEWILLOW_S_LACE:
-                        if tile.front == items.LOVEWILLOW:
-                            return True
-                        return tile.front == item.id
-                    case items.PILLAR_OF_THE_DEAD:
-                        if tile.front == items.BONE_CHECKPOINT:
-                            return True
-                        return tile.front == item.id
-
-            match item.id:
-                case items.MAGIC_INFUSED_VEIN:
-                    if tile.front != items.PURE_MAGIC_ORE:
-                        if tile.front == items.MAGIC_INFUSED_STONE:
-                            return True
-                        return tile.front == item.id
-                    return True
-                case items.MAGIC_INFUSED_STONE:
-                    if tile.front == items.PURE_MAGIC_ORE:
-                        return True
-                case items.PURE_MAGIC_ORE:
-                    if tile.front == items.MAGIC_INFUSED_STONE:
-                        return True
-                case _:
-                    if item.id == 10596 and tile.front == items.GREAT_TURRET_OF_GROWTOPIA:
-                        return True
-                    return tile.front == item.id
-
-            if tile.front == items.MAGIC_INFUSED_VEIN:
-                return True
-
-            return tile.front == item.id
-
-        match cave_related:
-            case 2:
-                if item.id == items.CAVE_DIRT:
-                    if tile.front == items.STALAGMITE:
-                        return True
-                    return label_29()
-                if item.id == items.CAVE_COLUMN:
-                    if tile.front == items.CAVE_PLATFORM:
-                        return True
-                    return tile.front == item.id
-            case 1:
-                if item.id != items.CAVE_DIRT:
-                    return label_35()
-                if tile.front == items.STALACTITE:
-                    return True
-                return label_29()
-            case 0:
-                if item.id != items.CAVE_DIRT:
-                    return label_35()
-                if tile.front == items.CAVE_PLATFORM:
-                    return True
-                return label_29()
-
-        if item.id == items.CAVE_DIRT:
-            return label_29()
-
-        return label_31()
-
-    def get_texture_index(self, tile: Tile) -> int:
-        item = item_database.get(tile.front)
-        match item.texture_type:
-            case ItemInfoTextureType.SINGLE_FRAME_ALONE | ItemInfoTextureType.SINGLE_FRAME | ItemInfoTextureType.SMART_OUTER:
-                return 0
-            case ItemInfoTextureType.SMART_EDGE:
-
-                east = self.get_tile(tile.pos + (1, 0))
 
     @classmethod
     def from_tank(cls, tank: TankPacket | bytes) -> "World":

@@ -11,6 +11,99 @@ class GotoResolver(ast.NodeTransformer):
         self.label_blocks: dict[str, list[ast.stmt]] = {}
         self.in_function = False
 
+    def _collapse_nested_labels(self) -> None:
+
+        def find_label_in_stmt(stmt: ast.stmt) -> tuple[str | None, bool]:
+            is_label, label_name = self._is_label_def(stmt)
+            if is_label:
+                return label_name, True
+
+            # Recurse into compound statements in the same way _collect_all_labels does.
+            # Return the first found label name (pre-order).
+            if isinstance(stmt, ast.If):
+                for s in stmt.body:
+                    ln, found = find_label_in_stmt(s)
+                    if found:
+                        return ln, True
+                for s in stmt.orelse:
+                    ln, found = find_label_in_stmt(s)
+                    if found:
+                        return ln, True
+            elif isinstance(stmt, (ast.For, ast.While)):
+                for s in stmt.body:
+                    ln, found = find_label_in_stmt(s)
+                    if found:
+                        return ln, True
+                for s in stmt.orelse:
+                    ln, found = find_label_in_stmt(s)
+                    if found:
+                        return ln, True
+            elif isinstance(stmt, ast.With):
+                for s in stmt.body:
+                    ln, found = find_label_in_stmt(s)
+                    if found:
+                        return ln, True
+            elif isinstance(stmt, ast.Try):
+                for s in stmt.body:
+                    ln, found = find_label_in_stmt(s)
+                    if found:
+                        return ln, True
+                for s in stmt.orelse:
+                    ln, found = find_label_in_stmt(s)
+                    if found:
+                        return ln, True
+                for s in stmt.finalbody:
+                    ln, found = find_label_in_stmt(s)
+                    if found:
+                        return ln, True
+                for handler in stmt.handlers:
+                    for s in handler.body:
+                        ln, found = find_label_in_stmt(s)
+                        if found:
+                            return ln, True
+            elif isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    for s in case.body:
+                        ln, found = find_label_in_stmt(s)
+                        if found:
+                            return ln, True
+
+            return None, False
+
+        changed = True
+        # Keep looping until no nested label occurrences remain (collapse them iteratively).
+        while changed:
+            changed = False
+            # Work on a snapshot of keys because we may add new labels later (we don't here, but safe).
+            for label in list(self.label_blocks.keys()):
+                stmts = self.label_blocks[label]
+                # find first top-level statement index that either is a LABEL or contains a LABEL
+                cut_index = None
+                inner_label_name = None
+                for idx, top_stmt in enumerate(stmts):
+                    ln, found = find_label_in_stmt(top_stmt)
+                    if found and ln in self.label_blocks:
+                        cut_index = idx
+                        inner_label_name = ln
+                        break
+                if cut_index is not None:
+                    # Replace stmts[cut_index:] with a single goto(inner_label_name)
+                    # Use the original top_stmt's lineno/col_offset for better location info.
+                    sample_stmt = stmts[cut_index]
+                    goto_assign = ast.Assign(
+                        targets=[ast.Name(id="__unused", ctx=ast.Store())],
+                        value=ast.Call(func=ast.Name(id="goto", ctx=ast.Load()), args=[ast.Constant(value=inner_label_name)], keywords=[]),
+                        lineno=getattr(sample_stmt, "lineno", 0),
+                        col_offset=getattr(sample_stmt, "col_offset", 0),
+                    )
+                    # Keep the prefix before the containing statement; drop the containing statement and everything after it.
+                    new_block = stmts[:cut_index] + [goto_assign]
+                    self.label_blocks[label] = new_block
+                    # Note: no need to add the inner label to self.labels — it already exists.
+                    changed = True
+                    # break so we restart scanning labels from the beginning (makes iteration simpler)
+                    break
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         has_goto = self._contains_goto_or_label(node)
 
@@ -23,6 +116,7 @@ class GotoResolver(ast.NodeTransformer):
 
         self._collect_all_labels(node.body)
         self._extract_label_blocks(node.body)
+        self._collapse_nested_labels()
 
         transformed_body = self._create_state_machine(node.body)
 
@@ -44,6 +138,7 @@ class GotoResolver(ast.NodeTransformer):
 
         self._collect_all_labels(node.body)
         self._extract_label_blocks(node.body)
+        self._collapse_nested_labels()
         transformed_body = self._create_state_machine(node.body)
 
         new_func = ast.AsyncFunctionDef(
@@ -151,15 +246,16 @@ class GotoResolver(ast.NodeTransformer):
         label_init = ast.Assign(targets=[ast.Name(id="__goto_label", ctx=ast.Store())], value=ast.Constant(value="start"), lineno=1, col_offset=0)
 
         cases = []
+        goto_break = ast.Raise(ast.Call(ast.Name("Exception"), [ast.Constant("__GOTO_BREAK__")]))
 
         start_body = self._transform_statements(body)
-        start_body.append(ast.Break(lineno=1, col_offset=0))
+        start_body.append(goto_break)
         cases.append(("start", start_body))
 
         for label_name in sorted(self.labels):
             if label_name in self.label_blocks:
                 label_body = self._transform_statements(self.label_blocks[label_name])
-                label_body.append(ast.Break(lineno=1, col_offset=0))
+                label_body.append(goto_break)
                 cases.append((label_name, label_body))
 
         if_chain = None
@@ -177,9 +273,15 @@ class GotoResolver(ast.NodeTransformer):
                 if_chain = new_if
 
         if if_chain is not None:
-            if_chain.orelse = [ast.Break(lineno=1, col_offset=0)]
+            if_chain.orelse = [goto_break]
 
-        while_loop = ast.While(test=ast.Constant(value=True), body=[root_if] if root_if else [ast.Break(lineno=1, col_offset=0)], orelse=[], lineno=1, col_offset=0)
+        handler: list[ast.stmt] = [
+            ast.If(ast.Compare(ast.Constant("__GOTO_CONTINUE__"), [ast.In()], [ast.Call(ast.Name("str"), [ast.Name("__goto_except")])]), [ast.Continue()]),
+            ast.If(ast.Compare(ast.Constant("__GOTO_BREAK__"), [ast.In()], [ast.Call(ast.Name("str"), [ast.Name("__goto_except")])]), [ast.Break()]),
+            ast.Raise(ast.Name("__goto_except")),
+        ]
+        root_if = ast.Try([root_if] if root_if else [goto_break], handlers=[ast.ExceptHandler(ast.Name("Exception"), "__goto_except", handler)])
+        while_loop = ast.While(test=ast.Constant(value=True), body=[root_if], orelse=[], lineno=1, col_offset=0)
 
         return [label_init, while_loop]
 
@@ -196,7 +298,7 @@ class GotoResolver(ast.NodeTransformer):
                 result.extend(
                     [
                         ast.Assign(targets=[ast.Name(id="__goto_label", ctx=ast.Store())], value=ast.Constant(value=target), lineno=stmt.lineno, col_offset=stmt.col_offset),
-                        ast.Continue(lineno=stmt.lineno, col_offset=stmt.col_offset),
+                        ast.Raise(ast.Call(ast.Name("Exception"), [ast.Constant("__GOTO_CONTINUE__")])),
                     ]
                 )
                 continue
@@ -402,7 +504,6 @@ class CFGBuilder(ast.NodeVisitor):
             self.cfg.add_edge(self.current_block, merge_block)
 
         if node.orelse:
-            assert else_entry
             self.cfg.add_edge(if_block, else_entry)
             self.current_block = else_entry
             self._process_statements(node.orelse)
@@ -455,7 +556,6 @@ class CFGBuilder(ast.NodeVisitor):
         loop_body = self.cfg.create_block(BlockType.LOOP)
         loop_exit = self.cfg.create_block()
 
-        assert entry_block
         self.cfg.add_edge(entry_block, loop_header)
         self.cfg.add_edge(loop_header, loop_body)
         self.cfg.add_edge(loop_header, loop_exit)
@@ -490,7 +590,6 @@ class CFGBuilder(ast.NodeVisitor):
         final_block = self.cfg.create_block(BlockType.EXCEPTION) if node.finalbody else None
         exit_block = self.cfg.create_block()
 
-        assert entry_block
         self.cfg.add_edge(entry_block, try_block)
         self.current_block = try_block
         self._process_statements(node.body)
@@ -552,7 +651,6 @@ class CFGBuilder(ast.NodeVisitor):
 
         for case in node.cases:
             case_block = self.cfg.create_block()
-            assert entry_block
             self.cfg.add_edge(entry_block, case_block)
             self.current_block = case_block
             self._process_statements(case.body)
@@ -795,12 +893,16 @@ class NormalizeIdentifiers(ast.NodeTransformer):
 
         return node
 
-    def visit_Call(self, node: ast.Call) -> ast.Call:
-        name = cast(ast.Name, node.func).id
-        node.func = ast.Name(to_snake_case(name))
-        self.generic_visit(node)
-
-        return node
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        name = "__UNKNOWN__"
+        if isinstance(node.func, ast.Name):
+            name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            assert type(node.func.value) is ast.Name
+            name = node.func.value.id
+        if not name[0].isupper():
+            node.func = ast.Name(to_snake_case(name))
+        return self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> ast.AST | None:
         self.generic_visit(node)

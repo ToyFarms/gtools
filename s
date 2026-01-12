@@ -1,3 +1,3 @@
 #!/usr/bin/bash
 
-PYTHONPATH=. uv run scripts/cli.py $*
+PYTHONPATH=. python scripts/cli.py "$@"
