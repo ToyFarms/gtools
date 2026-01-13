@@ -10,6 +10,175 @@ from pycparser.c_lexer import CLexer
 DEBUG = "DEBUG" in os.environ
 
 
+def type_default_param(type_str: str) -> tuple[str | None, Any | None]:
+    if not type_str or not isinstance(type_str, str):
+        return None, None
+
+    s = type_str.strip()
+
+    is_pointer = "*" in s
+    if is_pointer:
+        s = s.replace("*", " ")
+
+    if "[" in s or "]" in s:
+        return None, None
+    if re.search(r"\b(struct|union|enum)\b", s, flags=re.IGNORECASE):
+        return None, None
+    if "(" in s or ")" in s:
+        return None, None
+
+    tokens = s.split()
+    type_words = {
+        "const",
+        "volatile",
+        "register",
+        "restrict",
+        "static",
+        "extern",
+        "inline",
+        "signed",
+        "unsigned",
+        "short",
+        "long",
+        "int",
+        "integer",
+        "char",
+        "float",
+        "double",
+        "bool",
+        "_bool",
+        "_bool_t",
+        "wchar_t",
+        "void",
+        "size_t",
+        "ssize_t",
+        "intptr_t",
+        "uintptr_t",
+        "ptrdiff_t",
+        "off_t",
+        "mode_t",
+        "pid_t",
+        "time_t",
+        "in_addr_t",
+        "uid_t",
+        "gid_t",
+        "complex",
+        "_complex",
+    }
+    if len(tokens) > 1 and re.match(r"^[A-Za-z_]\w*$", tokens[-1]) and tokens[-1].lower() not in type_words:
+        tokens = tokens[:-1]
+        s = " ".join(tokens)
+
+    lower = s.lower()
+
+    qualifiers_pattern = r"\b(const|volatile|register|restrict|static|extern|inline|signed|unsigned)\b"
+    s_clean = re.sub(qualifiers_pattern, "", lower).strip()
+    s_clean = re.sub(r"\s+", " ", s_clean).strip()
+
+    s_norm = s_clean.replace("long long", "long long")
+    s_norm = s_norm.replace("signed char", "signed char")
+
+    int_type_patterns = [
+        r"^(?:int|integer)$",
+        r"^(?:short|short int|short signed|short signed int)$",
+        r"^(?:long|long int|long signed|long signed int)$",
+        r"^(?:long long|long long int|long long signed|long long signed int)$",
+        r"^(?:u?int\d+_t)$",
+        r"^__u?int\d+$",
+        r"^__int\d+$",
+        r"^(?:size_t|ssize_t|intptr_t|uintptr_t|ptrdiff_t|off_t|mode_t|pid_t|time_t|in_addr_t|uid_t|gid_t)$",
+        r"^(?:unsigned|signed)$",
+    ]
+    for pat in int_type_patterns:
+        if re.match(pat, s_norm):
+            hint = "int"
+            default = 0
+            if is_pointer:
+                return f"{hint} | None", None
+            return hint, default
+
+    if s_norm == "char":
+        hint = "str"
+        default = ""
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if s_norm in ("signed char", "unsigned char"):
+        hint = "int"
+        default = 0
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if s_norm in ("wchar_t",):
+        hint = "str"
+        default = ""
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if re.match(r"^(?:float|double|long double|longdouble)$", s_norm):
+        hint = "float"
+        default = 0.0
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if s_norm in ("_bool", "bool", "_bool_t"):
+        hint = "bool | int"
+        default = False
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if re.search(r"\bcomplex\b", s_norm) or re.search(r"_complex", s_norm):
+        hint = "complex"
+        default = 0 + 0j
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if s_norm == "void":
+        if is_pointer:
+            return "Any | None", None
+        return None, None
+
+    common_int_aliases = {"int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "intptr_t", "uintptr_t", "size_t", "ssize_t"}
+    if s_norm in common_int_aliases:
+        hint = "int"
+        default = 0
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if "int" in s_norm and re.match(r"^[a-z0-9_ ]*int[a-z0-9_ ]*$", s_norm):
+        hint = "int"
+        default = 0
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if "float" in s_norm or "double" in s_norm:
+        hint = "float"
+        default = 0.0
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if "char" in s_norm and "[" not in s and "*" not in type_str:
+        hint = "str"
+        default = ""
+        if is_pointer:
+            return f"{hint} | None", None
+        return hint, default
+
+    if is_pointer:
+        return f"{s.strip()} | None", None
+
+    return None, None
+
+
 @dataclass
 class Token:
     type: str
@@ -23,33 +192,33 @@ class Skip:
     skip: bool = False
 
 
-# NOTE: the operation name is probably mostly wrong
 OP_DEF = {
-    "LPAREN": (160, 0, "postfix_call"),
-    "LBRACKET": (160, 0, "postfix_index"),
-    "PERIOD": (160, 0, "postfix_member"),
-    "ARROW": (160, 0, "postfix_member"),
+    "LPAREN": (160, 159, "postfix_call"),
+    "LBRACKET": (160, 159, "postfix_index"),
+    "PERIOD": (160, 160, "postfix_member"),
+    "ARROW": (160, 160, "postfix_member"),
     "PLUSPLUS": (160, 0, "postfix_inc"),
     "MINUSMINUS": (160, 0, "postfix_dec"),
-    "TIMES": (120, 119, "binary_left"),
-    "DIVIDE": (120, 119, "binary_left"),
-    "MOD": (120, 119, "binary_left"),
-    "PLUS": (110, 109, "binary_left"),
-    "MINUS": (110, 109, "binary_left"),
-    "LSHIFT": (100, 99, "binary_left"),
-    "RSHIFT": (100, 99, "binary_left"),
-    "LT": (90, 89, "binary_left"),
-    "LE": (90, 89, "binary_left"),
-    "GT": (90, 89, "binary_left"),
-    "GE": (90, 89, "binary_left"),
-    "EQ": (80, 79, "binary_left"),
-    "NE": (80, 79, "binary_left"),
-    "AND": (70, 69, "binary_left"),
-    "AMP": (70, 69, "binary_left"),
-    "CARET": (60, 59, "binary_left"),
-    "PIPE": (50, 49, "binary_left"),
-    "LAND": (40, 39, "binary_left"),
-    "LOR": (30, 29, "binary_left"),
+    "COMMA": (130, 0, "comma"),
+    "TIMES": (120, 120, "binary_left"),
+    "DIVIDE": (120, 120, "binary_left"),
+    "MOD": (120, 120, "binary_left"),
+    "PLUS": (110, 110, "binary_left"),
+    "MINUS": (110, 110, "binary_left"),
+    "LSHIFT": (100, 100, "binary_left"),
+    "RSHIFT": (100, 100, "binary_left"),
+    "LT": (90, 90, "binary_left"),
+    "LE": (90, 90, "binary_left"),
+    "GT": (90, 90, "binary_left"),
+    "GE": (90, 90, "binary_left"),
+    "EQ": (80, 80, "binary_left"),
+    "NE": (80, 80, "binary_left"),
+    "AND": (70, 70, "binary_left"),
+    "AMP": (70, 70, "binary_left"),
+    "CARET": (60, 60, "binary_left"),
+    "PIPE": (50, 50, "binary_left"),
+    "LAND": (40, 40, "binary_left"),
+    "LOR": (30, 30, "binary_left"),
     "CONDOP": (20, 19, "ternary"),
     "COLON": (19, 0, "ternary_colon"),
     "EQUALS": (10, 9, "assign"),
@@ -58,8 +227,12 @@ OP_DEF = {
     "TIMESEQUAL": (10, 9, "assign"),
     "DIVEQUAL": (10, 9, "assign"),
     "MODEQUAL": (10, 9, "assign"),
+    "LSHIFTEQUAL": (10, 9, "assign"),
+    "RSHIFTEQUAL": (10, 9, "assign"),
+    "ANDEQUAL": (10, 9, "assign"),
+    "XOREQUAL": (10, 9, "assign"),
+    "OREQUAL": (10, 9, "assign"),
     "CASE": (0, -1, "case"),
-    "COMMA": (0, -1, "comma"),
 }
 
 
@@ -67,6 +240,37 @@ OP_DEF = {
 class Setting:
     preserve_cast: bool = True
     ref: bool = True
+
+
+class CommaTransformer(ast.NodeTransformer):
+    def flatten_comma(self, node: ast.AST) -> list[ast.AST]:
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "comma":
+            elts: list[ast.AST] = []
+            for arg in node.args:
+                elts.extend(self.flatten_comma(arg))
+
+            return elts
+
+        return [node]
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        if isinstance(node.func, ast.Name) and node.func.id == "comma":
+            elements = []
+            for a in node.args:
+                elements.extend(self.flatten_comma(a))
+
+            tuple_node = ast.Tuple(elts=elements, ctx=ast.Load())
+
+            lambda_node = ast.Lambda(
+                args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
+                body=ast.Subscript(value=tuple_node, slice=ast.Constant(value=-1), ctx=ast.Load()),
+            )
+
+            call_node = ast.Call(func=lambda_node, args=[], keywords=[])
+
+            return ast.copy_location(call_node, node)
+        return node
 
 
 class CParser:
@@ -232,23 +436,35 @@ class CParser:
             types = types + f"[{ast.unparse(subscript)}]"
             self.expect_and_next("RBRACKET")
 
+        type, default_value = type_default_param(types)
+        type = ast.Name(type, ast.Load()) if type else ast.Constant(types) if types else None
         # int x;
         if self.peek().type == "SEMI":
             self.expect_and_next("SEMI")
-            return ast.AnnAssign(ast.Name(var_name.value, ast.Store()), ast.Constant(value=None), simple=1)
+            if type:
+                return ast.AnnAssign(ast.Name(var_name.value, ast.Store()), annotation=type, value=ast.Constant(default_value), simple=1)
+            else:
+                return ast.Assign([ast.Name(var_name.value, ast.Store())], value=ast.Constant(default_value))
 
+        value = None
         # int x = ...
         if self.peek().type == "EQUALS":
-            self.expect_and_next("EQUALS")
+            self.next()
             value = self.parse_expr()
-        else:
+        elif self.get_op_info(self.peek().type)[2] == "assign":  # int x |= (aug assign)
+            self.i -= 1
+            return ast.Expr(self.parse_expr())
+        else:  # int x;
             self.expect_and_next("SEMI")
 
-        return ast.AnnAssign(ast.Name(var_name.value, ast.Store()), ast.Constant(types), value, simple=1)
+        if type:
+            return ast.AnnAssign(ast.Name(var_name.value, ast.Store()), type, value, simple=1)
+        elif value:
+            return ast.Assign([ast.Name(var_name.value, ast.Store())], value=value)
 
     def parse_if(self) -> ast.stmt:
         self.expect_and_next("IF")
-        cond = self.parse_expr()
+        cond = CommaTransformer().visit(self.parse_expr(eat_comma=True))
 
         if self.peek().type == "LBRACE":
             body = self.parse_body()
@@ -336,13 +552,13 @@ class CParser:
     def get_op_info(self, token_type: str) -> tuple[int, int, str]:
         return OP_DEF.get(token_type, (-1, -1, "none"))
 
-    def parse_expr(self, min_bp: int = 0, stop_at: str | None = None) -> ast.expr:
+    def parse_expr(self, min_bp: int = 0, stop_at: str | None = None, eat_comma: bool = False) -> ast.expr:
         tok = self.next()
-        left = self.nud(tok)
+        left = self.nud(tok, eat_comma)
         if DEBUG:
-            print("nud: ", ast.dump(left))
+            print(f"nud: \x1b[33m{ast.unparse(left)} [next={tok}]\x1b[0m")
 
-        while True:
+        while self.has_next():
             look = self.peek()
             lbp, rbp, kind = self.get_op_info(look.type)
             if DEBUG:
@@ -351,21 +567,19 @@ class CParser:
             if stop_at and kind == stop_at:
                 self.next()
                 return left
-            # if kind == "assign":
-            #     self.next()
-            #     return left
 
-            # this generally falls outside of expression responsibility, but it makes it easier
-            if kind in ("ternary_colon", "comma"):
+            if kind == "comma" and not eat_comma:
+                break
+            if kind in ("ternary_colon",):
                 break
 
             if lbp <= min_bp or kind == "none":
                 break
 
             op_tok = self.next()
-            left = self.led(op_tok, left, rbp)
+            left = self.led(op_tok, left, rbp, eat_comma)
             if DEBUG:
-                print(f"led: {ast.dump(left)}")
+                print(f"led: \x1b[34m{ast.unparse(left)} [next={op_tok}]\x1b[0m")
 
         return left
 
@@ -396,32 +610,43 @@ class CParser:
     def is_valid_typename(self, token: Token) -> bool:
         return token.type in ("TIMES", "AND", "ID", "UNSIGNED", "SIGNED", "INT", "CHAR", "FLOAT", "DOUBLE", "VOID", "TYPE_NAME", "STRUCT", "UNION", "ENUM", "CONST", "VOLATILE")
 
-    def is_cast_or_group(self) -> bool:
+    def is_cast(self) -> bool:
         saved = self.i
         self.i -= 1
         inbetween = self.read_inbetween("LPAREN", "RPAREN")
 
-        is_cast = self.peek().type in ("ID", "AND", "TIMES") and all(self.is_valid_typename(x) for x in inbetween)
+        is_cast = self.peek().type not in ("LBRACE",) and all(self.is_valid_typename(x) for x in inbetween)
         self.i = saved
         return is_cast
 
-    def nud(self, tok: Token) -> ast.expr:
+    # TODO:
+    """
+    $ "if ((idx = x + y * w, (v30 = x))) {return 1;} "
+    > if (idx := (x + y * (lambda: (w, (v30 := x))[-1])())):
+          return 1
+    w should not be separated
+
+    $ if (foo(abc) == DIAMOND && ((y = (int)tile->y - 1, x = (int)tile->x, y < 0) || (w = world->width, x >= w) || y >= world->height || (idx = x + y * w, (v30 = x)))) {return 1;}
+    > it failed
+    """
+
+    def nud(self, tok: Token, eat_comma: bool = False) -> ast.expr:
         t = tok.type
         v = tok.value
 
         if t == "LPAREN":
             # handle cast
-            if self.is_cast_or_group():
+            if self.is_cast():
                 self.i -= 1
                 types = self.read_inbetween("LPAREN", "RPAREN")
-                right = self.parse_expr(130)
+                right = self.parse_expr(130, eat_comma=eat_comma)
                 if self.s.preserve_cast:
                     return ast.Call(func=ast.Name(id="cast", ctx=ast.Load()), args=[ast.Constant("".join(x.value for x in types)), right])
                 else:
                     return right
             else:
                 # normal grouping
-                expr = self.parse_expr()
+                expr = self.parse_expr(eat_comma=eat_comma)
                 self.expect_and_next("RPAREN")
                 return expr
 
@@ -436,22 +661,22 @@ class CParser:
         if t == "CHAR_CONST":
             return ast.Constant(str(v).strip("'"))
         if t == "CASE":
-            right = cast(ast.pattern, self.parse_expr())
+            right = cast(ast.pattern, self.parse_expr(eat_comma=eat_comma))
             return cast(ast.expr, ast.match_case(pattern=right, body=[]))
         if t == "LBRACE":
-            right = self.parse_expr()
-            self.expect_and_next("RBRACE")
+            right = self.parse_expr(eat_comma=eat_comma)
             self.expect_and_next("SEMI")
+            self.expect_and_next("RBRACE")
             return right
         if t == "PERIOD":
             name = self.next()
             self.expect_and_next("EQUALS")
-            right = self.parse_expr()
+            right = self.parse_expr(eat_comma=eat_comma)
             return ast.Call(ast.Name("init"), [ast.Name(name.value), right])
 
         # unary
         if t in ("PLUS", "MINUS", "LNOT", "TILDE", "TIMES", "AMP", "INCREMENT", "DECREMENT", "SIZEOF", "AND"):
-            right = self.parse_expr(130)
+            right = self.parse_expr(130, eat_comma=eat_comma)
             op_map = {
                 "PLUS": ast.UAdd(),
                 "MINUS": ast.USub(),
@@ -471,9 +696,9 @@ class CParser:
                     return right
                 return ast.Call(ast.Name(op), args=[right])
 
-        assert False, f"unhandled token: {tok}"
+        assert False, f"nud unhandled token: {tok}"
 
-    def led(self, op_tok: Token, left: ast.expr, rbp: int) -> ast.expr:
+    def led(self, op_tok: Token, left: ast.expr, rbp: int, eat_comma: bool = False) -> ast.expr:
         t = op_tok.type
         v = op_tok.value
 
@@ -482,7 +707,7 @@ class CParser:
             args: list[ast.expr] = []
             if self.peek().type != "RPAREN":
                 while True:
-                    args.append(self.parse_expr())
+                    args.append(self.parse_expr(eat_comma=eat_comma))
                     if self.peek().type == "COMMA":
                         self.next()
                         continue
@@ -491,7 +716,7 @@ class CParser:
             return ast.Call(left, args)
 
         if t == "LBRACKET":
-            idx = self.parse_expr(0)
+            idx = self.parse_expr(0, eat_comma=eat_comma)
             self.expect_and_next("RBRACKET")
             return ast.Subscript(left, idx)
 
@@ -527,19 +752,19 @@ class CParser:
             }
 
             if t == "LAND":
-                right = self.parse_expr(rbp)
+                right = self.parse_expr(rbp, eat_comma=eat_comma)
                 return ast.BoolOp(op=ast.And(), values=[left, right])
             if t == "LOR":
-                right = self.parse_expr(rbp)
+                right = self.parse_expr(rbp, eat_comma=eat_comma)
                 return ast.BoolOp(op=ast.Or(), values=[left, right])
 
             if t in cmp_map:
-                right = self.parse_expr(rbp)
+                right = self.parse_expr(rbp, eat_comma=eat_comma)
                 cmp_op = cmp_map[t]()
                 return ast.Compare(left=left, ops=[cmp_op], comparators=[right])
 
             if t in binop_map:
-                right = self.parse_expr(rbp)
+                right = self.parse_expr(rbp, eat_comma=eat_comma)
                 bin_op = binop_map[t]()
                 return ast.BinOp(left=left, op=bin_op, right=right)
 
@@ -557,52 +782,52 @@ class CParser:
             }
             op_sym = v if v is not None else t
             if op_sym in fallback_symbol_to_ast:
-                right = self.parse_expr(rbp)
+                right = self.parse_expr(rbp, eat_comma=eat_comma)
                 return ast.BinOp(left=left, op=fallback_symbol_to_ast[op_sym](), right=right)
 
-            right = self.parse_expr(rbp)
+            right = self.parse_expr(rbp, eat_comma=eat_comma)
             func_name = f"op_{t.lower()}"
             return ast.Call(func=ast.Name(id=func_name, ctx=ast.Load()), args=[left, right], keywords=[])
 
         if kind == "assign":
-            assign_aug_map: dict[str, object] = {
-                "PLUSEQ": ast.Add,
-                "MINUSEQ": ast.Sub,
-                "TIMESEQ": ast.Mult,
-                "DIVEQ": ast.Div,
-                "MODEQ": ast.Mod,
-                "LSHIFTEQ": ast.LShift,
-                "RSHIFTEQ": ast.RShift,
-                "ANDEQ": ast.BitAnd,
-                "XOREQ": ast.BitXor,
-                "OREQ": ast.BitOr,
+            assign_aug_map: dict[str, type[ast.operator]] = {
+                "PLUSEQUAL": ast.Add,
+                "MINUSEQUAL": ast.Sub,
+                "TIMESEQUAL": ast.Mult,
+                "DIVEQUAL": ast.Div,
+                "MODEQUAL": ast.Mod,
+                "LSHIFTEQUAL": ast.LShift,
+                "RSHIFTEQUAL": ast.RShift,
+                "ANDEQUAL": ast.BitAnd,
+                "XOREQUAL": ast.BitXor,
+                "OREQUAL": ast.BitOr,
             }
 
             if t == "ASSIGN":
-                right = self.parse_expr(rbp)
-                return ast.Call(ast.Name("assign"), args=[left, right])
+                right = self.parse_expr(rbp, eat_comma=eat_comma)
+                return ast.Assign([ast.Name(ast.unparse(left))], right)  # pyright: ignore[reportReturnType]
 
             if t in assign_aug_map:
-                right = self.parse_expr(rbp)
-                return ast.Call(ast.Name(t.lower()), args=[left, right])
+                right = self.parse_expr(rbp, eat_comma=eat_comma)
+                return ast.AugAssign(ast.Name(ast.unparse(left)), assign_aug_map[t](), right)  # pyright: ignore[reportReturnType]
 
-            right = self.parse_expr(rbp)
+            right = self.parse_expr(rbp, eat_comma=eat_comma)
             # NOTE: this parser exprects to return an expression, conveniently, python assigmnent are statement,
             # so we just use walrus operator for all just to simplify it
             return ast.NamedExpr(cast(ast.Name, left), right)
 
         if kind == "ternary":
-            true_expr = self.parse_expr()
+            true_expr = self.parse_expr(eat_comma=eat_comma)
             self.expect_and_next("COLON")
-            false_expr = self.parse_expr(rbp)
+            false_expr = self.parse_expr(rbp, eat_comma=eat_comma)
             return ast.IfExp(test=left, body=true_expr, orelse=false_expr)
 
-        if kind == "comma":
-            right = self.parse_expr(rbp)
+        if kind == "comma" and eat_comma:
+            right = self.parse_expr(rbp, eat_comma=eat_comma)
             return ast.Call(func=ast.Name(id="comma", ctx=ast.Load()), args=[left, right], keywords=[])
 
         if kind == "postfix_member":
-            right = self.parse_expr(30)
+            right = self.parse_expr(rbp)
             return ast.Attribute(left, ast.unparse(right))
 
         assert False, f"unhandled led: op={op_tok}, left={ast.dump(left)}"

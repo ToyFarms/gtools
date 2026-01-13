@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from enum import IntFlag
 from inspect import isabstract
 import logging
-from typing import ClassVar, Self
+from typing import ClassVar, Literal, Self
 
 from pyglm.glm import ivec2, vec2
 from gtools.core.buffer import Buffer
@@ -1769,15 +1769,15 @@ class World:
 
         return False
 
-    def get_tile(self, pos: ivec2 | int) -> Tile:
+    def get_tile(self, pos: ivec2 | int) -> Tile | None:
         if isinstance(pos, int):
             pos = ivec2(pos % self.width, pos // self.width)
         for tile in self.tiles:
             if tile.pos == pos:
                 return tile
 
-        # self.logger.warning(f"tile {pos} in {self.name} does not exists")
-        raise IndexError(f"tile {pos} in {self.name} does not exists")
+        self.logger.warning(f"tile {pos} in {self.name} does not exists")
+        # raise IndexError(f"tile {pos} in {self.name} does not exists")
 
     def index_tile(self, pos: ivec2) -> int | None:
         for i, tile in enumerate(self.tiles):

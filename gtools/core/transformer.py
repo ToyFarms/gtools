@@ -969,13 +969,13 @@ class NormalizeIdentifiers(ast.NodeTransformer):
         return node
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
-        name = "__UNKNOWN__"
+        name = None
         if isinstance(node.func, ast.Name):
             name = node.func.id
         elif isinstance(node.func, ast.Attribute):
             assert type(node.func.value) is ast.Name
             name = node.func.value.id
-        if not name[0].isupper():
+        if name and not name[0].isupper():
             node.func = ast.Name(to_snake_case(name))
         return self.generic_visit(node)
 

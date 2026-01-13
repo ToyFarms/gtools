@@ -531,8 +531,7 @@ class Item:
             case ItemInfoTextureType.SMART_EDGE:
                 return 8
             case ItemInfoTextureType.SMART_EDGE_HORIZ:
-                print("SMART_EDGE_HORIZ is not implemented")
-                return 0
+                return 8
             case ItemInfoTextureType.SMART_CLING:
                 print("SMART_CLING is not implemented")
                 return 0

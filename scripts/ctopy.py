@@ -22,7 +22,7 @@ def clean(code: str, s: Setting | None = None) -> ast.Module:
     if s is None:
         s = Setting(preserve_cast=False, ref=False)
     tree = raw(code, s)
-    passes: list[type[ast.NodeTransformer]] = [GotoResolver, DeadCodeEliminator, NormalizeIdentifiers, RemoveTypeAnnotations]
+    passes: list[type[ast.NodeTransformer]] = [GotoResolver, DeadCodeEliminator, NormalizeIdentifiers]
     for pass_ in passes:
         tree = pass_().visit(tree)
         ast.fix_missing_locations(tree)
@@ -80,13 +80,16 @@ def ctopy8(code: str) -> None:
     tree = clean(code)
     code = ast.unparse(tree)
     code = re.sub(r"get_foreground_or_background_id\(([^)]*)\)", r"\1.front", code)
+    code = re.sub(r"getForegroundOrBackgroundId\(([^)]*)\)", r"\1.front", code)
     code = re.sub(r"GLUED", r"TileFlags.GLUED", code)
     code = re.sub(r"world_view", r"world", code)
-    code = re.sub(r"tilesBegin\[([^\]]*)\]", r"get_tile(ivec2(tile_x, tile_y))", code)
+    code = re.sub(r"tilesBegin\[([^\]]*)\]", r"get_tile(\1)", code)
     code = re.sub(r"is_tile_steam_type\(([^)]*)\)", r"item_database.get(\1.front).is_steam()", code)
     code = re.sub(r"GUILD_FLAG_SHIELD_DIVISION", r"GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE", code)
     code = re.sub(r"tile\.tileX", r"tile.pos.x", code)
     code = re.sub(r"tile\.tileY", r"tile.pos.y", code)
+    code = re.sub(r"tileX", r"tile_x", code)
+    code = re.sub(r"tileY", r"tile_y", code)
     code = re.sub(r"textureType", r"texture_type", code)
     code = re.sub(r"fgTileConnectivityState", r"fg_tex_index", code)
     code = re.sub(r"bgTileConnectivityState", r"bg_tex_index", code)

@@ -19,6 +19,8 @@ from gtools.baked.items import (
     CAVE_PLATFORM,
     CLIMBING_WALL,
     DATA_BEDROCK,
+    DIAMOND_REGAL_BANNISTER,
+    DIAMOND_REGAL_STAIRS,
     DWARVEN_BACKGROUND,
     FISSURE,
     GREAT_TURRET_OF_GROWTOPIA,
@@ -35,6 +37,8 @@ from gtools.baked.items import (
     MYSTERY_DOOR,
     PURE_MAGIC_ORE,
     PURPLE_CAVE_CRYSTAL,
+    REGAL_BANNISTER,
+    REGAL_STAIRS,
     STALACTITE,
     STALAGMITE,
     STEAM_LAUNCHER,
@@ -49,7 +53,6 @@ from gtools.baked.items import (
 
 
 def tile_should_connect(world: World, tile_x: int, tile_y: int, item_id: int, maybe_cave_stuff: int, /) -> int:
-    tile: Tile
     __goto_label = "start"
     while True:
         try:
@@ -244,12 +247,14 @@ def tile_should_connect(world: World, tile_x: int, tile_y: int, item_id: int, ma
                     raise Exception("__GOTO_CONTINUE__")
                 return maybe_cave_stuff == 0
             elif __goto_label == "LABEL_29":
+                assert tile
                 if tile.front >= PURPLE_CAVE_CRYSTAL and tile.front <= AQUA_CAVE_CRYSTAL:
                     return 1
                 __goto_label = "LABEL_31"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_31":
                 if not maybe_cave_stuff and item_id == CAVE_DIRT:
+                    assert tile
                     if tile.front == CLIMBING_WALL:
                         return 1
                     return tile.front == item_id
@@ -257,6 +262,7 @@ def tile_should_connect(world: World, tile_x: int, tile_y: int, item_id: int, ma
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_35":
                 if item_id == STEAM_PIPE:
+                    assert tile
                     if item_database.get(tile.front).is_steam():
                         return 1
                     __goto_label = "LABEL_60"
@@ -264,6 +270,7 @@ def tile_should_connect(world: World, tile_x: int, tile_y: int, item_id: int, ma
                 __goto_label = "LABEL_60"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_60":
+                assert tile
                 if (
                     maybe_cave_stuff
                     and (item_id - GUILD_FLAG_POLE_SPEAR & 4294967293 == 0 and (tile.front >= GUILD_FLAG_TATTERS and tile.front <= GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE))
@@ -1279,7 +1286,7 @@ def handle_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
                 west_tile = v20 == bg
                 v23 = tile_y - 1
                 if v23 < 0 or (
-                    tile_x >= width or (v23 >= a1.height or ((v24 := a1.get_tile(ivec2(tile_x, tile_y))) == 0 or ((v25 := v24.bg_id) != BLANK and v24.flags & 2048 != 0)))
+                    tile_x >= width or (v23 >= a1.height or ((v24 := a1.get_tile(ivec2(tile_x, tile_y))) == None or ((v25 := v24.bg_id) != BLANK and v24.flags & 2048 != 0)))
                 ):
                     north_tile = 1
                     __goto_label = "LABEL_59"
@@ -1416,7 +1423,7 @@ def handle_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
                 v23 = tile_y - 1
                 assert tile_x and width
                 if v23 < 0 or (
-                    tile_x >= width or (v23 >= a1.height or ((v24 := a1.get_tile(ivec2(tile_x, tile_y))) == 0 or ((v25 := v24.bg_id) != BLANK and v24.flags & 2048 != 0)))
+                    tile_x >= width or (v23 >= a1.height or ((v24 := a1.get_tile(ivec2(tile_x, tile_y))) == None or ((v25 := v24.bg_id) != BLANK and v24.flags & 2048 != 0)))
                 ):
                     north_tile = 1
                     __goto_label = "LABEL_59"
@@ -1528,6 +1535,323 @@ def handle_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
     assert False
 
 
+def handle_smart_edge_horiz_texture(world: World, tile: Tile, a3: str, /) -> int:
+    __goto_label = "start"
+    while True:
+        try:
+            if __goto_label == "start":
+                tile_x: int = 0
+                width: int = 0
+                bg_id: int = 0
+                tile_y: int = 0
+                v9: Tile | None = None
+                v10: int = 0
+                v11: bool | int = False
+                v12: bool | int = False
+                v13: int = 0
+                v14: Tile | None = None
+                v15: int = 0
+                v16: bool | int = False
+                v17: bool | int = False
+                foreground_or_background_id: int = 0
+                v19: int = 0
+                v21: int = 0
+                v22: int = 0
+                v23: int = 0
+                v24: int = 0
+                v25: Tile | None = None
+                v26: int = 0
+                v27: int = 0
+                v28: int = 0
+                v29: int = 0
+                v30: Tile | None = None
+                v31: int = 0
+                v32: int = 0
+                v33: int = 0
+                v34: int = 0
+                v35: Tile | None = None
+                v36: int = 0
+                v37: int = 0
+                v38: int = 0
+                v39: int = 0
+                v40: Tile | None = None
+                if a3:
+                    tile_x = tile.pos.x
+                    width = world.width
+                    bg_id = tile.bg_id
+                    tile_y = tile.pos.y
+                    if tile_x + 1 >= width:
+                        __goto_label = "LABEL_10"
+                        raise Exception("__GOTO_CONTINUE__")
+                    if tile_y >= world.height:
+                        __goto_label = "LABEL_10"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v9 = world.get_tile(tile_x + 1 + tile_y * width)
+                    if not v9:
+                        __goto_label = "LABEL_10"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v10 = v9.bg_id
+                    if v10:
+                        if v9.flags & 2048 != 0:
+                            __goto_label = "LABEL_10"
+                            raise Exception("__GOTO_CONTINUE__")
+                    if bg_id == 8930:
+                        v11 = v10 == WEEPING_WILLOW
+                    else:
+                        if bg_id != 1194:
+                            if bg_id == 3556 and v10 == DWARVEN_BACKGROUND:
+                                __goto_label = "LABEL_10"
+                                raise Exception("__GOTO_CONTINUE__")
+                            __goto_label = "LABEL_25"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v11 = v10 == TWISTED_WINDOWS
+                    if v11:
+                        v12 = 1
+                        v13 = tile_x - 1
+                        if tile_x - 1 < 0:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        if v13 >= width:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        if tile_y >= world.height:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v14 = world.get_tile(tile_y * width + v13)
+                        if not v14:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v15 = v14.bg_id
+                        if v15:
+                            if v14.flags & 2048 != 0:
+                                __goto_label = "LABEL_20"
+                                raise Exception("__GOTO_CONTINUE__")
+                        if bg_id == 8930:
+                            v16 = v15 == WEEPING_WILLOW
+                        else:
+                            if bg_id != 1194:
+                                if bg_id == 3556 and v15 == DWARVEN_BACKGROUND:
+                                    __goto_label = "LABEL_20"
+                                    raise Exception("__GOTO_CONTINUE__")
+                                __goto_label = "LABEL_30"
+                                raise Exception("__GOTO_CONTINUE__")
+                            v16 = v15 == TWISTED_WINDOWS
+                        if v16:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_30"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v12 = v10 == bg_id
+                    __goto_label = "LABEL_11"
+                    raise Exception("__GOTO_CONTINUE__")
+                foreground_or_background_id = tile.front
+                v12 = tile_should_connect(world, tile.pos.x + 1, tile.pos.y, foreground_or_background_id, 0)
+                v19 = tile.front
+                v17 = tile_should_connect(world, tile.pos.x - 1, tile.pos.y, v19, 0)
+                if v12:
+                    if v17:
+                        return 1
+                    else:
+                        if tile.front == REGAL_STAIRS:
+                            v21 = tile.pos.y - 1
+                            v22 = tile.pos.x
+                            if v21 < 0:
+                                return 4
+                            v23 = world.width
+                            if v22 >= v23:
+                                return 4
+                            if v21 >= world.height:
+                                return 4
+                            v24 = v22 + v21 * v23
+                            v25 = world.get_tile(v24)
+                            if not v25 or ((v25.front and v25.front & 1 == 0) and v25.flags & 2048 != 0):
+                                return 4
+                            if v25.front == REGAL_BANNISTER:
+                                return 4
+                        v36 = tile.pos.y - 1
+                        v37 = tile.pos.x
+                        v38 = world.width
+                        v39 = v37 + v36 * v38
+                        if v39 > 0 and v39 < len(world.tiles) - 1:
+                            v40 = world.get_tile(v39)
+                            if tile.front == DIAMOND_REGAL_STAIRS and v40 and (
+                                ((((v36 < 0 or v37 >= v38) or v36 >= world.height) or v40 == 0) or ((v40.front and v40.front & 1 == 0) and v40.flags & TileFlags.GLUED != 0))
+                                or v40.front == DIAMOND_REGAL_BANNISTER
+                            ):
+                                return 4
+                            else:
+                                return 0
+                        else:
+                            return 0
+                elif v17:
+                    if tile.front == REGAL_STAIRS:
+                        v31 = tile.pos.y - 1
+                        v32 = tile.pos.x
+                        if v31 < 0:
+                            return 5
+                        v33 = world.width
+                        if v32 >= v33:
+                            return 5
+                        if v31 >= world.height:
+                            return 5
+                        v34 = v32 + v31 * v33
+                        v35 = world.get_tile(v34)
+                        if not v35 or ((v35.front and v35.front & 1 == 0) and v35.flags & TileFlags.GLUED != 0):
+                            return 5
+                        if v35.front == REGAL_BANNISTER:
+                            return 5
+                    v36 = tile.pos.y - 1
+                    v37 = tile.pos.x
+                    v38 = world.width
+                    v39 = v37 + v36 * v38
+                    if v39 > 0 and v39 < len(world.tiles) - 1:
+                        v40 = world.get_tile(v39)
+                        if tile.front == DIAMOND_REGAL_STAIRS and v40 and (
+                            ((((v36 < 0 or v37 >= v38) or v36 >= world.height) or v40 == 0) or ((v40.front and v40.front & 1 == 0) and v40.flags & TileFlags.GLUED != 0))
+                            or v40.front == DIAMOND_REGAL_BANNISTER
+                        ):
+                            return 5
+                        else:
+                            return 2
+                    else:
+                        return 2
+                else:
+                    return 3
+            elif __goto_label == "LABEL_10":
+                v12 = 1
+                __goto_label = "LABEL_11"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_11":
+                v13 = tile_x - 1
+                if tile_x - 1 < 0:
+                    __goto_label = "LABEL_20"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v13 >= width:
+                    __goto_label = "LABEL_20"
+                    raise Exception("__GOTO_CONTINUE__")
+                if tile_y >= world.height:
+                    __goto_label = "LABEL_20"
+                    raise Exception("__GOTO_CONTINUE__")
+                assert tile_y
+                v14 = world.get_tile(tile_y * width + v13)
+                if not v14:
+                    __goto_label = "LABEL_20"
+                    raise Exception("__GOTO_CONTINUE__")
+                v15 = v14.bg_id
+                if v15:
+                    if v14.flags & 2048 != 0:
+                        __goto_label = "LABEL_20"
+                        raise Exception("__GOTO_CONTINUE__")
+                if bg_id == 8930:
+                    v16 = v15 == WEEPING_WILLOW
+                else:
+                    if bg_id != 1194:
+                        if bg_id == 3556 and v15 == DWARVEN_BACKGROUND:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_30"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v16 = v15 == TWISTED_WINDOWS
+                if v16:
+                    __goto_label = "LABEL_20"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_30"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_20":
+                v17 = 1
+                __goto_label = "LABEL_32"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_25":
+                assert v10
+                v12 = v10 == bg_id
+                __goto_label = "LABEL_11"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_30":
+                assert v15
+                v17 = v15 == bg_id
+                __goto_label = "LABEL_32"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_32":
+                if v12:
+                    if v17:
+                        return 1
+                    else:
+                        if tile.front == REGAL_STAIRS:
+                            v21 = tile.pos.y - 1
+                            v22 = tile.pos.x
+                            if v21 < 0:
+                                return 4
+                            v23 = world.width
+                            if v22 >= v23:
+                                return 4
+                            if v21 >= world.height:
+                                return 4
+                            v24 = v22 + v21 * v23
+                            v25 = world.get_tile(v24)
+                            if not v25 or ((v25.front and v25.front & 1 == 0) and v25.flags & 2048 != 0):
+                                return 4
+                            if v25.front == REGAL_BANNISTER:
+                                return 4
+                        v36 = tile.pos.y - 1
+                        v37 = tile.pos.x
+                        v38 = world.width
+                        v39 = v37 + v36 * v38
+                        if v39 > 0 and v39 < len(world.tiles) - 1:
+                            v40 = world.get_tile(v39)
+                            if tile.front == DIAMOND_REGAL_STAIRS and v40 and (
+                                ((((v36 < 0 or v37 >= v38) or v36 >= world.height) or v40 == 0) or ((v40.front and v40.front & 1 == 0) and v40.flags & TileFlags.GLUED != 0))
+                                or v40.front == DIAMOND_REGAL_BANNISTER
+                            ):
+                                return 4
+                            else:
+                                return 0
+                        else:
+                            return 0
+                elif v17:
+                    if tile.front == REGAL_STAIRS:
+                        v31 = tile.pos.y - 1
+                        v32 = tile.pos.x
+                        if v31 < 0:
+                            return 5
+                        v33 = world.width
+                        if v32 >= v33:
+                            return 5
+                        if v31 >= world.height:
+                            return 5
+                        v34 = v32 + v31 * v33
+                        v35 = world.get_tile(v34)
+                        if not v35 or ((v35.front and v35.front & 1 == 0) and v35.flags & TileFlags.GLUED != 0):
+                            return 5
+                        if v35.front == REGAL_BANNISTER:
+                            return 5
+                    v36 = tile.pos.y - 1
+                    v37 = tile.pos.x
+                    v38 = world.width
+                    v39 = v37 + v36 * v38
+                    if v39 > 0 and v39 < len(world.tiles) - 1:
+                        v40 = world.get_tile(v39)
+                        if tile.front == DIAMOND_REGAL_STAIRS and v40 and (
+                            ((((v36 < 0 or v37 >= v38) or v36 >= world.height) or v40 == 0) or ((v40.front and v40.front & 1 == 0) and v40.flags & TileFlags.GLUED != 0))
+                            or v40.front == DIAMOND_REGAL_BANNISTER
+                        ):
+                            return 5
+                        else:
+                            return 2
+                    else:
+                        return 2
+                else:
+                    return 3
+            else:
+                raise Exception("__GOTO_BREAK__")
+        except Exception as __goto_except:
+            if "__GOTO_CONTINUE__" in str(__goto_except):
+                continue
+            if "__GOTO_BREAK__" in str(__goto_except):
+                break
+            raise __goto_except
+    assert False
+
+
 def update_tile_connectivity(world: World, tile: Tile, /):
     __goto_label = "start"
     while True:
@@ -1576,7 +1900,7 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                             if item_by_id.flags2 & 1 != 0:
                                 tile.fg_tex_index = check_tile_connectivity_left_and_right_for_seed(world, tile, 0)
                             else:
-                                tile.fg_tex_index = sub_1405633_c0(world, tile, 0)
+                                tile.fg_tex_index = handle_smart_edge_horiz_texture(world, tile, 0)
                             break
                         if __matched0 or __switch_on0 == ItemInfoTextureType.SMART_CLING2:
                             if not __matched0 and __switch_on0 == ItemInfoTextureType.SMART_CLING2:
@@ -1645,7 +1969,7 @@ def update_tile_connectivity(world: World, tile: Tile, /):
                             if not v11:
                                 __goto_label = "LABEL_19"
                                 raise Exception("__GOTO_CONTINUE__")
-                            tile.bg_tex_index = sub_1405633_c0(world, tile, 1)
+                            tile.bg_tex_index = handle_smart_edge_horiz_texture(world, tile, 1)
                             break
                         if __matched1 or __switch_on1 == ItemInfoTextureType.SMART_CLING2:
                             if not __matched1 and __switch_on1 == ItemInfoTextureType.SMART_CLING2:
