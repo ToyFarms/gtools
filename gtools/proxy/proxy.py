@@ -443,7 +443,6 @@ class Proxy:
     def disconnect_all(self) -> None:
         self.proxy_client.disconnect()
         self.proxy_server.disconnect_now()
-        self.proxy_server = ProxyServer(setting.proxy_server, setting.proxy_port)
         self._should_reconnect.set()
         self.logger.debug("gt client disconnected")
 
