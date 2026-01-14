@@ -202,7 +202,9 @@ if __name__ == "__main__":
         for tile in world.tiles:
             update_tile_connectivity(world, tile)
 
-        for tile in world.tiles:
+        for i, tile in enumerate(world.tiles):
+            if i == world.garbage_start:
+                break
             for cmd in renderer.get_render_cmd(tile):
                 for dst in cmd.dst:
                     dst = ivec4(dst)
