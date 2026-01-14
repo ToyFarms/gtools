@@ -129,16 +129,18 @@ class RtTexManager:
     _atlas_cache: dict[str, npt.NDArray[np.uint8]] = {}
     _tex_cache: dict[tuple[str, int, int, int, int], npt.NDArray[np.uint8]] = {}
 
-    def get(self, file: str | Path, x: int, y: int, w: int, h: int) -> npt.NDArray[np.uint8]:
+    def get(self, file: str | Path, x: int, y: int, w: int, h: int, flip_x: bool = False) -> npt.NDArray[np.uint8]:
         file = str(file)
 
-        key = (file, x, y, w, h)
+        key = (file, x, y, w, h, flip_x)
         if key in self._tex_cache:
             return self._tex_cache[key]
 
         cached = RtTexManager._atlas_cache.get(file)
         if cached is not None:
             cropped = cached[y : y + h, x : x + w, :]
+            if flip_x:
+                cropped = cropped[:, ::-1, :]
             self._tex_cache[key] = cropped
             return cropped
 
@@ -148,6 +150,9 @@ class RtTexManager:
         RtTexManager._atlas_cache[file] = img
 
         cropped = img[y : y + h, x : x + w, :]
+        if flip_x:
+            cropped = cropped[:, ::-1, :]
+
         self._tex_cache[key] = cropped
         return cropped
 

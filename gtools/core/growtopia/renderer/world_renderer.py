@@ -13,7 +13,7 @@ class WorldRenderer:
     def __init__(self) -> None:
         self._tex_mgr = RtTexManager()
 
-    def get_tex_from_id(self, id: int, offset: int = 0, stride: int = 0) -> npt.NDArray[np.uint8]:
+    def get_tex_from_id(self, id: int, offset: int = 0, stride: int = 1) -> npt.NDArray[np.uint8]:
         try:
             item = item_database.get(id)
         except:
@@ -32,18 +32,18 @@ class WorldRenderer:
 
     # TODO: batch_render is not really faster than normal, probably because its just the same thing rebranded
     # TODO: render command doesnt have the thing to become frontend agnostic yet, need to rethink what it would actually need
-    def batch_render_cmd(self, tiles: list[Tile]) -> list[RenderCommand]:
-        r: list[RenderCommand] = []
-        bg_tile_by_types: defaultdict[int, list[ivec2]] = defaultdict(list)
-        fg_tile_by_types: defaultdict[int, list[ivec2]] = defaultdict(list)
-        for tile in tiles:
-            bg_tile_by_types[tile.bg_id].append(tile.pos * 32)
-            fg_tile_by_types[tile.fg_id].append(tile.pos * 32)
+    # def batch_render_cmd(self, tiles: list[Tile]) -> list[RenderCommand]:
+    #     r: list[RenderCommand] = []
+    #     bg_tile_by_types: defaultdict[int, list[ivec2]] = defaultdict(list)
+    #     fg_tile_by_types: defaultdict[int, list[ivec2]] = defaultdict(list)
+    #     for tile in tiles:
+    #         bg_tile_by_types[tile.bg_id].append(tile.pos * 32)
+    #         fg_tile_by_types[tile.fg_id].append(tile.pos * 32)
 
-        # TODO: we cannot batch with different tex index
-        for id, pos_list in bg_tile_by_types.items():
-            r.append(RenderCommand(self.get_tex(id), list(map(lambda x: vec4(x.x, x.y, 32, 32), pos_list))))
-        for id, pos_list in fg_tile_by_types.items():
-            r.append(RenderCommand(self.get_tex(id), list(map(lambda x: vec4(x.x, x.y, 32, 32), pos_list))))
+    #     # TODO: we cannot batch with different tex index
+    #     for id, pos_list in bg_tile_by_types.items():
+    #         r.append(RenderCommand(self.get_tex(id), list(map(lambda x: vec4(x.x, x.y, 32, 32), pos_list))))
+    #     for id, pos_list in fg_tile_by_types.items():
+    #         r.append(RenderCommand(self.get_tex(id), list(map(lambda x: vec4(x.x, x.y, 32, 32), pos_list))))
 
-        return r
+    #     return r

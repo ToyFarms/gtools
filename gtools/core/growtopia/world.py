@@ -12,7 +12,7 @@ from gtools.baked.items import DATA_BEDROCK, DATA_STARSHIP_HULL, GUILD_LOCK
 from gtools.core.buffer import Buffer
 import cbor2
 
-from gtools.core.growtopia.items_dat import ItemInfoFlag2, item_database
+from gtools.core.growtopia.items_dat import ItemInfoFlag2, ItemInfoTextureType, item_database
 from gtools.core.growtopia.packet import TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RtTexManager
@@ -1568,9 +1568,19 @@ class Tile:
 
     def get_texture(self, mgr: RtTexManager, id: int, tex_index: int) -> npt.NDArray[np.uint8]:
         item = item_database.get(id)
-        off = ivec2(tex_index % max(item.get_tex_stride(), 1), (tex_index // item.get_tex_stride()) if tex_index else 0)
+
+        stride = item.get_tex_stride()
+        is_flipped = self.flags & TileFlags.FLIPPED_X != 0
+        if is_flipped and item.texture_type == ItemInfoTextureType.SMART_EDGE_HORIZ:
+            if tex_index == 0:
+                tex_index = 2
+            elif tex_index == 2:
+                tex_index = 0
+
+        off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
         tex = (ivec2(item.tex_coord_x, item.tex_coord_y) + off) * 32
-        return mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32)
+
+        return mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32, flip_x=is_flipped)
 
     def get_fg_texture(self, mgr: RtTexManager) -> npt.NDArray[np.uint8]:
         return self.get_texture(mgr, self.fg_id, self.fg_tex_index)
