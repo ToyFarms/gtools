@@ -1196,7 +1196,7 @@ class GuildItemTile(TileExtra):
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "GuildItemTile":
         t = cls()
-        # t.unk1 = s.read_bytes(17)
+        t.unk1 = s.read_bytes(17)
         return t
 
 

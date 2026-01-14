@@ -220,4 +220,4 @@ if __name__ == "__main__":
                 break
         print(f"rendering took {time.perf_counter() - start:.3f}s")
 
-        # Image.fromarray(img).show()
+        Image.fromarray(img).show()
