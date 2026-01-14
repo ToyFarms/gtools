@@ -533,25 +533,19 @@ class Item:
             case ItemInfoTextureType.SMART_EDGE_HORIZ:
                 return 8
             case ItemInfoTextureType.SMART_CLING:
-                print("SMART_CLING is not implemented")
-                return 0
+                return 5
             case ItemInfoTextureType.SMART_CLING2:
                 return 8
             case ItemInfoTextureType.SMART_OUTER:
-                print("SMART_OUTER is not implemented")
-                return 0
+                return 5
             case ItemInfoTextureType.RANDOM:
-                print("RANDOM is not implemented")
-                return 0
+                return 4
             case ItemInfoTextureType.SMART_EDGE_VERT:
-                print("SMART_EDGE_VERT is not implemented")
-                return 0
+                return 10
             case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
-                print("SMART_EDGE_HORIZ_CAVE is not implemented")
-                return 0
+                return 4
             case ItemInfoTextureType.SMART_EDGE_DIAGON:
-                print("SMART_EDGE_DIAGON is not implemented")
-                return 0
+                return 4
 
     @classmethod
     def deserialize(cls, s: Buffer, version: int = 99999999999) -> "Item":

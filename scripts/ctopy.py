@@ -98,6 +98,7 @@ def ctopy8(code: str) -> None:
     code = re.sub(r"item_database.itemsBegin\[([^\]]*)\]", r"item_database.get(\1)", code)
     code = re.sub(r"maybe_get_item_by_id\(.*, ([^)]*)\)", r"item_database.get(\1)", code)
     code = re.sub(r"'ItemID' = None", r"int = 0", code)
+    code = re.sub(r"a1\.tile_([xy])", r"a1.pos.\1", code)
 
 
     print(code)

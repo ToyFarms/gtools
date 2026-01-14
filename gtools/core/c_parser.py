@@ -240,37 +240,6 @@ class Setting:
     ref: bool = True
 
 
-class CommaTransformer(ast.NodeTransformer):
-    def flatten_comma(self, node: ast.AST) -> list[ast.AST]:
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "comma":
-            elts: list[ast.AST] = []
-            for arg in node.args:
-                elts.extend(self.flatten_comma(arg))
-
-            return elts
-
-        return [node]
-
-    def visit_Call(self, node: ast.Call) -> ast.AST:
-        self.generic_visit(node)
-        if isinstance(node.func, ast.Name) and node.func.id == "comma":
-            elements = []
-            for a in node.args:
-                elements.extend(self.flatten_comma(a))
-
-            tuple_node = ast.Tuple(elts=elements, ctx=ast.Load())
-
-            lambda_node = ast.Lambda(
-                args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
-                body=ast.Subscript(value=tuple_node, slice=ast.Constant(value=-1), ctx=ast.Load()),
-            )
-
-            call_node = ast.Call(func=lambda_node, args=[], keywords=[])
-
-            return ast.copy_location(call_node, node)
-        return node
-
-
 class CParser:
     match_i = itertools.count()
     match_q = deque[int]()
@@ -669,8 +638,7 @@ class CParser:
             return False
 
         saved = self.i
-        if not context.get("mandatory_paren"):
-            self.i -= 1
+        self.i -= 1
         inbetween = self.read_inbetween("LPAREN", "RPAREN")
         if not inbetween:
             self.i = saved
@@ -877,10 +845,6 @@ class CParser:
             self.expect_and_next("COLON")
             false_expr = self.parse_expr(rbp, context=context)
             return ast.IfExp(test=left, body=true_expr, orelse=false_expr)
-
-        if kind == "comma" and context:
-            right = self.parse_expr(rbp, context=context)
-            return ast.Call(func=ast.Name(id="comma", ctx=ast.Load()), args=[left, right], keywords=[])
 
         if kind == "postfix_member":
             right = self.parse_expr(rbp)

@@ -1,4 +1,3 @@
-from typing import cast
 from PIL import Image
 import click
 from pyglm.glm import ivec2, ivec4
@@ -375,6 +374,75 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
     while True:
         try:
             if __goto_label == "start":
+                tile_x: int = 0
+                v4: int = 0
+                tile_y: int = 0
+                width: int = 0
+                v9: int = 0
+                bg_id: int = 0
+                v11: Tile | None = None
+                v12: int = 0
+                v13: bool | int = False
+                v14: int = 0
+                v15: int = 0
+                v16: Tile | None = None
+                v17: int = 0
+                v18: bool | int = False
+                v19: bool | int = False
+                v20: Tile | None = None
+                v21: int = 0
+                v22: bool | int = False
+                v23: bool | int = False
+                v24: int = 0
+                v25: Tile | None = None
+                v26: int = 0
+                v27: bool | int = False
+                south_west_tile: int = 0
+                v29: Tile | None = None
+                v30: int = 0
+                v31: bool | int = False
+                west_tile: int = 0
+                v33: int = 0
+                v34: Tile | None = None
+                v35: int = 0
+                v36: bool | int = False
+                north_west_tile: int = 0
+                v38: Tile | None = None
+                v39: int = 0
+                north_tile: int = 0
+                v41: Tile | None = None
+                v42: int = 0
+                v43: bool | int = False
+                south_east_tile_1: int = 0
+                north_east_tile: int = 0
+                south_tile_1: int = 0
+                v47: int = 0
+                tile_x__plus__one: int = 0
+                foreground_or_background_id: int = 0
+                v50: int = 0
+                v51: int = 0
+                v52: int = 0
+                v53: int = 0
+                v54: int = 0
+                v55: int = 0
+                v56: int = 0
+                v57: int = 0
+                v59: int = 0
+                v60: int = 0
+                v61: int = 0
+                v62: int = 0
+                v63: int = 0
+                v64: int = 0
+                east_tile_1: bool | int = False
+                east_tile: bool | int = False
+                tile_y_1: int = 0
+                v68: int = 0
+                v70: bool | int = False
+                south_east_tile: bool | int = False
+                v72: bool | int = False
+                v73: int = 0
+                south_tile: bool | int = False
+                v75: bool | int = False
                 tile_x = tile.pos.x
                 v4 = 0
                 tile_y = tile.pos.y
@@ -383,27 +451,27 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if a3 == 1:
                     width = world.width
                     v9 = tile_x + 1
-                    bg = tile.bg_id
+                    bg_id = tile.bg_id
                     if tile_x + 1 >= width:
                         __goto_label = "LABEL_10"
                         raise Exception("__GOTO_CONTINUE__")
                     if tile_y >= world.height:
                         __goto_label = "LABEL_10"
                         raise Exception("__GOTO_CONTINUE__")
-                    v11 = world.get_tile(tile_x + (1 + tile_y * width))
+                    v11 = world.get_tile(tile_x + 1 + tile_y * width)
                     if not v11:
                         __goto_label = "LABEL_10"
                         raise Exception("__GOTO_CONTINUE__")
-                    v12 = v11.bg
+                    v12 = v11.bg_id
                     if v12:
                         if v11.flags & TileFlags.GLUED != 0:
                             __goto_label = "LABEL_10"
                             raise Exception("__GOTO_CONTINUE__")
-                    if bg == 8930:
+                    if bg_id == 8930:
                         v13 = v12 == WEEPING_WILLOW
                     else:
-                        if bg != 1194:
-                            if bg == 3556 and v12 == DWARVEN_BACKGROUND:
+                        if bg_id != 1194:
+                            if bg_id == 3556 and v12 == DWARVEN_BACKGROUND:
                                 __goto_label = "LABEL_10"
                                 raise Exception("__GOTO_CONTINUE__")
                             __goto_label = "LABEL_30"
@@ -418,245 +486,38 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                         if v15 >= world.height:
                             __goto_label = "LABEL_19"
                             raise Exception("__GOTO_CONTINUE__")
-                        v16 = world.get_tile(tile_x + (1 + v15 * width))
+                        v16 = world.get_tile(tile_x + 1 + v15 * width)
                         if not v16:
                             __goto_label = "LABEL_19"
                             raise Exception("__GOTO_CONTINUE__")
-                        v17 = v16.bg
+                        v17 = v16.bg_id
                         if v17:
                             if v16.flags & 2048 != 0:
                                 __goto_label = "LABEL_19"
                                 raise Exception("__GOTO_CONTINUE__")
-                        if bg == 8930:
+                        if bg_id == 8930:
                             v18 = v17 == WEEPING_WILLOW
                         else:
-                            if bg != 1194:
-                                if bg == 3556 and v17 == DWARVEN_BACKGROUND:
+                            if bg_id != 1194:
+                                if bg_id == 3556 and v17 == DWARVEN_BACKGROUND:
                                     __goto_label = "LABEL_19"
                                     raise Exception("__GOTO_CONTINUE__")
                                 __goto_label = "LABEL_35"
                                 raise Exception("__GOTO_CONTINUE__")
                             v18 = v17 == TWISTED_WINDOWS
                         if v18:
-                            v19 = 1
-                            v70 = v19
-                            if tile_x >= width:
-                                __goto_label = "LABEL_39"
-                                raise Exception("__GOTO_CONTINUE__")
-                            if v15 >= world.height:
-                                __goto_label = "LABEL_39"
-                                raise Exception("__GOTO_CONTINUE__")
-                            v20 = world.get_tile(tile_x + v15 * width)
-                            if not v20:
-                                __goto_label = "LABEL_39"
-                                raise Exception("__GOTO_CONTINUE__")
-                            v21 = v20.bg
-                            if v21 and v20.flags & 2048 != 0:
-                                v73 = 1
-                                v24 = tile_x - 1
-                                if tile_x - 1 < 0:
-                                    __goto_label = "LABEL_50"
-                                    raise Exception("__GOTO_CONTINUE__")
-                                if v24 >= width:
-                                    __goto_label = "LABEL_50"
-                                    raise Exception("__GOTO_CONTINUE__")
-                                if v15 >= world.height:
-                                    __goto_label = "LABEL_50"
-                                    raise Exception("__GOTO_CONTINUE__")
-                                v25 = world.get_tile(v24 + v15 * width)
-                                if not v25:
-                                    __goto_label = "LABEL_50"
-                                    raise Exception("__GOTO_CONTINUE__")
-                                v26 = v25.bg
-                                if v26:
-                                    if v25.flags & 2048 != 0:
-                                        __goto_label = "LABEL_50"
-                                        raise Exception("__GOTO_CONTINUE__")
-                                if bg == 8930:
-                                    v27 = v26 == WEEPING_WILLOW
-                                else:
-                                    if bg != 1194:
-                                        if bg == 3556 and v26 == DWARVEN_BACKGROUND:
-                                            __goto_label = "LABEL_50"
-                                            raise Exception("__GOTO_CONTINUE__")
-                                        __goto_label = "LABEL_90"
-                                        raise Exception("__GOTO_CONTINUE__")
-                                    v27 = v26 == TWISTED_WINDOWS
-                                if v27:
-                                    south_west_tile = 1
-                                    if v24 < 0:
-                                        __goto_label = "LABEL_60"
-                                        raise Exception("__GOTO_CONTINUE__")
-                                    if v24 >= width:
-                                        __goto_label = "LABEL_60"
-                                        raise Exception("__GOTO_CONTINUE__")
-                                    if tile_y >= world.height:
-                                        __goto_label = "LABEL_60"
-                                        raise Exception("__GOTO_CONTINUE__")
-                                    v29 = world.get_tile(v24 + tile_y * width)
-                                    if not v29:
-                                        __goto_label = "LABEL_60"
-                                        raise Exception("__GOTO_CONTINUE__")
-                                    v30 = v29.bg
-                                    if v30:
-                                        if v29.flags & 2048 != 0:
-                                            __goto_label = "LABEL_60"
-                                            raise Exception("__GOTO_CONTINUE__")
-                                    if bg == 8930:
-                                        v31 = v30 == WEEPING_WILLOW
-                                    else:
-                                        if bg != 1194:
-                                            if bg == 3556 and v30 == DWARVEN_BACKGROUND:
-                                                __goto_label = "LABEL_60"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            __goto_label = "LABEL_95"
-                                            raise Exception("__GOTO_CONTINUE__")
-                                        v31 = v30 == TWISTED_WINDOWS
-                                    if v31:
-                                        west_tile = 1
-                                        v33 = tile_y_1 - 1
-                                        if v24 < 0:
-                                            __goto_label = "LABEL_71"
-                                            raise Exception("__GOTO_CONTINUE__")
-                                        if v33 < 0:
-                                            __goto_label = "LABEL_71"
-                                            raise Exception("__GOTO_CONTINUE__")
-                                        if v24 >= width:
-                                            __goto_label = "LABEL_71"
-                                            raise Exception("__GOTO_CONTINUE__")
-                                        if v33 >= world.height:
-                                            __goto_label = "LABEL_71"
-                                            raise Exception("__GOTO_CONTINUE__")
-                                        v34 = world.get_tile(v24 + v33 * width)
-                                        if not v34:
-                                            __goto_label = "LABEL_71"
-                                            raise Exception("__GOTO_CONTINUE__")
-                                        v35 = v34.bg
-                                        if v35:
-                                            if v34.flags & 2048 != 0:
-                                                __goto_label = "LABEL_71"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                        if bg == 8930:
-                                            v36 = v35 == WEEPING_WILLOW
-                                        else:
-                                            if bg != 1194:
-                                                if bg == 3556 and v35 == DWARVEN_BACKGROUND:
-                                                    __goto_label = "LABEL_71"
-                                                    raise Exception("__GOTO_CONTINUE__")
-                                                __goto_label = "LABEL_100"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            v36 = v35 == TWISTED_WINDOWS
-                                        if v36:
-                                            north_west_tile = 1
-                                            if v33 < 0:
-                                                __goto_label = "LABEL_107"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            if tile_x >= width:
-                                                __goto_label = "LABEL_107"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            if v33 >= world.height:
-                                                __goto_label = "LABEL_107"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            v38 = world.get_tile(tile_x + v33 * width)
-                                            if not v38:
-                                                __goto_label = "LABEL_107"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            v39 = v38.bg
-                                            if v39:
-                                                if v38.flags & 2048 != 0:
-                                                    __goto_label = "LABEL_107"
-                                                    raise Exception("__GOTO_CONTINUE__")
-                                            if bg == 8930:
-                                                if v39 == WEEPING_WILLOW:
-                                                    north_tile = 1
-                                                    __goto_label = "LABEL_108"
-                                                    raise Exception("__GOTO_CONTINUE__")
-                                            elif bg == 1194:
-                                                if v39 == TWISTED_WINDOWS:
-                                                    __goto_label = "LABEL_107"
-                                                    raise Exception("__GOTO_CONTINUE__")
-                                            elif bg == 3556 and v39 == DWARVEN_BACKGROUND:
-                                                __goto_label = "LABEL_107"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            north_tile = v39 == bg
-                                            if v33 < 0:
-                                                __goto_label = "LABEL_117"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            if v9 >= width:
-                                                __goto_label = "LABEL_117"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            if v33 >= world.height:
-                                                __goto_label = "LABEL_117"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            v41 = world.get_tile(width * v33 + (1 + v68))
-                                            if not v41:
-                                                __goto_label = "LABEL_117"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            v42 = v41.bg
-                                            if v42:
-                                                if v41.flags & 2048 != 0:
-                                                    __goto_label = "LABEL_117"
-                                                    raise Exception("__GOTO_CONTINUE__")
-                                            if bg == 8930:
-                                                v43 = v42 == WEEPING_WILLOW
-                                            else:
-                                                if bg != 1194:
-                                                    if bg == 3556 and v42 == DWARVEN_BACKGROUND:
-                                                        __goto_label = "LABEL_117"
-                                                        raise Exception("__GOTO_CONTINUE__")
-                                                    v47 = v42
-                                                    south_east_tile_1 = v70
-                                                    v13 = v47 == bg
-                                                    south_tile_1 = v73
-                                                    north_east_tile = v13
-                                                    __goto_label = "LABEL_128"
-                                                    raise Exception("__GOTO_CONTINUE__")
-                                                v43 = v42 == TWISTED_WINDOWS
-                                            if v43:
-                                                south_east_tile_1 = v70
-                                                north_east_tile = 1
-                                                south_tile_1 = v73
-                                                __goto_label = "LABEL_128"
-                                                raise Exception("__GOTO_CONTINUE__")
-                                            __goto_label = "LABEL_122"
-                                            raise Exception("__GOTO_CONTINUE__")
-                                        north_west_tile = v35 == bg
-                                        __goto_label = "LABEL_72"
-                                        raise Exception("__GOTO_CONTINUE__")
-                                    west_tile = v30 == bg
-                                    __goto_label = "LABEL_61"
-                                    raise Exception("__GOTO_CONTINUE__")
-                                south_west_tile = v26 == bg
-                                __goto_label = "LABEL_51"
-                                raise Exception("__GOTO_CONTINUE__")
-                            if bg == 8930:
-                                v22 = v21 == WEEPING_WILLOW
-                            else:
-                                if bg != 1194:
-                                    if bg == 3556 and v21 == DWARVEN_BACKGROUND:
-                                        __goto_label = "LABEL_39"
-                                        raise Exception("__GOTO_CONTINUE__")
-                                    __goto_label = "LABEL_85"
-                                    raise Exception("__GOTO_CONTINUE__")
-                                v22 = v21 == TWISTED_WINDOWS
-                            if v22:
-                                v23 = 1
-                                v73 = v23
-                                __goto_label = "LABEL_41"
-                                raise Exception("__GOTO_CONTINUE__")
-                            v23 = v21 == bg
-                            __goto_label = "LABEL_40"
+                            __goto_label = "LABEL_19"
                             raise Exception("__GOTO_CONTINUE__")
-                        v19 = v17 == bg
+                        v19 = v17 == bg_id
                         __goto_label = "LABEL_20"
                         raise Exception("__GOTO_CONTINUE__")
-                    v14 = v12 == bg
+                    v14 = v12 == bg_id
                     __goto_label = "LABEL_11"
                     raise Exception("__GOTO_CONTINUE__")
                 if a3:
                     if a3 == 2:
                         v57 = tile_x + 1
-                        east_tile = is_steam_or_something(world, tile_x + 1, tile.pos.y)
+                        east_tile = is_steam_or_something(world, tile_x + 1, tile_y)
                         v72 = is_steam_or_something(world, tile_x + 1, tile_y + 1)
                         v75 = is_steam_or_something(world, tile_x, tile_y + 1)
                         south_west_tile = is_steam_or_something(world, tile_x - 1, tile_y + 1)
@@ -675,14 +536,14 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                         # south_west_tile = BYTE3(tile)
                         # south_tile_1 = BYTE2(tile)
                         # south_east_tile_1 = BYTE1(tile)
-                        north_east_tile = bool(tile)
-                        north_tile = bool(tile)
-                        north_west_tile = bool(tile)
-                        west_tile = bool(tile)
-                        south_west_tile = bool(tile)
-                        south_tile_1 = bool(tile)
-                        south_east_tile_1 = bool(tile)
-                        v14 = bool(tile)
+                        north_east_tile = 1
+                        north_tile = 1
+                        north_west_tile = 1
+                        west_tile = 1
+                        south_west_tile = 1
+                        south_tile_1 = 1
+                        south_east_tile_1 = 1
+                        v14 = 1
                 else:
                     tile_x__plus__one = tile_x + 1
                     foreground_or_background_id = tile.front
@@ -721,63 +582,7 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                     __goto_label = "LABEL_186"
                     raise Exception("__GOTO_CONTINUE__")
                 if not west_tile:
-                    if not south_tile_1:
-                        if v14:
-                            if south_tile_1:
-                                v61 = 45
-                                if south_east_tile_1:
-                                    return 5
-                                return v61
-                            elif west_tile:
-                                return 28
-                            elif north_tile:
-                                v62 = 43
-                                if north_east_tile:
-                                    return 7
-                                return v62
-                            else:
-                                return 29
-                        elif south_tile_1:
-                            if west_tile:
-                                v63 = 46
-                                if south_west_tile:
-                                    return 6
-                                return v63
-                            elif north_tile:
-                                return 9
-                            else:
-                                return 10
-                        else:
-                            if not west_tile:
-                                return 12 - (north_tile != 0)
-                            if north_tile:
-                                v64 = 44
-                                if north_west_tile:
-                                    return 8
-                                return v64
-                            else:
-                                return 30
-                    if north_tile:
-                        if north_east_tile:
-                            if south_east_tile_1:
-                                return 3
-                            else:
-                                return 32
-                        elif south_east_tile_1:
-                            return 31
-                        else:
-                            return 33
-                    if south_tile_1 and (west_tile and north_tile):
-                        if north_west_tile:
-                            if south_west_tile:
-                                return 4
-                            else:
-                                return 35
-                        elif south_west_tile:
-                            return 34
-                        else:
-                            return 36
-                    __goto_label = "LABEL_205"
+                    __goto_label = "LABEL_186"
                     raise Exception("__GOTO_CONTINUE__")
                 if north_tile:
                     if south_east_tile_1:
@@ -790,28 +595,19 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                                 return 13
                         if north_west_tile and north_east_tile:
                             return 15
-                    if south_west_tile and (north_west_tile and north_east_tile):
+                    if (south_west_tile and north_west_tile) and north_east_tile:
                         return 16
                     if south_east_tile_1:
                         if south_west_tile:
                             return 17
-                    elif south_west_tile:
-                        if north_west_tile:
-                            return 20
-                        if south_west_tile and north_east_tile:
-                            return 21
-                        if south_east_tile_1:
-                            return 26
+                    else:
                         if south_west_tile:
-                            return 25
-                        if north_west_tile:
-                            return 23
-                        v59 = 27
-                        if north_east_tile:
-                            return 24
-                        return v59
-                    if north_west_tile and north_east_tile:
-                        return 18
+                            if north_west_tile:
+                                return 20
+                            __goto_label = "LABEL_160"
+                            raise Exception("__GOTO_CONTINUE__")
+                        if north_west_tile and north_east_tile:
+                            return 18
                     if south_east_tile_1:
                         if north_east_tile:
                             return 19
@@ -830,7 +626,7 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 __goto_label = "LABEL_11"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_100":
-                north_west_tile = v35 == bg
+                north_west_tile = v35 == bg_id
                 __goto_label = "LABEL_72"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_107":
@@ -847,15 +643,28 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if v33 >= world.height:
                     __goto_label = "LABEL_117"
                     raise Exception("__GOTO_CONTINUE__")
-                v41 = world.get_tile(width * v33 + (1 + v68))
+                v41 = world.get_tile(width * v33 + 1 + v68)
                 if not v41:
                     __goto_label = "LABEL_117"
                     raise Exception("__GOTO_CONTINUE__")
-                v42 = v41.bg
+                v42 = v41.bg_id
                 if v42:
                     if v41.flags & 2048 != 0:
                         __goto_label = "LABEL_117"
                         raise Exception("__GOTO_CONTINUE__")
+                if bg_id == 8930:
+                    v43 = v42 == WEEPING_WILLOW
+                else:
+                    if bg_id != 1194:
+                        if bg_id == 3556 and v42 == DWARVEN_BACKGROUND:
+                            __goto_label = "LABEL_117"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_122"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v43 = v42 == TWISTED_WINDOWS
+                if v43:
+                    __goto_label = "LABEL_117"
+                    raise Exception("__GOTO_CONTINUE__")
                 __goto_label = "LABEL_122"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_11":
@@ -866,26 +675,29 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if v15 >= world.height:
                     __goto_label = "LABEL_19"
                     raise Exception("__GOTO_CONTINUE__")
-                v16 = world.get_tile(tile_x + (1 + v15 * width))
+                v16 = world.get_tile(tile_x + 1 + v15 * width)
                 if not v16:
                     __goto_label = "LABEL_19"
                     raise Exception("__GOTO_CONTINUE__")
-                v17 = v16.bg
+                v17 = v16.bg_id
                 if v17:
                     if v16.flags & 2048 != 0:
                         __goto_label = "LABEL_19"
                         raise Exception("__GOTO_CONTINUE__")
-                if bg == 8930:
+                if bg_id == 8930:
                     v18 = v17 == WEEPING_WILLOW
                 else:
-                    if bg != 1194:
-                        if bg == 3556 and v17 == DWARVEN_BACKGROUND:
+                    if bg_id != 1194:
+                        if bg_id == 3556 and v17 == DWARVEN_BACKGROUND:
                             __goto_label = "LABEL_19"
                             raise Exception("__GOTO_CONTINUE__")
                         __goto_label = "LABEL_35"
                         raise Exception("__GOTO_CONTINUE__")
                     v18 = v17 == TWISTED_WINDOWS
-                __goto_label = "LABEL_19"
+                if v18:
+                    __goto_label = "LABEL_19"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_35"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_117":
                 south_east_tile_1 = v70
@@ -896,7 +708,7 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
             elif __goto_label == "LABEL_122":
                 v47 = v42
                 south_east_tile_1 = v70
-                v13 = v47 == bg
+                v13 = v47 == bg_id
                 south_tile_1 = v73
                 north_east_tile = v13
                 __goto_label = "LABEL_128"
@@ -918,8 +730,46 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                             return 42
                     __goto_label = "LABEL_186"
                     raise Exception("__GOTO_CONTINUE__")
-                __goto_label = "LABEL_186"
-                raise Exception("__GOTO_CONTINUE__")
+                if not west_tile:
+                    __goto_label = "LABEL_186"
+                    raise Exception("__GOTO_CONTINUE__")
+                if north_tile:
+                    if south_east_tile_1:
+                        if south_west_tile:
+                            if north_west_tile:
+                                if not north_east_tile:
+                                    return 14
+                                return v4
+                            if north_east_tile:
+                                return 13
+                        if north_west_tile and north_east_tile:
+                            return 15
+                    if (south_west_tile and north_west_tile) and north_east_tile:
+                        return 16
+                    if south_east_tile_1:
+                        if south_west_tile:
+                            return 17
+                    else:
+                        if south_west_tile:
+                            if north_west_tile:
+                                return 20
+                            __goto_label = "LABEL_160"
+                            raise Exception("__GOTO_CONTINUE__")
+                        if north_west_tile and north_east_tile:
+                            return 18
+                    if south_east_tile_1:
+                        if north_east_tile:
+                            return 19
+                        if north_west_tile:
+                            return 22
+                    __goto_label = "LABEL_160"
+                    raise Exception("__GOTO_CONTINUE__")
+                if not south_east_tile_1:
+                    return 39 - (south_west_tile != 0)
+                v60 = 37
+                if south_west_tile:
+                    return 1
+                return v60
             elif __goto_label == "LABEL_160":
                 if south_west_tile and north_east_tile:
                     return 21
@@ -934,14 +784,27 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                     return 24
                 return v59
             elif __goto_label == "LABEL_186":
-                __goto_label = "LABEL_205"
+                if not south_tile_1:
+                    __goto_label = "LABEL_205"
+                    raise Exception("__GOTO_CONTINUE__")
+                if north_tile:
+                    if north_east_tile:
+                        if south_east_tile_1:
+                            return 3
+                        else:
+                            return 32
+                    elif south_east_tile_1:
+                        return 31
+                    else:
+                        return 33
+                __goto_label = "LABEL_195"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_19":
                 v19 = 1
                 __goto_label = "LABEL_20"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_195":
-                if south_tile_1 and (west_tile and north_tile):
+                if (south_tile_1 and west_tile) and north_tile:
                     if north_west_tile:
                         if south_west_tile:
                             return 4
@@ -965,8 +828,25 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if not v20:
                     __goto_label = "LABEL_39"
                     raise Exception("__GOTO_CONTINUE__")
-                v21 = v20.bg
-                __goto_label = "LABEL_41"
+                v21 = v20.bg_id
+                if v21 and v20.flags & 2048 != 0:
+                    v73 = 1
+                    __goto_label = "LABEL_41"
+                    raise Exception("__GOTO_CONTINUE__")
+                if bg_id == 8930:
+                    v22 = v21 == WEEPING_WILLOW
+                else:
+                    if bg_id != 1194:
+                        if bg_id == 3556 and v21 == DWARVEN_BACKGROUND:
+                            __goto_label = "LABEL_39"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_85"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v22 = v21 == TWISTED_WINDOWS
+                if v22:
+                    __goto_label = "LABEL_39"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_85"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_205":
                 if v14:
@@ -1005,11 +885,11 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                     else:
                         return 30
             elif __goto_label == "LABEL_30":
-                v14 = v12 == bg
+                v14 = v12 == bg_id
                 __goto_label = "LABEL_11"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_35":
-                v19 = v17 == bg
+                v19 = v17 == bg_id
                 __goto_label = "LABEL_20"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_39":
@@ -1035,22 +915,25 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if not v25:
                     __goto_label = "LABEL_50"
                     raise Exception("__GOTO_CONTINUE__")
-                v26 = v25.bg
+                v26 = v25.bg_id
                 if v26:
                     if v25.flags & 2048 != 0:
                         __goto_label = "LABEL_50"
                         raise Exception("__GOTO_CONTINUE__")
-                if bg == 8930:
+                if bg_id == 8930:
                     v27 = v26 == WEEPING_WILLOW
                 else:
-                    if bg != 1194:
-                        if bg == 3556 and v26 == DWARVEN_BACKGROUND:
+                    if bg_id != 1194:
+                        if bg_id == 3556 and v26 == DWARVEN_BACKGROUND:
                             __goto_label = "LABEL_50"
                             raise Exception("__GOTO_CONTINUE__")
                         __goto_label = "LABEL_90"
                         raise Exception("__GOTO_CONTINUE__")
                     v27 = v26 == TWISTED_WINDOWS
-                __goto_label = "LABEL_50"
+                if v27:
+                    __goto_label = "LABEL_50"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_90"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_50":
                 south_west_tile = 1
@@ -1070,22 +953,25 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if not v29:
                     __goto_label = "LABEL_60"
                     raise Exception("__GOTO_CONTINUE__")
-                v30 = v29.bg
+                v30 = v29.bg_id
                 if v30:
                     if v29.flags & 2048 != 0:
                         __goto_label = "LABEL_60"
                         raise Exception("__GOTO_CONTINUE__")
-                if bg == 8930:
+                if bg_id == 8930:
                     v31 = v30 == WEEPING_WILLOW
                 else:
-                    if bg != 1194:
-                        if bg == 3556 and v30 == DWARVEN_BACKGROUND:
+                    if bg_id != 1194:
+                        if bg_id == 3556 and v30 == DWARVEN_BACKGROUND:
                             __goto_label = "LABEL_60"
                             raise Exception("__GOTO_CONTINUE__")
                         __goto_label = "LABEL_95"
                         raise Exception("__GOTO_CONTINUE__")
                     v31 = v30 == TWISTED_WINDOWS
-                __goto_label = "LABEL_60"
+                if v31:
+                    __goto_label = "LABEL_60"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_95"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_60":
                 west_tile = 1
@@ -1109,22 +995,25 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if not v34:
                     __goto_label = "LABEL_71"
                     raise Exception("__GOTO_CONTINUE__")
-                v35 = v34.bg
+                v35 = v34.bg_id
                 if v35:
                     if v34.flags & 2048 != 0:
                         __goto_label = "LABEL_71"
                         raise Exception("__GOTO_CONTINUE__")
-                if bg == 8930:
+                if bg_id == 8930:
                     v36 = v35 == WEEPING_WILLOW
                 else:
-                    if bg != 1194:
-                        if bg == 3556 and v35 == DWARVEN_BACKGROUND:
+                    if bg_id != 1194:
+                        if bg_id == 3556 and v35 == DWARVEN_BACKGROUND:
                             __goto_label = "LABEL_71"
                             raise Exception("__GOTO_CONTINUE__")
                         __goto_label = "LABEL_100"
                         raise Exception("__GOTO_CONTINUE__")
                     v36 = v35 == TWISTED_WINDOWS
-                __goto_label = "LABEL_71"
+                if v36:
+                    __goto_label = "LABEL_71"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_100"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_71":
                 north_west_tile = 1
@@ -1144,23 +1033,36 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if not v38:
                     __goto_label = "LABEL_107"
                     raise Exception("__GOTO_CONTINUE__")
-                v39 = v38.bg
+                v39 = v38.bg_id
                 if v39:
                     if v38.flags & 2048 != 0:
                         __goto_label = "LABEL_107"
                         raise Exception("__GOTO_CONTINUE__")
-                __goto_label = "LABEL_107"
+                if bg_id == 8930:
+                    if v39 == WEEPING_WILLOW:
+                        __goto_label = "LABEL_107"
+                        raise Exception("__GOTO_CONTINUE__")
+                elif bg_id == 1194:
+                    if v39 == TWISTED_WINDOWS:
+                        __goto_label = "LABEL_107"
+                        raise Exception("__GOTO_CONTINUE__")
+                else:
+                    if bg_id == 3556 and v39 == DWARVEN_BACKGROUND:
+                        __goto_label = "LABEL_107"
+                        raise Exception("__GOTO_CONTINUE__")
+                    north_tile = v39 == bg_id
+                __goto_label = "LABEL_108"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_85":
-                v23 = v21 == bg
+                v23 = v21 == bg_id
                 __goto_label = "LABEL_40"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_90":
-                south_west_tile = v26 == bg
+                south_west_tile = v26 == bg_id
                 __goto_label = "LABEL_51"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_95":
-                west_tile = v30 == bg
+                west_tile = v30 == bg_id
                 __goto_label = "LABEL_61"
                 raise Exception("__GOTO_CONTINUE__")
             else:
@@ -1863,7 +1765,7 @@ def handle_smart_edge_horiz_texture(world: World, tile: Tile, a3: int, /) -> int
     assert False
 
 
-def is_tile_flipped(world: World, tile_x: int, tile_y: int, tile_id: int, is_flipped: int, /) -> int:
+def tile_is_flipped(world: World, tile_x: int, tile_y: int, tile_id: int, is_flipped: int, /) -> int:
     width: int = 0
     index: int = 0
     tile: Tile | None = None
@@ -1943,10 +1845,10 @@ def handle_smart_edge_horiz_seed_texture(world: World, tile: Tile, use_tile: int
                 else:
                     is_flipped = tile.flags & TileFlags.FLIPPED_X != 0
                     tile_id_1 = tile.front
-                    right_tile_flipped = is_tile_flipped(world, tile.pos.x + 1, tile.pos.y, tile_id_1, is_flipped)
+                    right_tile_flipped = tile_is_flipped(world, tile.pos.x + 1, tile.pos.y, tile_id_1, is_flipped)
                     is_flipped_1 = tile.flags & TileFlags.FLIPPED_X != 0
                     tile_id = tile.front
-                    left_tile_flipped = is_tile_flipped(world, tile.pos.x - 1, tile.pos.y, tile_id, is_flipped_1)
+                    left_tile_flipped = tile_is_flipped(world, tile.pos.x - 1, tile.pos.y, tile_id, is_flipped_1)
                 if tile.flags & TileFlags.FLIPPED_X != 0:
                     if right_tile_flipped:
                         return 2 - left_tile_flipped
@@ -2044,10 +1946,10 @@ def handle_random_seed_texture(world: World, a1: Tile, a3: int, /) -> int:
                 else:
                     is_flipped = a1.flags & 32 != 0
                     foreground_or_background_id = a1.front
-                    v13 = is_tile_flipped(world, a1.pos.x, a1.pos.y - 1, foreground_or_background_id, is_flipped)
+                    v13 = tile_is_flipped(world, a1.pos.x, a1.pos.y - 1, foreground_or_background_id, is_flipped)
                     v21 = a1.flags & 32 != 0
                     v22 = a1.front
-                    v18 = is_tile_flipped(world, a1.pos.x, a1.pos.y + 1, v22, v21)
+                    v18 = tile_is_flipped(world, a1.pos.x, a1.pos.y + 1, v22, v21)
                 if v13:
                     return v18
                 else:
@@ -2070,6 +1972,561 @@ def handle_random_seed_texture(world: World, a1: Tile, a3: int, /) -> int:
                 break
             raise __goto_except
     assert False
+
+
+def handle_random_texture(world: World, tile: Tile, a3: int, /) -> int:
+    __goto_label = "start"
+    while True:
+        try:
+            if __goto_label == "start":
+                tile_y: int = 0
+                bg_id: int = 0
+                tile_x: int = 0
+                v8: int = 0
+                width: int = 0
+                v10: Tile | None = None
+                v11: int = 0
+                v12: bool | int = False
+                v13: bool | int = False
+                v14: int = 0
+                v15: int = 0
+                v16: Tile | None = None
+                v17: int = 0
+                v18: bool | int = False
+                v19: bool | int = False
+                foreground_or_background_id: int = 0
+                v21: int = 0
+                if a3:
+                    tile_y = tile.pos.y
+                    bg_id = tile.bg_id
+                    tile_x = tile.pos.x
+                    v8 = tile_y - 1
+                    if tile_y - 1 < 0:
+                        __goto_label = "LABEL_11"
+                        raise Exception("__GOTO_CONTINUE__")
+                    width = world.width
+                    if tile_x >= width:
+                        __goto_label = "LABEL_11"
+                        raise Exception("__GOTO_CONTINUE__")
+                    if v8 >= world.height:
+                        __goto_label = "LABEL_11"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v10 = world.get_tile(tile_x + v8 * width)
+                    if not v10:
+                        __goto_label = "LABEL_11"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v11 = v10.bg_id
+                    if v11:
+                        if v10.flags & 2048 != 0:
+                            __goto_label = "LABEL_11"
+                            raise Exception("__GOTO_CONTINUE__")
+                    if bg_id == 8930:
+                        v12 = v11 == WEEPING_WILLOW
+                    else:
+                        if bg_id != 1194:
+                            if bg_id == 3556 and v11 == DWARVEN_BACKGROUND:
+                                __goto_label = "LABEL_11"
+                                raise Exception("__GOTO_CONTINUE__")
+                            __goto_label = "LABEL_25"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v12 = v11 == TWISTED_WINDOWS
+                    if v12:
+                        v13 = 1
+                        v14 = world.width
+                        v15 = tile_y + 1
+                        if tile_x >= v14:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        if v15 >= world.height:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v16 = world.get_tile(tile_x + v15 * v14)
+                        if not v16:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v17 = v16.bg_id
+                        if v17:
+                            if v16.flags & 2048 != 0:
+                                __goto_label = "LABEL_20"
+                                raise Exception("__GOTO_CONTINUE__")
+                        if bg_id == 8930:
+                            v18 = v17 == WEEPING_WILLOW
+                        else:
+                            if bg_id != 1194:
+                                if bg_id == 3556 and v17 == DWARVEN_BACKGROUND:
+                                    __goto_label = "LABEL_20"
+                                    raise Exception("__GOTO_CONTINUE__")
+                                __goto_label = "LABEL_30"
+                                raise Exception("__GOTO_CONTINUE__")
+                            v18 = v17 == TWISTED_WINDOWS
+                        if v18:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_30"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v13 = v11 == bg_id
+                    __goto_label = "LABEL_12"
+                    raise Exception("__GOTO_CONTINUE__")
+                foreground_or_background_id = tile.front
+                v13 = tile_should_connect(world, tile.pos.x, tile.pos.y - 1, foreground_or_background_id, 2)
+                v21 = tile.front
+                v19 = tile_should_connect(world, tile.pos.x, tile.pos.y + 1, v21, 1)
+                if v13:
+                    return v19
+                else:
+                    return 3 - v19
+            elif __goto_label == "LABEL_11":
+                v13 = 1
+                __goto_label = "LABEL_12"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_12":
+                v14 = world.width
+                v15 = tile_y + 1
+                if tile_x >= v14:
+                    __goto_label = "LABEL_20"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v15 >= world.height:
+                    __goto_label = "LABEL_20"
+                    raise Exception("__GOTO_CONTINUE__")
+                v16 = world.get_tile(tile_x + v15 * v14)
+                if not v16:
+                    __goto_label = "LABEL_20"
+                    raise Exception("__GOTO_CONTINUE__")
+                v17 = v16.bg_id
+                if v17:
+                    if v16.flags & 2048 != 0:
+                        __goto_label = "LABEL_20"
+                        raise Exception("__GOTO_CONTINUE__")
+                if bg_id == 8930:
+                    v18 = v17 == WEEPING_WILLOW
+                else:
+                    if bg_id != 1194:
+                        if bg_id == 3556 and v17 == DWARVEN_BACKGROUND:
+                            __goto_label = "LABEL_20"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_30"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v18 = v17 == TWISTED_WINDOWS
+                if v18:
+                    __goto_label = "LABEL_20"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_30"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_20":
+                v19 = 1
+                __goto_label = "LABEL_32"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_25":
+                assert v11
+                v13 = v11 == bg_id
+                __goto_label = "LABEL_12"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_30":
+                assert v17
+                v19 = v17 == bg_id
+                __goto_label = "LABEL_32"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_32":
+                if v13:
+                    return v19
+                else:
+                    return 3 - v19
+            else:
+                raise Exception("__GOTO_BREAK__")
+        except Exception as __goto_except:
+            if "__GOTO_CONTINUE__" in str(__goto_except):
+                continue
+            if "__GOTO_BREAK__" in str(__goto_except):
+                break
+            raise __goto_except
+    assert False
+
+
+def handle_smart_edge_vert_texture(world: World, a1: Tile, a3: int, /) -> int:
+    __goto_label = "start"
+    while True:
+        try:
+            if __goto_label == "start":
+                width: int = 0
+                v6: bool | int = False
+                tile_y: int = 0
+                v8: bool | int = False
+                v10: bool | int = False
+                tile_x: int = 0
+                v12: Tile | None = None
+                v13: int = 0
+                v14: int = 0
+                v15: int = 0
+                v16: Tile | None = None
+                v17: int = 0
+                v18: int = 0
+                v19: int = 0
+                bg_id: int = 0
+                v21: int = 0
+                v22: Tile | None = None
+                v23: int = 0
+                v24: int = 0
+                v25: Tile | None = None
+                v26: int = 0
+                v27: bool | int = False
+                v28: bool | int = False
+                foreground_or_background_id: int = 0
+                v30: int = 0
+                v31: int = 0
+                v32: int = 0
+                v33: int = 0
+                v34: int = 0
+                v35: Tile | None = None
+                result: int = 0
+                width = world.width
+                v6 = 0
+                tile_y = a1.pos.y
+                v8 = 0
+                v10 = 1
+                tile_x = a1.pos.x
+                if tile_x + 1 < width and tile_y < world.height:
+                    v12 = world.get_tile(tile_x + 1 + tile_y * width)
+                    if v12:
+                        v6 = v12.front == CAVE_DIRT
+                v13 = a1.pos.x - 1
+                v14 = a1.pos.y
+                if v13 >= 0:
+                    v15 = world.width
+                    if v13 < v15 and v14 < world.height:
+                        v16 = world.get_tile(v13 + v14 * v15)
+                        if v16:
+                            v8 = v16.front == CAVE_DIRT
+                v17 = 0
+                if a3:
+                    v18 = a1.pos.x
+                    v19 = world.width
+                    bg_id = a1.bg_id
+                    v21 = a1.pos.y
+                    if v18 + 1 < v19 and v21 < world.height:
+                        v22 = world.get_tile(v18 + 1 + v21 * v19)
+                        if v22:
+                            v23 = v22.bg_id
+                            if v23 == BLANK or v22.flags & 2048 == 0:
+                                if bg_id == 8930:
+                                    if v23 == WEEPING_WILLOW:
+                                        __goto_label = "LABEL_25"
+                                        raise Exception("__GOTO_CONTINUE__")
+                                    __goto_label = "LABEL_24"
+                                    raise Exception("__GOTO_CONTINUE__")
+                                if bg_id == 1194:
+                                    if v23 == TWISTED_WINDOWS:
+                                        __goto_label = "LABEL_25"
+                                        raise Exception("__GOTO_CONTINUE__")
+                                    __goto_label = "LABEL_24"
+                                    raise Exception("__GOTO_CONTINUE__")
+                                if bg_id != 3556 or v23 != DWARVEN_BACKGROUND:
+                                    v10 = v23 == bg_id
+                    v24 = v18 - 1
+                    if v18 - 1 < 0:
+                        __goto_label = "LABEL_34"
+                        raise Exception("__GOTO_CONTINUE__")
+                    if v24 >= v19:
+                        __goto_label = "LABEL_34"
+                        raise Exception("__GOTO_CONTINUE__")
+                    if v21 >= world.height:
+                        __goto_label = "LABEL_34"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v25 = world.get_tile(v21 * v19 + v24)
+                    if not v25:
+                        __goto_label = "LABEL_34"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v26 = v25.bg_id
+                    if v26:
+                        if v25.flags & 2048 != 0:
+                            __goto_label = "LABEL_34"
+                            raise Exception("__GOTO_CONTINUE__")
+                    if bg_id == 8930:
+                        v27 = v26 == WEEPING_WILLOW
+                    else:
+                        if bg_id != 1194:
+                            if bg_id == 3556 and v26 == DWARVEN_BACKGROUND:
+                                __goto_label = "LABEL_34"
+                                raise Exception("__GOTO_CONTINUE__")
+                            __goto_label = "LABEL_39"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v27 = v26 == TWISTED_WINDOWS
+                    if v27:
+                        __goto_label = "LABEL_34"
+                        raise Exception("__GOTO_CONTINUE__")
+                    __goto_label = "LABEL_39"
+                    raise Exception("__GOTO_CONTINUE__")
+                foreground_or_background_id = a1.front
+                v10 = tile_should_connect(world, a1.pos.x + 1, a1.pos.y, foreground_or_background_id, 0)
+                v30 = a1.front
+                v28 = tile_should_connect(world, a1.pos.x - 1, a1.pos.y, v30, 0)
+                v31 = a1.pos.x
+                v32 = a1.pos.y + 1
+                v33 = world.width
+                if v31 >= v33:
+                    return 9
+                if v32 >= world.height:
+                    return 9
+                v34 = v31 + v32 * v33
+                v35 = world.get_tile(v34)
+                if not v35 or ((v35.front and v35.front & 1 == 0) and v35.flags & 2048 != 0):
+                    return 9
+                if v35.front == CAVE_COLUMN:
+                    return 9
+                if v8:
+                    if v6:
+                        return 6
+                    else:
+                        result = 7
+                        if v10:
+                            return 4
+                elif v6:
+                    result = 8
+                    if v28:
+                        return 5
+                elif v10:
+                    v17 = v28
+                    return v17
+                else:
+                    return 3 - v28
+                raise Exception("__GOTO_BREAK__")
+            elif __goto_label == "LABEL_24":
+                assert v23
+                v10 = v23 == bg_id
+                __goto_label = "LABEL_25"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_25":
+                v24 = v18 - 1
+                if v18 - 1 < 0:
+                    __goto_label = "LABEL_34"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v24 >= v19:
+                    __goto_label = "LABEL_34"
+                    raise Exception("__GOTO_CONTINUE__")
+                if v21 >= world.height:
+                    __goto_label = "LABEL_34"
+                    raise Exception("__GOTO_CONTINUE__")
+                assert v21 and v19
+                v25 = world.get_tile(v21 * v19 + v24)
+                if not v25:
+                    __goto_label = "LABEL_34"
+                    raise Exception("__GOTO_CONTINUE__")
+                v26 = v25.bg_id
+                if v26:
+                    if v25.flags & 2048 != 0:
+                        __goto_label = "LABEL_34"
+                        raise Exception("__GOTO_CONTINUE__")
+                if bg_id == 8930:
+                    v27 = v26 == WEEPING_WILLOW
+                else:
+                    if bg_id != 1194:
+                        if bg_id == 3556 and v26 == DWARVEN_BACKGROUND:
+                            __goto_label = "LABEL_34"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_39"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v27 = v26 == TWISTED_WINDOWS
+                if v27:
+                    __goto_label = "LABEL_34"
+                    raise Exception("__GOTO_CONTINUE__")
+                __goto_label = "LABEL_39"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_34":
+                v28 = 1
+                __goto_label = "LABEL_41"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_39":
+                assert v26
+                v28 = v26 == bg_id
+                __goto_label = "LABEL_41"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_41":
+                v31 = a1.pos.x
+                v32 = a1.pos.y + 1
+                v33 = world.width
+                if v31 >= v33:
+                    return 9
+                if v32 >= world.height:
+                    return 9
+                v34 = v31 + v32 * v33
+                v35 = world.get_tile(v34)
+                if not v35 or ((v35.front and v35.front & 1 == 0) and v35.flags & 2048 != 0):
+                    return 9
+                if v35.front == CAVE_COLUMN:
+                    return 9
+                if v8:
+                    if v6:
+                        return 6
+                    else:
+                        result = 7
+                        if v10:
+                            return 4
+                elif v6:
+                    result = 8
+                    if v28:
+                        return 5
+                elif v10:
+                    v17 = v28
+                    return v17
+                else:
+                    return 3 - v28
+                raise Exception("__GOTO_BREAK__")
+            else:
+                raise Exception("__GOTO_BREAK__")
+        except Exception as __goto_except:
+            if "__GOTO_CONTINUE__" in str(__goto_except):
+                continue
+            if "__GOTO_BREAK__" in str(__goto_except):
+                break
+            raise __goto_except
+    return result
+
+
+def handle_smart_edge_diagon_texture(world: World, a1: Tile, a3: int, /) -> int:
+    __goto_label = "start"
+    while True:
+        try:
+            if __goto_label == "start":
+                v5: bool | int = False
+                tile_x: int = 0
+                tile_y: int = 0
+                bg_id: int = 0
+                width: int = 0
+                v10: int = 0
+                v11: Tile | None = None
+                v12: int = 0
+                v13: bool | int = False
+                v14: int = 0
+                v15: int = 0
+                v16: Tile | None = None
+                v17: int = 0
+                v18: bool | int = False
+                v19: int = 0
+                v20: int = 0
+                v21: int = 0
+                v22: int = 0
+                v23: int = 0
+                v24: int = 0
+                v25: Tile | None = None
+                v26: int = 0
+                v27: int = 0
+                v28: int = 0
+                v29: Tile | None = None
+                v30: int = 0
+                is_flipped: int = 0
+                foreground_or_background_id: int = 0
+                v33: int = 0
+                v34: int = 0
+                v35: int = 0
+                v36: int = 0
+                result: int = 0
+                if a3:
+                    v5 = a1.flags & 32 != 0
+                    if a1.flags & 32 != 0:
+                        tile_x = a1.pos.x
+                        tile_y = a1.pos.y
+                        bg_id = a1.bg_id
+                        width = world.width
+                        v10 = tile_y + 1
+                        v13 = (
+                            ((tile_x + 1 >= width or v10 >= world.height) or (v11 := world.get_tile(tile_x + 1 + v10 * width)) == None)
+                            or ((v12 := v11.bg_id) != BLANK and v11.flags & 2048 != 0)
+                        ) or (v12 == bg_id and (v11.flags & 32 != 0) == v5)
+                        v14 = tile_x - 1
+                        v15 = tile_y - 1
+                        if tile_x - 1 < 0:
+                            __goto_label = "LABEL_22"
+                            raise Exception("__GOTO_CONTINUE__")
+                        if v15 < 0:
+                            __goto_label = "LABEL_22"
+                            raise Exception("__GOTO_CONTINUE__")
+                        if v14 >= width:
+                            __goto_label = "LABEL_22"
+                            raise Exception("__GOTO_CONTINUE__")
+                        if v15 >= world.height:
+                            __goto_label = "LABEL_22"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v16 = world.get_tile(v14 + v15 * width)
+                        if not v16:
+                            __goto_label = "LABEL_22"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v17 = v16.bg_id
+                        if v17 and v16.flags & 2048 != 0:
+                            v18 = 1
+                            __goto_label = "LABEL_48"
+                            raise Exception("__GOTO_CONTINUE__")
+                        if v17 == bg_id and (v16.flags & 32 != 0) == v5:
+                            __goto_label = "LABEL_22"
+                            raise Exception("__GOTO_CONTINUE__")
+                        __goto_label = "LABEL_23"
+                        raise Exception("__GOTO_CONTINUE__")
+                    v19 = a1.pos.x
+                    v20 = a1.pos.y
+                    v21 = a1.bg_id
+                    v22 = v19 - 1
+                    v23 = v20 + 1
+                    v13 = (
+                        (((v19 - 1 < 0 or ((v24 := world.width), v22 >= v24)[-1]) or v23 >= world.height) or (v25 := world.get_tile(v22 + v23 * v24)) == None)
+                        or ((v26 := v25.bg_id) != BLANK and v25.flags & 2048 != 0)
+                    ) or (v26 == v21 and v25.flags & 32 == 0)
+                    v27 = v20 - 1
+                    if (((v20 - 1 < 0 or ((v28 := world.width), v19 + 1 >= v28)[-1]) or v27 >= world.height) or (v29 := world.get_tile(v27 * v28 + 1 + v19)) == None,)[-1]:
+                        v18 = 1
+                        __goto_label = "LABEL_48"
+                        raise Exception("__GOTO_CONTINUE__")
+                    assert v29
+                    v30 = v29.bg_id
+                    if v30 and v29.flags & 2048 != 0:
+                        v18 = 1
+                    else:
+                        if v30 != v21 or v29.flags & 32 != 0:
+                            __goto_label = "LABEL_23"
+                            raise Exception("__GOTO_CONTINUE__")
+                        v18 = 1
+                else:
+                    is_flipped = a1.flags & 32 != 0
+                    if a1.flags & 32 != 0:
+                        foreground_or_background_id = a1.front
+                        v13 = tile_is_flipped(world, a1.pos.x + 1, a1.pos.y + 1, foreground_or_background_id, is_flipped)
+                        v33 = a1.flags & 32 != 0
+                        v34 = a1.front
+                        v35 = a1.pos.x - 1
+                    else:
+                        v36 = a1.front
+                        v13 = tile_is_flipped(world, a1.pos.x - 1, a1.pos.y + 1, v36, 0)
+                        v33 = a1.flags & 32 != 0
+                        v34 = a1.front
+                        v35 = a1.pos.x + 1
+                    v18 = tile_is_flipped(world, v35, a1.pos.y - 1, v34, v33)
+                if v13:
+                    return 2 - v18
+                result = 3
+                if v18:
+                    return 0
+                return result
+            elif __goto_label == "LABEL_22":
+                v18 = 1
+                __goto_label = "LABEL_48"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_23":
+                v18 = 0
+                __goto_label = "LABEL_48"
+                raise Exception("__GOTO_CONTINUE__")
+            elif __goto_label == "LABEL_48":
+                if v13:
+                    return 2 - v18
+                result = 3
+                if v18:
+                    return 0
+                return result
+            else:
+                raise Exception("__GOTO_BREAK__")
+        except Exception as __goto_except:
+            if "__GOTO_CONTINUE__" in str(__goto_except):
+                continue
+            if "__GOTO_BREAK__" in str(__goto_except):
+                break
+            raise __goto_except
+    return result
 
 
 def update_tile_connectivity(world: World, tile: Tile, /) -> None:
@@ -2133,19 +2590,19 @@ def update_tile_connectivity(world: World, tile: Tile, /) -> None:
                             if item_by_id.flags2 & 1 != 0:
                                 tile.fg_tex_index = handle_random_seed_texture(world, tile, 0)
                             else:
-                                tile.fg_tex_index = sub_140564120(world, tile, 0)
+                                tile.fg_tex_index = handle_random_texture(world, tile, 0)
                             break
                         if __matched0 or __switch_on0 == ItemInfoTextureType.SMART_EDGE_VERT:
                             if not __matched0 and __switch_on0 == ItemInfoTextureType.SMART_EDGE_VERT:
                                 _switch_matched_any0 = True
                             __matched0 = True
-                            tile.fg_tex_index = sub_1405637_d0(world, tile, 0)
+                            tile.fg_tex_index = handle_smart_edge_vert_texture(world, tile, 0)
                             break
                         if __matched0 or __switch_on0 == ItemInfoTextureType.SMART_EDGE_DIAGON:
                             if not __matched0 and __switch_on0 == ItemInfoTextureType.SMART_EDGE_DIAGON:
                                 _switch_matched_any0 = True
                             __matched0 = True
-                            tile.fg_tex_index = sub_1405630_e0(world, tile, 0)
+                            tile.fg_tex_index = handle_smart_edge_diagon_texture(world, tile, 0)
                             break
                         if __matched0 or not _switch_matched_any0:
                             __matched0 = True
@@ -2199,13 +2656,13 @@ def update_tile_connectivity(world: World, tile: Tile, /) -> None:
                             if not __matched1 and __switch_on1 == ItemInfoTextureType.RANDOM:
                                 _switch_matched_any1 = True
                             __matched1 = True
-                            tile.bg_tex_index = sub_140564120(world, tile, 1)
+                            tile.bg_tex_index = handle_random_texture(world, tile, 1)
                             break
                         if __matched1 or __switch_on1 == ItemInfoTextureType.SMART_EDGE_VERT:
                             if not __matched1 and __switch_on1 == ItemInfoTextureType.SMART_EDGE_VERT:
                                 _switch_matched_any1 = True
                             __matched1 = True
-                            tile.bg_tex_index = sub_1405637_d0(world, tile, 1)
+                            tile.bg_tex_index = handle_smart_edge_vert_texture(world, tile, 1)
                             break
                         if __matched1 or __switch_on1 == ItemInfoTextureType.SMART_EDGE_DIAGON:
                             if not __matched1 and __switch_on1 == ItemInfoTextureType.SMART_EDGE_DIAGON:
@@ -2221,8 +2678,9 @@ def update_tile_connectivity(world: World, tile: Tile, /) -> None:
                         break
                 raise Exception("__GOTO_BREAK__")
             elif __goto_label == "LABEL_19":
-                tile.bg_tex_index = handle_smart_edge_horiz_for_seed(v10, v12, 1)
-                breakhandle_smart_edge_horiz_seed_texture
+                assert v10 and v12
+                tile.bg_tex_index = handle_smart_edge_horiz_seed_texture(v10, v12, 1)
+                break
             else:
                 raise Exception("__GOTO_BREAK__")
         except Exception as __goto_except:

@@ -34,6 +34,7 @@ from gtools.proxy import login
 from gtools.proxy.extension.broker import Broker
 from gtools.proxy.extension.sdk import Extension, register_thread
 from gtools.proxy.proxy import Proxy
+from scripts.tileset import update_tile_connectivity
 from thirdparty.enet.bindings import ENetPacketFlag
 from gtools.proxy.setting import setting
 from extension.utils import UtilityExtension
@@ -198,12 +199,16 @@ if __name__ == "__main__":
 
         img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
         start = time.perf_counter()
-        for cmd in renderer.batch_render_cmd(world.tiles):
-            for dst in cmd.dst:
-                dst = ivec4(dst)
-                alpha_mask = cmd.buffer[:, :, 3] > 4
-                dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
-                dst_slice[alpha_mask] = cmd.buffer[:, :, : dst_slice.shape[2]][alpha_mask]
+        for tile in world.tiles:
+            update_tile_connectivity(world, tile)
+
+        for tile in world.tiles:
+            for cmd in renderer.get_render_cmd(tile):
+                for dst in cmd.dst:
+                    dst = ivec4(dst)
+                    alpha_mask = cmd.buffer[:, :, 3] > 4
+                    dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                    dst_slice[alpha_mask] = cmd.buffer[:, :, : dst_slice.shape[2]][alpha_mask]
         print(f"rendering took {time.perf_counter() - start:.3f}s")
 
         Image.fromarray(img).show()
