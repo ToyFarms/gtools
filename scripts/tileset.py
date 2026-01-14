@@ -1,3 +1,4 @@
+# pyright: reportUnreachable=false, reportOperatorIssue=false
 from PIL import Image
 import click
 from pyglm.glm import ivec2, ivec4
@@ -626,7 +627,6 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 __goto_label = "LABEL_11"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_100":
-                assert v35
                 north_west_tile = v35 == bg_id
                 __goto_label = "LABEL_72"
                 raise Exception("__GOTO_CONTINUE__")
@@ -638,14 +638,12 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if v33 < 0:
                     __goto_label = "LABEL_117"
                     raise Exception("__GOTO_CONTINUE__")
-                assert v9
                 if v9 >= width:
                     __goto_label = "LABEL_117"
                     raise Exception("__GOTO_CONTINUE__")
                 if v33 >= world.height:
                     __goto_label = "LABEL_117"
                     raise Exception("__GOTO_CONTINUE__")
-                assert v33
                 v41 = world.get_tile(width * v33 + 1 + v68)
                 if not v41:
                     __goto_label = "LABEL_117"
@@ -672,7 +670,6 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_11":
                 v15 = tile_y + 1
-                assert v9
                 if v9 >= width:
                     __goto_label = "LABEL_19"
                     raise Exception("__GOTO_CONTINUE__")
@@ -822,14 +819,12 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_20":
                 v70 = v19
-                assert tile_x
                 if tile_x >= width:
                     __goto_label = "LABEL_39"
                     raise Exception("__GOTO_CONTINUE__")
                 if v15 >= world.height:
                     __goto_label = "LABEL_39"
                     raise Exception("__GOTO_CONTINUE__")
-                assert v15
                 v20 = world.get_tile(tile_x + v15 * width)
                 if not v20:
                     __goto_label = "LABEL_39"
@@ -891,12 +886,10 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                     else:
                         return 30
             elif __goto_label == "LABEL_30":
-                assert v12
                 v14 = v12 == bg_id
                 __goto_label = "LABEL_11"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_35":
-                assert v17
                 v19 = v17 == bg_id
                 __goto_label = "LABEL_20"
                 raise Exception("__GOTO_CONTINUE__")
@@ -919,7 +912,6 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if v15 >= world.height:
                     __goto_label = "LABEL_50"
                     raise Exception("__GOTO_CONTINUE__")
-                assert v15
                 v25 = world.get_tile(v24 + v15 * width)
                 if not v25:
                     __goto_label = "LABEL_50"
@@ -952,7 +944,6 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if v24 < 0:
                     __goto_label = "LABEL_60"
                     raise Exception("__GOTO_CONTINUE__")
-                assert v24
                 if v24 >= width:
                     __goto_label = "LABEL_60"
                     raise Exception("__GOTO_CONTINUE__")
@@ -995,7 +986,6 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if v33 < 0:
                     __goto_label = "LABEL_71"
                     raise Exception("__GOTO_CONTINUE__")
-                assert v24
                 if v24 >= width:
                     __goto_label = "LABEL_71"
                     raise Exception("__GOTO_CONTINUE__")
@@ -1034,14 +1024,12 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 if v33 < 0:
                     __goto_label = "LABEL_107"
                     raise Exception("__GOTO_CONTINUE__")
-                assert tile_x
                 if tile_x >= width:
                     __goto_label = "LABEL_107"
                     raise Exception("__GOTO_CONTINUE__")
                 if v33 >= world.height:
                     __goto_label = "LABEL_107"
                     raise Exception("__GOTO_CONTINUE__")
-                assert v33
                 v38 = world.get_tile(tile_x + v33 * width)
                 if not v38:
                     __goto_label = "LABEL_107"
@@ -1067,17 +1055,14 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
                 __goto_label = "LABEL_108"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_85":
-                assert v21
                 v23 = v21 == bg_id
                 __goto_label = "LABEL_40"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_90":
-                assert v26
                 south_west_tile = v26 == bg_id
                 __goto_label = "LABEL_51"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_95":
-                assert v30
                 west_tile = v30 == bg_id
                 __goto_label = "LABEL_61"
                 raise Exception("__GOTO_CONTINUE__")
@@ -1267,7 +1252,6 @@ def handle_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_11":
                 v14 = tile_y + 1
-                assert tile_x and width
                 if tile_x >= width:
                     __goto_label = "LABEL_18"
                     raise Exception("__GOTO_CONTINUE__")
@@ -1339,7 +1323,6 @@ def handle_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_29":
                 v23 = tile_y - 1
-                assert tile_x and width
                 if v23 < 0 or (
                     tile_x >= width or (v23 >= a1.height or ((v24 := a1.get_tile(ivec2(tile_x, tile_y))) == None or ((v25 := v24.bg_id) != BLANK and v24.flags & 2048 != 0)))
                 ):
@@ -1363,17 +1346,14 @@ def handle_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
                 __goto_label = "LABEL_59"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_40":
-                assert v11
                 east_tile = v11 == bg
                 __goto_label = "LABEL_11"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_43":
-                assert v16
                 south_tile = v16 == bg
                 __goto_label = "LABEL_19"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_48":
-                assert v20
                 west_tile = v20 == bg
                 __goto_label = "LABEL_29"
                 raise Exception("__GOTO_CONTINUE__")
@@ -1653,7 +1633,6 @@ def handle_smart_edge_horiz_texture(world: World, tile: Tile, a3: int, /) -> int
                 if tile_y >= world.height:
                     __goto_label = "LABEL_20"
                     raise Exception("__GOTO_CONTINUE__")
-                assert tile_y
                 v14 = world.get_tile(tile_y * width + v13)
                 if not v14:
                     __goto_label = "LABEL_20"
@@ -1683,12 +1662,10 @@ def handle_smart_edge_horiz_texture(world: World, tile: Tile, a3: int, /) -> int
                 __goto_label = "LABEL_32"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_25":
-                assert v10
                 v12 = v10 == bg_id
                 __goto_label = "LABEL_11"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_30":
-                assert v15
                 v17 = v15 == bg_id
                 __goto_label = "LABEL_32"
                 raise Exception("__GOTO_CONTINUE__")
@@ -2133,12 +2110,10 @@ def handle_random_texture(world: World, tile: Tile, a3: int, /) -> int:
                 __goto_label = "LABEL_32"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_25":
-                assert v11
                 v13 = v11 == bg_id
                 __goto_label = "LABEL_12"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_30":
-                assert v17
                 v19 = v17 == bg_id
                 __goto_label = "LABEL_32"
                 raise Exception("__GOTO_CONTINUE__")
@@ -2306,7 +2281,6 @@ def handle_smart_edge_vert_texture(world: World, a1: Tile, a3: int, /) -> int:
                     return 3 - v28
                 raise Exception("__GOTO_BREAK__")
             elif __goto_label == "LABEL_24":
-                assert v23
                 v10 = v23 == bg_id
                 __goto_label = "LABEL_25"
                 raise Exception("__GOTO_CONTINUE__")
@@ -2321,7 +2295,6 @@ def handle_smart_edge_vert_texture(world: World, a1: Tile, a3: int, /) -> int:
                 if v21 >= world.height:
                     __goto_label = "LABEL_34"
                     raise Exception("__GOTO_CONTINUE__")
-                assert v21 and v19
                 v25 = world.get_tile(v21 * v19 + v24)
                 if not v25:
                     __goto_label = "LABEL_34"
@@ -2351,7 +2324,6 @@ def handle_smart_edge_vert_texture(world: World, a1: Tile, a3: int, /) -> int:
                 __goto_label = "LABEL_41"
                 raise Exception("__GOTO_CONTINUE__")
             elif __goto_label == "LABEL_39":
-                assert v26
                 v28 = v26 == bg_id
                 __goto_label = "LABEL_41"
                 raise Exception("__GOTO_CONTINUE__")

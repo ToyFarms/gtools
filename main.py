@@ -7,6 +7,7 @@ from queue import Queue
 import sys
 import threading
 import time
+from traceback import print_exc
 
 from PIL import Image
 import numpy as np
@@ -199,19 +200,24 @@ if __name__ == "__main__":
 
         img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
         start = time.perf_counter()
-        for tile in world.tiles:
-            update_tile_connectivity(world, tile)
+        try:
+            for tile in world.tiles:
+                update_tile_connectivity(world, tile)
+        except Exception as e:
+            print_exc()
 
         for i, tile in enumerate(world.tiles):
             if i == world.garbage_start:
                 break
-            for cmd in renderer.get_render_cmd(tile):
-                for dst in cmd.dst:
-                    dst = ivec4(dst)
-                    alpha_mask = cmd.buffer[:, :, 3] > 4
-                    dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
-                    dst_slice[alpha_mask] = cmd.buffer[:, :, : dst_slice.shape[2]][alpha_mask]
+            try:
+                for cmd in renderer.get_render_cmd(tile):
+                    for dst in cmd.dst:
+                        dst = ivec4(dst)
+                        alpha_mask = cmd.buffer[:, :, 3] > 4
+                        dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                        dst_slice[alpha_mask] = cmd.buffer[:, :, : dst_slice.shape[2]][alpha_mask]
+            except:
+                break
         print(f"rendering took {time.perf_counter() - start:.3f}s")
 
-        Image.fromarray(img).show()
-
+        # Image.fromarray(img).show()

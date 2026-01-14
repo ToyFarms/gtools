@@ -100,6 +100,7 @@ message Tile {
   uint32 x = 6;
   uint32 y = 7;
   uint32 lock_block_index = 8;
+  bytes json_data = 9;
 }
 
 // the world data

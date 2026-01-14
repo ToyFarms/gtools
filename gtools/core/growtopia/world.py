@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 from enum import IntFlag
 from inspect import isabstract
 import logging
-from typing import ClassVar, Literal, Self
+from typing import ClassVar, Self
 
 from pyglm.glm import ivec2, vec2
+from gtools.baked.items import DATA_BEDROCK, DATA_STARSHIP_HULL, GUILD_LOCK
 from gtools.core.buffer import Buffer
 import cbor2
 
@@ -112,8 +113,7 @@ class GuildData:
     @classmethod
     def deserialize(cls, s: Buffer, id: int) -> "GuildData":
         t = cls()
-        # guild lock
-        if id != 5814:
+        if id != GUILD_LOCK:
             t.unk1 = s.read_u8()
         t.unk2 = s.read_u32()
         t.unk3 = s.read_u32()
@@ -163,8 +163,7 @@ class BedrockData:
         return t
 
 
-CborData = dict
-SpecialData = GuildData | StarshipHullData | BedrockData | CborData
+SpecialData = GuildData | StarshipHullData | BedrockData
 
 
 class TileExtra(ABC):
@@ -172,7 +171,6 @@ class TileExtra(ABC):
 
     _registry: dict[int, type["TileExtra"]] = {}
     logger = logging.getLogger("tile_extra")
-    special_data: SpecialData | None = None
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -190,28 +188,6 @@ class TileExtra(ABC):
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> Self: ...
 
     @classmethod
-    def handle_special_tile(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> SpecialData | None:
-        item = item_database.get(fg_id if fg_id > 0 else bg_id)
-
-        cbor_ids = [
-            15376,  # party projector
-            8642,  # bountiful lattice fence roots
-            15546,  # auction block
-            14666,  # auto surgeon
-            14662,  # operating table
-            3548,  # battle pet cage
-        ]
-
-        if item.flags2 & ItemInfoFlag2.GUILD_ITEM:
-            return GuildData.deserialize(s, item.id)
-        elif item.id == 6546 and format_version > 4:  # starship hull
-            return StarshipHullData.deserialize(s, format_version)
-        elif item.id == 42 and format_version > 10:  # bedrock
-            return BedrockData.deserialize(s)
-        elif item.id in cbor_ids:
-            return cbor2.loads(s.read_pascal_bytes("I"))
-
-    @classmethod
     def dispatch(cls, s: Buffer, fg: int = -1, bg: int = -1, format_version=999999999) -> "TileExtra":
         type = s.read_u8()
         if type not in TileExtra._registry:
@@ -223,9 +199,6 @@ class TileExtra(ABC):
             raise NotImplementedError(f"parser for object {t.__name__} is not implemented")
 
         extra = t.deserialize(s, fg, bg, format_version)
-        if fg > 0 or bg > 0:
-            extra.special_data = cls.handle_special_tile(s, fg, bg, format_version)
-
         return extra
 
 
@@ -959,15 +932,16 @@ class FishWallMountTile(TileExtra):
 class PortraitTile(TileExtra):
     ID = 48
     label: bytes = b""
-    unk1: int = 0  # u32
-    unk2: int = 0  # u32
-    unk3: int = 0  # u32
-    unk4: int = 0  # u32
-    face: int = 0  # u32
-    hat: int = 0  # u32
-    hair: int = 0  # u32
-    unk5: int = 0  # u16
-    unk6: int = 0  # u16
+    unk1: int = 0
+    unk2: int = 0
+    unk3: int = 0
+    unk4: int = 0
+    unk5: int = 0
+    unk6: int = 0
+    face: int = 0
+    hat: int = 0
+    hair: int = 0
+    unk10: int = 0
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "PortraitTile":
@@ -977,11 +951,12 @@ class PortraitTile(TileExtra):
         t.unk2 = s.read_u32()
         t.unk3 = s.read_u32()
         t.unk4 = s.read_u32()
-        t.face = s.read_u32()
-        t.hat = s.read_u32()
-        t.hair = s.read_u32()
-        t.unk5 = s.read_u16()
-        t.unk6 = s.read_u16()
+        t.unk5 = s.read_u8()
+        t.unk6 = s.read_u8()
+        t.face = s.read_u16()
+        t.hat = s.read_u16()
+        t.hair = s.read_u16()
+        t.unk10 = s.read_u16()
 
         return t
 
@@ -1221,7 +1196,7 @@ class GuildItemTile(TileExtra):
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "GuildItemTile":
         t = cls()
-        t.unk1 = s.read_bytes(17)
+        # t.unk1 = s.read_bytes(17)
         return t
 
 
@@ -1587,6 +1562,7 @@ class Tile:
     # data
     fg_tex_index: int = 0
     bg_tex_index: int = 0
+    json_data: dict = field(default_factory=dict)
 
     logger = logging.getLogger("tile")
 
@@ -1617,6 +1593,7 @@ class Tile:
             _extra_raw=proto.extra,
             pos=ivec2(proto.x, proto.y),
             lock_block_index=proto.lock_block_index,
+            json_data=cbor2.loads(proto.json_data),
         )
 
     def to_proto(self) -> growtopia_pb2.Tile:
@@ -1629,6 +1606,7 @@ class Tile:
             x=self.pos.x,
             y=self.pos.y,
             lock_block_index=self.lock_block_index,
+            json_data=cbor2.dumps(self.json_data),
         )
 
     @classmethod
@@ -1649,6 +1627,18 @@ class Tile:
 
             s.rpos = start
             tile._extra_raw = s.read_bytes(extra_size)
+
+        cbor_ids = [
+            15376,  # party projector
+            8642,  # bountiful lattice fence roots
+            15546,  # auction block
+            14666,  # auto surgeon
+            14662,  # operating table
+            3548,  # battle pet cage
+        ]
+
+        if tile.front in cbor_ids:
+            tile.json_data = cbor2.loads(s.read_pascal_bytes("I"))
 
         return tile
 
