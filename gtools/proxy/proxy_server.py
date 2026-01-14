@@ -26,23 +26,6 @@ class ProxyServer(ENetPeerBase):
         enet_host_use_crc32(self.host)
         enet_host_use_new_packet_for_server(self.host)
 
-    def disconnect_now(self) -> None:
-        super().disconnect_now()
-        if not self.addr:
-            self.logger.warning("addr is null, not rebuilding server")
-            return
-
-        enet_host_destroy(self.host)
-
-        self.peer = None
-        self.host = enet_host_create(byref(self.addr), 1, 2, 0, 0)
-        if not self.host:
-            raise RuntimeError("host is null")
-
-        enet_host_compress_with_range_coder(self.host)
-        enet_host_use_crc32(self.host)
-        enet_host_use_new_packet_for_server(self.host)
-
     def poll(self) -> PyENetEvent | None:
         event = super().poll()
         if event:

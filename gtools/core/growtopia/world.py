@@ -1553,12 +1553,12 @@ class TileFlags(IntFlag):
 
 
 @dataclass(slots=True)
-class Tile:
+class Tile[T: TileExtra]:
     fg_id: int = 0
     bg_id: int = 0
     parent_block_index: int = 0
     flags: TileFlags = TileFlags.NONE
-    extra: TileExtra | None = None
+    extra: T | None = None
     _extra_raw: bytes = b""
     pos: ivec2 = field(default_factory=ivec2)
     lock_block_index: int = 0

@@ -63,7 +63,7 @@ class AutoFishExtension(Extension):
     def thread_info(self) -> None:
         while True:
             if self.state.status == Status.IN_WORLD:
-                self.send_particle(ParticleID.GEIGER_PING_RED, abs=self.state.me.pos)
+                self.send_particle(ParticleID.GEIGER_PING, abs=self.state.me.pos)
                 self.send_particle(ParticleID.LBOT_PLACE, tile=self.fish_pos)
 
             self.console_log(f"{self.state.status.name} {self.state.inventory.get(self.bait)}")
@@ -102,7 +102,7 @@ class AutoFishExtension(Extension):
 
                         # NOTE: gone fishin net id can be used to identify
                         self.send_particle(ParticleID.LBOT_PLACE, tile=self.fish_pos)
-                        self.send_particle(ParticleID.GEIGER_PING_RED, abs=self.state.me.pos)
+                        self.send_particle(ParticleID.GEIGER_PING, abs=self.state.me.pos)
 
                         self.send_reel_packet()
                         time.sleep(random.uniform(0.261, 0.400))

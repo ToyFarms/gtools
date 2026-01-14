@@ -1,10 +1,16 @@
 from enum import IntEnum, auto
 import random
 import time
+from typing import Iterator
 
+from pyglm.glm import ivec2
+
+from gtools.baked.items import DIGIVEND_MACHINE, VENDING_MACHINE
 from gtools.core.growtopia.items_dat import item_database
+from gtools.core.growtopia.particles import ParticleID
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
+from gtools.core.growtopia.world import Tile, VendingMachineTile
 from gtools.core.task_scheduler import schedule_task
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
@@ -35,6 +41,33 @@ class Action(IntEnum):
 
     GAZETTE_DIALOG = auto()
     PING_CMD = auto()
+
+
+def bresenham(x0: int, y0: int, x1: int, y1: int) -> Iterator[ivec2]:
+    dx = x1 - x0
+    dy = y1 - y0
+
+    xsign = 1 if dx > 0 else -1
+    ysign = 1 if dy > 0 else -1
+
+    dx = abs(dx)
+    dy = abs(dy)
+
+    if dx > dy:
+        xx, xy, yx, yy = xsign, 0, 0, ysign
+    else:
+        dx, dy = dy, dx
+        xx, xy, yx, yy = 0, ysign, xsign, 0
+
+    D = 2 * dy - dx
+    y = 0
+
+    for x in range(dx + 1):
+        yield ivec2(x0 + x * xx + y * yx, y0 + x * xy + y * yy)
+        if D >= 0:
+            y += 1
+            D -= 2 * dx
+        D += 2 * dy
 
 
 s = helper()
@@ -94,6 +127,7 @@ class UtilityExtension(Extension):
         self.should_block = False
         self.warp_target = None
         self.fast_drop = False
+        self.intercept_warp = True
 
     def to_main_menu(self) -> None:
         self.should_block = True
@@ -107,6 +141,14 @@ class UtilityExtension(Extension):
                 ENetPacketFlag.RELIABLE,
             )
         )
+
+
+    @dispatch(s.command_toggle("/nowrap", id=200))
+    def _toggle_nowrap(self, event: PendingPacket) -> PendingPacket | None:
+        self.intercept_warp = not self.intercept_warp
+        self.console_log(f"simulate warp: {self.intercept_warp}")
+
+        return self.cancel()
 
     @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
@@ -125,12 +167,12 @@ class UtilityExtension(Extension):
                     return self.cancel()
                 else:
                     return self.pass_to_next()
-            case Action.WARP:
+            case Action.WARP if self.intercept_warp:
                 self.warp_target = pkt.generic_text.relative[b"text", 1].decode().removeprefix("/warp").strip()
                 self.console_log(f"warping to {self.warp_target!r}")
                 self.to_main_menu()
                 return self.cancel()
-            case Action.EXITED:
+            case Action.EXITED if self.intercept_warp:
                 if self.warp_target:
                     time.sleep(random.uniform(0.529, 0.723))
                     self.push(
@@ -212,6 +254,51 @@ class UtilityExtension(Extension):
         search = s.parse_command(event).strip()
         for item in item_database.search(search):
             self.console_log(f"{item.name.decode()}: rarity={item.rarity}, id={item.id}")
+        return self.cancel()
+
+    @dispatch(s.command("/find", id=102))
+    def _vend(self, event: PendingPacket) -> PendingPacket | None:
+        if not self.state.world:
+            self.console_log("not in a world!")
+            return self.cancel()
+
+        search = s.parse_command(event).strip()
+        item = item_database.search(search)[0]
+        found: list[Tile[VendingMachineTile]] = []
+        self.console_log(f"searching for {item.name.decode()}")
+
+        for tile in self.state.world.tiles:
+            if tile.fg_id in (VENDING_MACHINE, DIGIVEND_MACHINE):
+                if not isinstance(tile.extra, VendingMachineTile):
+                    continue
+
+                if tile.extra.item_id == item.id:
+                    found.append(tile)
+
+        if not found:
+            self.console_log(f"item '{item.name.decode()}' not found")
+            return self.cancel()
+
+        self.console_log(f"{item.name.decode()}:")
+        for tile in found:
+            if not tile.extra:
+                continue
+
+            self.console_log(f"    pos={tile.pos.x},{tile.pos.y}, price={tile.extra.price}")
+
+        t = 0
+        for tile in found:
+            for tile_inbetween in bresenham(int(self.state.me.pos.x // 32), int(self.state.me.pos.y // 32), tile.pos.x, tile.pos.y):
+                schedule_task(lambda x=tile_inbetween, t=t: self.send_particle(ParticleID.GEIGER_PING, tile=x), t)
+                t += 0.1
+
+            t0 = t
+            t += 1
+            for _ in range(5):
+                schedule_task(lambda x=tile.pos: self.send_particle(ParticleID.GEIGER_PING, 2, tile=x), t)
+                t += 2
+            t = t0
+
         return self.cancel()
 
     def destroy(self) -> None:
