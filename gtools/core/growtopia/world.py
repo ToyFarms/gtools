@@ -8,11 +8,11 @@ import logging
 from typing import ClassVar, Self
 
 from pyglm.glm import ivec2, vec2
-from gtools.baked.items import DATA_BEDROCK, DATA_STARSHIP_HULL, GUILD_LOCK
+from gtools.baked.items import GUILD_LOCK
 from gtools.core.buffer import Buffer
 import cbor2
 
-from gtools.core.growtopia.items_dat import ItemInfoFlag2, ItemInfoTextureType, item_database
+from gtools.core.growtopia.items_dat import ItemInfoTextureType, item_database
 from gtools.core.growtopia.packet import TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RtTexManager
@@ -692,11 +692,15 @@ class SolarCollectorTile(TileExtra):
 class ForgeTile(TileExtra):
     ID = 27
     temperature: int = 0  # u32
+    unk1: int = 0  # u8
+    unk2: int = 0  # u16
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "ForgeTile":
         t = cls()
         t.temperature = s.read_u8()
+        t.unk1 = s.read_u8()
+        t.unk2 = s.read_u16()
 
         return t
 
