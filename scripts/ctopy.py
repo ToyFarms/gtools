@@ -82,6 +82,7 @@ def ctopy8(code: str) -> None:
     code = re.sub(r"get_foreground_or_background_id\(([^)]*)\)", r"\1.front", code)
     code = re.sub(r"getForegroundOrBackgroundId\(([^)]*)\)", r"\1.front", code)
     code = re.sub(r"GLUED", r"TileFlags.GLUED", code)
+    code = re.sub(r"FLIPPED_X", r"TileFlags.FLIPPED_X", code)
     code = re.sub(r"world_view", r"world", code)
     code = re.sub(r"tilesBegin\[([^\]]*)\]", r"get_tile(\1)", code)
     code = re.sub(r"is_tile_steam_type\(([^)]*)\)", r"item_database.get(\1.front).is_steam()", code)
@@ -96,6 +97,7 @@ def ctopy8(code: str) -> None:
     code = re.sub(r"get_item_manager\(\)", r"item_database", code)
     code = re.sub(r"item_database.itemsBegin\[([^\]]*)\]", r"item_database.get(\1)", code)
     code = re.sub(r"maybe_get_item_by_id\(.*, ([^)]*)\)", r"item_database.get(\1)", code)
+    code = re.sub(r"'ItemID' = None", r"int = 0", code)
 
 
     print(code)
