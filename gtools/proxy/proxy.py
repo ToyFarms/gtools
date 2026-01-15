@@ -441,15 +441,10 @@ class Proxy:
                         self._update_status(Status.IN_WORLD)
 
     def disconnect_all(self) -> None:
-        self.proxy_client.disconnect()
+        self.proxy_client.disconnect_now()
         self.proxy_server.disconnect_now()
         self._should_reconnect.set()
         self.logger.info("gt client disconnected")
-
-        if self.proxy_client.peer:
-            self.logger.info("waiting for proxy_client to disconnect...")
-            while self.proxy_client.peer:
-                self.proxy_client.poll()
 
     def _worker(self) -> None:
         self.logger.debug("starting packet worker thread")
