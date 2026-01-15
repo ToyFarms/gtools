@@ -4,7 +4,7 @@ import click
 from pyglm.glm import ivec2, ivec4
 import numpy as np
 
-from gtools.core.growtopia.items_dat import Item, ItemInfoTextureType, item_database
+from gtools.core.growtopia.items_dat import Item, ItemInfoCollisionType, ItemInfoTextureType, item_database
 from gtools.core.growtopia.renderer.world_renderer import WorldRenderer
 from gtools.core.growtopia.rttex import get_image_buffer
 from gtools.core.growtopia.world import Tile, TileFlags, World
@@ -1077,7 +1077,7 @@ def handle_smart_edge_texture(world: World, tile: Tile, a3: int, /) -> int:
     assert False
 
 
-def handle_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
+def handle_smart_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
     __goto_label = "start"
     while True:
         try:
@@ -1432,6 +1432,42 @@ def handle_cling2_texture(a1: World, a2: Tile, a3: int, /) -> int:
             raise __goto_except
     assert False
 
+
+def handle_smart_cling_texture(world: World, tile: Tile, _a3: int) -> int:
+    """
+    texture index,
+    0: left
+    1: top
+    2: right
+    3: bottom
+    4: floating
+
+    priority,
+    bottom, top, left, right, floating
+    """
+
+    def should_connect(x: int, y: int) -> bool:
+        if not (0 <= x < world.width and 0 <= y < world.height):
+            return False
+        neighbor = world.get_tile(ivec2(x, y))
+        if not neighbor or neighbor.fg_id == 0:
+            return False
+        return item_database.get(neighbor.fg_id).collision_type == ItemInfoCollisionType.FULL
+
+    x, y = tile.pos.x, tile.pos.y
+
+    checks = [
+        (3, x, y + 1),  # bottom
+        (1, x, y - 1),  # top
+        (0, x - 1, y),  # left
+        (2, x + 1, y),  # right
+    ]
+
+    for texture, nx, ny in checks:
+        if should_connect(nx, ny):
+            return texture
+
+    return 4
 
 def handle_smart_edge_horiz_texture(world: World, tile: Tile, a3: int, /) -> int:
     __goto_label = "start"
@@ -2569,7 +2605,7 @@ def update_tile_connectivity(world: World, tile: Tile, /) -> None:
                             if not __matched0 and __switch_on0 == ItemInfoTextureType.SMART_CLING2:
                                 _switch_matched_any0 = True
                             __matched0 = True
-                            tile.fg_tex_index = handle_cling2_texture(world, tile, 0)
+                            tile.fg_tex_index = handle_smart_cling2_texture(world, tile, 0)
                             break
                         if __matched0 or __switch_on0 == ItemInfoTextureType.RANDOM:
                             if not __matched0 and __switch_on0 == ItemInfoTextureType.RANDOM:
@@ -2591,6 +2627,12 @@ def update_tile_connectivity(world: World, tile: Tile, /) -> None:
                                 _switch_matched_any0 = True
                             __matched0 = True
                             tile.fg_tex_index = handle_smart_edge_diagon_texture(world, tile, 0)
+                            break
+                        if __matched0 or __switch_on0 == ItemInfoTextureType.SMART_CLING:
+                            if not __matched0 and __switch_on0 == ItemInfoTextureType.SMART_CLING:
+                                _switch_matched_any0 = True
+                            __matched0 = True
+                            tile.fg_tex_index = handle_smart_cling_texture(world, tile, 0)
                             break
                         if __matched0 or not _switch_matched_any0:
                             __matched0 = True
@@ -2638,7 +2680,7 @@ def update_tile_connectivity(world: World, tile: Tile, /) -> None:
                             if not __matched1 and __switch_on1 == ItemInfoTextureType.SMART_CLING2:
                                 _switch_matched_any1 = True
                             __matched1 = True
-                            tile.bg_tex_index = handle_cling2_texture(world, tile, 1)
+                            tile.bg_tex_index = handle_smart_cling2_texture(world, tile, 1)
                             break
                         if __matched1 or __switch_on1 == ItemInfoTextureType.RANDOM:
                             if not __matched1 and __switch_on1 == ItemInfoTextureType.RANDOM:

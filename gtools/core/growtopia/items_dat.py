@@ -522,6 +522,13 @@ class Item:
             items.STEAM_LAMP,
         )
 
+    def is_background(self) -> bool:
+        return self.item_type in (
+            ItemInfoType.BACKGROUND,
+            ItemInfoType.BACKGD_SFX_EXTRA_FRAME,
+            ItemInfoType.MUSICNOTE,
+        )
+
     def get_tex_stride(self) -> int:
         match self.texture_type:
             case ItemInfoTextureType.SINGLE_FRAME_ALONE:
