@@ -1553,12 +1553,12 @@ class TileFlags(IntFlag):
 
 
 @dataclass(slots=True)
-class Tile[T: TileExtra]:
+class Tile:
     fg_id: int = 0
     bg_id: int = 0
     parent_block_index: int = 0
     flags: TileFlags = TileFlags.NONE
-    extra: T | None = None
+    extra: TileExtra | None = None
     _extra_raw: bytes = b""
     pos: ivec2 = field(default_factory=ivec2)
     lock_block_index: int = 0
@@ -1603,7 +1603,7 @@ class Tile[T: TileExtra]:
             bg_id=proto.bg_id,
             parent_block_index=proto.parent_block_index,
             flags=TileFlags(proto.flags),
-            extra=TileExtra.dispatch(Buffer(proto.extra)) if proto.extra else None,
+            extra=TileExtra.dispatch(Buffer(proto.extra), proto.fg_id, proto.bg_id) if proto.extra else None,
             _extra_raw=proto.extra,
             pos=ivec2(proto.x, proto.y),
             lock_block_index=proto.lock_block_index,

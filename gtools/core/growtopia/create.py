@@ -31,6 +31,14 @@ def play_positioned(path: str | bytes, net_id: int) -> NetPacket:
     return NetPacket(NetType.TANK_PACKET, call)
 
 
+def play_sfx(path: str | bytes, delay_ms: int = 0) -> NetPacket:
+    kv = StrKV()
+    kv[b"action"] = b"play_sfx"
+    kv[b"file"] = path
+    kv[b"delayMS"] = delay_ms
+    return NetPacket(NetType.GAME_MESSAGE, kv)
+
+
 def chat(text: str | bytes) -> NetPacket:
     text = text if isinstance(text, bytes) else text.encode()
     return NetPacket(NetType.GENERIC_TEXT, StrKV([[b"action", b"input"], [b"", b"text", text]]))

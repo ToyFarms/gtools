@@ -264,7 +264,7 @@ class UtilityExtension(Extension):
 
         search = s.parse_command(event).strip()
         item = item_database.search(search)[0]
-        found: list[Tile[VendingMachineTile]] = []
+        found: list[Tile] = []
         self.console_log(f"searching for {item.name.decode()}")
 
         for tile in self.state.world.tiles:
@@ -281,7 +281,7 @@ class UtilityExtension(Extension):
 
         self.console_log(f"{item.name.decode()}:")
         for tile in found:
-            if not tile.extra:
+            if not isinstance(tile.extra, VendingMachineTile):
                 continue
 
             self.console_log(f"    pos={tile.pos.x},{tile.pos.y}, price={tile.extra.price}")
