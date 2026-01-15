@@ -58,14 +58,14 @@ def tile_should_connect(world: World, tile_x: int, tile_y: int, item_id: int, ma
         try:
             if __goto_label == "start":
                 if tile_x < 0:
-                    return 1
+                    return 0
                 if tile_y < 0:
-                    return 1
+                    return 0
                 width = world.width
                 if tile_x >= width:
-                    return 1
+                    return 0
                 if tile_y >= world.height:
-                    return 1
+                    return 0
                 tile = world.get_tile(ivec2(tile_x, tile_y))
                 if not tile or (tile.front and (tile.front & 1 == 0 and tile.flags & TileFlags.GLUED != 0)):
                     return 1
