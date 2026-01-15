@@ -128,6 +128,7 @@ class UtilityExtension(Extension):
         self.warp_target = None
         self.fast_drop = False
         self.intercept_warp = True
+        self.fast_drop_amt = 200
 
     def to_main_menu(self) -> None:
         self.should_block = True
@@ -141,7 +142,6 @@ class UtilityExtension(Extension):
                 ENetPacketFlag.RELIABLE,
             )
         )
-
 
     @dispatch(s.command_toggle("/nowrap", id=200))
     def _toggle_nowrap(self, event: PendingPacket) -> PendingPacket | None:
@@ -208,7 +208,8 @@ class UtilityExtension(Extension):
                     res_data[b"action"] = b"dialog_return"
                     res_data[b"dialog_name"] = b"drop_item"
                     res_data[b"itemID"] = kv.relative[b"itemID", 1], b""
-                    res_data[b"count"] = kv.relative[b"count", 2]
+                    count = min(int(kv.relative[b"count", 2]), self.fast_drop_amt)
+                    res_data[b"count"] = count
 
                     res = PreparedPacket(
                         NetPacket(NetType.GENERIC_TEXT, data=res_data.append_nl()),
@@ -300,6 +301,21 @@ class UtilityExtension(Extension):
             t = t0
 
         return self.cancel()
+
+    @dispatch(s.command("/sd", id=103))
+    def _setdrop(self, event: PendingPacket) -> PendingPacket | None:
+        amt = s.parse_command(event).strip()
+        if not amt:
+            amt = "200"
+        if not amt.isnumeric():
+            return self.cancel()
+
+        amt = int(amt)
+        self.console_log(f"fast drop amount set to {amt}")
+        self.fast_drop_amt = amt
+
+        return self.cancel()
+
 
     def destroy(self) -> None:
         pass
