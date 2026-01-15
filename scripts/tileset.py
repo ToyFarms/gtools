@@ -1446,12 +1446,17 @@ def handle_smart_cling_texture(world: World, tile: Tile, _a3: int) -> int:
     bottom, top, left, right, floating
     """
 
-    def should_connect(x: int, y: int) -> bool:
+    def should_connect(tile_id: int, x: int, y: int) -> bool:
         if not (0 <= x < world.width and 0 <= y < world.height):
             return False
+
         neighbor = world.get_tile(ivec2(x, y))
         if not neighbor or neighbor.fg_id == 0:
             return False
+
+        if neighbor.front == tile_id:
+            return False
+
         return item_database.get(neighbor.fg_id).collision_type == ItemInfoCollisionType.FULL
 
     x, y = tile.pos.x, tile.pos.y
@@ -1464,7 +1469,7 @@ def handle_smart_cling_texture(world: World, tile: Tile, _a3: int) -> int:
     ]
 
     for texture, nx, ny in checks:
-        if should_connect(nx, ny):
+        if should_connect(tile.front, nx, ny):
             return texture
 
     return 4
