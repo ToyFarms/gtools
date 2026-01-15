@@ -444,10 +444,10 @@ class Proxy:
         self.proxy_client.disconnect()
         self.proxy_server.disconnect_now()
         self._should_reconnect.set()
-        self.logger.debug("gt client disconnected")
+        self.logger.info("gt client disconnected")
 
         if self.proxy_client.peer:
-            self.logger.debug("waiting for proxy_client to disconnect...")
+            self.logger.info("waiting for proxy_client to disconnect...")
             while self.proxy_client.peer:
                 self.proxy_client.poll()
 
@@ -534,9 +534,8 @@ class Proxy:
                     while not self.server_data:
                         time.sleep(0.16)
 
-                if self.proxy_client.peer is not None:
-                    self.logger.info("disconnecting connection to growtopia server")
-                    self.proxy_client.disconnect_now()
+                self.proxy_client.disconnect_now()
+                self.proxy_client = ProxyClient()
 
                 self.logger.info("waiting for growtopia to connect...")
                 while not self.proxy_server.peer:
@@ -545,7 +544,7 @@ class Proxy:
 
                 self.logger.info(f"proxy_client connecting to {self.server_data.server}:{self.server_data.port}")
                 self.proxy_client.connect(self.server_data.server, self.server_data.port)
-                self.logger.info("connected! now polling for events")
+                self.logger.info("all connected! now polling for events")
                 self._update_status(Status.CONNECTED)
 
                 MAX_POLL_MS = 100
