@@ -122,7 +122,7 @@ class AutoBreakExtension(Extension):
                     continue
                 printed = False
 
-                if self.last_confirmation != 0 and time.time() - self.last_confirmation > 3:
+                if self.last_confirmation != 0 and time.time() - self.last_confirmation > 2:
                     if not printed:
                         print("server not responding in a while, waiting...")
                         printed = True
