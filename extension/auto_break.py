@@ -64,10 +64,6 @@ class AutoBreakExtension(Extension):
     def _apply_damange(self, _event: PendingPacket) -> PendingPacket | None:
         self.last_confirmation = time.time()
 
-    @dispatch(Interest(interest=INTEREST_PING_REPLY, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_SERVER_TO_CLIENT, id=s.auto))
-    def _ping_reply(self, _event: PendingPacket) -> PendingPacket | None:
-        self.last_confirmation = time.time()
-
     def find_next_target(self) -> bool:
         if self.state.world is None:
             return False
