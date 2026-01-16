@@ -121,10 +121,8 @@ class _ZmqTransport[Send, Recv](ABC, Transport[Send, Recv]):
         elif msg["event"] in (
             zmq.EVENT_DISCONNECTED,
             zmq.EVENT_MONITOR_STOPPED,
-            zmq.EVENT_CLOSED,
             zmq.EVENT_ACCEPT_FAILED,
             zmq.EVENT_HANDSHAKE_FAILED_NO_DETAIL,
-            zmq.EVENT_CONNECT_RETRIED,
         ):
             return Event.DISCONNECTED
         else:
@@ -301,6 +299,8 @@ class Dealer(_ZmqTransport[DealerSend, DealerRecv]):
     def _setup_socket(self) -> None:
         assert self._socket
         self._socket.setsockopt(zmq.IDENTITY, self.id)
+        self._socket.setsockopt(zmq.RECONNECT_IVL, 50)
+        self._socket.setsockopt(zmq.RECONNECT_IVL_MAX, 500)
         self._socket.connect(self._addr)
 
     def _recv_message(self) -> DealerRecv:
@@ -325,6 +325,8 @@ class Push(_ZmqTransport[PushSend, PushRecv]):
 
     def _setup_socket(self) -> None:
         assert self._socket
+        self._socket.setsockopt(zmq.RECONNECT_IVL, 50)
+        self._socket.setsockopt(zmq.RECONNECT_IVL_MAX, 500)
         self._socket.connect(self._addr)
 
     def _recv_message(self) -> PushRecv:

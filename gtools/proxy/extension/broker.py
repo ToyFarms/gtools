@@ -8,7 +8,6 @@ import logging
 from queue import Queue
 import random
 import re
-import struct
 import threading
 import time
 from traceback import print_exc
@@ -23,7 +22,6 @@ from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.network import increment_port
 from gtools.core.signal import Signal
-from gtools.core.transport.protocol import Event
 from gtools.core.transport.zmq_transport import Pull, Router
 from gtools.flags import BENCHMARK, PERF, TRACE
 from gtools.protogen.extension_pb2 import (
@@ -319,7 +317,7 @@ class ExtensionManager:
         self._extensions: dict[bytes, Extension] = {}
         self._interest_map: defaultdict[InterestType, list[Client]] = defaultdict(list)
 
-    def im_fine(self, id: bytes) -> None:
+    def beat(self, id: bytes) -> None:
         if id not in self._extensions:
             return
 
@@ -328,21 +326,25 @@ class ExtensionManager:
     def sweep(self) -> None:
         to_remove: set[bytes] = set()
         for id, ext in self._extensions.items():
-            if time.time() - ext.last_heartbeat > 1:
+            if ext.last_heartbeat != 0.0 and time.time() - ext.last_heartbeat > setting.heartbeat_threshold:
                 to_remove.add(id)
 
-        [self.remove_extension(ext) for ext in to_remove]
+        for ext in to_remove:
+            self.logger.info(f"extension {ext} flatline, removing...")
+            self.remove_extension(ext)
 
-    def add_extension(self, extension: Extension) -> None:
+    def add_extension(self, ext: Extension) -> None:
+        self.logger.info(f"extension {ext.id} connected")
         with self._lock:
-            if extension.id in self._extensions:
-                self.logger.warning(f"extension {extension.id} already exists, overwriting")
-            self._extensions[extension.id] = extension
-            for interest in extension.interest:
+            if ext.id in self._extensions:
+                self.logger.warning(f"extension {ext.id} already exists, overwriting")
+            self._extensions[ext.id] = ext
+            for interest in ext.interest:
                 ent = self._interest_map[interest.interest]
-                insort(ent, Client(extension, interest), key=lambda x: -x.interest.priority)
+                insort(ent, Client(ext, interest), key=lambda x: -x.interest.priority)
 
     def remove_extension(self, id: bytes) -> None:
+        self.logger.info(f"extension {id} disconnected")
         with self._lock:
             if id not in self._extensions:
                 self.logger.warning(f"extension {id} does not exists to be removed")
@@ -686,21 +688,12 @@ class Broker:
         self._pull_thread_id.start()
         self._handler: dict[Packet.Type, HandleFunction] = {}
         self._monitor_thread_id = threading.Thread(target=self._monitor_thread)
+        self._monitor_thread_id.start()
 
     def _monitor_thread(self) -> None:
-        last_heartbeat = 0
-        interval = 0.5
-
         try:
-            while not self._stop_event:
+            while not self._stop_event.is_set():
                 self._extension_mgr.sweep()
-
-                now = time.time()
-                if now - last_heartbeat > interval:
-                    with self.suppressed_log():
-                        self.broadcast(Packet(type=Packet.TYPE_HEARTBEAT))
-                    last_heartbeat = now
-
                 time.sleep(0.1)
         except Exception as e:
             self.logger.debug(f"monitor thread error: {e}")
@@ -1003,6 +996,10 @@ class Broker:
             self._pull_thread_id.join(timeout=2.0)
             self.logger.debug("pull thread exited")
 
+        if self._monitor_thread_id and self._monitor_thread_id.is_alive():
+            self._monitor_thread_id.join(timeout=2.0)
+            self.logger.debug("monitor thread exited")
+
         self.logger.debug("broker has stopped")
 
     def _forward(self, chain: PendingChain, new_packet: PendingPacket) -> None:
@@ -1091,7 +1088,7 @@ class Broker:
 
                 match pkt.type:
                     case Packet.TYPE_HEARTBEAT:
-                        self._extension_mgr.im_fine(id)
+                        self._extension_mgr.beat(id)
                     case Packet.TYPE_PUSH_PACKET:
                         if self._scheduler:
                             self._scheduler.push(pkt.push_packet)

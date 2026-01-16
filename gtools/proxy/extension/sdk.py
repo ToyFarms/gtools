@@ -113,11 +113,11 @@ class Extension(ExtensionUtility):
             self.logger.debug(f"   send \x1b[31m-->>\x1b[0m \x1b[31m>>\x1b[0m{pkt!r}\x1b[31m>>\x1b[0m")
         self._dealer.send(pkt.SerializeToString())
 
-    def _recv(self, expected: Packet.Type | None = None) -> Packet | None:
+    def _recv(self, expected: Packet.Type | None = None, timeout: float | None = None) -> Packet | None:
         if self._stop_event.get():
             return None
 
-        payload = self._dealer.recv()
+        payload = self._dealer.recv(timeout=timeout)
         if payload is None:
             return
 
@@ -198,36 +198,50 @@ class Extension(ExtensionUtility):
         except Exception:
             pass
 
-        if not self._running:
-            if self._recv(Packet.TYPE_DISCONNECT_ACK):
-                self.broker_connected.set(False)
-                self.push_connected.set(False)
+        if not self._running and self.connected:
+            self.logger.debug("waiting for disconnect ack")
+            try:
+                while pkt := self._recv(timeout=0.5):
+                    if pkt.type == Packet.TYPE_DISCONNECT_ACK:
+                        break
+            except Empty:
+                pass
+
+            self.logger.debug("got disconnect ack")
+            self.broker_connected.set(False)
+            self.push_connected.set(False)
         else:
+            self.logger.debug("waiting for disconnection")
             self.broker_connected.wait_false(timeout=2.0)
             self.push_connected.wait_false(timeout=2.0)
 
-        self._stop_event.set(True)
-
+        self.logger.debug("stopping dealer")
         try:
             self._dealer.stop()
         except Exception as e:
             self.logger.debug(f"dealer close error: {e}")
+        self.logger.debug("stopping push")
         try:
             self._push.stop()
         except Exception as e:
             self.logger.debug(f"push close error: {e}")
 
+        self._stop_event.set(True)
+
         self.broker_connected.set(False)
         self.push_connected.set(False)
 
+        self.logger.debug("stopping worker thread")
         if self._worker_thread_id and self._worker_thread_id.is_alive():
             self._worker_thread_id.join(timeout=2.0)
             if self._worker_thread_id.is_alive():
                 self.logger.warning("main thread did not stop in time")
 
+        self.logger.debug("stopping monitor thread")
         if self._monitor_thread_id and self._monitor_thread_id.is_alive():
             self._monitor_thread_id.join(timeout=0.5)
 
+        self.logger.debug("terminating zmq context")
         try:
             self._context.term()
         except Exception as e:
@@ -247,12 +261,12 @@ class Extension(ExtensionUtility):
                     self.push_connected.set(True)
             elif event == Event.DISCONNECTED:
                 if source == "broker":
+                    self.logger.info("lost connection to broker")
                     self.broker_connected.set(False)
                 if source == "push":
                     self.push_connected.set(False)
 
         last_heartbeat = 0
-        interval = 0.5
 
         try:
             while not self._stop_event:
@@ -271,7 +285,7 @@ class Extension(ExtensionUtility):
                     pass
 
                 now = time.time()
-                if now - last_heartbeat > interval:
+                if now - last_heartbeat > setting.heartbeat_interval:
                     with self.suppressed_log():
                         self._send(Packet(type=Packet.TYPE_HEARTBEAT))
                     last_heartbeat = now
@@ -349,6 +363,7 @@ class Extension(ExtensionUtility):
                             self.logger.debug(f"extension processing time: {(time.monotonic_ns() - start) / 1e6}us")
                         self._send(Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=response))
                     case Packet.TYPE_CONNECTED:
+                        self.logger.info("connected to broker")
                         self.broker_connected.set(True)
                         self._send(Packet(type=Packet.TYPE_STATE_REQUEST))
                     case Packet.TYPE_DISCONNECT | Packet.TYPE_DISCONNECT_ACK:
