@@ -9,6 +9,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
 from gtools.core.growtopia.player import CharacterFlags
+from gtools.core.task_scheduler import schedule_task
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
@@ -59,6 +60,7 @@ class AutoBreakExtension(Extension):
         self.item_id = 0
         self.place_pending: dict[ivec2, float] = {}
         self.last_confirmation = 0
+        self.recording = False
 
     @dispatch(Interest(interest=INTEREST_TILE_APPLY_DAMAGE, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_SERVER_TO_CLIENT, id=s.auto))
     def _apply_damange(self, _event: PendingPacket) -> PendingPacket | None:
@@ -201,6 +203,22 @@ class AutoBreakExtension(Extension):
                 target = ivec2(self.state.me.pos // 32) + ((x + 1) * sign, 0)
                 self.target.append(target)
                 self.send_particle(ParticleID.LBOT_PLACE, tile=target)
+        else:
+            if not self.recording:
+                self.target.clear()
+                self.recording = True
+                self.console_log("now recording action, invoke this command again to complete")
+            else:
+                self.recording = False
+                self.target = list(set(self.target))
+                self.target.sort(key=lambda pos: (pos.x, -pos.y))
+                self.console_log(f"target: {len(self.target)}")
+                t = 0
+                for _ in range(5):
+                    for tile in self.target:
+                        schedule_task(lambda tile=tile: self.send_particle(ParticleID.LBOT_PLACE, tile=tile), t)
+                        t += 0.1
+                    t += 0.5
 
         return self.cancel()
 
@@ -220,6 +238,13 @@ class AutoBreakExtension(Extension):
                 self.item_id = tile.fg_id if tile.fg_id != 0 else tile.bg_id
                 self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
                 self._set_id_to_next = False
+
+        if self.recording:
+            pkt = NetPacket.deserialize(event.buf)
+            pos = ivec2(pkt.tank.int_x, pkt.tank.int_y)
+            self.target.append(pos)
+            self.console_log(f"recorded at {pos.x}, {pos.y}")
+            self.send_particle(ParticleID.LBOT_PLACE, tile=pos)
 
     @dispatch(s.command("/id", id=s.auto))
     def _set_id(self, event: PendingPacket) -> PendingPacket | None:
@@ -246,6 +271,13 @@ class AutoBreakExtension(Extension):
             self.item_id = pkt.tank.value
             self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
             self._set_id_to_next = False
+
+        if self.recording:
+            pkt = NetPacket.deserialize(event.buf)
+            pos = ivec2(pkt.tank.int_x, pkt.tank.int_y)
+            self.target.append(pos)
+            self.console_log(f"recorded at {pos.x}, {pos.y}")
+            self.send_particle(ParticleID.LBOT_PLACE, tile=pos)
 
     @dispatch(
         Interest(
@@ -288,9 +320,9 @@ class AutoBreakExtension(Extension):
         if id != 18 and self.state.inventory.get(id) is None:
             return False
 
-        print(f"tile change at {target_tile} {id=}")
         punch_or_place = TankFlags.PUNCH if id == 18 else TankFlags.PLACE
         facing_left = self.facing_left(vec2(target_tile * 32))
+        print(f"last={time.time()-self.last_confirmation:.2f}, tile change at {target_tile} {id=} facing={'left' if self.state.me.state & TankFlags.FACING_LEFT != 0 else 'right'}")
         self.push(
             PreparedPacket(
                 packet=NetPacket(
