@@ -208,6 +208,7 @@ class Proxy:
                 new_mac = AccountManager.get(name)["mac"].lower()
                 pkt.as_net.generic_text[b"mac", 1] = new_mac
                 self.logger.info(f"spoofing mac for {name.decode()}, {prev_mac.decode()} -> {new_mac}")
+                self.logger.debug(f"new payload: {pkt.as_net.generic_text}")
         elif pkt.as_net.type == NetType.GAME_MESSAGE:
             if pkt.as_net.game_message["action", 1] == b"quit":
                 self.disconnect_all()
