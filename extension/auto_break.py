@@ -66,6 +66,10 @@ class AutoBreakExtension(Extension):
     def _apply_damange(self, _event: PendingPacket) -> PendingPacket | None:
         self.last_confirmation = time.time()
 
+    @dispatch(Interest(interest=INTEREST_PING_REPLY, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_SERVER_TO_CLIENT, id=s.auto))
+    def _ping_reply(self, _event: PendingPacket) -> PendingPacket | None:
+        self.last_confirmation = time.time()
+
     def find_next_target(self) -> bool:
         if self.state.world is None:
             return False
@@ -122,7 +126,6 @@ class AutoBreakExtension(Extension):
                         printed = True
                     time.sleep(0.01)
                     continue
-                printed = False
 
                 if self.last_confirmation != 0 and time.time() - self.last_confirmation > 2:
                     if not printed:
@@ -147,9 +150,9 @@ class AutoBreakExtension(Extension):
             if self.enabled and self.state.status != Status.IN_WORLD:
                 self.punching_state = False
                 self.enabled = False
+                self.last_confirmation = 0
                 self.console_log("auto disabled")
 
-            self.last_confirmation = 0
             last_tile_change = math.inf
             self.reset_state()
             time.sleep(0.1)
@@ -186,6 +189,8 @@ class AutoBreakExtension(Extension):
         if self.item_id != 0:
             self.enabled = not self.enabled
             self.console_log(f"auto is now {self.enabled}")
+            if self.enabled:
+                self.last_confirmation = time.time()
         else:
             self.console_log(f"set item id first")
 
