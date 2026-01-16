@@ -17,6 +17,7 @@ class _Setting:
     appdir: Path
     asset_path: Path
     broker_addr: str
+    spoof_mac: bool
 
 
 setting = _Setting(
@@ -27,4 +28,5 @@ setting = _Setting(
     appdir=Path.home() / ".gtools",
     asset_path=windows_home() / "AppData/Local/Growtopia/game",
     broker_addr="tcp://127.0.0.1:6712",
+    spoof_mac=True,
 )

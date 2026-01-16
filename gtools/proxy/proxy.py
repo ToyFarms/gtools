@@ -40,6 +40,7 @@ from gtools.protogen.state_pb2 import (
     SetMyTelemetry,
     StateUpdate,
 )
+from gtools.proxy.accountmgr import AccountManager
 from gtools.proxy.enet import PyENetEvent
 from gtools.proxy.event import UpdateServerData
 from gtools.proxy.extension.broker import Broker, BrokerFunction, PacketCallback
@@ -200,7 +201,14 @@ class Proxy:
             elif pkt.as_net.tank.type == TankType.DISCONNECT:
                 src_ = self.proxy_client if pkt.direction == DIRECTION_CLIENT_TO_SERVER else self.proxy_server
                 src_.disconnect_now()
-        if pkt.as_net.type == NetType.GAME_MESSAGE:
+        elif pkt.as_net.type == NetType.GENERIC_TEXT:
+            if setting.spoof_mac and b"tankIDName" in pkt.as_net.generic_text and b"mac" in pkt.as_net.generic_text and pkt.direction == DIRECTION_CLIENT_TO_SERVER:
+                name = bytes(pkt.as_net.generic_text[b"tankIDName", 1])
+                prev_mac = bytes(pkt.as_net.generic_text[b"mac", 1])
+                new_mac = AccountManager.get(name)["mac"].lower()
+                pkt.as_net.generic_text[b"mac", 1] = new_mac
+                self.logger.info(f"spoofing mac for {name.decode()}, {prev_mac.decode()} -> {new_mac}")
+        elif pkt.as_net.type == NetType.GAME_MESSAGE:
             if pkt.as_net.game_message["action", 1] == b"quit":
                 self.disconnect_all()
                 self.running = False
