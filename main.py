@@ -103,7 +103,7 @@ if __name__ == "__main__":
 
         def process(self, event: PendingPacket) -> PendingPacket | None:
             p = NetPacket.deserialize(event.buf)
-            p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0xFFFFFFFF
+            p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0x7FFFFFFF
             event.buf = p.serialize()
 
             return self.forward(event)

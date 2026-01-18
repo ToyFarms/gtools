@@ -369,7 +369,7 @@ class Proxy:
                                 )
                             )
                     case TankType.ITEM_CHANGE_OBJECT:
-                        if pkt.tank.net_id == UINT32_MAX:  # add new
+                        if pkt.tank.net_id == -1:  # add new
                             self._send_state_update(
                                 StateUpdate(
                                     what=STATE_MODIFY_ITEM,
@@ -383,7 +383,7 @@ class Proxy:
                                     ),
                                 )
                             )
-                        elif pkt.tank.net_id == UINT32_MAX - 3:  # set amount
+                        elif pkt.tank.net_id == -4:  # set amount
                             self._send_state_update(
                                 StateUpdate(
                                     what=STATE_MODIFY_ITEM,

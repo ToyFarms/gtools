@@ -7,3 +7,4 @@ cachegrind.out
 analyze/
 smh.py
 test*.c
+node_modules/

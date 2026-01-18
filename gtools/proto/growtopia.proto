@@ -20,7 +20,7 @@ message CharacterState {
 }
 
 message Me {
-  uint32 net_id = 3;
+  int32 net_id = 3;
   uint32 build_range = 1;
   uint32 punch_range = 2;
   Vec2F pos = 4;

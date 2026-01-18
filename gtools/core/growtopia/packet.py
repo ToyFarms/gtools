@@ -111,7 +111,7 @@ class TankFlags(IntFlag):
 # TODO: have constructor for variant
 class TankPacket(Serializable):
     logger = logging.getLogger("tank_packet")
-    _Struct: struct.Struct = struct.Struct("<BBBBIiIfIfffffiiI")
+    _Struct: struct.Struct = struct.Struct("<BBBBiiIfIfffffiiI")
 
     def __init__(
         self,

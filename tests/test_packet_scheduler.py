@@ -1,4 +1,3 @@
-import struct
 import time
 
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankPacket

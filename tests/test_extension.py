@@ -44,7 +44,7 @@ class ExtensionNextState(Extension):
     @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
         p = NetPacket.deserialize(event.buf)
-        p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0xFFFFFFFF
+        p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0x7FFFFFFF
         event.buf = p.serialize()
 
         return self.forward(event)
@@ -74,7 +74,7 @@ class ExtensionNextStateNonBlock(Extension):
     @dispatch_fallback
     def process(self, event: PendingPacket) -> PendingPacket | None:
         p = NetPacket.deserialize(event.buf)
-        p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0xFFFFFFFF
+        p.tank.net_id = (p.tank.net_id * 31 + int(self._name.split(b"-")[-1].decode())) & 0x7FFFFFFF
         event.buf = p.serialize()
 
         return self.forward(event)
@@ -101,7 +101,7 @@ def compute_state(init: int, n: int | list[int]) -> int:
     s = init
     l = range(n - 1, -1, -1) if isinstance(n, int) else n
     for i in l:
-        s = (s * 31 + i) & 0xFFFFFFFF
+        s = (s * 31 + i) & 0x7FFFFFFF
 
     return s
 

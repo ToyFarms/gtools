@@ -547,7 +547,7 @@ def test_tankpacket_maximal_values() -> None:
         object_type=255,
         jump_count=255,
         animation_type=255,
-        net_id=0xFFFFFFFF,
+        net_id=0x7FFFFFFF,
         target_net_id=0x7FFFFFFF,
         flags=0xFFFF,
         float_var=3.4028234663852886e38,
