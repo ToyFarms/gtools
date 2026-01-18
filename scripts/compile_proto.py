@@ -19,14 +19,31 @@ def compile_proto() -> None:
         fix_import = False
 
     src = Path("gtools/proto")
-    out = Path("gtools/protogen")
-    out.mkdir(exist_ok=True)
+    pyi_out = Path("gtools/protogen")
+    pyi_out.mkdir(exist_ok=True)
+    ts_out = Path("extension/gtools-gui/protogen")
+    ts_out.mkdir(exist_ok=True)
 
     files = list(src.glob("*.proto"))
     print(f"sources: ")
     for file in files:
         print(f"    - {file}")
 
-    call(["protoc", "-I", src, "--python_out", out, "--pyi_out", out, *files])
+    call(["protoc", "-I", src, "--python_out", pyi_out, "--pyi_out", pyi_out, *files])
     if fix_import:
-        call(["fix-protobuf-imports", out])
+        call(["fix-protobuf-imports", pyi_out])
+
+    if not executable_exists("protoc-gen-ts_proto"):
+        print("\x1b[33mWARNING\x1b[0m protoc-gen-ts_proto not found (npm install -g ts-proto)")
+        print("skipping typescript generation")
+        return
+
+    call(
+        [
+            "protoc",
+            "-I",
+            src,
+            f"--ts_proto_out={ts_out}",
+            *files,
+        ]
+    )
