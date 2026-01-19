@@ -8,3 +8,4 @@ analyze/
 smh.py
 test*.c
 node_modules/
+test.txt

@@ -1,3 +1,4 @@
+import copy
 import pytest
 
 from gtools.core.growtopia.strkv import StrKV
@@ -933,3 +934,12 @@ def test_multiple_newline_preserved() -> None:
     buf = b"action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n"
     kv = StrKV.deserialize(buf)
     assert kv.serialize() == buf
+
+
+def test_copy_is_independent():
+    buf = b"action|dialog_return\ndialog_name|gazette\nbuttonClicked|banner\n\n"
+    kv = StrKV.deserialize(buf)
+    kv2 = kv.copy()
+
+    kv2["action"] = "something"
+    assert bytes(kv2["action", 1]) != bytes(kv["action", 1])

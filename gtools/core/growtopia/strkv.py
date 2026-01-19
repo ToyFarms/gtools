@@ -498,6 +498,10 @@ class StrKV:
     def serialize(self) -> bytes:
         return b"\n".join(b"|".join(row) for row in self._data)
 
+    def copy(self) -> "StrKV":
+        data_copy = [row.copy() for row in self._data]
+        return StrKV(data_copy)
+
     def append_nl(self) -> "StrKV":
         """adds a trailing newline"""
         self._data.append([])

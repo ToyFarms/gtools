@@ -14,7 +14,6 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.growtopia.world import Tile
-from gtools.core.limits import UINT32_MAX
 from gtools.core.block_sigint import block_sigint
 from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Direction, Packet, StateResponse
 from gtools.protogen import growtopia_pb2
@@ -202,13 +201,21 @@ class Proxy:
                 src_ = self.proxy_client if pkt.direction == DIRECTION_CLIENT_TO_SERVER else self.proxy_server
                 src_.disconnect_now()
         elif pkt.as_net.type == NetType.GENERIC_TEXT:
-            if setting.spoof_mac and b"tankIDName" in pkt.as_net.generic_text and b"mac" in pkt.as_net.generic_text and pkt.direction == DIRECTION_CLIENT_TO_SERVER:
-                name = bytes(pkt.as_net.generic_text[b"tankIDName", 1])
-                prev_mac = bytes(pkt.as_net.generic_text[b"mac", 1])
-                new_mac = AccountManager.get(name)["mac"].lower()
-                pkt.as_net.generic_text[b"mac", 1] = new_mac
-                self.logger.info(f"spoofing mac for {name.decode()}, {prev_mac.decode()} -> {new_mac}")
-                self.logger.debug(f"new payload: {pkt.as_net.generic_text}")
+            if setting.spoof_hwident and b"tankIDName" in pkt.as_net.generic_text and b"mac" in pkt.as_net.generic_text and pkt.direction == DIRECTION_CLIENT_TO_SERVER:
+                orig = pkt.as_net.generic_text.copy()
+                name = bytes(orig["tankIDName", 1])
+
+                acc = AccountManager.get(name) if name else AccountManager.last()
+                if acc:
+                    for field, value in acc["ident"].items():
+                        if field not in pkt.as_net.generic_text:
+                            self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
+                            continue
+
+                        self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
+                        pkt.as_net.generic_text[field] = value
+
+                    self.logger.debug(f"new payload: {pkt.as_net.generic_text}")
         elif pkt.as_net.type == NetType.GAME_MESSAGE:
             if pkt.as_net.game_message["action", 1] == b"quit":
                 self.disconnect_all()
@@ -307,7 +314,7 @@ class Proxy:
                                 )
                             )
                     case TankType.SEND_TILE_TREE_STATE:
-                        # NOTE: we set fg_id to 0? idk what this does, need to test first
+                        # NOTE: literally the trees, something with trees
                         pass
                     case TankType.SEND_TILE_UPDATE_DATA:
                         self._send_state_update(
