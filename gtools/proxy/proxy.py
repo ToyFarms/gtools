@@ -195,7 +195,7 @@ class Proxy:
                 TankType.APP_CHECK_RESPONSE,
                 TankType.APP_INTEGRITY_FAIL,
             ):
-                self.logger.debug(f"blocked {pkt.as_net.tank} from {Direction.Name(pkt.direction)}")
+                self.logger.info(f"blocked {pkt.as_net.tank} from {Direction.Name(pkt.direction)}")
                 return
             elif pkt.as_net.tank.type == TankType.DISCONNECT:
                 src_ = self.proxy_client if pkt.direction == DIRECTION_CLIENT_TO_SERVER else self.proxy_server
