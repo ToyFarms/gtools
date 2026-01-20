@@ -1,0 +1,17 @@
+class Relay(Extension):
+    def __init__(self) -> None:
+        super().__init__(name="relay", interest=[Interest(interest=INTEREST_STATE_UPDATE)])
+
+    @dispatch(
+        Interest(
+            interest=INTEREST_STATE,
+            direction=DIRECTION_UNSPECIFIED,
+            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+            id=s.auto,
+        ),
+    )
+    def on_something(self, event: PendingPacket) -> PendingPacket | None:
+        shared.put(event)
+
+    def destroy(self) -> None:
+        pass

@@ -17,7 +17,7 @@ class _Setting:
     appdir: Path
     asset_path: Path
     broker_addr: str
-    spoof_mac: bool
+    spoof_hwident: bool
     heartbeat_interval: float
     heartbeat_threshold: float
 
@@ -30,7 +30,7 @@ setting = _Setting(
     appdir=Path.home() / ".gtools",
     asset_path=windows_home() / "AppData/Local/Growtopia/game",
     broker_addr="tcp://127.0.0.1:6712",
-    spoof_mac=True,
+    spoof_hwident=True,
     heartbeat_interval=1.0,
     heartbeat_threshold=5.0,
 )
