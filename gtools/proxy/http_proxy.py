@@ -29,9 +29,10 @@ async def server_data():
 
     upstream_host = resolve_doh(setting.server_data_url)[0]
     url = f"https://{upstream_host}/growtopia/server_data.php"
-    headers["Host"] = upstream_host
+    headers["Host"] = setting.server_data_url
+    headers["Remote-Addr"] = upstream_host
 
-    async with httpx.AsyncClient(http2=True, verify=False) as client:
+    async with httpx.AsyncClient(http2=True, verify=False, headers=None) as client:
         resp = await client.post(url, content=body, headers=headers)
 
     resp_body = resp.content
