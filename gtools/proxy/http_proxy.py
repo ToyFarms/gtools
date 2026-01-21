@@ -24,8 +24,9 @@ async def server_data():
     headers = dict(request.headers)
 
     app.logger.info(f"from: {request.remote_addr}")
-    app.logger.info(headers)
-    app.logger.info(body)
+    app.logger.info(f"\t{request.url=}")
+    app.logger.info(f"\t{headers=}")
+    app.logger.info(f"\t{body=}")
 
     upstream_host = resolve_doh(setting.server_data_url)[0]
     url = f"https://{upstream_host}/growtopia/server_data.php"
@@ -63,21 +64,26 @@ async def server_data():
     return Response(new_body, status=resp.status_code, headers=resp_headers)
 
 
-@app.route("/", defaults={"path": ""}, methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-@app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def catch_all(path):
-    body = await request.get_data()
-    headers = dict(request.headers)
-
-    app.logger.info(f"from: {request.remote_addr}")
-    app.logger.info(headers)
-    app.logger.info(body)
-
+@app.route("/player/growid/login/validate", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+def validate(path):
     return {
         "path": path,
         "method": request.method,
     }
 
+@app.route("/player/login/dashboard", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+def dashboard(path):
+    return {
+        "path": path,
+        "method": request.method,
+    }
+
+@app.route("/player/growid/checkToken", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+def check_token(path):
+    return {
+        "path": path,
+        "method": request.method,
+    }
 
 class HTTPProxy:
     def __init__(self):
