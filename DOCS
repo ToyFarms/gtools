@@ -345,30 +345,34 @@ this packet looks like,
 
 
 each field what they mean and how to derive it:
-f             = unknown, always 0 i think
-protocol      = growtopia protocol version, ?
-game_version  = version, ?
-fz            = unknown, ?
-cbits         = unknown, ?
+f             = constant 0
+protocol      = growtopia protocol version
+game_version  = version
+fz            = size of Growtopia.exe in bytes
+cbits         = constant either 0 or 1024
 player_age    = age
 GDPR          = related to consent (General Data Protection Regulation)
-FCMToken      = Firebase Cloud Messaging token, ?
-category      = unknown, constant _-5100
+FCMToken      = Firebase Cloud Messaging token
+category      = constant _-5100
 totalPlaytime = playtime, always set to zero regardless
-klv           = unknown, ?
+klv           = unknown
 hash2         = hash of the active network adapter's mac address, proton_hash(get_active_adapter().mac + "RT")
-meta          = unknown, ?
-fhash         = unknown, ?
-rid           = unknown, ?
-platformID    = unknown, ?
-deviceVersion = unknown, ?
-country       = unknown, ?
+meta          = obtained from server_data.php
+fhash         = seems to not change
+rid           = unique registration id across growtopia installation
+platformID    = constant 0,1,1
+deviceVersion = constant 0
+country       = country
 hash          = hash of the disk volume serial number (either volume CDEFG, in that order), proton_hash(get_volume_serial("CDEFG") + "RT")
 mac           = mac address of the computer
-wk            = unknown, ?
-zf            = unknown, ?
-user          = unique user id (incremented each account)
-token         = unknown, ?
-UUIDToken     = unknown, ?
-doorID        = unknown, ?
-aat           = unknown, ?
+wk            = unknown
+zf            = hash of Growtopia.exe, proton_hash(read("Growtopia.exe", "rb"))
+lmode         = originally a separate field, but for some reason its now concatenated with zf, constant 1 f"zf|{}lmode|1"
+user          = unique user id (incremented each account), obtained from OnSendToServer index 3 (210578474i)
+token         = obtained from OnSendToServer, index 2 (13826541i, -1i part)
+UUIDToken     = obtained from OnSendToServer, kv index 2 (1231723EABABBABA826381726C545711)
+doorID        = obtained from OnSendToServer, 0 for white door, empty for not redirecting, else for the door id
+aat           = obtained from OnSendToServer, index 5 (1i, 3i part)
+                notice sometimes its omitted, in such situation means its not redirecting to a new server
+    Call(Variant(b'OnSendToServer', 17134i, 13826541i, 210578474i, b'213.179.209.177|0|1231723EABABBABA826381726C545711', 1i, b'username'))
+    Call(Variant(b'OnSendToServer', 17017i, -1i, 210578474i, b'213.179.209.175||-1', 3i))

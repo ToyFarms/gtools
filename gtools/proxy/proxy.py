@@ -390,7 +390,7 @@ class Proxy:
                                     ),
                                 )
                             )
-                        elif pkt.tank.net_id == -4:  # set amount
+                        elif pkt.tank.net_id == -3:  # set amount
                             self._send_state_update(
                                 StateUpdate(
                                     what=STATE_MODIFY_ITEM,
