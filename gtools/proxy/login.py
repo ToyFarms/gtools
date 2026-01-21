@@ -66,8 +66,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-        if setting.custom_server and setting.custom_port:
-            UpdateServerData(server=setting.custom_server, port=setting.custom_port).send()
+        if setting.custom_server:
+            UpdateServerData(server=setting.custom_server, port=orig_port).send()
         else:
             UpdateServerData(server=orig_server, port=orig_port).send()
 
