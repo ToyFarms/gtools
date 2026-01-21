@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 from queue import Queue
 import sys
-import threading
 import time
 from traceback import print_exc
 
@@ -14,13 +13,13 @@ import numpy as np
 from pyglm.glm import ivec4
 
 from gtools import flags
+from gtools.core.block_sigint import block_sigint
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.renderer.world_renderer import WorldRenderer
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.world import World
 from gtools.core.log import setup_logger
-from gtools.core.block_sigint import block_sigint
 from gtools.core.network import is_up, resolve_doh
 from gtools.core.wsl import windows_home
 from gtools.protogen.extension_pb2 import (
@@ -31,7 +30,7 @@ from gtools.protogen.extension_pb2 import (
     Interest,
     PendingPacket,
 )
-from gtools.proxy import login
+from gtools.proxy.http_proxy import HTTPProxy
 from gtools.proxy.extension.broker import Broker
 from gtools.proxy.extension.sdk import Extension, register_thread
 from gtools.proxy.proxy import Proxy
@@ -42,15 +41,13 @@ from extension.utils import UtilityExtension
 
 
 def run_proxy() -> None:
-    server = login.setup_server()
-    t = threading.Thread(target=lambda: server.serve_forever())
-    t.start()
-    Proxy().run()
-
-    with block_sigint():
-        server.shutdown()
-        server.server_close()
-        t.join()
+    server = HTTPProxy()
+    try:
+        server.start()
+        Proxy().run()
+    finally:
+        with block_sigint():
+            server.stop()
 
 
 def test_server() -> None:
