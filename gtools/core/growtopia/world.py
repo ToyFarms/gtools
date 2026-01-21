@@ -20,7 +20,7 @@ from gtools.protogen import growtopia_pb2
 import numpy as np
 import numpy.typing as npt
 
-from gtools.proxy.setting import setting
+from gtools import setting
 
 
 @dataclass(slots=True)

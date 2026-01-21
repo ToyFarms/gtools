@@ -37,7 +37,7 @@ from gtools.proxy.extension.sdk import Extension, register_thread
 from gtools.proxy.proxy import Proxy
 from scripts.tileset import update_tile_connectivity
 from thirdparty.enet.bindings import ENetPacketFlag
-from gtools.proxy.setting import setting
+from gtools import setting
 from extension.utils import UtilityExtension
 
 

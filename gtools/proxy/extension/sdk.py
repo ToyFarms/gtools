@@ -27,7 +27,7 @@ from gtools.protogen.extension_pb2 import (
 from gtools.protogen.state_pb2 import STATE_SET_MY_TELEMETRY
 from gtools.proxy.extension.sdk_utils import ExtensionUtility
 from gtools.proxy.state import State, Status
-from gtools.proxy.setting import setting
+from gtools import setting
 
 
 def register_thread(fn: Callable) -> Callable:

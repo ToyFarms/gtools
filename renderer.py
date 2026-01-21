@@ -9,7 +9,7 @@ from gtools.core.growtopia.world import World
 from gtools.core.growtopia.rttex import RtTexManager
 import urllib.parse
 from gtools.core.wsl import windows_home
-from gtools.proxy.setting import setting
+from gtools import setting
 
 manager = RtTexManager()
 

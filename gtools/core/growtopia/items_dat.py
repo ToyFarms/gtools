@@ -15,7 +15,7 @@ from zmq import IntFlag
 if not os.environ.get("NO_BAKED", None):
     from gtools.baked import items
 from gtools.core.buffer import Buffer
-from gtools.proxy.setting import setting
+from gtools import setting
 
 
 SECRET = b"PBG892FXX982ABC*"

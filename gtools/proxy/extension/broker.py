@@ -40,7 +40,7 @@ from gtools.protogen.op_pb2 import BinOp, Op
 from gtools.protogen.strkv_pb2 import FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field, FieldValue
 from gtools.protogen.variant_pb2 import VariantClause
-from gtools.proxy.setting import setting
+from gtools import setting
 
 
 def hash_interest(interest: Interest) -> int:

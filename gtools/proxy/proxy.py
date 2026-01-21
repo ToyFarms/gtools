@@ -45,7 +45,7 @@ from gtools.proxy.event import UpdateServerData
 from gtools.proxy.extension.broker import Broker, BrokerFunction, PacketCallback
 from gtools.proxy.proxy_client import ProxyClient
 from gtools.proxy.proxy_server import ProxyServer
-from gtools.proxy.setting import setting
+from gtools import setting
 from gtools.proxy.state import Inventory, State, Status, World
 from thirdparty.enet.bindings import ENetEventType, ENetPeer, enet_host_flush
 from thirdparty.hexdump import hexdump

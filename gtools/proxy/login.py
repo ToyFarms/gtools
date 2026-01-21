@@ -8,7 +8,7 @@ import ssl
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.network import resolve_doh
 from gtools.proxy.event import UpdateServerData
-from gtools.proxy.setting import setting
+from gtools import setting
 
 # TODO: rename file to server_data.py
 
@@ -66,7 +66,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-        UpdateServerData(server=orig_server, port=orig_port).send()
+        if setting.custom_server and setting.custom_port:
+            UpdateServerData(server=setting.custom_server, port=setting.custom_port).send()
+        else:
+            UpdateServerData(server=orig_server, port=orig_port).send()
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):

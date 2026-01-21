@@ -4,7 +4,7 @@ from typing import TypedDict
 from gtools.core.fake.mac import generate_random_mac
 from gtools.core.fake.volume_serial import generate_volume_serial
 from gtools.core.growtopia.crypto import proton_hash
-from gtools.proxy.setting import setting
+from gtools import setting
 
 
 class AccountIdent(TypedDict):

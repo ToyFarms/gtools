@@ -4,7 +4,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.renderer.renderer import RenderCommand
 from gtools.core.growtopia.rttex import RtTexManager
 from gtools.core.growtopia.world import Tile
-from gtools.proxy.setting import setting
+from gtools import setting
 import numpy as np
 import numpy.typing as npt
 
