@@ -17,6 +17,7 @@ class _Setting:
     heartbeat_interval: float
     heartbeat_threshold: float
     truncate_invalid_tank_packet_size: bool
+    panic_on_packet_error: bool
 
 
 setting = _Setting(
@@ -31,4 +32,5 @@ setting = _Setting(
     heartbeat_interval=1.0,
     heartbeat_threshold=5.0,
     truncate_invalid_tank_packet_size=False,
+    panic_on_packet_error=False
 )

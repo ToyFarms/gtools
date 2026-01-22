@@ -184,54 +184,63 @@ class Proxy:
         except Exception as e:
             self.logger.error(f"FAILED UPDATING STATE: {e}")
 
-        if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug(f"{'[modified] ' if modified else '[fabricated] ' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
-        else:
-            self.logger.info(
-                f"from {'\x1b[32mserver\x1b[0m' if pkt.direction == DIRECTION_SERVER_TO_CLIENT else '\x1b[31mclient\x1b[0m'} ({pkt.as_net.type.name}) {pkt.as_net.compact_repr()}"
-            )
-        if pkt.as_net.type == NetType.TANK_PACKET:
-            if pkt.as_net.tank.type in (
-                TankType.APP_CHECK_RESPONSE,
-                TankType.APP_INTEGRITY_FAIL,
+        try:
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(f"{'[modified] ' if modified else '[fabricated] ' if fabricated else ''}packet={pkt!r} flags={pkt.flags!r} from={Direction.Name(pkt.direction)}")
+            else:
+                self.logger.info(
+                    f"from {'\x1b[32mserver\x1b[0m' if pkt.direction == DIRECTION_SERVER_TO_CLIENT else '\x1b[31mclient\x1b[0m'} ({pkt.as_net.type.name}) {pkt.as_net.compact_repr()}"
+                )
+            if pkt.as_net.type == NetType.TANK_PACKET:
+                if pkt.as_net.tank.type in (
+                    TankType.APP_CHECK_RESPONSE,
+                    TankType.APP_INTEGRITY_FAIL,
+                ):
+                    self.logger.info(f"blocked {pkt.as_net.tank} from {Direction.Name(pkt.direction)}")
+                    return
+                elif pkt.as_net.tank.type == TankType.DISCONNECT:
+                    src_ = self.proxy_client if pkt.direction == DIRECTION_CLIENT_TO_SERVER else self.proxy_server
+                    src_.disconnect_now()
+            elif pkt.as_net.type == NetType.GENERIC_TEXT:
+                if setting.spoof_hwident and b"tankIDName" in pkt.as_net.generic_text and b"mac" in pkt.as_net.generic_text and pkt.direction == DIRECTION_CLIENT_TO_SERVER:
+                    orig = pkt.as_net.generic_text.copy()
+                    name = bytes(orig["tankIDName", 1])
+
+                    acc = AccountManager.get(name) if name else AccountManager.last()
+                    if acc:
+                        for field, value in acc["ident"].items():
+                            if field not in pkt.as_net.generic_text:
+                                self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
+                                continue
+
+                            self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
+                            pkt.as_net.generic_text[field] = value
+
+                        self.logger.debug(f"new payload: {pkt.as_net.generic_text}")
+            elif pkt.as_net.type == NetType.GAME_MESSAGE:
+                if pkt.as_net.game_message["action", 1] == b"quit":
+                    self.disconnect_all()
+                    self.running = False
+                    self._should_reconnect.set()
+
+                    return
+            elif pkt.as_net.type == NetType.SERVER_HELLO:
+                self._update_status(Status.LOGGING_IN)
+
+            if (
+                pkt.as_net.type == NetType.TANK_PACKET
+                and pkt.as_net.tank.type == TankType.CALL_FUNCTION
+                and Variant.get(pkt.as_net.tank.extended_data, 0).value == b"OnDialogRequest"
             ):
-                self.logger.info(f"blocked {pkt.as_net.tank} from {Direction.Name(pkt.direction)}")
-                return
-            elif pkt.as_net.tank.type == TankType.DISCONNECT:
-                src_ = self.proxy_client if pkt.direction == DIRECTION_CLIENT_TO_SERVER else self.proxy_server
-                src_.disconnect_now()
-        elif pkt.as_net.type == NetType.GENERIC_TEXT:
-            if setting.spoof_hwident and b"tankIDName" in pkt.as_net.generic_text and b"mac" in pkt.as_net.generic_text and pkt.direction == DIRECTION_CLIENT_TO_SERVER:
-                orig = pkt.as_net.generic_text.copy()
-                name = bytes(orig["tankIDName", 1])
-
-                acc = AccountManager.get(name) if name else AccountManager.last()
-                if acc:
-                    for field, value in acc["ident"].items():
-                        if field not in pkt.as_net.generic_text:
-                            self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
-                            continue
-
-                        self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
-                        pkt.as_net.generic_text[field] = value
-
-                    self.logger.debug(f"new payload: {pkt.as_net.generic_text}")
-        elif pkt.as_net.type == NetType.GAME_MESSAGE:
-            if pkt.as_net.game_message["action", 1] == b"quit":
-                self.disconnect_all()
-                self.running = False
-                self._should_reconnect.set()
-
-                return
-        elif pkt.as_net.type == NetType.SERVER_HELLO:
-            self._update_status(Status.LOGGING_IN)
-
-        if pkt.as_net.type == NetType.TANK_PACKET and pkt.as_net.tank.type == TankType.CALL_FUNCTION and Variant.get(pkt.as_net.tank.extended_data, 0).value == b"OnDialogRequest":
-            self.logger.debug("dialog enter")
-            self._in_dialog = True
-        elif pkt.as_net.type == NetType.GENERIC_TEXT and b"action" in pkt.as_net.generic_text and pkt.as_net.generic_text[b"action"] == b"dialog_return":
-            self.logger.debug("dialog exit")
-            self._in_dialog = False
+                self.logger.debug("dialog enter")
+                self._in_dialog = True
+            elif pkt.as_net.type == NetType.GENERIC_TEXT and b"action" in pkt.as_net.generic_text and pkt.as_net.generic_text[b"action"] == b"dialog_return":
+                self.logger.debug("dialog exit")
+                self._in_dialog = False
+        except:
+            self.logger.exception("something failed")
+            if setting.panic_on_packet_error:
+                raise
 
         if pkt.direction == DIRECTION_CLIENT_TO_SERVER:
             self._handle_client_to_server(pkt)
