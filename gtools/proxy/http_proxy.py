@@ -84,13 +84,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
         body = kv.serialize()
         resp.headers["Content-Length"] = str(len(body))
 
-        UpdateServerData(server=orig_server, port=orig_port).send()
-
         self.send_response(resp.status)
         for k, v in resp.headers.items():
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
+
+        UpdateServerData(server=orig_server, port=orig_port).send()
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
