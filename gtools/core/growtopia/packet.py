@@ -227,8 +227,8 @@ class TankPacket(Serializable):
 
     def __repr__(self) -> str:
         extra = ""
-        if self.type == TankType.CALL_FUNCTION:
-            extra = f", __extra=Call({Variant.deserialize(self.extended_data)})"
+        # if self.type == TankType.CALL_FUNCTION:
+        #     extra = f", __extra=Call({Variant.deserialize(self.extended_data)})"
 
         return f"TankPacket(type={self.type!r}, object_type={self.object_type}, jump_count={self.jump_count}, animation_type={self.animation_type}, net_id={self.net_id}, target_net_id={self.target_net_id}, flags={self.flags!r}, float_var={self.float_var}, value={self.value}, vector_x={self.vector_x}, vector_y={self.vector_y}, vector_x2={self.vector_x2}, vector_y2={self.vector_y2}, particle_rotation={self.particle_rotation}, int_x={self.int_x}, int_y={self.int_y}, extended_len={self.extended_len}, extended_data={self.extended_data}{extra})"
 
