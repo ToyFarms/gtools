@@ -47,10 +47,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
         headers["Remote-Addr"] = ip
 
         try:
-            with closing(http.client.HTTPSConnection(ip, timeout=10, context=context)) as conn:
-                conn.request("POST", target_path, body, headers=headers)
-                resp = conn.getresponse()
-                body = resp.read()
+            conn = http.client.HTTPSConnection(ip, timeout=10, context=context)
+            conn.request("POST", target_path, body, headers=headers)
+            resp = conn.getresponse()
+            body = resp.read()
         except socket.timeout:
             self.logger.error("upstream server timed out")
             self.send_response(502)
