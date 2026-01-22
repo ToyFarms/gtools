@@ -57,7 +57,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         headers = {k: v for k, v in resp.headers.items()}
-        self.logger.info(f"from: {resp.url}")
+        self.logger.info(f"from {ip} ({setting.server_data_url})")
         self.logger.info(f"\t{self.path=}")
         self.logger.info(f"\t{headers=}")
         self.logger.info(f"\t{body=}")
