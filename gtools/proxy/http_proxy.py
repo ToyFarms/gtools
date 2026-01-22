@@ -43,8 +43,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         ip = ip[0] if ip else setting.server_data_url
         if ip != setting.server_data_url:
             self.logger.debug(f"resolved {setting.server_data_url} to {ip}")
-            headers["Host"] = setting.server_data_url
-
+        headers["Host"] = setting.server_data_url
         headers["Remote-Addr"] = ip
 
         try:
@@ -57,10 +56,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_response(502)
             return
 
-        headers = {k: v for k, v in resp.headers.items()}
+        out_headers = dict(resp.getheaders())
+
         self.logger.info(f"from {ip} ({setting.server_data_url})")
         self.logger.info(f"\t{self.path=}")
-        self.logger.info(f"\t{headers=}")
+        self.logger.info(f"\t{out_headers=}")
         self.logger.info(f"\t{body=}")
 
         kv = StrKV.deserialize(body)
@@ -69,7 +69,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.logger.info("server is in maintenance")
 
             self.send_response(resp.status)
-            for k, v in resp.headers.items():
+            for k, v in out_headers.items():
                 self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
@@ -84,10 +84,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         self.logger.debug(f"modified server_data.php: {kv}")
         body = kv.serialize()
-        resp.headers["Content-Length"] = str(len(body))
+
+        out_headers.pop("Transfer-Encoding", None)
+        if "Content-Encoding" in out_headers:
+            out_headers.pop("Content-Encoding", None)
+        out_headers["Content-Length"] = str(len(body))
 
         self.send_response(resp.status)
-        for k, v in resp.headers.items():
+        for k, v in out_headers.items():
+            if k.lower() in ("connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"):
+                continue
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
