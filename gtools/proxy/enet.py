@@ -45,7 +45,7 @@ class PyENetEvent:
             packet = ctypes.cast(event.packet, POINTER(ENetPacket)).contents
             print(packet.dataLength)
             data = ctypes.string_at(packet.data, int(packet.dataLength))
-            print(packet.data)
+            print(data)
             flags = ENetPacketFlag(packet.flags)
             enet_packet_destroy(event.packet)
 
