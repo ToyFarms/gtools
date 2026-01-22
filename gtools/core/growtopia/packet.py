@@ -152,9 +152,12 @@ class TankPacket(Serializable):
         self.int_x = int_x
         self.int_y = int_y
         if extended_len != 0 and extended_len != len(extended_data):
-            raise ValueError(f"extended_len ({extended_len}) supplied does not match extended_data actual length ({len(extended_data)}, {extended_data})")
+            self.logger.warning(f"extended_len ({extended_len}) supplied does not match extended_data actual length ({len(extended_data)}, {extended_data})")
         self._extended_data = extended_data
-        self.extended_len = len(extended_data)
+        if extended_len == 0 and extended_data:
+            self.extended_len = len(extended_data)
+        else:
+            self.extended_len = extended_len
 
     @property
     def extended_data(self) -> bytes:
@@ -165,9 +168,12 @@ class TankPacket(Serializable):
         self._extended_data = data
         self.extended_len = len(data)
 
-    def serialize(self) -> bytes:
+    def serialize(self, mode: Literal["relaxed", "strict"] = "relaxed") -> bytes:
         if self.extended_data and self.flags & TankFlags.EXTENDED == 0:
-            raise RuntimeError("has extended data, but the flags is not set")
+            msg = "has extended data, but the flags is not set"
+            if mode == "strict":
+                raise ValueError(msg)
+            self.logger.warning(msg)
 
         buf = bytearray()
         buf.extend(
@@ -188,7 +194,7 @@ class TankPacket(Serializable):
                 self.particle_rotation,
                 self.int_x,
                 self.int_y,
-                len(self.extended_data),
+                self.extended_len,
             )
         )
         if self.extended_data:
@@ -203,27 +209,28 @@ class TankPacket(Serializable):
         mode: Literal["strict", "relaxed"] = "relaxed",
     ) -> "TankPacket":
         tank_size = TankPacket._Struct.size
-        values = list(TankPacket._Struct.unpack(data[:tank_size]))
+        tank = cls(*TankPacket._Struct.unpack(data[:tank_size]))
         extended_data = b""
         if len(data) > tank_size:
             extended_data = data[tank_size:]
 
-        extended_size = values[-1]
-        if extended_size != len(extended_data):
-            msg = f"extended data size does not match (in the packet: {extended_size}, actual: {len(extended_data)}): {values}"
-            if mode == "strict":
-                raise RuntimeError(msg)
-            else:
-                if setting.truncate_invalid_tank_packet_size:
-                    if len(extended_data) > extended_size:
-                        cls.logger.debug(f"truncating extended data ({len(extended_data)} to {extended_size})")
-                        extended_data = extended_data[:extended_size]
-                else:
-                    values[-1] = len(extended_data)
+        # sometimes the length advertised is outright wrong
+        if tank.extended_len != len(extended_data):
+            msg = f"extended data size does not match (advertised: {tank.extended_len}, actual: {len(extended_data)}): {tank}, extended={extended_data}"
 
+            if mode == "strict":
+                raise ValueError(msg)
             cls.logger.warning(msg)
 
-        return cls(*values, extended_data=extended_data)
+        # sometimes the extended flag is not set even when there is extended data
+        if extended_data and tank.flags & TankFlags.EXTENDED == 0:
+            msg = f"packet has extended data but the flag is not set: {tank}, extended={extended_data}"
+            if mode == "strict":
+                raise ValueError(msg)
+            cls.logger.warning(msg)
+
+        tank._extended_data = extended_data
+        return tank
 
     def __repr__(self) -> str:
         extra = ""

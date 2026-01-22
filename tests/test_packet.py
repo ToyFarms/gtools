@@ -1,5 +1,6 @@
 import binascii
 import time
+from gtools import setting
 from gtools.core.growtopia.create import chat, chat_seq, console_message
 from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, TankFlags, TankPacket, TankType
 import pytest
@@ -57,8 +58,8 @@ def test_serialize_extended_requires_flag() -> None:
     pkt = _make_basic_tank()
     pkt.extended_data = b"X"
 
-    with pytest.raises(RuntimeError, match="has extended data, but the flags is not set"):
-        pkt.serialize()
+    with pytest.raises(ValueError, match="has extended data, but the flags is not set"):
+        pkt.serialize(mode="strict")
 
 
 def test_deserialize_strict_mode_mismatch_raises() -> None:
@@ -73,12 +74,12 @@ def test_deserialize_strict_mode_mismatch_raises() -> None:
     new_header = TankPacket._Struct.pack(*header_vals)
     tampered = new_header + s[size:]
 
-    with pytest.raises(RuntimeError, match="extended data size does not match"):
+    with pytest.raises(ValueError, match="extended data size does not match"):
         TankPacket.deserialize(tampered, mode="strict")
 
 
 def test_sample_deserialize_strict_mode_mismatch_raises() -> None:
-    with pytest.raises(RuntimeError, match="extended data size does not match"):
+    with pytest.raises(ValueError, match="extended data size does not match"):
         NetPacket.deserialize(
             b"\x04\x00\x00\x00\x00\x00\x00\x00@\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x008E\x00\x00!C\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00",
             mode="strict",
@@ -104,7 +105,7 @@ def test_deserialize_relaxed_mode_truncation_and_warning(caplog: pytest.LogCaptu
     parsed = TankPacket.deserialize(tampered, mode="relaxed")
 
     assert any("extended data size does not match" in r.message for r in caplog.records)
-    assert parsed.extended_data == pkt.extended_data[:4]
+    assert parsed.extended_data == pkt.extended_data
 
     verify(tampered)
 
@@ -119,7 +120,7 @@ def test_sample_deserialize_relaxed_mode_truncation_and_warning(caplog: pytest.L
 
     serialized = pkt.serialize()
     verify(serialized)
-    assert serialized[:-1] == sample[:-5]
+    assert serialized == sample
 
 
 def test_tank_size() -> None:
@@ -478,8 +479,8 @@ def test_deserialize_relaxed_mode_extra_data(caplog: pytest.LogCaptureFixture) -
     caplog.set_level("WARNING")
     parsed = TankPacket.deserialize(tampered, mode="relaxed")
     assert any("extended data size does not match" in r.message for r in caplog.records)
-    assert parsed.extended_data == b"abc"
-    assert len(parsed.extended_data) == 3
+    assert parsed.extended_data == b"abcextra"
+    assert parsed.extended_len == 3
 
 
 def test_netpacket_more_samples_roundtrip() -> None:

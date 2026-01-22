@@ -4,7 +4,7 @@ from pathlib import Path
 from gtools.core.wsl import windows_home
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Setting:
     server_data_url: str
     proxy_server: str
@@ -16,7 +16,6 @@ class _Setting:
     spoof_hwident: bool
     heartbeat_interval: float
     heartbeat_threshold: float
-    truncate_invalid_tank_packet_size: bool
     panic_on_packet_error: bool
 
 
@@ -31,6 +30,5 @@ setting = _Setting(
     spoof_hwident=True,
     heartbeat_interval=1.0,
     heartbeat_threshold=5.0,
-    truncate_invalid_tank_packet_size=False,
     panic_on_packet_error=False
 )

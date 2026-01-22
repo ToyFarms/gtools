@@ -1,7 +1,7 @@
 import math
 import random
 import time
-from typing import Callable, Iterator
+from typing import Callable
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
