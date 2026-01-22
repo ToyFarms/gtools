@@ -202,7 +202,6 @@ class TankPacket(Serializable):
         data: bytes,
         mode: Literal["strict", "relaxed"] = "relaxed",
     ) -> "TankPacket":
-        print(data)
         tank_size = TankPacket._Struct.size
         values = list(TankPacket._Struct.unpack(data[:tank_size]))
         extended_data = b""

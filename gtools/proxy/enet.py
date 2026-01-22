@@ -40,10 +40,12 @@ class PyENetEvent:
     @classmethod
     def new(cls, event: ENetEvent) -> "PyENetEvent":
         data: bytes | None = None
-        flags = ENetPacketFlag(0)
+        flags = ENetPacketFlag.NONE
         if event.type == ENetEventType.RECEIVE:
             packet = ctypes.cast(event.packet, POINTER(ENetPacket)).contents
+            print(packet.dataLength)
             data = ctypes.string_at(packet.data, int(packet.dataLength))
+            print(packet.data)
             flags = ENetPacketFlag(packet.flags)
             enet_packet_destroy(event.packet)
 
