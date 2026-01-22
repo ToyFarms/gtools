@@ -28,7 +28,8 @@ async def server_data():
     app.logger.info(f"\t{headers=}")
     app.logger.info(f"\t{body=}")
 
-    upstream_host = resolve_doh(setting.server_data_url)[0]
+    upstream_host = resolve_doh(setting.server_data_url)
+    upstream_host = upstream_host[0] if upstream_host else setting.server_data_url
     url = f"https://{upstream_host}/growtopia/server_data.php"
     headers["Host"] = setting.server_data_url
     headers["Remote-Addr"] = upstream_host
@@ -58,32 +59,10 @@ async def server_data():
     resp_headers = dict(resp.headers)
     resp_headers["Content-Length"] = str(len(new_body))
 
-    report_server = setting.custom_server or orig_server
-    asyncio.create_task(asyncio.to_thread(UpdateServerData(server=report_server, port=orig_port).send))
+    UpdateServerData(server=orig_server, port=orig_port).send()
 
     return Response(new_body, status=resp.status_code, headers=resp_headers)
 
-
-@app.route("/player/growid/login/validate", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-def validate(path):
-    return {
-        "path": path,
-        "method": request.method,
-    }
-
-@app.route("/player/login/dashboard", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-def dashboard(path):
-    return {
-        "path": path,
-        "method": request.method,
-    }
-
-@app.route("/player/growid/checkToken", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-def check_token(path):
-    return {
-        "path": path,
-        "method": request.method,
-    }
 
 class HTTPProxy:
     def __init__(self):
@@ -100,7 +79,7 @@ class HTTPProxy:
 
         config.alpn_protocols = ["h2", "http/1.1"]
 
-        config.workers = 1
+        config.workers = 2
         config.use_reloader = False
         return config
 
