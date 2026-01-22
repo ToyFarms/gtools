@@ -120,37 +120,42 @@ class Proxy:
         self.proxy_client.send(pkt.as_raw, pkt.flags)
 
     def _handle_server_to_client(self, pkt: PreparedPacket) -> None:
-        if pkt.as_net.type == NetType.TANK_PACKET:
-            if pkt.as_net.tank.type == TankType.CALL_FUNCTION:
-                v = Variant.deserialize(pkt.as_net.tank.extended_data)
-                fn = v.as_string[0]
-                if fn == b"OnSendToServer":
-                    port = v.as_int[1]
-                    server_data = StrKV.deserialize(v.as_string[4])
+        try:
+            if pkt.as_net.type == NetType.TANK_PACKET:
+                if pkt.as_net.tank.type == TankType.CALL_FUNCTION:
+                    v = Variant.deserialize(pkt.as_net.tank.extended_data)
+                    fn = v.as_string[0]
+                    if fn == b"OnSendToServer":
+                        port = v.as_int[1]
+                        server_data = StrKV.deserialize(v.as_string[4])
 
-                    self.server_data = UpdateServerData(
-                        server=server_data[0, 0].decode(),
-                        port=port,
-                    )
-                    self.logger.info(f"redirecting to {self.server_data.server}:{self.server_data.port}")
+                        self.server_data = UpdateServerData(
+                            server=server_data[0, 0].decode(),
+                            port=port,
+                        )
+                        self.logger.info(f"redirecting to {self.server_data.server}:{self.server_data.port}")
 
-                    server_data[0, 0] = setting.proxy_server
-                    v[1] = Variant.vint(setting.proxy_port)
-                    v[4] = Variant.vstr(server_data.serialize())
+                        server_data[0, 0] = setting.proxy_server
+                        v[1] = Variant.vint(setting.proxy_port)
+                        v[4] = Variant.vstr(server_data.serialize())
 
-                    pkt.as_net.tank.extended_data = v.serialize()
+                        pkt.as_net.tank.extended_data = v.serialize()
 
-                    self.redirecting = True
-                    self.proxy_server.send(pkt.as_net.serialize(), pkt.flags)
-                    enet_host_flush(self.proxy_server.host)
-                    self.proxy_client.disconnect()
-                    self.proxy_server.disconnect()
-                    self._should_reconnect.set()
+                        self.redirecting = True
+                        self.proxy_server.send(pkt.as_net.serialize(), pkt.flags)
+                        enet_host_flush(self.proxy_server.host)
+                        self.proxy_client.disconnect()
+                        self.proxy_server.disconnect()
+                        self._should_reconnect.set()
 
-                    return
-                elif fn == b"OnSuperMainStartAcceptLogonHrdxs47254722215a":
-                    self.redirecting = False
-                    self._update_status(Status.LOGGED_IN)
+                        return
+                    elif fn == b"OnSuperMainStartAcceptLogonHrdxs47254722215a":
+                        self.redirecting = False
+                        self._update_status(Status.LOGGED_IN)
+        except:
+            self.logger.exception("error handling server_to_client")
+            if setting.panic_on_packet_error:
+                raise
 
         self.proxy_server.send(pkt.as_raw, pkt.flags)
 
