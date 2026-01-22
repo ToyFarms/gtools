@@ -1,126 +1,118 @@
-import threading
-from quart import Quart, request, Response
-import httpx
-import asyncio
+from http.server import BaseHTTPRequestHandler
+import http.client
+
 import logging
-from hypercorn.config import Config
-from hypercorn.asyncio import serve
+import socketserver
+import ssl
+import urllib.parse
 
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.network import resolve_doh
 from gtools.proxy.event import UpdateServerData
 from gtools import setting
 
-app = Quart(__name__)
-logger = logging.getLogger("http_proxy")
-app.logger.handlers = logger.handlers
-app.logger.setLevel(logging.INFO)
-logging.getLogger("hpack.hpack").setLevel(logging.WARNING)
 
+class ProxyHandler(BaseHTTPRequestHandler):
+    logger = logging.getLogger("http_proxy")
 
-@app.route("/growtopia/server_data.php", methods=["POST"])
-async def server_data():
-    body = await request.get_data()
-    headers = dict(request.headers)
-
-    app.logger.info(f"from: {request.remote_addr}")
-    app.logger.info(f"\t{request.url=}")
-    app.logger.info(f"\t{headers=}")
-    app.logger.info(f"\t{body=}")
-
-    upstream_host = resolve_doh(setting.server_data_url)
-    upstream_host = upstream_host[0] if upstream_host else setting.server_data_url
-    url = f"https://{upstream_host}/growtopia/server_data.php"
-    headers["Host"] = setting.server_data_url
-    headers["Remote-Addr"] = upstream_host
-
-    async with httpx.AsyncClient(http2=True, verify=False, headers=None) as client:
-        resp = await client.post(url, content=body, headers=headers)
-
-    resp_body = resp.content
-    kv = StrKV.deserialize(resp_body)
-    app.logger.info(f"server_data response: {kv}")
-
-    if "maint" in kv:
-        return Response(
-            resp_body,
-            status=resp.status_code,
-            headers=dict(resp.headers),
-        )
-
-    orig_server = kv["server", 1].decode()
-    orig_port = int(kv["port", 1].decode())
-
-    kv["server", 1] = setting.proxy_server
-    kv["port", 1] = setting.proxy_port
-
-    new_body = kv.serialize()
-
-    resp_headers = dict(resp.headers)
-    resp_headers["Content-Length"] = str(len(new_body))
-
-    UpdateServerData(server=orig_server, port=orig_port).send()
-
-    return Response(new_body, status=resp.status_code, headers=resp_headers)
-
-
-class HTTPProxy:
-    def __init__(self):
-        self._thread: threading.Thread | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._stop_event: asyncio.Event | None = None
-
-    def _make_config(self) -> Config:
-        config = Config()
-        config.bind = ["0.0.0.0:443"]
-
-        config.certfile = "resources/cert.pem"
-        config.keyfile = "resources/key.pem"
-
-        config.alpn_protocols = ["h2", "http/1.1"]
-
-        config.workers = 2
-        config.use_reloader = False
-        return config
-
-    async def _serve(self):
-        assert self._stop_event is not None
-        await serve(app, self._make_config(), shutdown_trigger=self._stop_event.wait)
-
-    def _run_loop(self):
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-
-        self._stop_event = asyncio.Event()
-        self._loop.run_until_complete(self._serve())
-
-        pending = asyncio.all_tasks(self._loop)
-        for task in pending:
-            task.cancel()
-
-        self._loop.run_until_complete(self._loop.shutdown_asyncgens())
-        self._loop.close()
-
-    def start(self):
-        if self._thread and self._thread.is_alive():
+    def do_POST(self):
+        if not self.path.startswith("/growtopia/server_data.php"):
             return
 
-        self._thread = threading.Thread(
-            target=self._run_loop,
-            name="http-proxy",
-            daemon=True,
-        )
-        self._thread.start()
+        parsed = urllib.parse.urlsplit(self.path)
+        target_path = parsed.path
+        if parsed.query:
+            target_path += "?" + parsed.query
 
-    def stop(self):
-        if not self._loop or not self._stop_event:
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length > 0 else b""
+
+        headers = {k: v for k, v in self.headers.items()}
+        self.logger.info(f"from: {self.client_address}")
+        self.logger.info(f"\t{self.path=}")
+        self.logger.info(f"\t{headers=}")
+        self.logger.info(f"\t{body=}")
+
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.VerifyMode.CERT_NONE
+
+        ip = resolve_doh(setting.server_data_url)
+        ip = ip[0] if ip else setting.server_data_url
+        self.logger.debug(f"resolved {setting.server_data_url} to {ip}")
+
+        headers["Host"] = setting.server_data_url
+        headers["Remote-Addr"] = ip
+
+        try:
+            conn = http.client.HTTPSConnection(ip, context=context, timeout=10)
+            conn.request("POST", target_path, body, headers=headers)
+            resp = conn.getresponse()
+        except Exception as e:
+            self.logger.error("error contacting upstream server")
+            self.send_response(502)
+            if conn:
+                conn.close()
             return
 
-        self._loop.call_soon_threadsafe(self._stop_event.set)
+        resp = conn.getresponse()
+        body = resp.read()
 
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=0.5)
-            self._thread = None
+        conn.close()
 
-        self._loop = None
-        self._stop_event = None
+        headers = {k: v for k, v in resp.headers.items()}
+        self.logger.info(f"from: {resp.url}")
+        self.logger.info(f"\t{self.path=}")
+        self.logger.info(f"\t{headers=}")
+        self.logger.info(f"\t{body=}")
+
+        kv = StrKV.deserialize(body)
+        self.logger.debug(f"server_data.php: {kv}")
+        if "maint" in kv:
+            self.logger.info("server is in maintenance")
+
+            self.send_response(resp.status)
+            for k, v in resp.headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+
+            return
+
+        orig_server = kv["server", 1].decode()
+        orig_port = int(kv["port", 1].decode())
+
+        kv["server", 1] = setting.proxy_server
+        kv["port", 1] = setting.proxy_port
+
+        body = kv.serialize()
+        resp.headers.replace_header("Content-Length", f"{len(body)}")
+
+        UpdateServerData(server=orig_server, port=orig_port).send()
+
+        self.send_response(resp.status)
+        for k, v in resp.headers.items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def setup_server() -> ThreadedHTTPServer:
+    PORT = 443
+    logging.debug(f"running http proxy server on :{PORT}")
+    httpd = ThreadedHTTPServer(("", PORT), ProxyHandler)
+
+    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    context.load_cert_chain("resources/cert.pem", "resources/key.pem")
+    httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+
+    return httpd
+
+
+if __name__ == "__main__":
+    setup_server().serve_forever()

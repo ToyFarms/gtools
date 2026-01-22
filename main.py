@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from queue import Queue
 import sys
+import threading
 import time
 from traceback import print_exc
 
@@ -30,7 +31,7 @@ from gtools.protogen.extension_pb2 import (
     Interest,
     PendingPacket,
 )
-from gtools.proxy.http_proxy import HTTPProxy
+from gtools.proxy.http_proxy import setup_server
 from gtools.proxy.extension.broker import Broker
 from gtools.proxy.extension.sdk import Extension, register_thread
 from gtools.proxy.proxy import Proxy
@@ -41,13 +42,15 @@ from extension.utils import UtilityExtension
 
 
 def run_proxy() -> None:
-    server = HTTPProxy()
-    try:
-        server.start()
-        Proxy().run()
-    finally:
-        with block_sigint():
-            server.stop()
+    server = setup_server()
+    t = threading.Thread(target=lambda: server.serve_forever())
+    t.start()
+    Proxy().run()
+
+    with block_sigint():
+        server.shutdown()
+        server.server_close()
+        t.join()
 
 
 def test_server() -> None:
