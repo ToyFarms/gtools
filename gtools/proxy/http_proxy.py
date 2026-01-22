@@ -41,9 +41,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         ip = resolve_doh(setting.server_data_url)
         ip = ip[0] if ip else setting.server_data_url
-        self.logger.debug(f"resolved {setting.server_data_url} to {ip}")
+        if ip != setting.server_data_url:
+            self.logger.debug(f"resolved {setting.server_data_url} to {ip}")
+            headers["Host"] = setting.server_data_url
 
-        headers["Host"] = setting.server_data_url
         headers["Remote-Addr"] = ip
 
         try:
