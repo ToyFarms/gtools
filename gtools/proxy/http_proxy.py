@@ -82,12 +82,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         kv["server", 1] = setting.proxy_server
         kv["port", 1] = setting.proxy_port
 
+        self.logger.debug(f"modified server_data.php: {kv}")
         body = kv.serialize()
         resp.headers["Content-Length"] = str(len(body))
-
-        print(body)
-        print(resp.headers.items())
-        print(resp.status)
 
         self.send_response(resp.status)
         for k, v in resp.headers.items():
