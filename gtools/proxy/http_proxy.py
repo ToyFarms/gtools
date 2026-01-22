@@ -85,6 +85,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
         body = kv.serialize()
         resp.headers["Content-Length"] = str(len(body))
 
+        print(body)
+        print(resp.headers.items())
+        print(resp.status)
+
         self.send_response(resp.status)
         for k, v in resp.headers.items():
             self.send_header(k, v)
