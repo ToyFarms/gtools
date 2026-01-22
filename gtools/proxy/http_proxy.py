@@ -1,7 +1,9 @@
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler
 import http.client
 
 import logging
+import socket
 import socketserver
 import ssl
 import urllib.parse
@@ -45,20 +47,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
         headers["Remote-Addr"] = ip
 
         try:
-            conn = http.client.HTTPSConnection(ip, context=context, timeout=10)
-            conn.request("POST", target_path, body, headers=headers)
-            resp = conn.getresponse()
-        except Exception as e:
-            self.logger.error("error contacting upstream server")
+            with closing(http.client.HTTPSConnection(ip, timeout=10, context=context)) as conn:
+                conn.request("POST", target_path, body, headers=headers)
+                resp = conn.getresponse()
+                body = resp.read()
+        except socket.timeout:
+            self.logger.error("upstream server timed out")
             self.send_response(502)
-            if conn:
-                conn.close()
             return
-
-        resp = conn.getresponse()
-        body = resp.read()
-
-        conn.close()
 
         headers = {k: v for k, v in resp.headers.items()}
         self.logger.info(f"from: {resp.url}")
