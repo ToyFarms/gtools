@@ -5,6 +5,7 @@ import struct
 import time
 from typing import Literal, cast
 
+from gtools import setting
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.convertible import ConvertibleToFloat, ConvertibleToInt
@@ -202,10 +203,10 @@ class TankPacket(Serializable):
         mode: Literal["strict", "relaxed"] = "relaxed",
     ) -> "TankPacket":
         tank_size = TankPacket._Struct.size
-        values = TankPacket._Struct.unpack(data[:tank_size])
+        values = list(TankPacket._Struct.unpack(data[:tank_size]))
         extended_data = b""
         if len(data) > tank_size:
-            extended_data = data[tank_size :]
+            extended_data = data[tank_size:]
 
         extended_size = values[-1]
         if extended_size != len(extended_data):
@@ -213,9 +214,12 @@ class TankPacket(Serializable):
             if mode == "strict":
                 raise RuntimeError(msg)
             else:
-                if len(extended_data) > extended_size:
-                    cls.logger.debug(f"truncating extended data ({len(extended_data)} to {extended_size})")
-                    extended_data = extended_data[:extended_size]
+                if setting.truncate_invalid_tank_packet_size:
+                    if len(extended_data) > extended_size:
+                        cls.logger.debug(f"truncating extended data ({len(extended_data)} to {extended_size})")
+                        extended_data = extended_data[:extended_size]
+                else:
+                    values[-1] = len(extended_data)
 
             cls.logger.warning(msg)
 

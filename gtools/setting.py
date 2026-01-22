@@ -16,6 +16,7 @@ class _Setting:
     spoof_hwident: bool
     heartbeat_interval: float
     heartbeat_threshold: float
+    truncate_invalid_tank_packet_size: bool
 
 
 setting = _Setting(
@@ -29,4 +30,5 @@ setting = _Setting(
     spoof_hwident=True,
     heartbeat_interval=1.0,
     heartbeat_threshold=5.0,
+    truncate_invalid_tank_packet_size=False,
 )
