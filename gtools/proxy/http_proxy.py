@@ -82,7 +82,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         kv["port", 1] = setting.proxy_port
 
         body = kv.serialize()
-        resp.headers.replace_header("Content-Length", f"{len(body)}")
+        resp.headers["Content-Length"] = str(len(body))
 
         UpdateServerData(server=orig_server, port=orig_port).send()
 
