@@ -116,7 +116,7 @@ class AdapterInfo:
         self.dns_server = ""
 
 
-def get_adapters():
+def get_adapters() -> list[AdapterInfo]:
     iphlpapi = ctypes.windll.iphlpapi
 
     size = wintypes.ULONG(0x4000)
