@@ -218,6 +218,7 @@ def get_machine_guid() -> bytes:
 def registry_val() -> None:
     if platform.system() != "Windows":
         print("\x1b[33mWARNING: running on something other than windows will result in different hardware id\x1b[0m")
+    print("NOTE: if something differ, that means some hardware id has changed, you just need to force growtopia to regenerate it (by deleting the keys)")
 
     try:
         vsn = get_any_vsn()
