@@ -2,14 +2,14 @@ import os
 import shutil
 import subprocess
 import sys
-from typing import Protocol
+from typing import Protocol, Sequence
 
 
 class SupportsStr(Protocol):
     def __str__(self) -> str: ...
 
 
-def call(cmd: list[SupportsStr]) -> None:
+def call(cmd: Sequence[SupportsStr]) -> None:
     c = list(map(str, cmd))
     print(f"+ {' '.join(c)}")
     ret = subprocess.run(c, stdout=sys.stdout, stderr=sys.stderr)

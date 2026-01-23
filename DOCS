@@ -344,28 +344,63 @@ this packet looks like,
     aat|2\x00'
 
 
-each field what they mean and how to derive it:
+each field what they mean and how to derive it,
 f             = constant 0
 protocol      = growtopia protocol version
 game_version  = version
 fz            = size of Growtopia.exe in bytes
-cbits         = constant either 0 or 1024
+cbits         = client bits (bitflags), values:
+                2    = disable_add_friend
+                4    = hide_sign
+                8    = hide_iap
+                16   = is_child
+                32   = disable_broadcast
+                64   = no_guild_invite
+                128  = no_guild_flag
+                256  = disable_billboard
+                512  = use_classic_store
+                1024 = enable_profile
+                2048 = disable_chat
 player_age    = age
-GDPR          = related to consent (General Data Protection Regulation)
+GDPR          = General Data Protection Regulation, there is also OnOverrideGDPRFromServer
+                Call(Variant(b'OnOverrideGDPRFromServer', 22i, 2i, 0i, 1i))
+                values:
+                1 = adult (age > 12)
+                2 = child non-us (GDPR)
+                3 = child us (COPPA)
+                (yes apparently i'm a child, or this is just outdated)
 FCMToken      = Firebase Cloud Messaging token
 category      = constant _-5100
 totalPlaytime = playtime, always set to zero regardless
-klv           = unknown
-hash2         = hash of the active network adapter's mac address, proton_hash(get_active_adapter().mac + "RT")
+klv           = derived token, unknown-need to update constant
+hash2         = hash of the active network adapter's mac address else mac is "", proton_hash(get_active_adapter().mac + "RT")
 meta          = obtained from server_data.php
 fhash         = seems to not change
-rid           = unique registration id across growtopia installation
-platformID    = constant 0,1,1
+rid           = unique registration id across growtopia installation, seems to consistently start with "02"
+platformID    = constant 0,1,1  values
+                enum ePlatformID
+                {
+                        PLATFORM_ID_UNKNOWN = -1,
+                        PLATFORM_ID_WINDOWS,
+                        PLATFORM_ID_IOS, //iPhone/iPad etc
+                        PLATFORM_ID_OSX,
+                        PLATFORM_ID_LINUX,
+                        PLATFORM_ID_ANDROID,
+                        PLATFORM_ID_WINDOWS_MOBILE, //yeah, right.  Doesn't look like we'll be porting here anytime soon.
+                        PLATFORM_ID_WEBOS,
+                        PLATFORM_ID_BBX, //RIM Playbook
+                        PLATFORM_ID_FLASH,
+                        PLATFORM_ID_HTML5, //javascript output via emscripten for web
+                        PLATFORM_ID_PSVITA,
+                        //new platforms will be added above here.  Don't count on PLATFORM_ID_COUNT not changing!
+                        PLATFORM_ID_COUNT
+                };
+
 deviceVersion = constant 0
 country       = country
-hash          = hash of the disk volume serial number (either volume CDEFG, in that order), proton_hash(get_volume_serial("CDEFG") + "RT")
-mac           = mac address of the computer
-wk            = unknown
+hash          = hash of vsn (Volume Serial Number) (either volume CDEFG, in that order, else empty string), proton_hash(GetVolumeInformation(either "CDEFG").lpVolumeSerialNumber + "RT")
+mac           = mac address of the computer else "WINNONE"
+wk            = windows key, md5 hash of MachineGuid, hashlib.md5(get_reg("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\\MachineGuid")).hexdigest().upper()
 zf            = hash of Growtopia.exe, proton_hash(read("Growtopia.exe", "rb"))
 lmode         = originally a separate field, but for some reason its now concatenated with zf, constant 1 f"zf|{}lmode|1"
 user          = unique user id (incremented each account), obtained from OnSendToServer index 3 (210578474i)
@@ -373,6 +408,27 @@ token         = obtained from OnSendToServer, index 2 (13826541i, -1i part)
 UUIDToken     = obtained from OnSendToServer, kv index 2 (1231723EABABBABA826381726C545711)
 doorID        = obtained from OnSendToServer, 0 for white door, empty for not redirecting, else for the door id
 aat           = obtained from OnSendToServer, index 5 (1i, 3i part)
-                notice sometimes its omitted, in such situation means its not redirecting to a new server
+                notice sometimes its omitted, in such situation means its not redirecting to a new server (i think)
     Call(Variant(b'OnSendToServer', 17134i, 13826541i, 210578474i, b'213.179.209.177|0|1231723EABABBABA826381726C545711', 1i, b'username'))
     Call(Variant(b'OnSendToServer', 17017i, -1i, 210578474i, b'213.179.209.175||-1', 3i))
+
+registry,
+    ** see scripts/registry_val.py for a working demo and more details **
+    stored on HKEY_CURRENT_USER\Software\Microsoft\<key>, and HKEY_CURRENT_USER\<key2>
+    where,
+        cpuid_leaf0 = cpuid_checksum()
+        key = cpuid_leaf0 + 1
+        subkey = key >> 1
+
+        v = int(get_vsn_hash().decode())
+        key2 = abs(int(v) // 3)
+        subkey2 = abs(int(v) // 4)
+
+    all values below is obfuscated
+     * <key>\<subkey>    = vsn hash
+     * <key>\<subkey>c   = checksum of vsn hash
+     * <key>\<subkey>w   = md5 hash of machine guid
+     * <key>\<subkey>wc  = checksum of md5 hash of machine guid
+
+     * <key2>\<subkey2>  = mac address
+     * <key2>\<subkey2>c = checksum of mac address
