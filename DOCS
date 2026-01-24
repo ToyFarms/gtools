@@ -412,6 +412,11 @@ aat           = obtained from OnSendToServer, index 5 (1i, 3i part)
     Call(Variant(b'OnSendToServer', 17134i, 13826541i, 210578474i, b'213.179.209.177|0|1231723EABABBABA826381726C545711', 1i, b'username'))
     Call(Variant(b'OnSendToServer', 17017i, -1i, 210578474i, b'213.179.209.175||-1', 3i))
 
+NOTE: some field are platform dependent (https://github.com/1i8/ENetSocks5/blob/946b0e00bd2e385d9ccd8a50fb5d88521284edfa/EBotNet/growtopia/TankProtocol.cpp#L51)
+    windows     = wk, zf
+    osx, ios    = aid, vid
+    android     = gid
+
 registry,
     ** see scripts/registry_val.py for a working demo and more details **
     stored on HKEY_CURRENT_USER\Software\Microsoft\<key>, and HKEY_CURRENT_USER\<key2>
