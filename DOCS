@@ -345,7 +345,7 @@ this packet looks like,
 
 
 each field what they mean and how to derive it,
-f             = constant 0
+f             = swear filter, 0 or 1
 protocol      = growtopia protocol version
 game_version  = version
 fz            = size of Growtopia.exe in bytes
@@ -370,13 +370,13 @@ GDPR          = General Data Protection Regulation, there is also OnOverrideGDPR
                 3 = child us (COPPA)
                 (yes apparently i'm a child, or this is just outdated)
 FCMToken      = Firebase Cloud Messaging token
-category      = constant _-5100
+category      = world select category, default to _-5100
 totalPlaytime = playtime, always set to zero regardless
-klv           = derived token, unknown-need to update constant
+klv           = derived token, unknown-need to update constant (give me gt latest version devirtualized pls :w)
 hash2         = hash of the active network adapter's mac address else mac is "", proton_hash(get_active_adapter().mac + "RT")
 meta          = obtained from server_data.php
-fhash         = seems to not change
-rid           = unique registration id across growtopia installation, seems to consistently start with "02"
+fhash         = field hash, calculated with proton_hash(b"tankIDName|tankIDPass|requestedName|f|protocol|game_version|fz|lmode|cbits|hash2|vid|aid|gid|meta|rid|platformID|deviceVersion|country|hash|mac|reconnect|1\nuser|token|doorID|ProductIdwk|fhash|")
+rid           = unique registration id encoding the first time growtopia is run, see `gtools/core/growtopia/crypto.py` for implementation
 platformID    = constant 0,1,1  values
                 enum ePlatformID
                 {
@@ -402,7 +402,7 @@ hash          = hash of vsn (Volume Serial Number) (either volume CDEFG, in that
 mac           = mac address of the computer else "WINNONE"
 wk            = windows key, md5 hash of MachineGuid, hashlib.md5(get_reg("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\\MachineGuid")).hexdigest().upper()
 zf            = hash of Growtopia.exe, proton_hash(read("Growtopia.exe", "rb"))
-lmode         = originally a separate field, but for some reason its now concatenated with zf, constant 1 f"zf|{}lmode|1"
+lmode         = login mode? originally a separate field, but for some reason its now concatenated with zf, constant 1 f"zf|{}lmode|1"
 user          = unique user id (incremented each account), obtained from OnSendToServer index 3 (210578474i)
 token         = obtained from OnSendToServer, index 2 (13826541i, -1i part)
 UUIDToken     = obtained from OnSendToServer, kv index 2 (1231723EABABBABA826381726C545711)

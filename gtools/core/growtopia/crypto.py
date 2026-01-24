@@ -1,3 +1,7 @@
+from datetime import datetime
+import random
+
+
 def proton_hash(data: bytes) -> int:
     hash_val = 0x55555555
 
@@ -41,3 +45,123 @@ def hex_rolling_shift(buf: bytes) -> bytes:
 
     return bytes(arr)
 
+
+class MersenneTwister:
+    def __init__(self) -> None:
+        self.mt = [0] * 624
+        self.index = 625
+
+    def seed(self, seed_value: int) -> None:
+        self.mt[0] = seed_value
+        self.index = 1
+
+        for i in range(1, 624):
+            self.mt[i] = (69069 * self.mt[i - 1]) & 0xFFFFFFFF
+
+        self.index = 624
+
+    def random(self, max_val: int) -> int:
+        if max_val == 0:
+            return 0
+
+        if self.index >= 624:
+            if self.index == 625:
+                self.mt[0] = 4357
+                self.index = 1
+                for i in range(1, 624):
+                    self.mt[i] = (69069 * self.mt[i - 1]) & 0xFFFFFFFF
+
+            self._generate()
+
+        y = self.mt[self.index]
+        self.index += 1
+
+        y ^= y >> 11
+        y ^= (y << 7) & 0xFF3A58AD
+        y ^= (y << 15) & 0xFFFFDF8C
+        y ^= y >> 18
+
+        return y % max_val
+
+    def _generate(self) -> None:
+        for i in range(624):
+            y = (self.mt[i] & 0x80000000) + (self.mt[(i + 1) % 624] & 0x7FFFFFFF)
+            self.mt[i] = self.mt[(i + 397) % 624] ^ (y >> 1)
+            if y & 1:
+                self.mt[i] ^= 0x9908B0DF
+
+        self.index = 0
+
+
+def generate_rid() -> str:
+    now = datetime.now()
+    month = now.month
+    day = now.day
+    year = now.year
+    hour = now.hour
+    second = now.second
+
+    values = [0, 0, 0, 0]
+
+    years_since_2014 = year - 2014
+    temp1 = month + 12 * years_since_2014
+    temp2 = day + 2 * temp1 + temp1
+    temp3 = hour + 24 * temp2
+    values[0] = second + 3600 * temp3
+
+    r1 = random.randint(0, 0x7FFE) % 0x7FFF
+    r2 = random.randint(0, 0x7FFE) % 0x7FFF
+    r3 = random.randint(0, 0x7FFE) % 0x7FFF
+    values[1] = (r2 * r1 + r3) & 0xFFFFFFFF
+
+    r4 = random.randint(0, 0x7FFE) % 0x7FFF
+    seed = (year + values[0] + r4) & 0xFFFFFFFF
+
+    mt = MersenneTwister()
+    mt.seed(seed)
+    values[2] = mt.random(200000000)
+
+    r5 = random.randint(0, 0x7FFE) % 0x7FFF
+    r6 = random.randint(0, 0x7FFE) % 0x7FFF
+    r7 = random.randint(0, 0x7FFE) % 0x7FFF
+    values[3] = (r6 * r5 + r7) & 0xFFFFFFFF
+
+    rid_parts = []
+    for value in values:
+        hex_str = format(value & 0xFFFFFFFF, "08X")
+        rid_parts.append(hex_str)
+
+    return "".join(rid_parts)
+
+
+def extract_time_from_rid(rid: str) -> datetime:
+    """NOTE: rid is reversible over the domain because of weird encoding:
+    second e  [0, 3599]
+    minute e  [0, 23]
+    hour   e  [0, 2]
+    month  e  [0, 11]
+    year   >= 2014
+
+    otherwise, there may be loss of information.
+    but generally the year, month, hour, minute, second is pretty accurate
+    """
+    value0 = int(rid[:8], 16)
+
+    second = value0 % 3600
+    temp3 = value0 // 3600
+
+    hour = temp3 % 24
+    temp2 = temp3 // 24
+
+    day = temp2 % 3
+    temp1 = temp2 // 3
+
+    month = temp1 % 12
+    years_since_2014 = temp1 // 12
+
+    year = 2014 + years_since_2014
+
+    day += 1
+    month += 1
+
+    return datetime(year=year, month=month, day=day, hour=hour, second=second)
