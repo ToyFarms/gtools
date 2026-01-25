@@ -344,6 +344,7 @@ this packet looks like,
     aat|2\x00'
 
 
+** see scripts/login_val.py for a working demo and more details **
 each field what they mean and how to derive it,
 f             = swear filter, 0 or 1
 protocol      = growtopia protocol version

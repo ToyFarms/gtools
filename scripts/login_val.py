@@ -1,0 +1,50 @@
+import hashlib
+from pathlib import Path
+import platform
+import click
+
+from gtools.core.growtopia.crypto import generate_rid, proton_hash
+from gtools.core.wsl import windows_home
+from gtools.core.windows.adapter import get_computer_mac
+from gtools.core.windows.guid import get_machine_guid
+from gtools.core.windows.vsn import get_any_vsn
+
+
+@click.command()
+@click.argument("game_version", default="5.4")
+@click.argument("protocol", default="225")
+@click.argument("growtopia_exe", default=windows_home() / "AppData/Local/Growtopia/growtopia.exe", type=Path)
+def login_val(game_version: str, protocol: str, gt_path: Path) -> None:
+    if platform.system() != "Windows":
+        print("\x1b[33mWARNING: running on something other than windows will result in different hardware id\x1b[0m")
+
+    gt_buf = gt_path.read_bytes()
+
+    print("? = not deterministic, depends on setting")
+    print(f"f             = ?0")
+    print(f"protocol      = {protocol}")
+    print(f"game_version  = {game_version}")
+    print(f"fz            = {len(gt_buf)}")
+    print(f"cbits         = ?0")
+    print(f"player_age    = ?25")
+    print(f"GDPR          = ?2")
+    print(f"FCMToken      = ?")
+    print(f"category      = ?_-5100")
+    print(f"totalPlaytime = 0")
+    print(f"klv           = (unk)")
+    print(f"hash2         = ")
+    print(f"meta          = {proton_hash(get_computer_mac().encode() + b'RT')}")
+    print(f"fhash         = {proton_hash(b'tankIDName|tankIDPass|requestedName|f|protocol|game_version|fz|lmode|cbits|hash2|vid|aid|gid|meta|rid|platformID|deviceVersion|country|hash|mac|reconnect|1\nuser|token|doorID|ProductIdwk|fhash|')}")
+    print(f"rid           = ?{generate_rid()}")
+    print(f"platformID    = ?0,1,1")
+    print(f"deviceVersion = ?0")
+    print(f"country       = ?us")
+    print(f"hash          = {proton_hash(get_any_vsn().encode() + b'RT')}")
+    print(f"mac           = {get_computer_mac()}")
+    print(f"wk            = {hashlib.md5(get_machine_guid()).hexdigest().upper()}")
+    print(f"zf            = {proton_hash(gt_buf)}lmode|1")
+    print(f"user          = ?")
+    print(f"token         = ?")
+    print(f"UUIDToken     = ?")
+    print(f"doorID        = ?")
+    print(f"aat           = ?")
