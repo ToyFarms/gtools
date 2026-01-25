@@ -13,7 +13,7 @@ from gtools.core.windows.vsn import get_any_vsn
 @click.command()
 @click.argument("game_version", default="5.4")
 @click.argument("protocol", default="225")
-@click.argument("growtopia_exe", default=windows_home() / "AppData/Local/Growtopia/growtopia.exe", type=Path)
+@click.argument("gt_path", default=windows_home() / "AppData/Local/Growtopia/growtopia.exe", type=Path)
 def login_val(game_version: str, protocol: str, gt_path: Path) -> None:
     if platform.system() != "Windows":
         print("\x1b[33mWARNING: running on something other than windows will result in different hardware id\x1b[0m")
