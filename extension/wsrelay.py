@@ -1,6 +1,4 @@
 import asyncio
-import base64
-import json
 from queue import Queue
 import websockets
 

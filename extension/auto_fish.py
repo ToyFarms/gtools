@@ -1,4 +1,3 @@
-from enum import IntEnum, auto
 import random
 import time
 
@@ -15,17 +14,11 @@ from gtools.protogen.extension_pb2 import (
     Interest,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension, register_thread
+from gtools.proxy.extension.sdk import Extension, dispatch
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.proxy.extension.sdk_utils import helper
 from gtools.proxy.state import Status
 from thirdparty.enet.bindings import ENetPacketFlag
-
-
-class Action(IntEnum):
-    TOGGLE_AUTO = auto()
-    INITIATE = auto()
-    GOT_FISH = auto()
 
 
 s = helper()
@@ -33,86 +26,74 @@ s = helper()
 
 class AutoFishExtension(Extension):
     def __init__(self) -> None:
-        super().__init__(
-            name="auto_fish",
-            interest=[
-                s.command("/ft", Action.TOGGLE_AUTO),
-                Interest(
-                    interest=INTEREST_TILE_CHANGE_REQUEST,
-                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
-                    direction=DIRECTION_CLIENT_TO_SERVER,
-                    id=Action.INITIATE,
-                ),
-                Interest(
-                    interest=INTEREST_SEND_PARTICLE_EFFECT,
-                    blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
-                    direction=DIRECTION_SERVER_TO_CLIENT,
-                    id=Action.GOT_FISH,
-                ),
-                Interest(
-                    interest=INTEREST_STATE_UPDATE,
-                ),
-            ],
-        )
+        super().__init__(name="auto_fish", interest=[Interest(interest=INTEREST_STATE_UPDATE)])
 
         self.enabled = False
-        self.fish_pos = ivec2(-1, -1)  # in tile space
+        self.fish_pos = ivec2(-1, -1)
         self.bait = -1
 
-    @register_thread
-    def thread_info(self) -> None:
-        while True:
-            if self.state.status == Status.IN_WORLD:
-                self.send_particle(ParticleID.GEIGER_PING, abs=self.state.me.pos)
-                self.send_particle(ParticleID.LBOT_PLACE, tile=self.fish_pos)
+    # @register_thread
+    # def thread_info(self) -> None:
+    #     while True:
+    #         if self.state.status == Status.IN_WORLD:
+    #             self.send_particle(ParticleID.GEIGER_PING, abs=self.state.me.pos)
+    #             self.send_particle(ParticleID.LBOT_PLACE, tile=self.fish_pos)
 
-            self.console_log(f"{self.state.status.name} {self.state.inventory.get(self.bait)}")
-            time.sleep(1)
+    #         self.console_log(f"{self.state.status.name} {self.state.inventory.get(self.bait)}")
+    #         time.sleep(1)
 
-    def process(self, event: PendingPacket) -> PendingPacket | None:
+    @dispatch(s.command_toggle("/ft", s.auto))
+    def toggle_auto(self, _event: PendingPacket) -> PendingPacket | None:
+        if self.state.status != Status.IN_WORLD:
+            self.console_log("auto fish cannot enabled when not in a world, try re-entering the world")
+        else:
+            self.enabled = not self.enabled
+            self.console_log(f"auto fish enabled: {self.enabled}")
+        return self.cancel()
+
+    @dispatch(
+        Interest(
+            interest=INTEREST_TILE_CHANGE_REQUEST,
+            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+            direction=DIRECTION_CLIENT_TO_SERVER,
+            id=s.auto,
+        )
+    )
+    def initiate(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
-        match event.interest_id:
-            case Action.TOGGLE_AUTO:
-                if self.state.status != Status.IN_WORLD:
-                    self.console_log("auto fish cannot enabled when not in a world, try re-entering the world")
-                else:
-                    self.enabled = not self.enabled
-                    self.console_log(f"auto fish enabled: {self.enabled}")
-                return self.cancel()
-            case Action.INITIATE:
-                self.bait = pkt.tank.value
-                self.fish_pos = ivec2(pkt.tank.int_x, pkt.tank.int_y)
-                self.console_log(f"bait: {self.bait}")
-            case Action.GOT_FISH:
-                if self.enabled and self.state.status == Status.IN_WORLD:
-                    time.sleep(random.uniform(0.315, 0.519))
+        self.bait = pkt.tank.value
+        self.fish_pos = ivec2(pkt.tank.int_x, pkt.tank.int_y)
+        self.console_log(f"bait: {self.bait}")
 
-                    fish_pos = ivec2(pkt.tank.vector_x // 32, pkt.tank.vector_y // 32)
-                    if (
-                        self.bait in self.state.inventory
-                        and self.state.inventory[self.bait].amount >= 1
-                        and self.bait != -1
-                        and fish_pos == self.fish_pos
-                        and self.state.me.pos != (0, 0)
-                        and self.in_range(self.fish_pos, punch=False)
-                    ):
-                        facing_left = TankFlags.NONE
-                        if int(self.state.me.pos.x // 32) > self.fish_pos.x:
-                            facing_left |= TankFlags.FACING_LEFT
+    @dispatch(
+        Interest(
+            interest=INTEREST_SEND_PARTICLE_EFFECT,
+            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+            direction=DIRECTION_SERVER_TO_CLIENT,
+            id=s.auto,
+        )
+    )
+    def got_fish(self, event: PendingPacket) -> PendingPacket | None:
+        pkt = NetPacket.deserialize(event.buf)
+        if self.enabled and self.state.status == Status.IN_WORLD:
+            time.sleep(random.uniform(0.315, 0.519))
 
-                        # NOTE: gone fishin net id can be used to identify
-                        self.send_particle(ParticleID.LBOT_PLACE, tile=self.fish_pos)
-                        self.send_particle(ParticleID.GEIGER_PING, abs=self.state.me.pos)
+            fish_pos = ivec2(pkt.tank.vector_x // 32, pkt.tank.vector_y // 32)
+            if (
+                self.bait != -1
+                and self.bait in self.state.inventory
+                and self.state.inventory[self.bait].amount >= 1
+                and fish_pos == self.fish_pos
+                and self.state.me.pos != (0, 0)
+                and self.in_range(self.fish_pos, punch=False)
+            ):
+                # NOTE: gone fishin net id can be used to identify
+                self.send_particle(ParticleID.LBOT_PLACE, tile=self.fish_pos)
+                self.send_particle(ParticleID.GEIGER_PING, abs=self.state.me.pos)
 
-                        self.send_reel_packet()
-                        time.sleep(random.uniform(0.261, 0.400))
-                        self.send_throw_packet()
-
-    def facing_left(self, to: ivec2) -> TankFlags:
-        bot_pos = ivec2(self.state.me.pos // 32)
-        if bot_pos.x > to.x:
-            return TankFlags.FACING_LEFT
-        return TankFlags.NONE
+                self.send_reel_packet()
+                time.sleep(random.uniform(0.261, 0.400))
+                self.send_throw_packet()
 
     def click_packet(self) -> None:
         self.push(
@@ -126,7 +107,7 @@ class AutoFishExtension(Extension):
                         vector_y=self.state.me.pos.y,
                         int_x=self.fish_pos.x,
                         int_y=self.fish_pos.y,
-                        flags=self.facing_left(self.fish_pos),
+                        flags=self.facing_left(tile=self.fish_pos),
                     ),
                 ),
                 direction=DIRECTION_CLIENT_TO_SERVER,
@@ -147,7 +128,7 @@ class AutoFishExtension(Extension):
                         vector_y=self.state.me.pos.y,
                         int_x=self.fish_pos.x,
                         int_y=self.fish_pos.y,
-                        flags=self.facing_left(self.fish_pos) | TankFlags.STANDING | TankFlags.PLACE | TankFlags.TILE_CHANGE,
+                        flags=self.facing_left(tile=self.fish_pos) | TankFlags.STANDING | TankFlags.PLACE | TankFlags.TILE_CHANGE,
                     ),
                 ),
                 direction=DIRECTION_CLIENT_TO_SERVER,
@@ -167,7 +148,7 @@ class AutoFishExtension(Extension):
                         vector_y=self.state.me.pos.y,
                         int_x=-1,
                         int_y=-1,
-                        flags=self.facing_left(self.fish_pos) | TankFlags.STANDING,
+                        flags=self.facing_left(tile=self.fish_pos) | TankFlags.STANDING,
                     ),
                 ),
                 direction=DIRECTION_CLIENT_TO_SERVER,
@@ -193,7 +174,7 @@ class AutoFishExtension(Extension):
                         vector_y=self.state.me.pos.y,
                         int_x=-1,
                         int_y=-1,
-                        flags=self.facing_left(self.fish_pos) | TankFlags.STANDING,
+                        flags=self.facing_left(tile=self.fish_pos) | TankFlags.STANDING,
                     ),
                 ),
                 direction=DIRECTION_CLIENT_TO_SERVER,

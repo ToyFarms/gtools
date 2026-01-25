@@ -144,7 +144,7 @@ class UtilityExtension(Extension):
         )
 
     @dispatch(s.command_toggle("/nowrap", id=200))
-    def _toggle_nowrap(self, event: PendingPacket) -> PendingPacket | None:
+    def _toggle_nowrap(self, _event: PendingPacket) -> PendingPacket | None:
         self.intercept_warp = not self.intercept_warp
         self.console_log(f"simulate warp: {self.intercept_warp}")
 

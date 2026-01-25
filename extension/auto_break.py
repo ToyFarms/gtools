@@ -326,7 +326,7 @@ class AutoBreakExtension(Extension):
             return False
 
         punch_or_place = TankFlags.PUNCH if id == 18 else TankFlags.PLACE
-        facing_left = self.facing_left(vec2(target_tile * 32))
+        facing_left = self.facing_left(tile=target_tile)
         print(f"last={time.time()-self.last_confirmation:.2f}, tile change at {target_tile} {id=} facing={'left' if self.state.me.state & TankFlags.FACING_LEFT != 0 else 'right'}")
         self.push(
             PreparedPacket(

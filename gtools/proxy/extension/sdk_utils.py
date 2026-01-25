@@ -320,11 +320,18 @@ class ExtensionUtility(ABC):
 
         self.push(PreparedPacket(particle(id, pos[0], pos[1], alternate), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
 
-    def facing_left(self, to: vec2) -> TankFlags:
-        if self.state.me.pos.x // 32 == to.x // 32:
+    def facing_left(self, *, abs: vec2 | None = None, tile: ivec2 | None = None) -> TankFlags:
+        if abs:
+            target = abs
+        elif tile:
+            target = vec2(tile) * 32
+        else:
             return self.state.me.state & TankFlags.FACING_LEFT
 
-        return TankFlags.FACING_LEFT if self.state.me.pos.x > to.x else TankFlags.NONE
+        if int(self.state.me.pos.x // 32) == int(target.x // 32):
+            return self.state.me.state & TankFlags.FACING_LEFT
+
+        return TankFlags.FACING_LEFT if self.state.me.pos.x > target.x else TankFlags.NONE
 
     def in_range(self, p2: ivec2, punch: bool) -> bool:
         range = self.state.me.character.punch_range if punch else self.state.me.character.build_range

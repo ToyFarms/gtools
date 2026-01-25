@@ -2,6 +2,7 @@ from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
     INTEREST_STATE,
+    INTEREST_STATE_UPDATE,
     Interest,
     InterestState,
     PendingPacket,
@@ -13,9 +14,9 @@ from gtools.proxy.extension.sdk_utils import helper
 s = helper()
 
 
-class ________CHANGE_ME________(Extension):
+class FOO(Extension):
     def __init__(self) -> None:
-        super().__init__(name="________CHANGE_ME________", interest=[])
+        super().__init__(name="FOO", interest=[Interest(INTEREST_STATE_UPDATE)])
 
     @dispatch(
         Interest(
@@ -34,4 +35,4 @@ class ________CHANGE_ME________(Extension):
 
 
 if __name__ == "__main__":
-    ________CHANGE_ME________().standalone()
+    FOO().standalone()
