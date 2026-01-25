@@ -350,6 +350,7 @@ protocol      = growtopia protocol version
 game_version  = version
 fz            = size of Growtopia.exe in bytes
 cbits         = client bits (bitflags), values:
+                1    = unk1
                 2    = disable_add_friend
                 4    = hide_sign
                 8    = hide_iap
@@ -360,7 +361,9 @@ cbits         = client bits (bitflags), values:
                 256  = disable_billboard
                 512  = use_classic_store
                 1024 = enable_profile
-                2048 = disable_chat
+                2048 = role_skin
+                4096 = role_icon
+                8192 = disable_chat
 player_age    = age
 GDPR          = General Data Protection Regulation, there is also OnOverrideGDPRFromServer
                 Call(Variant(b'OnOverrideGDPRFromServer', 22i, 2i, 0i, 1i))
@@ -372,7 +375,7 @@ GDPR          = General Data Protection Regulation, there is also OnOverrideGDPR
 FCMToken      = Firebase Cloud Messaging token
 category      = world select category, default to _-5100
 totalPlaytime = playtime, always set to zero regardless
-klv           = derived token, unknown-need to update constant (give me gt latest version devirtualized pls :w)
+klv           = derived token, unknown-need to update constant
 hash2         = hash of the active network adapter's mac address else mac is "", proton_hash(get_active_adapter().mac + "RT")
 meta          = obtained from server_data.php
 fhash         = field hash, calculated with proton_hash(b"tankIDName|tankIDPass|requestedName|f|protocol|game_version|fz|lmode|cbits|hash2|vid|aid|gid|meta|rid|platformID|deviceVersion|country|hash|mac|reconnect|1\nuser|token|doorID|ProductIdwk|fhash|")
@@ -426,8 +429,8 @@ registry,
         subkey = key >> 1
 
         v = int(get_vsn_hash().decode())
-        key2 = abs(int(v) // 3)
-        subkey2 = abs(int(v) // 4)
+        key2 = abs(int(v / 3))
+        subkey2 = abs(int(v / 4))
 
     all values below is obfuscated
      * <key>\<subkey>    = vsn hash
