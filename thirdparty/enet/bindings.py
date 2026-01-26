@@ -1,20 +1,14 @@
 import ctypes
 from ctypes import _Pointer
 from enum import Enum, IntEnum, IntFlag
-from pathlib import Path
 from sys import platform
 from typing import cast
 
-if platform == "linux" or platform == "linux2":
-    lib_name = "libenet.so"
-elif platform == "darwin":
-    lib_name = "enet.dylib"
-elif platform == "win32":
-    lib_name = "enet.dll"
-else:
-    raise RuntimeError(f"unhandled platform: {platform}")
+from gtools.core.dll_loader import DLL
 
-enet = ctypes.CDLL(Path(__file__).parent / "enet" / lib_name)
+enet = DLL("thirdparty/enet/enet", "enet")
+if not enet.supported:
+    raise RuntimeError(f"enet is not supported on {platform}")
 
 
 class Pointer[T](_Pointer): ...

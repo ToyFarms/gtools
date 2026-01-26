@@ -1,27 +1,20 @@
 import ctypes
 import logging
-from pathlib import Path
 import platform
 
-dir = Path("gtools/core/x86")
-lib = None
+from gtools.core.dll_loader import DLL
+
+lib = DLL("gtools/core/x86", "cpuid")
 logger = logging.getLogger("cpuid")
 
-match platform.system():
-    case "Windows":
-        lib = ctypes.CDLL(dir / "cpuid.dll")
-    case "Linux":
-        lib = ctypes.CDLL(dir / "libcpuid.so")
-    case _ as sys:
-        logger.warning(f"cpuid instruction is not supported on {sys}")
-
-if lib:
+if lib.supported:
     lib.cpuid_checksum.restype = ctypes.c_int16
 
+    def cpuid_checksum() -> int:
+        return lib.cpuid_checksum()
 
-def cpuid_checksum() -> int:
-    if not lib:
-        logger.warning(f"cpuid instruction is not supported on {sys}")
+else:
+    logger.warning(f"cpuid instruction is not supported on {platform.system()}")
+
+    def cpuid_checksum() -> int:
         return 0
-
-    return lib.cpuid_checksum()

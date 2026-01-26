@@ -1,18 +1,28 @@
+import ctypes
 from datetime import datetime
 import random
+from gtools.core.dll_loader import DLL
 
+crypto_lib = DLL("gtools/core/growtopia", "crypto")
+if crypto_lib.supported:
+    crypto_lib.proton_hash.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+    crypto_lib.proton_hash.restype = ctypes.c_int32
 
-def proton_hash(data: bytes) -> int:
-    hash_val = 0x55555555
+    def proton_hash(data: bytes) -> int:
+        data_size = len(data)
+        return crypto_lib.proton_hash(data, data_size)
+else:
+    def proton_hash(data: bytes) -> int:
+        hash_val = 0x55555555
 
-    for byte in data:
-        hash_val = byte + ((hash_val & 0xFFFFFFFF) >> 27) + ((hash_val << 5) & 0xFFFFFFFF)
-        hash_val &= 0xFFFFFFFF
+        for byte in data:
+            hash_val = byte + ((hash_val & 0xFFFFFFFF) >> 27) + ((hash_val << 5) & 0xFFFFFFFF)
+            hash_val &= 0xFFFFFFFF
 
-    if hash_val & 0x80000000:
-        hash_val -= 0x100000000
+        if hash_val & 0x80000000:
+            hash_val -= 0x100000000
 
-    return hash_val
+        return hash_val
 
 
 def rolling_chksum(buf: bytes, shift: int) -> int:
