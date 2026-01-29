@@ -1,5 +1,6 @@
 import ctypes
 from datetime import datetime
+import hashlib
 import random
 from gtools.core.dll_loader import DLL
 
@@ -11,7 +12,9 @@ if crypto_lib.supported:
     def proton_hash(data: bytes) -> int:
         data_size = len(data)
         return crypto_lib.proton_hash(data, data_size)
+
 else:
+
     def proton_hash(data: bytes) -> int:
         hash_val = 0x55555555
 
@@ -175,3 +178,29 @@ def extract_time_from_rid(rid: str) -> datetime:
     month += 1
 
     return datetime(year=year, month=month, day=day, hour=hour, second=second)
+
+
+def md5(x: bytes) -> bytes:
+    return hashlib.md5(x).hexdigest().upper().encode()
+
+
+def sha256(x: bytes) -> bytes:
+    return hashlib.sha256(x).hexdigest().lower().encode()
+
+
+def generate_klv(protocol: bytes, version: bytes, rid: bytes) -> bytes:
+    salts = [
+        b"e9fc40ec08f9ea6393f59c65e37f750aacddf68490c4f92d0d2523a5bc02ea63",
+        b"c85df9056ee603b849a93e1ebab5dd5f66e1fb8b2f4a8caef8d13b9f9e013fa4",
+        b"3ca373dffbf463bb337e0fd768a2f395b8e417475438916506c721551f32038d",
+        b"73eff5914c61a20a71ada81a6fc7780700fb1c0285659b4899bc172a24c14fc1",
+    ]
+
+    parts = [
+        sha256(md5(sha256(protocol))) + salts[0],
+        sha256(sha256(version)) + salts[1],
+        sha256(md5(sha256(rid))) + salts[2],
+        sha256(sha256(protocol) + salts[3]),
+    ]
+
+    return sha256(b"".join(parts))
