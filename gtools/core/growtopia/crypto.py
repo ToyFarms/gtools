@@ -204,3 +204,20 @@ def generate_klv(protocol: bytes, version: bytes, rid: bytes) -> bytes:
     ]
 
     return sha256(b"".join(parts))
+
+
+# take this with a grain of salt, i just eyeballed this
+def generate_klv_android(protocol: bytes, rid: bytes) -> bytes:
+    salts = [
+        b"f270bfe3092faf56e02b8740ed8a7390",
+        b"c8f2bde4340c3c0fed4d550539489acc",
+        b"cd439492ab5814c8665a720baabfbfb7",
+        b"fba119844f893c112125f29cf858bedc",
+    ]
+    parts = [
+        salts[0] + md5(md5(salts[0])),
+        salts[1] + md5(md5(md5(md5(protocol)))),
+        salts[2] + md5(md5(md5(rid))),
+        salts[3],
+    ]
+    return md5(b"".join(parts))
