@@ -108,35 +108,25 @@ class MersenneTwister:
 
 def generate_rid() -> str:
     now = datetime.now()
-    month = now.month
-    day = now.day
-    year = now.year
-    hour = now.hour
-    second = now.second
 
     values = [0, 0, 0, 0]
+    values[0] = (now.day * 86400 + now.hour * 3600 + now.second + (now.month + now.year * 12) * 259200 - 1969378304) & 0xFFFFFFFF
 
-    years_since_2014 = year - 2014
-    temp1 = month + 12 * years_since_2014
-    temp2 = day + 2 * temp1 + temp1
-    temp3 = hour + 24 * temp2
-    values[0] = second + 3600 * temp3
-
-    r1 = random.randint(0, 0x7FFE) % 0x7FFF
-    r2 = random.randint(0, 0x7FFE) % 0x7FFF
-    r3 = random.randint(0, 0x7FFE) % 0x7FFF
+    r1 = random.randrange(0, 0x7FFFFFFF)
+    r2 = random.randrange(0, 0x7FFFFFFF)
+    r3 = random.randrange(0, 0x7FFFFFFF)
     values[1] = (r2 * r1 + r3) & 0xFFFFFFFF
 
-    r4 = random.randint(0, 0x7FFE) % 0x7FFF
-    seed = (year + values[0] + r4) & 0xFFFFFFFF
+    r4 = random.randrange(0, 0x7FFFFFFF)
+    seed = (now.year + values[0] + r4) & 0xFFFFFFFF
 
     mt = MersenneTwister()
     mt.seed(seed)
     values[2] = mt.random(200000000)
 
-    r5 = random.randint(0, 0x7FFE) % 0x7FFF
-    r6 = random.randint(0, 0x7FFE) % 0x7FFF
-    r7 = random.randint(0, 0x7FFE) % 0x7FFF
+    r5 = random.randrange(0, 0x7FFFFFFF)
+    r6 = random.randrange(0, 0x7FFFFFFF)
+    r7 = random.randrange(0, 0x7FFFFFFF)
     values[3] = (r6 * r5 + r7) & 0xFFFFFFFF
 
     rid_parts = []
@@ -148,16 +138,8 @@ def generate_rid() -> str:
 
 
 def extract_time_from_rid(rid: str) -> datetime:
-    """NOTE: rid is reversible over the domain because of weird encoding:
-    second e  [0, 3599]
-    minute e  [0, 23]
-    hour   e  [0, 2]
-    month  e  [0, 11]
-    year   >= 2014
-
-    otherwise, there may be loss of information.
-    but generally the year, month, hour, minute, second is pretty accurate
-    """
+    """NOTE: rid is lossy because it only encode 259200 seconds in a day which can only encode 3 days, the rest then overflows into the next component),
+    also the minutes component is not used at all for some reason"""
     value0 = int(rid[:8], 16)
 
     second = value0 % 3600
