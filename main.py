@@ -24,7 +24,7 @@ from gtools.core.growtopia.world import World
 from gtools.core.hosts import HostsFileManager
 from gtools.core.log import setup_logger
 from gtools.core.network import is_up, resolve_doh
-from gtools.core.privilege import elevate_process
+from gtools.core.privilege import elevate
 from gtools.core.wsl import is_running_wsl, windows_home
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
@@ -53,23 +53,6 @@ def get_host_mgr() -> HostsFileManager:
         return HostsFileManager("/mnt/c/Windows/System32/drivers/etc/hosts")
     else:
         return HostsFileManager()
-
-
-backed_up = False
-
-
-def elevate(kill: bool = True) -> bool:
-    if not (res := elevate_process(kill=kill)).is_success:
-        print(res)
-        return False
-
-    global backed_up
-    if not backed_up:
-        m = get_host_mgr()
-        bak_path = m.backup()
-        print(f"backed up {m.hosts_path} to {bak_path}")
-        backed_up = True
-    return True
 
 
 hosts = ["www.growtopia1.com", "www.growtopia2.com"]
@@ -176,12 +159,12 @@ def run_proxy() -> None:
         check_hosts()
     except PermissionError:
         try:
-            if elevate(kill=False):
+            if elevate(wait_for_child=True):
+                bak_path = m.backup()
+                print(f"backed up {m.hosts_path} to {bak_path}")
                 check_hosts()
                 time.sleep(3)
-                return
-            print("waiting for admin process to finish")
-            time.sleep(3)
+                exit(0)
         except Exception as e:
             traceback.print_exc()
             print(f"failed checking hosts: {e}")
@@ -275,6 +258,8 @@ if __name__ == "__main__":
     elif args.cmd == "host":
         m = get_host_mgr()
         if args.host_op in ("enable", "disable"):
+            bak_path = m.backup()
+            print(f"backed up {m.hosts_path} to {bak_path}")
             if elevate():
                 if args.host_op == "enable":
                     ensure_enabled()
@@ -287,11 +272,10 @@ if __name__ == "__main__":
         elif args.host_op == "ensure":
             check_hosts()
         elif args.host_op == "restore":
-            if (res := elevate_process()).is_success:
+            if elevate():
                 bak = m.restore()
                 print(f"successfully restored from {bak}")
-            else:
-                print(res)
+                exit(0)
     elif args.cmd == "ext_test":
         b = Broker()
         b.start()

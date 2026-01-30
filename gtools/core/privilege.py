@@ -1,173 +1,194 @@
+from dataclasses import dataclass
 import os
 import sys
 import subprocess
 import platform
-from enum import Enum
+from typing import Any
 
 
-class ElevationStatus(Enum):
-    SUCCESS = "success"
-    ALREADY_ELEVATED = "already_elevated"
-    REJECTED = "rejected"
-    ERROR = "error"
-    NOT_SUPPORTED = "not_supported"
-
-
+@dataclass
 class ElevationResult:
-    def __init__(self, status: ElevationStatus, message: str = "", exc: Exception | None = None):
-        self.status = status
-        self.message = message
-        self.exc = exc
-        self.is_success = status in (ElevationStatus.SUCCESS, ElevationStatus.ALREADY_ELEVATED)
-
-    def __repr__(self):
-        if self.exc:
-            return f"{self.message}: {self.exc}"
-        else:
-            return f"{self.message}"
+    success: bool
+    proc_handle: Any | None = None
 
 
 def is_elevated() -> bool:
     system = platform.system()
-
     try:
         if system == "Windows":
             import ctypes
 
-            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            try:
+                return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                return False
         else:
             return os.geteuid() == 0
     except Exception:
         return False
 
 
-def elevate_process(restart: bool = True, kill: bool = True) -> ElevationResult:
+def elevate(wait_for_child: bool = False, timeout: float | None = None) -> bool:
+    """returns true for privileged path, and false for non-privileged path, also keeps both process alive so you need to manage them yourself if you don't want duplicate"""
     if is_elevated():
-        return ElevationResult(ElevationStatus.ALREADY_ELEVATED, "process is already running with elevated privileges")
+        return True
 
     system = platform.system()
-
     try:
         if system == "Windows":
-            return _elevate_windows(restart, kill)
+            result = _launch_elevated_windows()
         elif system == "Darwin":
-            return _elevate_macos(restart, kill)
+            result = _launch_elevated_macos()
         elif system == "Linux":
-            return _elevate_linux(restart, kill)
+            result = _launch_elevated_linux()
         else:
-            return ElevationResult(ElevationStatus.NOT_SUPPORTED, f"platform '{system}' is not supported for elevation")
+            return False
 
-    except Exception as e:
-        return ElevationResult(ElevationStatus.ERROR, f"unexpected error during elevation: {str(e)}", e)
+        if not result.success:
+            return False
+
+        child_handle = result.proc_handle
+
+        if wait_for_child and child_handle is not None:
+            _wait_for_process_handle(child_handle, timeout)
+            return False
+        elif wait_for_child and child_handle is None:
+            return False
+        else:
+            return False
+
+    except Exception:
+        return False
 
 
-def _elevate_windows(restart: bool, kill: bool) -> ElevationResult:
+def _launch_elevated_windows() -> ElevationResult:
     try:
         import ctypes
+        from ctypes import wintypes
 
-        if restart:
-            script = sys.executable
-            params = " ".join([f'"{arg}"' for arg in sys.argv])
+        SEE_MASK_NOCLOSEPROCESS = 0x00000040
+        SW_SHOWNORMAL = 1
 
-            ret = ctypes.windll.shell32.ShellExecuteW(
-                None,
-                "runas",
-                script,
-                params,
-                None,
-                1,  # SW_SHOWNORMAL
-            )
+        class SHELLEXECUTEINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("fMask", wintypes.ULONG),
+                ("hwnd", wintypes.HWND),
+                ("lpVerb", wintypes.LPCWSTR),
+                ("lpFile", wintypes.LPCWSTR),
+                ("lpParameters", wintypes.LPCWSTR),
+                ("lpDirectory", wintypes.LPCWSTR),
+                ("nShow", wintypes.INT),
+                ("hInstApp", wintypes.HINSTANCE),
+                ("lpIDList", wintypes.LPVOID),
+                ("lpClass", wintypes.LPCWSTR),
+                ("hkeyClass", wintypes.HKEY),
+                ("dwHotKey", wintypes.DWORD),
+                ("hIcon", wintypes.HANDLE),
+                ("hProcess", wintypes.HANDLE),
+            ]
 
-            # ShellExecuteW returns > 32 on success
-            if ret > 32:
-                if kill:
-                    sys.exit(0)
-                return ElevationResult(ElevationStatus.SUCCESS)
-            elif ret == 5:  # ERROR_ACCESS_DENIED
-                return ElevationResult(ElevationStatus.REJECTED, "user declined UAC prompt or access was denied")
-            else:
-                return ElevationResult(ElevationStatus.ERROR, f"ShellExecuteW failed with return code: {ret}")
-        else:
-            return ElevationResult(ElevationStatus.SUCCESS)
+        exe = sys.executable
+        params = " ".join([f'"{arg}"' for arg in sys.argv])
 
-    except ImportError:
-        return ElevationResult(ElevationStatus.ERROR, "ctypes module not available on Windows", ImportError("ctypes required for Windows elevation"))
-    except Exception as e:
-        return ElevationResult(ElevationStatus.ERROR, f"windows elevation failed: {str(e)}", e)
+        ei = SHELLEXECUTEINFO()
+        ei.cbSize = ctypes.sizeof(ei)
+        ei.fMask = SEE_MASK_NOCLOSEPROCESS
+        ei.hwnd = None
+        ei.lpVerb = "runas"
+        ei.lpFile = exe
+        ei.lpParameters = params
+        ei.lpDirectory = None
+        ei.nShow = SW_SHOWNORMAL
+        ei.hInstApp = None
+        ei.hProcess = None
+
+        ShellExecuteEx = ctypes.windll.shell32.ShellExecuteExW
+        ret = ShellExecuteEx(ctypes.byref(ei))
+        if not ret:
+            return ElevationResult(False)
+
+        hproc = ei.hProcess
+        return ElevationResult(True, proc_handle=hproc)
+
+    except:
+        return ElevationResult(False)
 
 
-def _elevate_macos(restart: bool, kill: bool) -> ElevationResult:
+def _launch_elevated_macos() -> ElevationResult:
     try:
-        if restart:
-            script = os.path.abspath(sys.argv[0])
-            args = sys.argv[1:]
+        script = os.path.abspath(sys.argv[0])
+        args = sys.argv[1:]
 
-            cmd = f"{sys.executable} {script}"
-            if args:
-                cmd += " " + " ".join([f'"{arg}"' for arg in args])
+        cmd = [sys.executable, script] + args
+        joined = " ".join([f'"{p}"' for p in cmd])
+        applescript = f"do shell script {joined} with administrator privileges"
 
-            applescript = f'do shell script "{cmd}" with administrator privileges'
+        popen = subprocess.Popen(["osascript", "-e", applescript], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return ElevationResult(True, proc_handle=popen)
 
-            result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True)
-
-            if result.returncode == 0:
-                if kill:
-                    sys.exit(0)
-                return ElevationResult(ElevationStatus.SUCCESS)
-            elif result.returncode == 1:
-                return ElevationResult(ElevationStatus.REJECTED, "user cancelled authentication dialog")
-            else:
-                return ElevationResult(ElevationStatus.ERROR, f"osascript failed: {result.stderr}")
-        else:
-            return ElevationResult(ElevationStatus.SUCCESS)
-
-    except FileNotFoundError:
-        return ElevationResult(ElevationStatus.ERROR, "osascript not found. Is this running on macOS?", FileNotFoundError("osascript command not found"))
-    except Exception as e:
-        return ElevationResult(ElevationStatus.ERROR, f"macOS elevation failed: {str(e)}", e)
+    except:
+        return ElevationResult(False)
 
 
-def _elevate_linux(restart: bool, kill: bool) -> ElevationResult:
+def _launch_elevated_linux() -> ElevationResult:
     try:
-        if restart:
-            script = os.path.abspath(sys.argv[0])
-            args = [sys.executable, script] + sys.argv[1:]
+        script = os.path.abspath(sys.argv[0])
+        args = [sys.executable, script] + sys.argv[1:]
 
-            elevation_commands = ["pkexec", "sudo", "gksu", "kdesudo"]
+        elevation_commands = ["pkexec", "gksu", "kdesudo", "sudo"]
 
-            for cmd in elevation_commands:
-                if _command_exists(cmd):
-                    try:
-                        if cmd == "sudo":
-                            full_cmd = [cmd] + args
-                        else:
-                            full_cmd = [cmd] + args
+        for cmd in elevation_commands:
+            if _command_exists(cmd):
+                full_cmd = [cmd] + args
+                try:
+                    popen = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    return ElevationResult(True, proc_handle=popen)
+                except Exception:
+                    continue
 
-                        result = subprocess.run(full_cmd, capture_output=True, text=True)
-
-                        if result.returncode == 0:
-                            if kill:
-                                sys.exit(0)
-                            return ElevationResult(ElevationStatus.SUCCESS)
-                        elif result.returncode == 126 or result.returncode == 127:
-                            return ElevationResult(ElevationStatus.REJECTED, f"authentication cancelled or failed with {cmd}")
-                        else:
-                            continue
-
-                    except Exception:
-                        continue
-
-            return ElevationResult(ElevationStatus.ERROR, "no suitable elevation command found (tried: pkexec, sudo, gksu, kdesudo)")
-        else:
-            return ElevationResult(ElevationStatus.SUCCESS)
-
+        return ElevationResult(False)
     except Exception as e:
-        return ElevationResult(ElevationStatus.ERROR, f"linux elevation failed: {str(e)}", e)
+        return ElevationResult(False)
 
 
 def _command_exists(command: str) -> bool:
     try:
-        subprocess.run(["which", command], capture_output=True, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+        import shutil
+
+        return shutil.which(command) is not None
+    except Exception:
+        try:
+            subprocess.run(["which", command], capture_output=True, check=True)
+            return True
+        except Exception:
+            return False
+
+
+def _wait_for_process_handle(handle, timeout: float | None) -> bool:
+    system = platform.system()
+    if system == "Windows":
+        try:
+            import ctypes
+
+            INFINITE = 0xFFFFFFFF
+            WAIT_OBJECT_0 = 0x00000000
+            ms = INFINITE if timeout is None else int(timeout * 1000)
+            res = ctypes.windll.kernel32.WaitForSingleObject(handle, ms)
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return res == WAIT_OBJECT_0
+        except Exception:
+            return False
+    else:
+        try:
+            proc = handle
+            if timeout is None:
+                proc.wait()
+                return True
+            else:
+                proc.wait(timeout=timeout)
+                return True
+        except subprocess.TimeoutExpired:
+            return False
+        except Exception:
+            return False
