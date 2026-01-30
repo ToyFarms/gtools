@@ -8,7 +8,6 @@ import sys
 import threading
 import time
 from traceback import print_exc
-import traceback
 
 from PIL import Image
 import numpy as np
@@ -24,7 +23,7 @@ from gtools.core.growtopia.world import World
 from gtools.core.hosts import HostsFileManager
 from gtools.core.log import setup_logger
 from gtools.core.network import is_up, resolve_doh
-from gtools.core.privilege import elevate, is_elevated
+from gtools.core.privilege import elevate, is_elevated_child
 from gtools.core.wsl import is_running_wsl, windows_home
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
@@ -156,21 +155,12 @@ def check_hosts() -> None:
 
 def run_proxy() -> None:
     try:
-        if is_elevated():
-            bak_path = m.backup()
-            print(f"backed up {m.hosts_path} to {bak_path}")
-
         check_hosts()
-        time.sleep(3)
-        exit(0)
+        if is_elevated_child():
+            time.sleep(3)
+            exit(0)
     except PermissionError:
-        try:
-            elevate(wait_for_child=True)
-        except Exception as e:
-            traceback.print_exc()
-            print(f"failed checking hosts: {e}")
-            if is_running_wsl():
-                print("WARNING: wsl cannot self elevate, your terminal has to be running as administrator in the first place")
+        elevate(wait_for_child=True)
 
     server = setup_server()
     t = threading.Thread(target=lambda: server.serve_forever())

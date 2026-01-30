@@ -4,6 +4,9 @@ import sys
 import subprocess
 import platform
 from typing import Any
+import uuid
+
+ELEVATE_FLAG = "--__elevate_token="
 
 
 @dataclass
@@ -29,18 +32,19 @@ def is_elevated() -> bool:
 
 
 def elevate(wait_for_child: bool = False, timeout: float | None = None) -> bool:
-    """returns true for privileged path, and false for non-privileged path, also keeps both process alive so you need to manage them yourself if you don't want duplicate"""
     if is_elevated():
         return True
 
     system = platform.system()
+    token = uuid.uuid4().hex
+
     try:
         if system == "Windows":
-            result = _launch_elevated_windows()
+            result = _launch_elevated_windows(token)
         elif system == "Darwin":
-            result = _launch_elevated_macos()
+            result = _launch_elevated_macos(token)
         elif system == "Linux":
-            result = _launch_elevated_linux()
+            result = _launch_elevated_linux(token)
         else:
             return False
 
@@ -61,7 +65,7 @@ def elevate(wait_for_child: bool = False, timeout: float | None = None) -> bool:
         return False
 
 
-def _launch_elevated_windows() -> ElevationResult:
+def _launch_elevated_windows(token: str) -> ElevationResult:
     try:
         import ctypes
         from ctypes import wintypes
@@ -90,6 +94,7 @@ def _launch_elevated_windows() -> ElevationResult:
 
         exe = sys.executable
         params = " ".join([f'"{arg}"' for arg in sys.argv])
+        params = f'{params} "{ELEVATE_FLAG}{token}"'
 
         ei = SHELLEXECUTEINFO()
         ei.cbSize = ctypes.sizeof(ei)
@@ -111,30 +116,32 @@ def _launch_elevated_windows() -> ElevationResult:
         hproc = ei.hProcess
         return ElevationResult(True, proc_handle=hproc)
 
-    except:
+    except Exception:
         return ElevationResult(False)
 
 
-def _launch_elevated_macos() -> ElevationResult:
+def _launch_elevated_macos(token: str) -> ElevationResult:
     try:
         script = os.path.abspath(sys.argv[0])
         args = sys.argv[1:]
 
         cmd = [sys.executable, script] + args
+        cmd.append(f"{ELEVATE_FLAG}{token}")
         joined = " ".join([f'"{p}"' for p in cmd])
         applescript = f"do shell script {joined} with administrator privileges"
 
         popen = subprocess.Popen(["osascript", "-e", applescript], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return ElevationResult(True, proc_handle=popen)
 
-    except:
+    except Exception:
         return ElevationResult(False)
 
 
-def _launch_elevated_linux() -> ElevationResult:
+def _launch_elevated_linux(token: str) -> ElevationResult:
     try:
         script = os.path.abspath(sys.argv[0])
         args = [sys.executable, script] + sys.argv[1:]
+        args.append(f"{ELEVATE_FLAG}{token}")
 
         elevation_commands = ["pkexec", "gksu", "kdesudo", "sudo"]
 
@@ -148,7 +155,7 @@ def _launch_elevated_linux() -> ElevationResult:
                     continue
 
         return ElevationResult(False)
-    except Exception as e:
+    except Exception:
         return ElevationResult(False)
 
 
@@ -192,3 +199,14 @@ def _wait_for_process_handle(handle, timeout: float | None) -> bool:
             return False
         except Exception:
             return False
+
+
+def launched_via_elevate() -> str | None:
+    for arg in sys.argv:
+        if arg.startswith(ELEVATE_FLAG):
+            return arg[len(ELEVATE_FLAG) :]
+    return
+
+
+def is_elevated_child() -> bool:
+    return is_elevated() and launched_via_elevate() is not None
