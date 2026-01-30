@@ -146,6 +146,7 @@ def check_hosts() -> None:
 
                 if orig:
                     setting.server_data_url = orig.ip
+                    setting.save()  # no other way to transmit the information
                     print(f"changed proxy target server to {orig.ip}")
 
 
