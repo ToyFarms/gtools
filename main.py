@@ -43,10 +43,6 @@ from gtools import setting
 from extension.utils import UtilityExtension
 
 
-def confirm(msg: str) -> bool:
-    return input(f"{msg} (Y/n) ").lower() in ("", "y")
-
-
 def get_host_mgr() -> HostsFileManager:
     if is_running_wsl():
         return HostsFileManager("/mnt/c/Windows/System32/drivers/etc/hosts")
@@ -66,10 +62,9 @@ def ensure_enabled() -> None:
         for h in hosts:
             ent = m.get(h, include_disabled=True)
             if not ent:
-                if confirm(f"{h} does not exists, add?"):
-                    m.add("127.0.0.1", h, insert_after_hostname=hosts)
-                    print(f"added {h}")
-                    print(f"enabled {h}")
+                m.add("127.0.0.1", h, insert_after_hostname=hosts)
+                print(f"added {h}")
+                print(f"enabled {h}")
             elif ent.disabled:
                 if len(ent.hostnames) > 1:
                     m.split_hostname(None, h, include_disabled=True)
@@ -90,11 +85,10 @@ def ensure_disabled() -> None:
         for h in hosts:
             ent = m.get(h, include_disabled=True)
             if not ent:
-                if confirm(f"{h} does not exists, add?"):
-                    m.add("127.0.0.1", h, insert_after_hostname=hosts)
-                    print(f"added {h}")
-                    m.disable(h)
-                    print(f"disabled {h}")
+                m.add("127.0.0.1", h, insert_after_hostname=hosts)
+                print(f"added {h}")
+                m.disable(h)
+                print(f"disabled {h}")
             elif not ent.disabled:
                 if len(ent.hostnames) > 1:
                     m.split_hostname(None, h)
