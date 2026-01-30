@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import os
+import shlex
 import sys
 import subprocess
 import platform
@@ -92,16 +93,18 @@ def _launch_elevated_windows(token: str) -> ElevationResult:
                 ("hProcess", wintypes.HANDLE),
             ]
 
-        exe = sys.executable
-        params = " ".join([f'"{arg}"' for arg in sys.argv])
-        params = f'{params} "{ELEVATE_FLAG}{token}"'
+        this_script = os.path.abspath(__file__)
+
+        param_list = [this_script, sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:], f"{ELEVATE_FLAG}{token}"]
+
+        params = subprocess.list2cmdline(param_list)
 
         ei = SHELLEXECUTEINFO()
         ei.cbSize = ctypes.sizeof(ei)
         ei.fMask = SEE_MASK_NOCLOSEPROCESS
         ei.hwnd = None
         ei.lpVerb = "runas"
-        ei.lpFile = exe
+        ei.lpFile = sys.executable
         ei.lpParameters = params
         ei.lpDirectory = None
         ei.nShow = SW_SHOWNORMAL
@@ -122,32 +125,26 @@ def _launch_elevated_windows(token: str) -> ElevationResult:
 
 def _launch_elevated_macos(token: str) -> ElevationResult:
     try:
-        script = os.path.abspath(sys.argv[0])
-        args = sys.argv[1:]
-
-        cmd = [sys.executable, script] + args
-        cmd.append(f"{ELEVATE_FLAG}{token}")
-        joined = " ".join([f'"{p}"' for p in cmd])
-        applescript = f"do shell script {joined} with administrator privileges"
-
+        this_script = os.path.abspath(__file__)
+        param_list = [sys.executable, this_script, sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:], f"{ELEVATE_FLAG}{token}"]
+        cmd = " ".join(shlex.quote(p) for p in param_list)
+        applescript = f'do shell script "{cmd}" with administrator privileges'
         popen = subprocess.Popen(["osascript", "-e", applescript], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return ElevationResult(True, proc_handle=popen)
-
     except Exception:
         return ElevationResult(False)
 
 
 def _launch_elevated_linux(token: str) -> ElevationResult:
     try:
-        script = os.path.abspath(sys.argv[0])
-        args = [sys.executable, script] + sys.argv[1:]
-        args.append(f"{ELEVATE_FLAG}{token}")
+        this_script = os.path.abspath(__file__)
+        param_list = [sys.executable, this_script, sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:], f"{ELEVATE_FLAG}{token}"]
 
         elevation_commands = ["pkexec", "gksu", "kdesudo", "sudo"]
 
         for cmd in elevation_commands:
             if _command_exists(cmd):
-                full_cmd = [cmd] + args
+                full_cmd = [cmd] + param_list
                 try:
                     popen = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     return ElevationResult(True, proc_handle=popen)
@@ -201,12 +198,121 @@ def _wait_for_process_handle(handle, timeout: float | None) -> bool:
             return False
 
 
-def launched_via_elevate() -> str | None:
-    for arg in sys.argv:
-        if arg.startswith(ELEVATE_FLAG):
-            return arg[len(ELEVATE_FLAG) :]
-    return
-
-
 def is_elevated_child() -> bool:
-    return is_elevated() and launched_via_elevate() is not None
+    return is_elevated() and "ELEVATED" in os.environ and "ELEVATION_TOKEN" in os.environ
+
+
+def _strip_elevate_flag(argv: list[str]) -> tuple[list[str], str | None]:
+    token = None
+    out = []
+    for a in argv:
+        if a.startswith(ELEVATE_FLAG) and token is None:
+            token = a[len(ELEVATE_FLAG) :]
+        else:
+            out.append(a)
+    return out, token
+
+
+def _exec_elevated_target_windows(target_argv: list[str], extra_env: dict[str, str]) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    CREATE_UNICODE_ENVIRONMENT = 0x00000400
+
+    class STARTUPINFO(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("lpReserved", wintypes.LPWSTR),
+            ("lpDesktop", wintypes.LPWSTR),
+            ("lpTitle", wintypes.LPWSTR),
+            ("dwX", wintypes.DWORD),
+            ("dwY", wintypes.DWORD),
+            ("dwXSize", wintypes.DWORD),
+            ("dwYSize", wintypes.DWORD),
+            ("dwXCountChars", wintypes.DWORD),
+            ("dwYCountChars", wintypes.DWORD),
+            ("dwFillAttribute", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("wShowWindow", wintypes.WORD),
+            ("cbReserved2", wintypes.WORD),
+            ("lpReserved2", ctypes.POINTER(ctypes.c_byte)),
+            ("hStdInput", wintypes.HANDLE),
+            ("hStdOutput", wintypes.HANDLE),
+            ("hStdError", wintypes.HANDLE),
+        ]
+
+    class PROCESS_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("hProcess", wintypes.HANDLE),
+            ("hThread", wintypes.HANDLE),
+            ("dwProcessId", wintypes.DWORD),
+            ("dwThreadId", wintypes.DWORD),
+        ]
+
+    env = os.environ.copy()
+    env.update(extra_env)
+    env_block = "\0".join(f"{k}={v}" for k, v in env.items()) + "\0\0"
+    env_block = ctypes.create_unicode_buffer(env_block)
+
+    cmdline = subprocess.list2cmdline(target_argv)
+
+    si = STARTUPINFO()
+    si.cb = ctypes.sizeof(si)
+    pi = PROCESS_INFORMATION()
+
+    ok = kernel32.CreateProcessW(
+        None,
+        ctypes.c_wchar_p(cmdline),
+        None,
+        None,
+        False,
+        CREATE_UNICODE_ENVIRONMENT,
+        env_block,
+        None,
+        ctypes.byref(si),
+        ctypes.byref(pi),
+    )
+
+    if not ok:
+        raise RuntimeError("CreateProcessW failed")
+
+    kernel32.CloseHandle(pi.hThread)
+    kernel32.CloseHandle(pi.hProcess)
+
+
+def _exec_elevated_target_posix(target_argv: list[str], extra_env: dict[str, str]) -> None:
+    env = os.environ.copy()
+    env.update(extra_env)
+    os.execvpe(target_argv[0], target_argv, env)
+
+
+# NOTE: intermediary to pass argument as environment variable
+if __name__ == "__main__":
+    if is_elevated_child():
+        argv_no_token, token = _strip_elevate_flag(sys.argv)
+        if token is None:
+            print("Missing elevation token", file=sys.stderr)
+            sys.exit(1)
+
+        if len(argv_no_token) < 2:
+            print("No target command supplied to elevated intermediary", file=sys.stderr)
+            sys.exit(1)
+
+        target_argv = argv_no_token[1:]
+
+        injected_env = {
+            "ELEVATED": "1",
+            "ELEVATION_TOKEN": token,
+        }
+
+        system = platform.system()
+        try:
+            if system == "Windows":
+                _exec_elevated_target_windows(target_argv, injected_env)
+                sys.exit(0)
+            else:
+                _exec_elevated_target_posix(target_argv, injected_env)
+        except Exception as e:
+            print(f"Failed to launch elevated target: {e}", file=sys.stderr)
+            sys.exit(1)
