@@ -8,12 +8,22 @@ import logging
 from typing import ClassVar, Self
 
 from pyglm.glm import ivec2, vec2
-from gtools.baked.items import GUILD_LOCK
+from gtools.baked.items import (
+    AUCTION_BLOCK,
+    AUTO_SURGEON_STATION,
+    BATTLE_PET_CAGE,
+    BOUNTIFUL_LATTICE_FENCE_ROOTS,
+    DATA_BEDROCK,
+    DATA_STARSHIP_HULL,
+    GUILD_LOCK,
+    OPERATING_TABLE,
+    PARTY_PROJECTOR,
+)
 from gtools.core.buffer import Buffer
 import cbor2
 
 from gtools.core.growtopia.items_dat import ItemInfoTextureType, item_database
-from gtools.core.growtopia.packet import TankPacket
+from gtools.core.growtopia.packet import NetPacket, TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RtTexManager
 from gtools.protogen import growtopia_pb2
@@ -103,27 +113,6 @@ class CyBotCommandData:
 
 
 @dataclass(slots=True)
-class GuildData:
-    unk1: int = 0  # u8
-    unk2: int = 0  # u32
-    unk3: int = 0  # u32
-    unk4: int = 0  # u32
-    unk5: int = 0  # u32
-
-    @classmethod
-    def deserialize(cls, s: Buffer, id: int) -> "GuildData":
-        t = cls()
-        if id != GUILD_LOCK:
-            t.unk1 = s.read_u8()
-        t.unk2 = s.read_u32()
-        t.unk3 = s.read_u32()
-        t.unk4 = s.read_u32()
-        t.unk5 = s.read_u32()
-
-        return t
-
-
-@dataclass(slots=True)
 class StarshipHullData:
     unk1: int = 0  # u32
     unk2: int = 0  # u32
@@ -149,21 +138,6 @@ class StarshipHullData:
             t.unk8 = s.read_u32()
 
         return t
-
-
-@dataclass(slots=True)
-class BedrockData:
-    unk1: int = 0  # u64
-
-    @classmethod
-    def deserialize(cls, s: Buffer) -> "BedrockData":
-        t = cls()
-        t.unk1 = s.read_u64()
-
-        return t
-
-
-SpecialData = GuildData | StarshipHullData | BedrockData
 
 
 class TileExtra(ABC):
@@ -199,6 +173,11 @@ class TileExtra(ABC):
             raise NotImplementedError(f"parser for object {t.__name__} is not implemented")
 
         extra = t.deserialize(s, fg, bg, format_version)
+
+        item = item_database.get(fg or bg)
+        if item.id == DATA_STARSHIP_HULL and format_version > 4:
+            print(StarshipHullData.deserialize(s, format_version))
+
         return extra
 
 
@@ -1195,12 +1174,21 @@ class CyBotTile(TileExtra):
 @dataclass(slots=True)
 class GuildItemTile(TileExtra):
     ID = 65
-    unk1: bytes = b""  # 17
+    unk1: int = 0  # u8
+    unk2: int = 0  # u32
+    unk3: int = 0  # u32
+    unk4: int = 0  # u32
+    unk5: int = 0  # u32
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "GuildItemTile":
         t = cls()
-        t.unk1 = s.read_bytes(17)
+        if id != GUILD_LOCK:
+            t.unk1 = s.read_u8()
+        t.unk2 = s.read_u32()
+        t.unk3 = s.read_u32()
+        t.unk4 = s.read_u32()
+        t.unk5 = s.read_u32()
         return t
 
 
@@ -1388,8 +1376,8 @@ class PveNpcData:
     field_8: int = 0  # u32
     field_9: int = 0  # u32
     field_10: int = 0  # u32
-    field_11: int = 0  # u32
-    field_b12: bool = False  # u32
+    field_b11: bool = False  # u32
+    field_12: int = 0  # u32
     field_13: int = 0  # u32
     field_14: int = 0  # u32
     field_b15: bool = False  # u32
@@ -1402,8 +1390,8 @@ class PveNpcData:
     field_22: int = 0  # u32
     field_23: int = 0  # u32
     field_25: int = 0  # u32
+    field_b26: bool = False  # u32
     pos: list[tuple[int, int]] = field(default_factory=list)  # vector<vec2<i32>>
-    field_b27: bool = False  # u32
 
     @classmethod
     def deserialize(cls, s: Buffer) -> "PveNpcData":
@@ -1417,10 +1405,10 @@ class PveNpcData:
         t.field_b7 = s.read_u32() != 0
         t.field_8 = s.read_u32()
         t.field_9 = s.read_u32()
-        t.field_11 = s.read_u32()
-        t.field_b12 = s.read_u32() != 0
-        t.field_13 = s.read_u32()
         t.field_10 = s.read_u32()
+        t.field_b11 = s.read_u32() != 0
+        t.field_12 = s.read_u32()
+        t.field_13 = s.read_u32()
         t.field_14 = s.read_u32()
         t.field_b15 = s.read_u32() != 0
         t.field_16 = s.read_u32()
@@ -1432,14 +1420,13 @@ class PveNpcData:
         t.field_22 = s.read_u32()
         t.field_23 = s.read_u32()
         t.field_25 = s.read_u32()
-        t.field_b27 = s.read_u32() != 0
+        t.field_b26 = s.read_u32() != 0
         for _ in range(s.read_u32()):
             t.pos.append((s.read_u32(), s.read_u32()))
 
         return t
 
 
-# probably outdated but oh well
 @dataclass(slots=True)
 class PveNpcTile(TileExtra):
     ID = 76
@@ -1575,7 +1562,9 @@ class Tile:
 
         stride = item.get_tex_stride()
         is_flipped = self.flags & TileFlags.FLIPPED_X != 0
+        # TODO: we need to determine to ignore flipped, because some tile just doesn't care
         if is_flipped and item.texture_type == ItemInfoTextureType.SMART_EDGE_HORIZ:
+            # handle flipped couch texture
             if tex_index == 0:
                 tex_index = 2
             elif tex_index == 2:
@@ -1643,12 +1632,12 @@ class Tile:
             tile._extra_raw = s.read_bytes(extra_size)
 
         cbor_ids = [
-            15376,  # party projector
-            8642,  # bountiful lattice fence roots
-            15546,  # auction block
-            14666,  # auto surgeon
-            14662,  # operating table
-            3548,  # battle pet cage
+            PARTY_PROJECTOR,
+            BOUNTIFUL_LATTICE_FENCE_ROOTS,
+            AUCTION_BLOCK,
+            AUTO_SURGEON_STATION,
+            OPERATING_TABLE,
+            BATTLE_PET_CAGE,
         ]
 
         if tile.front in cbor_ids:
@@ -1718,6 +1707,7 @@ class Dropped:
 
 @dataclass(slots=True)
 class World:
+    id: int = 0  # u32, from int_x in tank packet
     version: int = 0  # u32
     unk1: int = 0  # u16
     name: bytes = b""
@@ -1725,10 +1715,14 @@ class World:
     height: int = 0  # u32
     nb_tiles: int = 0  # u32
     unk2: bytes = b"\x00" * 5
-    tiles: list[Tile] = field(default_factory=list)
-    unk3: bytes = b"\x00" * 12
-    dropped: Dropped = field(default_factory=Dropped)
+    tiles: list[Tile] = field(default_factory=list, repr=False)
     unk4: bytes = b"\x00" * 12
+    dropped: Dropped = field(default_factory=Dropped, repr=False)
+    unk5: int = 0  # u16
+    unk6: int = 0  # u16
+    unk7: int = 0  # u16
+    unk8: int = 0  # u16
+    unk9: int = 0  # u32
 
     # state (not in data)
     player: list[Player] = field(default_factory=list)
@@ -1764,7 +1758,7 @@ class World:
                     self.tiles.append(Tile(pos=pos))
 
         self.nb_tiles = len(self.tiles)
-        self.tiles.sort(key=lambda tile: (tile.pos.x, -tile.pos.y))
+        self.tiles.sort(key=lambda tile: (tile.pos.y, tile.pos.x))
 
     def tile_exists(self, pos: ivec2) -> bool:
         for tile in self.tiles:
@@ -1843,8 +1837,11 @@ class World:
             item.amount = amount
 
     @classmethod
-    def from_tank(cls, tank: TankPacket | bytes) -> "World":
-        return cls.deserialize(Buffer(tank if isinstance(tank, bytes) else tank.extended_data), 60)
+    def from_net(cls, tank: TankPacket | bytes) -> "World":
+        if isinstance(tank, bytes):
+            tank = NetPacket.deserialize(tank).tank
+
+        return cls.deserialize(tank.extended_data, int_x_id=tank.int_x)
 
     @classmethod
     def from_extended(cls, extended: bytes) -> "World":
@@ -1855,14 +1852,15 @@ class World:
         return b""
 
     @classmethod
-    def deserialize(cls, s: bytes | Buffer, offset: int = 0) -> "World":
+    def deserialize(cls, s: bytes | Buffer, int_x_id: int = 0) -> "World":
+        # we delegate passing the id to the caller because we don't have the tank packet here
         s = Buffer(s)
 
         world = cls()
 
-        s.rpos += offset
-        world.version = s.read_u32()
-        world.unk1 = s.read_u16()
+        world.id = int_x_id
+        world.version = s.read_u16()
+        world.unk1 = s.read_u32()
         world.name = s.read_pascal_bytes("H")
         world.width = s.read_u32()
         world.height = s.read_u32()
@@ -1886,8 +1884,14 @@ class World:
             world.tiles.append(tile)
 
         if failed:
+            # if we fail, then we cannot parse dropped item, but we can take advantage of the fact that it always placed at the end
+            # meaning we can parse it reversed from the end until it failed or found some impossible value
             with s.reversed(keep=False):
-                world.unk4 = s.read_bytes(12)
+                world.unk9 = s.read_u32()
+                world.unk8 = s.read_u16()
+                world.unk7 = s.read_u16()
+                world.unk6 = s.read_u16()
+                world.unk5 = s.read_u16()
 
                 while True:
                     item = DroppedItem()
@@ -1919,13 +1923,12 @@ class World:
                             world.dropped.last_uid = maybe_last_uid
                             break
 
-                world.unk3 = s.read_bytes(12)
+                world.unk4 = s.read_bytes(12)
             world.dropped.items.reverse()
 
             return world
 
-        world.unk3 = s.read_bytes(12)
-
+        world.unk4 = s.read_bytes(12)
         world.dropped.nb_items = s.read_u32()
         world.dropped.last_uid = s.read_u32()
         for _ in range(world.dropped.nb_items):
@@ -1938,7 +1941,11 @@ class World:
 
             world.dropped.items.append(item)
 
-        world.unk4 = s.read_bytes(12)
+        world.unk5 = s.read_u16()
+        world.unk6 = s.read_u16()
+        world.unk7 = s.read_u16()
+        world.unk8 = s.read_u16()
+        world.unk9 = s.read_u32()
 
         return world
 

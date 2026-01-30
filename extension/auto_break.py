@@ -216,7 +216,7 @@ class AutoBreakExtension(Extension):
             else:
                 self.recording = False
                 self.target = list(set(self.target))
-                self.target.sort(key=lambda pos: (pos.x, -pos.y))
+                self.target.sort(key=lambda pos: (pos.y, pos.x))
                 self.console_log(f"target: {len(self.target)}")
                 t = 0
                 for _ in range(5):

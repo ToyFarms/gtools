@@ -18,7 +18,7 @@ WORLD_DIR = windows_home() / setting.appdir_name / "worlds"
 
 def render_world(name: str) -> Image.Image:
     path = Path(f"{WORLD_DIR}/{name}")
-    w = World.from_tank(path.read_bytes())
+    w = World.from_net(path.read_bytes())
 
     img = Image.new("RGBA", (w.width * 32, w.height * 32))
 

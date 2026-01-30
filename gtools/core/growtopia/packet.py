@@ -279,7 +279,7 @@ class TankPacket(Serializable):
                     ("int_x", self.int_x),
                     ("int_y", self.int_y),
                     ("extended_len", self.extended_len),
-                    ("extended_data", self.extended_data[:100] + (b"..." if len(self.extended_data) > 100 else b"")),
+                    ("extended_data", self.extended_data[:50] + (b"..." if len(self.extended_data) > 50 else b"")),
                 ],
             )
         )

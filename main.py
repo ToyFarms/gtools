@@ -371,14 +371,20 @@ if __name__ == "__main__":
         p.join()
         b.stop()
     elif args.cmd == "world_test":
-        for f in (windows_home() / ".gtools/world").glob("*"):
+        logger = logging.getLogger("world")
+        logger.setLevel(logging.CRITICAL)
+        logging.getLogger("tank_packet").setLevel(logging.CRITICAL)
+        for f in (windows_home() / ".gtools/worlds").glob("*"):
             try:
-                World.from_tank(f.read_bytes())
+                pkt = NetPacket.deserialize(f.read_bytes())
+                w = World.from_net(pkt.tank)
+                # print(w)
             except:
-                print(f"parsing {f} failed")
+                print(f"\x1b[31mparsing {f} failed\x1b[0m")
+                break
     elif args.cmd == "render":
         renderer = WorldRenderer()
-        world = World.from_tank(Path(args.world).read_bytes())
+        world = World.from_net(Path(args.world).read_bytes())
 
         img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
         start = time.perf_counter()
