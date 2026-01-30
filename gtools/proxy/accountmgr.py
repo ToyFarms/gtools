@@ -1,5 +1,7 @@
+import hashlib
 import json
 from typing import TypedDict
+import uuid
 
 from gtools.core.fake.mac import generate_random_mac
 from gtools.core.fake.volume_serial import generate_volume_serial
@@ -11,6 +13,7 @@ class AccountIdent(TypedDict):
     mac: str
     hash: str
     hash2: str
+    wk: str
 
 
 class Account(TypedDict):
@@ -43,6 +46,7 @@ class AccountManager:
                 "mac": generate_random_mac(),
                 "hash": str(proton_hash(f"{generate_volume_serial()}RT".encode())),
                 "hash2": str(proton_hash(f"{generate_random_mac()}RT".encode())),
+                "wk": hashlib.md5(str(uuid.uuid4()).encode()).hexdigest().upper(),
             },
         }
 
@@ -63,3 +67,36 @@ class AccountManager:
 
         cls._last = acc
         return acc
+
+    @classmethod
+    def remove(cls, name: bytes) -> Account:
+        name_str = name.decode()
+
+        accounts = cls._read()
+        if name_str not in accounts:
+            raise KeyError(f"no account named {name}")
+
+        acc = accounts.pop(name.decode())
+        cls._write(accounts)
+
+        return acc
+
+    @classmethod
+    def renew(cls, name: bytes) -> Account:
+        name_str = name.decode()
+        new_ident = cls.create_account(name_str)["ident"]
+
+        accounts = cls._read()
+        accounts[name_str]["ident"] = new_ident
+
+        cls._write(accounts)
+
+        return accounts[name_str]
+
+    @classmethod
+    def exists(cls, name: bytes) -> bool:
+        return name.decode() in cls._read()
+
+    @classmethod
+    def get_all(cls) -> list[Account]:
+        return list(cls._read().values())

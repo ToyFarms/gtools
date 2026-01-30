@@ -218,21 +218,29 @@ class Proxy:
                     src_ = self.proxy_client if pkt.direction == DIRECTION_CLIENT_TO_SERVER else self.proxy_server
                     src_.disconnect_now()
             elif pkt.as_net.type == NetType.GENERIC_TEXT:
-                if setting.spoof_hwident and b"tankIDName" in pkt.as_net.generic_text and b"mac" in pkt.as_net.generic_text and pkt.direction == DIRECTION_CLIENT_TO_SERVER:
+                if (
+                    setting.spoof_hwident
+                    and pkt.direction == DIRECTION_CLIENT_TO_SERVER
+                    and b"tankIDName" in pkt.as_net.generic_text
+                    and b"mac" in pkt.as_net.generic_text
+                    and b"wk" in pkt.as_net.generic_text
+                ):
                     orig = pkt.as_net.generic_text.copy()
                     name = bytes(orig["tankIDName", 1])
 
                     acc = AccountManager.get(name) if name else AccountManager.last()
-                    if acc:
-                        for field, value in acc["ident"].items():
-                            if field not in pkt.as_net.generic_text:
-                                self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
-                                continue
+                    if not acc:  # don't risk sending actual hwid, just crash
+                        raise ValueError("CRITICAL: account name is not given nor was it given previously (no last exists), cannot determine which profile to use. crashing..")
 
-                            self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
-                            pkt.as_net.generic_text[field] = value
+                    for field, value in acc["ident"].items():
+                        if field not in pkt.as_net.generic_text:
+                            self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
+                            continue
 
-                        self.logger.debug(f"new payload: {pkt.as_net.generic_text}")
+                        self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
+                        pkt.as_net.generic_text[field] = value
+
+                    self.logger.debug(f"new payload: {pkt.as_net.generic_text}")
             elif pkt.as_net.type == NetType.GAME_MESSAGE:
                 if pkt.as_net.game_message["action", 1] == b"quit":
                     self.disconnect_all()

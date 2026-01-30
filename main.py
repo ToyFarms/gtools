@@ -3,6 +3,7 @@ import logging
 import multiprocessing as mp
 import os
 from pathlib import Path
+from pprint import pprint
 from queue import Queue
 import sys
 import threading
@@ -33,6 +34,7 @@ from gtools.protogen.extension_pb2 import (
     Interest,
     PendingPacket,
 )
+from gtools.proxy.accountmgr import AccountManager
 from gtools.proxy.http_proxy import setup_server
 from gtools.proxy.extension.broker import Broker
 from gtools.proxy.extension.sdk import Extension, register_thread
@@ -233,6 +235,16 @@ if __name__ == "__main__":
     host_sub.add_parser("ensure")
     host_sub.add_parser("restore")
 
+    acc = subparser.add_parser("acc")
+    acc_sub = acc.add_subparsers(dest="acc_op")
+    acc_sub.add_parser("list")
+    x = acc_sub.add_parser("remove")
+    x.add_argument("name", nargs="*")
+    x = acc_sub.add_parser("add")
+    x.add_argument("name", nargs="*")
+    x = acc_sub.add_parser("renew")
+    x.add_argument("name", nargs="*")
+
     args = parser.parse_args()
 
     class SimpleExtension(Extension):
@@ -256,6 +268,33 @@ if __name__ == "__main__":
         test_server()
     elif args.cmd == "proxy":
         run_proxy()
+    elif args.cmd == "acc":
+        repr = lambda x: f"{x['name']}: {x['ident']}"
+        if args.acc_op == "list":
+            for acc in AccountManager.get_all():
+                print(repr(acc))
+        elif args.acc_op == "remove":
+            for name in args.name:
+                try:
+                    removed = AccountManager.remove(name.encode())
+                    print(f"removed {repr(removed)}")
+                except KeyError:
+                    print(f"account {name} does not exists")
+        elif args.acc_op == "add":
+            for name in args.name:
+                try:
+                    added = AccountManager.get(name.encode())
+                    print(f"added {repr(added)}")
+                except KeyError:
+                    print(f"account {name} does not exists")
+        elif args.acc_op == "renew":
+            for name in args.name:
+                if not AccountManager.exists(name.encode()):
+                    print(f"no account named {name}")
+                    continue
+                prev = AccountManager.get(name.encode())
+                new = AccountManager.renew(name.encode())
+                print(f"from {repr(prev)} -> {repr(new)}")
     elif args.cmd == "setting":
         if args.setting_op == "list":
             for k, v in setting.to_dict().items():
