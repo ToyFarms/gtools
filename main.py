@@ -40,6 +40,7 @@ from gtools.proxy.proxy import Proxy
 from scripts.tileset import update_tile_connectivity
 from thirdparty.enet.bindings import ENetPacketFlag
 from gtools import setting
+from gtools.setting import Setting
 from extension.utils import UtilityExtension
 
 
@@ -213,6 +214,17 @@ if __name__ == "__main__":
     render = subparser.add_parser("render")
     render.add_argument("world")
 
+    sett = subparser.add_parser("setting")
+    sett_sub = sett.add_subparsers(dest="setting_op")
+    sett_sub.add_parser("list")
+    sett_get = sett_sub.add_parser("get")
+    sett_get.add_argument("name", nargs="*")
+    sett_set = sett_sub.add_parser("set")
+    sett_set.add_argument("key")
+    sett_set.add_argument("value")
+    sett_reset = sett_sub.add_parser("reset")
+    sett_reset.add_argument("name", nargs="*")
+
     host = subparser.add_parser("host")
     host_sub = host.add_subparsers(dest="host_op")
     host_sub.add_parser("enable")
@@ -244,6 +256,29 @@ if __name__ == "__main__":
         test_server()
     elif args.cmd == "proxy":
         run_proxy()
+    elif args.cmd == "setting":
+        if args.setting_op == "list":
+            for k, v in setting.to_dict().items():
+                print(f"{k} = {v}")
+        elif args.setting_op == "get":
+            for f in args.name:
+                print(f"{f} = {getattr(setting, f)}")
+        elif args.setting_op == "set":
+            if not hasattr(setting, args.key):
+                print(f"setting does not have field: {args.key}")
+                exit(1)
+            setattr(setting, args.key, Setting.convert_field_value(args.key, args.value))
+            print(f"set {args.key} to {args.value}")
+            setting.save()
+        elif args.setting_op == "reset":
+            default = Setting()
+            if not args.name:
+                setting = default
+            else:
+                for f in args.name:
+                    print(f"resetting field {f} ({getattr(setting, f)} -> {getattr(default, f)})")
+                    setattr(setting, f, getattr(default, f))
+            setting.save()
     elif args.cmd == "host":
         m = get_host_mgr()
         if args.host_op in ("enable", "disable"):

@@ -15,7 +15,81 @@ type Deserializer = Callable[[Any], Any]
 class JsonMixin:
     _CODECS: dict[type, tuple[Serializer, Deserializer]] = {
         Path: (str, Path),
+        datetime: (
+            lambda dt: dt.isoformat(),
+            lambda s: datetime.fromisoformat(s),
+        ),
+        date: (
+            lambda d: d.isoformat(),
+            lambda s: date.fromisoformat(s),
+        ),
+        Enum: (
+            lambda e: e.value,
+            lambda v: v,
+        ),
+        bytes: (
+            lambda b: b.decode("utf-8"),
+            lambda s: s.encode("utf-8"),
+        ),
+        int: (
+            int,
+            lambda v: int(v) if not isinstance(v, bool) else v,
+        ),
+        float: (
+            float,
+            float,
+        ),
+        bool: (
+            bool,
+            bool,
+        ),
+        str: (
+            str,
+            str,
+        ),
     }
+
+    @staticmethod
+    def _convert_by_type(field_type: type, value: Any) -> Any:
+        origin = get_origin(field_type)
+
+        # Optional[T] / Union[T, None]
+        if origin is Union:
+            for arg in get_args(field_type):
+                if arg is type(None):
+                    continue
+                try:
+                    return JsonMixin._convert_by_type(arg, value)
+                except Exception:
+                    pass
+            return value
+
+        # list[T]
+        if origin in (list, List) and isinstance(value, list):
+            (item_type,) = get_args(field_type)
+            return [JsonMixin._convert_by_type(item_type, v) for v in value]
+
+        # nested
+        if is_dataclass(field_type) and isinstance(value, dict):
+            return field_type.from_dict(value)  # pyright: ignore
+
+        # registered codec
+        codec = JsonMixin._CODECS.get(field_type)
+        if codec:
+            _, deser = codec
+            return deser(value)
+
+        return value
+
+    @classmethod
+    def convert_field_value(cls, field_name: str, value: Any) -> Any:
+        type_hints = get_type_hints(cls)
+        field_type = type_hints.get(field_name)
+
+        if field_type is None:
+            return value
+
+        return cls._convert_by_type(field_type, value)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)  # pyright: ignore[reportArgumentType]
@@ -28,34 +102,11 @@ class JsonMixin:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=indent, default=self._json_serializer)
 
-    @staticmethod
-    def _coerce_value(field_type: type, value: Any) -> Any:
-        origin = get_origin(field_type)
-
-        # Optional[T] or Union[T, None]
-        if origin is Union:
-            for arg in get_args(field_type):
-                if arg is type(None):
-                    continue
-                try:
-                    return JsonMixin._coerce_value(arg, value)
-                except Exception:
-                    pass
-            return value
-
-        codec = JsonMixin._CODECS.get(field_type)
-        if codec and isinstance(value, str):
-            _, deser = codec
-            return deser(value)
-
-        return value
-
     @classmethod
     def from_dict[T: JsonMixin](cls: type[T], data: dict[str, Any]) -> T:
         if not is_dataclass(cls):
             raise TypeError(f"{cls.__name__} must be a dataclass")
 
-        type_hints = get_type_hints(cls)
         field_values = {}
 
         for field in fields(cls):
@@ -66,24 +117,7 @@ class JsonMixin:
                     continue
                 raise ValueError(f"missing required field: {field.name}")
 
-            value = data[field.name]
-            field_type = type_hints.get(field.name, field.type)
-
-            value = JsonMixin._coerce_value(field_type, value)
-            if is_dataclass(field_type) and isinstance(value, dict):
-                value = field_type.from_dict(value)  # pyright: ignore[reportAttributeAccessIssue]
-
-            elif get_origin(field_type) in (list, List):
-                args = get_args(field_type)
-                if args and is_dataclass(args[0]) and isinstance(value, list):
-                    value = [args[0].from_dict(item) if isinstance(item, dict) else item for item in value]  # pyright: ignore[reportAttributeAccessIssue]
-            elif get_origin(field_type) is Union:
-                args = get_args(field_type)
-                for arg in args:
-                    if is_dataclass(arg) and isinstance(value, dict):
-                        value = arg.from_dict(value)  # pyright: ignore[reportAttributeAccessIssue]
-                        break
-
+            value = cls.convert_field_value(field.name, data[field.name])
             field_values[field.name] = value
 
         return cls(**field_values)
@@ -102,16 +136,20 @@ class JsonMixin:
 
     @staticmethod
     def _json_serializer(obj: Any) -> Any:
-        for typ, (ser, _) in JsonMixin._CODECS.items():
-            if isinstance(obj, typ):
-                return ser(obj)
-
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        elif isinstance(obj, Enum):
-            return obj.value
-        elif is_dataclass(obj):
+        if is_dataclass(obj):
             return asdict(obj)  # pyright: ignore[reportArgumentType]
-        elif hasattr(obj, "__dict__"):
-            return obj.__dict__
+
+        for typ, (ser, _) in JsonMixin._CODECS.items():
+            try:
+                if isinstance(obj, typ):
+                    return ser(obj)
+            except TypeError:
+                pass
+
+        if isinstance(obj, dict):
+            return {k: JsonMixin._json_serializer(v) for k, v in obj.items()}
+
+        if isinstance(obj, (list, tuple, set)):
+            return [JsonMixin._json_serializer(v) for v in obj]
+
         raise TypeError(f"object of type {type(obj).__name__} is not JSON serializable")
