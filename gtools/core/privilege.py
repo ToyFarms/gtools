@@ -219,6 +219,8 @@ def _exec_elevated_target_windows(target_argv: list[str], extra_env: dict[str, s
 
     kernel32 = ctypes.windll.kernel32
     CREATE_UNICODE_ENVIRONMENT = 0x00000400
+    INFINITE = 0xFFFFFFFF
+    WAIT_FAILED = 0xFFFFFFFF
 
     class STARTUPINFO(ctypes.Structure):
         _fields_ = [
@@ -277,8 +279,21 @@ def _exec_elevated_target_windows(target_argv: list[str], extra_env: dict[str, s
     if not ok:
         raise RuntimeError("CreateProcessW failed")
 
-    kernel32.CloseHandle(pi.hThread)
-    kernel32.CloseHandle(pi.hProcess)
+    try:
+        wait_rc = kernel32.WaitForSingleObject(pi.hProcess, INFINITE)
+        if wait_rc == WAIT_FAILED:
+            raise RuntimeError("WaitForSingleObject failed")
+
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(pi.hProcess, ctypes.byref(exit_code)):
+            raise RuntimeError("GetExitCodeProcess failed")
+
+        if exit_code.value != 0:
+            raise RuntimeError(f"child process exited with non-zero exit code {exit_code.value}")
+
+    finally:
+        kernel32.CloseHandle(pi.hThread)
+        kernel32.CloseHandle(pi.hProcess)
 
 
 def _exec_elevated_target_posix(target_argv: list[str], extra_env: dict[str, str]) -> None:
@@ -289,30 +304,29 @@ def _exec_elevated_target_posix(target_argv: list[str], extra_env: dict[str, str
 
 # NOTE: intermediary to pass argument as environment variable
 if __name__ == "__main__":
-    if is_elevated_child():
-        argv_no_token, token = _strip_elevate_flag(sys.argv)
-        if token is None:
-            print("Missing elevation token", file=sys.stderr)
-            sys.exit(1)
+    argv_no_token, token = _strip_elevate_flag(sys.argv)
+    if token is None:
+        print("Missing elevation token", file=sys.stderr)
+        sys.exit(1)
 
-        if len(argv_no_token) < 2:
-            print("No target command supplied to elevated intermediary", file=sys.stderr)
-            sys.exit(1)
+    if len(argv_no_token) < 2:
+        print("No target command supplied to elevated intermediary", file=sys.stderr)
+        sys.exit(1)
 
-        target_argv = argv_no_token[1:]
+    target_argv = argv_no_token[1:]
 
-        injected_env = {
-            "ELEVATED": "1",
-            "ELEVATION_TOKEN": token,
-        }
+    injected_env = {
+        "ELEVATED": "1",
+        "ELEVATION_TOKEN": token,
+    }
 
-        system = platform.system()
-        try:
-            if system == "Windows":
-                _exec_elevated_target_windows(target_argv, injected_env)
-                sys.exit(0)
-            else:
-                _exec_elevated_target_posix(target_argv, injected_env)
-        except Exception as e:
-            print(f"Failed to launch elevated target: {e}", file=sys.stderr)
-            sys.exit(1)
+    system = platform.system()
+    try:
+        if system == "Windows":
+            _exec_elevated_target_windows(target_argv, injected_env)
+            sys.exit(0)
+        else:
+            _exec_elevated_target_posix(target_argv, injected_env)
+    except Exception as e:
+        print(f"Failed to launch elevated target: {e}", file=sys.stderr)
+        sys.exit(1)
