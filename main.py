@@ -157,13 +157,11 @@ def run_proxy() -> None:
     try:
         check_hosts()
         if is_elevated_child():
-            time.sleep(3)
+            print("waiting 1s to sync up")
+            time.sleep(1)
             exit(0)
     except PermissionError:
         elevate(wait_for_child=True)
-    except:
-        time.sleep(3)
-        raise
 
     server = setup_server()
     t = threading.Thread(target=lambda: server.serve_forever())
