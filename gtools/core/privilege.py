@@ -423,34 +423,33 @@ def _exec_elevated_target_posix(target_argv: list[str], extra_env: dict[str, str
 # NOTE: intermediary to pass argument as environment variable
 if __name__ == "__main__":
     logger.debug("__main__ entry argv=%s", sys.argv)
-    if is_elevated_child():
-        argv_no_token, token = _strip_elevate_flag(sys.argv)
-        if token is None:
-            logger.error("Missing elevation token")
-            print("Missing elevation token", file=sys.stderr)
-            sys.exit(1)
+    argv_no_token, token = _strip_elevate_flag(sys.argv)
+    if token is None:
+        logger.error("Missing elevation token")
+        print("Missing elevation token", file=sys.stderr)
+        sys.exit(1)
 
-        if len(argv_no_token) < 2:
-            logger.error("No target command supplied to elevated intermediary")
-            print("No target command supplied to elevated intermediary", file=sys.stderr)
-            sys.exit(1)
+    if len(argv_no_token) < 2:
+        logger.error("No target command supplied to elevated intermediary")
+        print("No target command supplied to elevated intermediary", file=sys.stderr)
+        sys.exit(1)
 
-        target_argv = argv_no_token[1:]
+    target_argv = argv_no_token[1:]
 
-        injected_env = {
-            "ELEVATED": "1",
-            "ELEVATION_TOKEN": token,
-        }
+    injected_env = {
+        "ELEVATED": "1",
+        "ELEVATION_TOKEN": token,
+    }
 
-        system = platform.system()
-        try:
-            logger.debug("Launching elevated target system=%s target=%s", system, target_argv)
-            if system == "Windows":
-                _exec_elevated_target_windows(target_argv, injected_env)
-                sys.exit(0)
-            else:
-                _exec_elevated_target_posix(target_argv, injected_env)
-        except Exception as e:
-            logger.exception("Failed to launch elevated target: %s", e)
-            print(f"Failed to launch elevated target: {e}", file=sys.stderr)
-            sys.exit(1)
+    system = platform.system()
+    try:
+        logger.debug("Launching elevated target system=%s target=%s", system, target_argv)
+        if system == "Windows":
+            _exec_elevated_target_windows(target_argv, injected_env)
+            sys.exit(0)
+        else:
+            _exec_elevated_target_posix(target_argv, injected_env)
+    except Exception as e:
+        logger.exception("Failed to launch elevated target: %s", e)
+        print(f"Failed to launch elevated target: {e}", file=sys.stderr)
+        sys.exit(1)
