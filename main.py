@@ -3,7 +3,6 @@ import logging
 import multiprocessing as mp
 import os
 from pathlib import Path
-from pprint import pprint
 from queue import Queue
 import sys
 import threading
@@ -201,49 +200,53 @@ def _run(e: type[Extension], *args) -> None:
 
 if __name__ == "__main__":
     _ = item_database.items()  # trigger cache
+
     parser = argparse.ArgumentParser()
+    parser.add_argument("-v", action="store_true", help="verbose logging")
 
-    parser.add_argument("-v", action="store_true")
+    subparsers = parser.add_subparsers(dest="cmd", help="sub-command to run")
 
-    subparser = parser.add_subparsers(dest="cmd")
+    for name, help_txt in [
+        ("proxy", "run the proxy"),
+        ("ext_test", "run extension test"),
+        ("test", "run network checks"),
+        ("stress", "run stress extension"),
+        ("world_test", "test world parsing"),
+    ]:
+        subparsers.add_parser(name, help=help_txt)
 
-    subparser.add_parser("proxy")
-    subparser.add_parser("ext_test")
-    subparser.add_parser("test")
-    subparser.add_parser("stress")
-    subparser.add_parser("world_test")
+    render = subparsers.add_parser("render", help="render a world file")
+    render.add_argument("world", help="path to world packet file")
 
-    render = subparser.add_parser("render")
-    render.add_argument("world")
+    sett = subparsers.add_parser("setting", help="manipulate settings")
+    sett_sub = sett.add_subparsers(dest="setting_op", help="setting operation")
+    sett_sub.add_parser("list", help="list settings")
+    sett_get = sett_sub.add_parser("get", help="get setting(s)")
+    sett_get.add_argument("name", nargs="*", help="setting name(s)")
+    sett_set = sett_sub.add_parser("set", help="set a setting key")
+    sett_set.add_argument("key", help="setting key")
+    sett_set.add_argument("value", help="setting value")
+    sett_reset = sett_sub.add_parser("reset", help="reset settings")
+    sett_reset.add_argument("name", nargs="*", help="setting name(s) to reset")
 
-    sett = subparser.add_parser("setting")
-    sett_sub = sett.add_subparsers(dest="setting_op")
-    sett_sub.add_parser("list")
-    sett_get = sett_sub.add_parser("get")
-    sett_get.add_argument("name", nargs="*")
-    sett_set = sett_sub.add_parser("set")
-    sett_set.add_argument("key")
-    sett_set.add_argument("value")
-    sett_reset = sett_sub.add_parser("reset")
-    sett_reset.add_argument("name", nargs="*")
+    host = subparsers.add_parser("host", help="manage hosts file entries")
+    host_sub = host.add_subparsers(dest="host_op", help="host operation")
+    host_sub.add_parser("enable", help="enable hosts")
+    host_sub.add_parser("disable", help="disable hosts")
+    host_sub.add_parser("status", help="show hosts status")
+    host_sub.add_parser("ensure", help="ensure hosts exist and are loopback")
+    host_sub.add_parser("restore", help="restore hosts from backup")
 
-    host = subparser.add_parser("host")
-    host_sub = host.add_subparsers(dest="host_op")
-    host_sub.add_parser("enable")
-    host_sub.add_parser("disable")
-    host_sub.add_parser("status")
-    host_sub.add_parser("ensure")
-    host_sub.add_parser("restore")
+    acc = subparsers.add_parser("acc", help="account management")
+    acc_sub = acc.add_subparsers(dest="acc_op", help="account operation")
 
-    acc = subparser.add_parser("acc")
-    acc_sub = acc.add_subparsers(dest="acc_op")
-    acc_sub.add_parser("list")
-    x = acc_sub.add_parser("remove")
-    x.add_argument("name", nargs="*")
-    x = acc_sub.add_parser("add")
-    x.add_argument("name", nargs="*")
-    x = acc_sub.add_parser("renew")
-    x.add_argument("name", nargs="*")
+    name_parent = argparse.ArgumentParser(add_help=False)
+    name_parent.add_argument("name", nargs="*", help="account name(s)")
+
+    acc_sub.add_parser("list", help="list accounts")
+    acc_sub.add_parser("remove", parents=[name_parent], help="remove account(s)")
+    acc_sub.add_parser("add", parents=[name_parent], help="add account(s)")
+    acc_sub.add_parser("renew", parents=[name_parent], help="renew account(s)")
 
     args = parser.parse_args()
 
