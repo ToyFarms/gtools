@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from traceback import print_exc
+import traceback
 
 from PIL import Image
 import numpy as np
@@ -20,9 +21,11 @@ from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.renderer.world_renderer import WorldRenderer
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.world import World
+from gtools.core.hosts import HostsFileManager
 from gtools.core.log import setup_logger
 from gtools.core.network import is_up, resolve_doh
-from gtools.core.wsl import windows_home
+from gtools.core.privilege import ElevationResult, elevate_process
+from gtools.core.wsl import is_running_wsl, windows_home
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_SERVER_TO_CLIENT,
@@ -41,7 +44,162 @@ from gtools import setting
 from extension.utils import UtilityExtension
 
 
+def confirm(msg: str) -> bool:
+    return input(f"{msg} (Y/n) ").lower() in ("", "y")
+
+
+def get_host_mgr() -> HostsFileManager:
+    if is_running_wsl():
+        return HostsFileManager("/mnt/c/Windows/System32/drivers/etc/hosts")
+    else:
+        return HostsFileManager()
+
+
+hosts = ["www.growtopia1.com", "www.growtopia2.com"]
+def ensure_enabled() -> None:
+    m = get_host_mgr()
+    if m.exists(hosts, include_disabled=True):
+        if not (res := elevate_process()).is_success:
+            print(res)
+            return
+        m.enable(hosts)
+        print(f"enabled {hosts}")
+    else:
+        for h in hosts:
+            ent = m.get(h, include_disabled=True)
+            if not ent:
+                if confirm(f"{h} does not exists, add?"):
+                    if not (res := elevate_process()).is_success:
+                        print(res)
+                        return
+
+                    m.add("127.0.0.1", h, insert_after_hostname=hosts)
+                    print(f"added {h}")
+                    print(f"enabled {h}")
+            elif ent.disabled:
+                if len(ent.hostnames) > 1:
+                    if not (res := elevate_process()).is_success:
+                        print(res)
+                        return
+
+                    m.split_hostname(None, h, include_disabled=True)
+                    print(f"split {ent}")
+                    # m.enable(h)  # split makes it enabled by default
+                    print(f"enabled {h}")
+                else:
+                    if not (res := elevate_process()).is_success:
+                        print(res)
+                        return
+
+                    m.enable(h)
+                    print(f"enabled {h}")
+
+
+def ensure_disabled() -> None:
+    m = get_host_mgr()
+    if m.exists(hosts, include_disabled=True):
+        if not (res := elevate_process()).is_success:
+            print(res)
+            return
+        m.disable(hosts)
+        print(f"disabled {hosts}")
+    else:
+        for h in hosts:
+            ent = m.get(h, include_disabled=True)
+            if not ent:
+                if confirm(f"{h} does not exists, add?"):
+                    if not (res := elevate_process()).is_success:
+                        print(res)
+                        return
+                    m.add("127.0.0.1", h, insert_after_hostname=hosts)
+                    print(f"added {h}")
+                    m.disable(h)
+                    print(f"disabled {h}")
+            elif not ent.disabled:
+                if len(ent.hostnames) > 1:
+                    if not (res := elevate_process()).is_success:
+                        print(res)
+                        return
+                    m.split_hostname(None, h)
+                    print(f"split {ent}")
+                    m.disable(h)
+                    print(f"disabled {h}")
+                else:
+                    if not (res := elevate_process()).is_success:
+                        print(res)
+                        return
+                    m.disable(h)
+                    print(f"disabled {h}")
+
+
+def check_hosts() -> None:
+    m = get_host_mgr()
+
+    def warn_admin(res: ElevationResult) -> None:
+        print(f"failed elevating: {res}, continuing...")
+
+    bak_path = m.backup()
+    print(f"backed up {m.hosts_path} to {bak_path}")
+    ensure_enabled()  # also makes sure it exists
+
+    replace_hostnames: list[str] = []
+
+    if g := m.get("www.growtopia1.com"):
+        if g.ip not in ("localhost", "127.0.0.1", "::1"):
+            replace_hostnames.append("www.growtopia1.com")
+            print(f"www.growtopia1.com hosts is not a loopback address ({g.ip})")
+    if g := m.get("www.growtopia2.com"):
+        if g.ip not in ("localhost", "127.0.0.1", "::1"):
+            replace_hostnames.append("www.growtopia2.com")
+            print(f"www.growtopia1.com hosts is not a loopback address ({g.ip})")
+
+    if replace_hostnames:
+        print("growtopia hosts found, but its not a loopback address")
+        print("[1] do nothing")
+        print(" 2  replace with a loopback address")
+        print(" 3  change proxy target server to whats in the hosts file (replace)")
+        match input("what do you want to do? "):
+            case "2":
+                if (res := elevate_process()).is_success:
+                    if m.exists(replace_hostnames):
+                        m.replace("127.0.0.1", replace_hostnames, keep_original=True)
+                        print(f"changed {replace_hostnames} to 127.0.0.1")
+                    else:
+                        for repl in replace_hostnames:
+                            m.replace("127.0.0.1", repl, keep_original=True)
+                            print(f"changed {repl} to 127.0.0.1")
+                else:
+                    warn_admin(res)
+            case "3":
+                if (res := elevate_process()).is_success:
+                    orig = None
+                    if m.exists(replace_hostnames):
+                        orig = m.get(replace_hostnames[0])
+                        m.replace("127.0.0.1", replace_hostnames, keep_original=True)
+                        print(f"changed {replace_hostnames} to 127.0.0.1")
+                    else:
+                        for repl in replace_hostnames:
+                            if not orig:
+                                orig = m.get(repl)
+                            m.replace("127.0.0.1", repl, keep_original=True)
+                            print(f"changed {repl} to 127.0.0.1")
+
+                    if orig:
+                        setting.server_data_url = orig.ip
+                        print(f"changed proxy target server to {orig.ip}")
+                else:
+                    warn_admin(res)
+
+
 def run_proxy() -> None:
+    try:
+        check_hosts()
+    except Exception as e:
+        traceback.print_exc()
+        print(f"failed checking hosts: {e}")
+        if is_running_wsl():
+            print("WARNING: wsl cannot self elevate, your terminal has to be running as administrator in the first place")
+
     server = setup_server()
     t = threading.Thread(target=lambda: server.serve_forever())
     t.start()
@@ -95,6 +253,14 @@ if __name__ == "__main__":
     render = subparser.add_parser("render")
     render.add_argument("world")
 
+    host = subparser.add_parser("host")
+    host_sub = host.add_subparsers(dest="host_op")
+    host_sub.add_parser("enable")
+    host_sub.add_parser("disable")
+    host_sub.add_parser("status")
+    host_sub.add_parser("ensure")
+    host_sub.add_parser("restore")
+
     args = parser.parse_args()
 
     class SimpleExtension(Extension):
@@ -118,6 +284,30 @@ if __name__ == "__main__":
         test_server()
     elif args.cmd == "proxy":
         run_proxy()
+    elif args.cmd == "host":
+        m = get_host_mgr()
+        if args.host_op in ("enable", "disable"):
+            if (res := elevate_process()).is_success:
+                bak_path = m.backup()
+                print(f"backed up {m.hosts_path} to {bak_path}")
+                if args.host_op == "enable":
+                    ensure_enabled()
+                elif args.host_op == "disable":
+                    ensure_disabled()
+            else:
+                print(f"{res}")
+        elif args.host_op == "status":
+            for x in ("www.growtopia1.com", "www.growtopia2.com"):
+                ent = m.get(x, include_disabled=True)
+                print(f"{x}: {'None' if not ent else f'{ent.ip} (disabled)' if ent.disabled else f'{ent.ip} (enabled)'}")
+        elif args.host_op == "ensure":
+            check_hosts()
+        elif args.host_op == "restore":
+            if (res := elevate_process()).is_success:
+                bak = m.restore()
+                print(f"successfully restored from {bak}")
+            else:
+                print(res)
     elif args.cmd == "ext_test":
         b = Broker()
         b.start()
@@ -166,7 +356,7 @@ if __name__ == "__main__":
                 while True:
                     self.push(p)
 
-            def process(self, event: PendingPacket) -> PendingPacket | None:
+            def process(self, _event: PendingPacket) -> PendingPacket | None:
                 pass
 
             def destroy(self) -> None:

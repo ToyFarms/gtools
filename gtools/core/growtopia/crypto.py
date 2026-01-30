@@ -10,8 +10,7 @@ if crypto_lib.supported:
     crypto_lib.proton_hash.restype = ctypes.c_int32
 
     def proton_hash(data: bytes) -> int:
-        data_size = len(data)
-        return crypto_lib.proton_hash(data, data_size)
+        return crypto_lib.proton_hash(data, len(data))
 
 else:
 
@@ -53,7 +52,7 @@ def hex_rolling_shift(buf: bytes) -> bytes:
     arr = bytearray(len(buf))
 
     for i, b in enumerate(buf):
-        shift = 0x9E if chr(b) in ("abcdef") else 0xBE
+        shift = 0x9E if chr(b) in "abcdef" else 0xBE
         arr[i] = (b + shift + i) & 0xFF
 
     return bytes(arr)
@@ -138,7 +137,7 @@ def generate_rid() -> str:
 
 
 def extract_time_from_rid(rid: str) -> datetime:
-    """NOTE: rid is lossy because it only encode 259200 seconds in a day which can only encode 3 days, the rest then overflows into the next component),
+    """NOTE: rid is lossy because it only encode 259200 seconds in a month which can only encode 3 days, the rest then overflows into the next component,
     also the minutes component is not used at all for some reason"""
     value0 = int(rid[:8], 16)
 
