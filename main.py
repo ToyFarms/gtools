@@ -23,7 +23,7 @@ from gtools.core.growtopia.world import World
 from gtools.core.hosts import HostsFileManager
 from gtools.core.log import setup_logger
 from gtools.core.network import is_up, resolve_doh
-from gtools.core.privilege import elevate, is_elevated_child
+from gtools.core.privilege import elevate, is_elevated, is_elevated_child
 from gtools.core.wsl import is_running_wsl, windows_home
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
@@ -116,6 +116,8 @@ def check_hosts() -> None:
             print(f"www.growtopia1.com hosts is not a loopback address ({g.ip})")
 
     if replace_hostnames:
+        if not is_elevated():
+            raise PermissionError()
         print("growtopia hosts found, but its not a loopback address")
         print("[1] do nothing")
         print(" 2  replace with a loopback address")
