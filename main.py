@@ -24,7 +24,7 @@ from gtools.core.growtopia.world import World
 from gtools.core.hosts import HostsFileManager
 from gtools.core.log import setup_logger
 from gtools.core.network import is_up, resolve_doh
-from gtools.core.privilege import ElevationResult, elevate_process
+from gtools.core.privilege import elevate_process
 from gtools.core.wsl import is_running_wsl, windows_home
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
@@ -58,13 +58,14 @@ def get_host_mgr() -> HostsFileManager:
 backed_up = False
 
 
-def elevate() -> bool:
-    if not (res := elevate_process()).is_success:
+def elevate(kill: bool = True) -> bool:
+    if not (res := elevate_process(kill=kill)).is_success:
         print(res)
         return False
 
     global backed_up
     if not backed_up:
+        m = get_host_mgr()
         bak_path = m.backup()
         print(f"backed up {m.hosts_path} to {bak_path}")
         backed_up = True
@@ -77,8 +78,6 @@ hosts = ["www.growtopia1.com", "www.growtopia2.com"]
 def ensure_enabled() -> None:
     m = get_host_mgr()
     if m.exists(hosts, include_disabled=True):
-        if not elevate():
-            return
         m.enable(hosts)
         print(f"enabled {hosts}")
     else:
@@ -86,25 +85,16 @@ def ensure_enabled() -> None:
             ent = m.get(h, include_disabled=True)
             if not ent:
                 if confirm(f"{h} does not exists, add?"):
-                    if not elevate():
-                        return
-
                     m.add("127.0.0.1", h, insert_after_hostname=hosts)
                     print(f"added {h}")
                     print(f"enabled {h}")
             elif ent.disabled:
                 if len(ent.hostnames) > 1:
-                    if not elevate():
-                        return
-
                     m.split_hostname(None, h, include_disabled=True)
                     print(f"split {ent}")
                     # m.enable(h)  # split makes it enabled by default
                     print(f"enabled {h}")
                 else:
-                    if not elevate():
-                        return
-
                     m.enable(h)
                     print(f"enabled {h}")
 
@@ -112,8 +102,6 @@ def ensure_enabled() -> None:
 def ensure_disabled() -> None:
     m = get_host_mgr()
     if m.exists(hosts, include_disabled=True):
-        if not elevate():
-            return
         m.disable(hosts)
         print(f"disabled {hosts}")
     else:
@@ -121,23 +109,17 @@ def ensure_disabled() -> None:
             ent = m.get(h, include_disabled=True)
             if not ent:
                 if confirm(f"{h} does not exists, add?"):
-                    if not elevate():
-                        return
                     m.add("127.0.0.1", h, insert_after_hostname=hosts)
                     print(f"added {h}")
                     m.disable(h)
                     print(f"disabled {h}")
             elif not ent.disabled:
                 if len(ent.hostnames) > 1:
-                    if not elevate():
-                        return
                     m.split_hostname(None, h)
                     print(f"split {ent}")
                     m.disable(h)
                     print(f"disabled {h}")
                 else:
-                    if not elevate():
-                        return
                     m.disable(h)
                     print(f"disabled {h}")
 
@@ -146,7 +128,6 @@ def check_hosts() -> None:
     m = get_host_mgr()
 
     ensure_enabled()  # also makes sure it exists
-
     replace_hostnames: list[str] = []
 
     if g := m.get("www.growtopia1.com"):
@@ -165,41 +146,47 @@ def check_hosts() -> None:
         print(" 3  change proxy target server to whats in the hosts file (replace)")
         match input("what do you want to do? "):
             case "2":
-                if elevate():
-                    if m.exists(replace_hostnames):
-                        m.replace("127.0.0.1", replace_hostnames, keep_original=True)
-                        print(f"changed {replace_hostnames} to 127.0.0.1")
-                    else:
-                        for repl in replace_hostnames:
-                            m.replace("127.0.0.1", repl, keep_original=True)
-                            print(f"changed {repl} to 127.0.0.1")
+                if m.exists(replace_hostnames):
+                    m.replace("127.0.0.1", replace_hostnames, keep_original=True)
+                    print(f"changed {replace_hostnames} to 127.0.0.1")
+                else:
+                    for repl in replace_hostnames:
+                        m.replace("127.0.0.1", repl, keep_original=True)
+                        print(f"changed {repl} to 127.0.0.1")
             case "3":
-                if elevate():
-                    orig = None
-                    if m.exists(replace_hostnames):
-                        orig = m.get(replace_hostnames[0])
-                        m.replace("127.0.0.1", replace_hostnames, keep_original=True)
-                        print(f"changed {replace_hostnames} to 127.0.0.1")
-                    else:
-                        for repl in replace_hostnames:
-                            if not orig:
-                                orig = m.get(repl)
-                            m.replace("127.0.0.1", repl, keep_original=True)
-                            print(f"changed {repl} to 127.0.0.1")
+                orig = None
+                if m.exists(replace_hostnames):
+                    orig = m.get(replace_hostnames[0])
+                    m.replace("127.0.0.1", replace_hostnames, keep_original=True)
+                    print(f"changed {replace_hostnames} to 127.0.0.1")
+                else:
+                    for repl in replace_hostnames:
+                        if not orig:
+                            orig = m.get(repl)
+                        m.replace("127.0.0.1", repl, keep_original=True)
+                        print(f"changed {repl} to 127.0.0.1")
 
-                    if orig:
-                        setting.server_data_url = orig.ip
-                        print(f"changed proxy target server to {orig.ip}")
+                if orig:
+                    setting.server_data_url = orig.ip
+                    print(f"changed proxy target server to {orig.ip}")
 
 
 def run_proxy() -> None:
     try:
         check_hosts()
-    except Exception as e:
-        traceback.print_exc()
-        print(f"failed checking hosts: {e}")
-        if is_running_wsl():
-            print("WARNING: wsl cannot self elevate, your terminal has to be running as administrator in the first place")
+    except PermissionError:
+        try:
+            if elevate(kill=False):
+                check_hosts()
+                time.sleep(3)
+                return
+            print("waiting for admin process to finish")
+            time.sleep(3)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"failed checking hosts: {e}")
+            if is_running_wsl():
+                print("WARNING: wsl cannot self elevate, your terminal has to be running as administrator in the first place")
 
     server = setup_server()
     t = threading.Thread(target=lambda: server.serve_forever())

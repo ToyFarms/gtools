@@ -41,7 +41,7 @@ def is_elevated() -> bool:
         return False
 
 
-def elevate_process(restart: bool = True) -> ElevationResult:
+def elevate_process(restart: bool = True, kill: bool = True) -> ElevationResult:
     if is_elevated():
         return ElevationResult(ElevationStatus.ALREADY_ELEVATED, "process is already running with elevated privileges")
 
@@ -49,11 +49,11 @@ def elevate_process(restart: bool = True) -> ElevationResult:
 
     try:
         if system == "Windows":
-            return _elevate_windows(restart)
+            return _elevate_windows(restart, kill)
         elif system == "Darwin":
-            return _elevate_macos(restart)
+            return _elevate_macos(restart, kill)
         elif system == "Linux":
-            return _elevate_linux(restart)
+            return _elevate_linux(restart, kill)
         else:
             return ElevationResult(ElevationStatus.NOT_SUPPORTED, f"platform '{system}' is not supported for elevation")
 
@@ -61,7 +61,7 @@ def elevate_process(restart: bool = True) -> ElevationResult:
         return ElevationResult(ElevationStatus.ERROR, f"unexpected error during elevation: {str(e)}", e)
 
 
-def _elevate_windows(restart: bool) -> ElevationResult:
+def _elevate_windows(restart: bool, kill: bool) -> ElevationResult:
     try:
         import ctypes
 
@@ -80,7 +80,9 @@ def _elevate_windows(restart: bool) -> ElevationResult:
 
             # ShellExecuteW returns > 32 on success
             if ret > 32:
-                sys.exit(0)
+                if kill:
+                    sys.exit(0)
+                return ElevationResult(ElevationStatus.SUCCESS)
             elif ret == 5:  # ERROR_ACCESS_DENIED
                 return ElevationResult(ElevationStatus.REJECTED, "user declined UAC prompt or access was denied")
             else:
@@ -94,7 +96,7 @@ def _elevate_windows(restart: bool) -> ElevationResult:
         return ElevationResult(ElevationStatus.ERROR, f"windows elevation failed: {str(e)}", e)
 
 
-def _elevate_macos(restart: bool) -> ElevationResult:
+def _elevate_macos(restart: bool, kill: bool) -> ElevationResult:
     try:
         if restart:
             script = os.path.abspath(sys.argv[0])
@@ -109,7 +111,9 @@ def _elevate_macos(restart: bool) -> ElevationResult:
             result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True)
 
             if result.returncode == 0:
-                sys.exit(0)
+                if kill:
+                    sys.exit(0)
+                return ElevationResult(ElevationStatus.SUCCESS)
             elif result.returncode == 1:
                 return ElevationResult(ElevationStatus.REJECTED, "user cancelled authentication dialog")
             else:
@@ -123,7 +127,7 @@ def _elevate_macos(restart: bool) -> ElevationResult:
         return ElevationResult(ElevationStatus.ERROR, f"macOS elevation failed: {str(e)}", e)
 
 
-def _elevate_linux(restart: bool) -> ElevationResult:
+def _elevate_linux(restart: bool, kill: bool) -> ElevationResult:
     try:
         if restart:
             script = os.path.abspath(sys.argv[0])
@@ -142,7 +146,9 @@ def _elevate_linux(restart: bool) -> ElevationResult:
                         result = subprocess.run(full_cmd, capture_output=True, text=True)
 
                         if result.returncode == 0:
-                            sys.exit(0)
+                            if kill:
+                                sys.exit(0)
+                            return ElevationResult(ElevationStatus.SUCCESS)
                         elif result.returncode == 126 or result.returncode == 127:
                             return ElevationResult(ElevationStatus.REJECTED, f"authentication cancelled or failed with {cmd}")
                         else:
