@@ -161,6 +161,9 @@ def run_proxy() -> None:
             exit(0)
     except PermissionError:
         elevate(wait_for_child=True)
+    except:
+        time.sleep(3)
+        raise
 
     server = setup_server()
     t = threading.Thread(target=lambda: server.serve_forever())
