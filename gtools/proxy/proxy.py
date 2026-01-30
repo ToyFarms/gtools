@@ -2,6 +2,7 @@ import ctypes
 import logging
 import os
 from queue import Queue
+import sys
 import threading
 import time
 import traceback
@@ -230,7 +231,10 @@ class Proxy:
 
                     acc = AccountManager.get(name) if name else AccountManager.last()
                     if not acc:  # don't risk sending actual hwid, just crash
-                        raise ValueError("CRITICAL: account name is not given nor was it given previously (no last exists), cannot determine which profile to use. crashing..")
+                        msg = "account name is not given nor was it given previously (no last exists), cannot determine which profile to use. crashing.."
+                        print(msg)
+                        self.logger.critical(msg)
+                        sys.exit(123)
 
                     for field, value in acc["ident"].items():
                         if field not in pkt.as_net.generic_text:
