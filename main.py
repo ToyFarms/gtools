@@ -24,7 +24,7 @@ from gtools.core.growtopia.world import World
 from gtools.core.hosts import HostsFileManager
 from gtools.core.log import setup_logger
 from gtools.core.network import is_up, resolve_doh
-from gtools.core.privilege import elevate
+from gtools.core.privilege import elevate, is_elevated
 from gtools.core.wsl import is_running_wsl, windows_home
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
@@ -156,15 +156,16 @@ def check_hosts() -> None:
 
 def run_proxy() -> None:
     try:
+        if is_elevated():
+            bak_path = m.backup()
+            print(f"backed up {m.hosts_path} to {bak_path}")
+
         check_hosts()
+        time.sleep(3)
+        exit(0)
     except PermissionError:
         try:
-            if elevate(wait_for_child=True):
-                bak_path = m.backup()
-                print(f"backed up {m.hosts_path} to {bak_path}")
-                check_hosts()
-                time.sleep(3)
-                exit(0)
+            elevate(wait_for_child=True)
         except Exception as e:
             traceback.print_exc()
             print(f"failed checking hosts: {e}")

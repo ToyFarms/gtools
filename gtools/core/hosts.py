@@ -4,7 +4,6 @@ import platform
 from pathlib import Path
 from dataclasses import dataclass
 import shutil
-from typing import Optional
 import ipaddress
 from collections import Counter
 
@@ -32,7 +31,7 @@ class HostEntry:
 @dataclass
 class ParsedLine:
     raw: str
-    entry: Optional[HostEntry] = None
+    entry: HostEntry | None = None
     dirty: bool = False
 
 
