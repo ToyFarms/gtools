@@ -250,6 +250,22 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if args.cmd is None:
+        parser.print_help()
+        sys.exit(1)
+
+    if args.cmd == "setting" and getattr(args, "setting_op", None) is None:
+        sett.print_help()
+        sys.exit(1)
+
+    if args.cmd == "host" and getattr(args, "host_op", None) is None:
+        host.print_help()
+        sys.exit(1)
+
+    if args.cmd == "acc" and getattr(args, "acc_op", None) is None:
+        acc.print_help()
+        sys.exit(1)
+
     class SimpleExtension(Extension):
         def __init__(self, name: str, priority: int) -> None:
             super().__init__(name=name, interest=[Interest(interest=INTEREST_TANK_PACKET, priority=priority, blocking_mode=BLOCKING_MODE_BLOCK, direction=DIRECTION_UNSPECIFIED)])
