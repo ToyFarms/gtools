@@ -222,19 +222,20 @@ class Proxy:
                 if (
                     setting.spoof_hwident
                     and pkt.direction == DIRECTION_CLIENT_TO_SERVER
-                    and b"tankIDName" in pkt.as_net.generic_text
+                    and pkt.as_net.type == NetType.GENERIC_TEXT
                     and b"mac" in pkt.as_net.generic_text
-                    and b"wk" in pkt.as_net.generic_text
+                    and b"hash" in pkt.as_net.generic_text
+                    and b"hash2" in pkt.as_net.generic_text
                 ):
                     orig = pkt.as_net.generic_text.copy()
-                    name = bytes(orig["tankIDName", 1])
+                    try:
+                        name = bytes(orig["tankIDName", 1])
+                        acc = AccountManager.get(name) if name else AccountManager.last()
+                    except KeyError:
+                        pass
 
-                    acc = AccountManager.get(name) if name else AccountManager.last()
-                    if not acc:  # don't risk sending actual hwid, just crash
-                        msg = "account name is not given nor was it given previously (no last exists), cannot determine which profile to use. crashing.."
-                        print(msg)
-                        self.logger.critical(msg)
-                        sys.exit(123)
+                    if not acc:
+                        acc = AccountManager.default()
 
                     for field, value in acc["ident"].items():
                         if field not in pkt.as_net.generic_text:

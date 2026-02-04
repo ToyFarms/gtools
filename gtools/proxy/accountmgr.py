@@ -100,3 +100,7 @@ class AccountManager:
     @classmethod
     def get_all(cls) -> list[Account]:
         return list(cls._read().values())
+
+    @classmethod
+    def default(cls) -> Account:
+        return cls.get(b"default")
