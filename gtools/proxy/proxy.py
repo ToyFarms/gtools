@@ -243,7 +243,7 @@ class Proxy:
                         self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
                         pkt.as_net.generic_text[field] = value
 
-                    self.logger.debug(f"new payload: {pkt.as_net.generic_text}")
+                    self.logger.info(f"spoofed login: {pkt.as_net.generic_text}")
             elif pkt.as_net.type == NetType.GAME_MESSAGE:
                 if pkt.as_net.game_message["action", 1] == b"quit":
                     self.disconnect_all()
