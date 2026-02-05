@@ -1,11 +1,9 @@
-from dataclasses import dataclass, field
-from enum import Enum, IntEnum, IntFlag
+from enum import IntEnum, IntFlag
 import logging
 import struct
 import time
 from typing import Literal, cast
 
-from gtools import setting
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.convertible import ConvertibleToFloat, ConvertibleToInt
