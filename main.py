@@ -201,9 +201,11 @@ def _run(e: type[Extension], *args) -> None:
 if __name__ == "__main__":
     _ = item_database.items()  # trigger cache
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-v", action="store_true", help="verbose logging")
+    global_parent = argparse.ArgumentParser(add_help=False)
+    global_parent.add_argument("-v", "--verbose", default=argparse.SUPPRESS, action="store_true", help="verbose logging")
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbose logging")
     subparsers = parser.add_subparsers(dest="cmd", help="sub-command to run")
 
     for name, help_txt in [
@@ -213,43 +215,44 @@ if __name__ == "__main__":
         ("stress", "run stress extension"),
         ("world_test", "test world parsing"),
     ]:
-        subparsers.add_parser(name, help=help_txt)
+        subparsers.add_parser(name, parents=[global_parent], help=help_txt)
 
-    render = subparsers.add_parser("render", help="render a world file")
+    render = subparsers.add_parser("render", parents=[global_parent], help="render a world file")
     render.add_argument("world", help="path to world packet file")
 
-    sett = subparsers.add_parser("setting", help="manipulate settings")
+    sett = subparsers.add_parser("setting", parents=[global_parent], help="manipulate settings")
     sett_sub = sett.add_subparsers(dest="setting_op", help="setting operation")
-    sett_sub.add_parser("list", help="list settings")
-    sett_get = sett_sub.add_parser("get", help="get setting(s)")
+    sett_sub.add_parser("list", parents=[global_parent], help="list settings")
+    sett_get = sett_sub.add_parser("get", parents=[global_parent], help="get setting(s)")
     sett_get.add_argument("name", nargs="*", help="setting name(s)")
-    sett_set = sett_sub.add_parser("set", help="set a setting key")
+    sett_set = sett_sub.add_parser("set", parents=[global_parent], help="set a setting key")
     sett_set.add_argument("key", help="setting key")
     sett_set.add_argument("value", help="setting value")
-    sett_reset = sett_sub.add_parser("reset", help="reset settings")
+    sett_reset = sett_sub.add_parser("reset", parents=[global_parent], help="reset settings")
     sett_reset.add_argument("name", nargs="*", help="setting name(s) to reset")
 
-    host = subparsers.add_parser("host", help="manage hosts file entries")
+    host = subparsers.add_parser("host", parents=[global_parent], help="manage hosts file entries")
     host_sub = host.add_subparsers(dest="host_op", help="host operation")
-    host_sub.add_parser("enable", help="enable hosts")
-    host_sub.add_parser("disable", help="disable hosts")
-    host_sub.add_parser("status", help="show hosts status")
-    host_sub.add_parser("ensure", help="ensure hosts exist and are loopback")
-    host_sub.add_parser("restore", help="restore hosts from backup")
+    host_sub.add_parser("enable", parents=[global_parent], help="enable hosts")
+    host_sub.add_parser("disable", parents=[global_parent], help="disable hosts")
+    host_sub.add_parser("status", parents=[global_parent], help="show hosts status")
+    host_sub.add_parser("ensure", parents=[global_parent], help="ensure hosts exist and are loopback")
+    host_sub.add_parser("restore", parents=[global_parent], help="restore hosts from backup")
 
-    acc = subparsers.add_parser("acc", help="account management")
+    acc = subparsers.add_parser("acc", parents=[global_parent], help="account management")
     acc_sub = acc.add_subparsers(dest="acc_op", help="account operation")
 
     name_parent = argparse.ArgumentParser(add_help=False)
     name_parent.add_argument("name", nargs="*", help="account name(s)")
 
-    acc_sub.add_parser("list", help="list accounts")
-    acc_sub.add_parser("remove", parents=[name_parent], help="remove account(s)")
-    acc_sub.add_parser("add", parents=[name_parent], help="add account(s)")
-    acc_sub.add_parser("renew", parents=[name_parent], help="renew account(s)")
+    acc_sub.add_parser("list", parents=[global_parent], help="list accounts")
+    acc_sub.add_parser("remove", parents=[global_parent, name_parent], help="remove account(s)")
+    acc_sub.add_parser("add", parents=[global_parent, name_parent], help="add account(s)")
+    acc_sub.add_parser("renew", parents=[global_parent, name_parent], help="renew account(s)")
 
     args = parser.parse_args()
 
+    print(args)
     if args.cmd is None:
         parser.print_help()
         sys.exit(1)
@@ -280,7 +283,7 @@ if __name__ == "__main__":
         def destroy(self) -> None:
             pass
 
-    level = logging.DEBUG if args.v else logging.INFO
+    level = logging.DEBUG if args.verbose else logging.INFO
     setup_logger(log_dir=setting.appdir / "logs", level=level)
 
     if args.cmd == "test":
