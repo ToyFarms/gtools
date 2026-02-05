@@ -223,9 +223,7 @@ class Proxy:
                     setting.spoof_hwident
                     and pkt.direction == DIRECTION_CLIENT_TO_SERVER
                     and pkt.as_net.type == NetType.GENERIC_TEXT
-                    and b"mac" in pkt.as_net.generic_text
-                    and b"hash" in pkt.as_net.generic_text
-                    and b"hash2" in pkt.as_net.generic_text
+                    and (b"mac" in pkt.as_net.generic_text or b"hash" in pkt.as_net.generic_text or b"hash2" in pkt.as_net.generic_text or b"wk" in pkt.as_net.generic_text)
                 ):
                     orig = pkt.as_net.generic_text.copy()
                     try:

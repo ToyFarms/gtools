@@ -252,7 +252,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print(args)
     if args.cmd is None:
         parser.print_help()
         sys.exit(1)

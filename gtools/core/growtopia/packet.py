@@ -131,7 +131,7 @@ class TankPacket(Serializable):
         int_x: int = 0,
         int_y: int = 0,
         extended_len: int = 0,
-        extended_data: bytes = b"",
+        extended_data: bytes | None = b"",
     ) -> None:
         self.type = type if isinstance(type, TankType) else TankType(type)
         self.object_type = object_type
@@ -149,8 +149,11 @@ class TankPacket(Serializable):
         self.particle_rotation = particle_rotation
         self.int_x = int_x
         self.int_y = int_y
-        if extended_len != 0 and extended_len != len(extended_data):
+        # do not check if extended_data is None, otherwise check for mismatch
+        if extended_data is not None and extended_len != 0 and extended_len != len(extended_data):
             self.logger.warning(f"extended_len ({extended_len}) supplied does not match extended_data actual length ({len(extended_data)}, {extended_data})")
+        elif extended_data is None:
+            extended_data = b""
         self._extended_data = extended_data
         if extended_len == 0 and extended_data:
             self.extended_len = len(extended_data)
@@ -207,7 +210,7 @@ class TankPacket(Serializable):
         mode: Literal["strict", "relaxed"] = "relaxed",
     ) -> "TankPacket":
         tank_size = TankPacket._Struct.size
-        tank = cls(*TankPacket._Struct.unpack(data[:tank_size]))
+        tank = cls(*TankPacket._Struct.unpack(data[:tank_size]), extended_data=None)
         extended_data = b""
         if len(data) > tank_size:
             extended_data = data[tank_size:]
@@ -405,7 +408,8 @@ if __name__ == "__main__":
         # "02000000616374696f6e7c696e7075740a7c746578747c424f4f524f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f2120",
         # "0400000001000000ffffffff000000000800000000000000ffffffff00000000000000000000000000000000000000000000000000000000a6010000020002070000004f6e537061776e010292010000737061776e7c6176617461720a6e657449447c3139330a7573657249447c3231303836373737350a6569647c3231303836373737357c434a5a6e70797966376b30433048546136644f447951594f744739547050747273566376532f50357650633d7c50793164474c49507a3842323853327a4f7a433265673d3d0a69707c6b577632614c3968454531334e6862736f77776274344b6e68586872634f6456577a6a4f3843596a7439493d0a636f6c726563747c307c307c32307c33300a706f7358597c3631347c3133300a6e616d657c6077796a67736d66726a60600a7469746c6549636f6e7c7b22506c61796572576f726c644944223a3139332c225772656e6368437573746f6d697a6174696f6e223a7b225772656e6368466f726567726f756e6443616e526f74617465223a66616c73652c225772656e6368466f726567726f756e644944223a2d312c225772656e636849636f6e4944223a2d317d7d0a636f756e7472797c75730a696e7669737c300a6d73746174657c300a736d73746174657c300a6f6e6c696e6549447c0a00",
         # "03000000616374696f6e7c7175697400",
-        b"\x04\x00\x00\x00\x00\x00\x00\x00@\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x008E\x00\x00!C\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00"
+        # b"\x04\x00\x00\x00\x00\x00\x00\x00@\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x008E\x00\x00!C\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00"
+        b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9b\x00\x00\x00\x02\x00\x02\x10\x00\x00\x00OnConsoleMessage\x01\x02~\x00\x00\x00CP:0_PL:1_OID:_CT:[SB]_ `5** from (`wuRalph`````5) in [```$EMBAGAMES```5] ** : ```$Looking for 3 letter world lmk what u got``\x00"
     ]
 
     n = 1_000_000
