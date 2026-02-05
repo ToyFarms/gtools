@@ -1,6 +1,5 @@
 import binascii
 import time
-from gtools import setting
 from gtools.core.growtopia.create import chat, chat_seq, console_message
 from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, TankFlags, TankPacket, TankType
 import pytest

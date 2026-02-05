@@ -13,7 +13,7 @@ from gtools.core.wsl import windows_home
 
 logger = logging.getLogger("setting")
 
-APPDIR = windows_home() / ".gtools"
+APPDIR = Path.home() / ".gtools"
 SETTING_FILE = APPDIR / "setting.json"
 
 _setting_lock = threading.RLock()
