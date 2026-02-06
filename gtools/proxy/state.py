@@ -19,7 +19,7 @@ class Me:
     punch_range: int = 0
     pos: vec2 = field(default_factory=vec2)
     flags: TankFlags = TankFlags.NONE
-    character: CharacterState = field(default_factory=CharacterState)
+    state: CharacterState = field(default_factory=CharacterState)
     server_ping: int = 0
     client_ping: int = 0
     time_since_login: float = 0.0
@@ -32,8 +32,8 @@ class Me:
             build_range=proto.build_range,
             punch_range=proto.punch_range,
             pos=vec2(proto.pos.x, proto.pos.y),
-            state=TankFlags(proto.state),
-            character=CharacterState.from_proto(proto.character),
+            flags=TankFlags(proto.flags),
+            state=CharacterState.from_proto(proto.state),
             server_ping=proto.server_ping,
             client_ping=proto.client_ping,
             time_since_login=proto.time_since_login,
@@ -46,8 +46,8 @@ class Me:
             build_range=self.build_range,
             punch_range=self.punch_range,
             pos=growtopia_pb2.Vec2F(x=self.pos.x, y=self.pos.y),
-            state=self.flags,
-            character=self.character.to_proto(),
+            flags=self.flags,
+            state=self.state.to_proto(),
             server_ping=self.server_ping,
             client_ping=self.client_ping,
             time_since_login=self.time_since_login,
@@ -151,7 +151,7 @@ class State:
             case StateUpdateWhat.STATE_SET_CHARACTER_STATE:
                 state = CharacterState.from_proto(upd.character_state)
                 if upd.character_state.net_id == self.me.net_id:
-                    self.me.character = state
+                    self.me.state = state
 
                 if self.world and (player := self.world.get_player(upd.character_state.net_id)):
                     player.state = state

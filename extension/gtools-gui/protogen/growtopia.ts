@@ -37,8 +37,8 @@ export interface Me {
   buildRange: number;
   punchRange: number;
   pos: Vec2F | undefined;
-  state: number;
-  character: CharacterState | undefined;
+  flags: number;
+  state: CharacterState | undefined;
   serverPing: number;
   clientPing: number;
   timeSinceLogin: number;
@@ -537,8 +537,8 @@ function createBaseMe(): Me {
     buildRange: 0,
     punchRange: 0,
     pos: undefined,
-    state: 0,
-    character: undefined,
+    flags: 0,
+    state: undefined,
     serverPing: 0,
     clientPing: 0,
     timeSinceLogin: 0,
@@ -560,11 +560,11 @@ export const Me: MessageFns<Me> = {
     if (message.pos !== undefined) {
       Vec2F.encode(message.pos, writer.uint32(34).fork()).join();
     }
-    if (message.state !== 0) {
-      writer.uint32(72).uint32(message.state);
+    if (message.flags !== 0) {
+      writer.uint32(72).uint32(message.flags);
     }
-    if (message.character !== undefined) {
-      CharacterState.encode(message.character, writer.uint32(82).fork()).join();
+    if (message.state !== undefined) {
+      CharacterState.encode(message.state, writer.uint32(82).fork()).join();
     }
     if (message.serverPing !== 0) {
       writer.uint32(40).uint32(message.serverPing);
@@ -625,7 +625,7 @@ export const Me: MessageFns<Me> = {
             break;
           }
 
-          message.state = reader.uint32();
+          message.flags = reader.uint32();
           continue;
         }
         case 10: {
@@ -633,7 +633,7 @@ export const Me: MessageFns<Me> = {
             break;
           }
 
-          message.character = CharacterState.decode(reader, reader.uint32());
+          message.state = CharacterState.decode(reader, reader.uint32());
           continue;
         }
         case 5: {
@@ -695,8 +695,8 @@ export const Me: MessageFns<Me> = {
         ? globalThis.Number(object.punch_range)
         : 0,
       pos: isSet(object.pos) ? Vec2F.fromJSON(object.pos) : undefined,
-      state: isSet(object.state) ? globalThis.Number(object.state) : 0,
-      character: isSet(object.character) ? CharacterState.fromJSON(object.character) : undefined,
+      flags: isSet(object.flags) ? globalThis.Number(object.flags) : 0,
+      state: isSet(object.state) ? CharacterState.fromJSON(object.state) : undefined,
       serverPing: isSet(object.serverPing)
         ? globalThis.Number(object.serverPing)
         : isSet(object.server_ping)
@@ -734,11 +734,11 @@ export const Me: MessageFns<Me> = {
     if (message.pos !== undefined) {
       obj.pos = Vec2F.toJSON(message.pos);
     }
-    if (message.state !== 0) {
-      obj.state = Math.round(message.state);
+    if (message.flags !== 0) {
+      obj.flags = Math.round(message.flags);
     }
-    if (message.character !== undefined) {
-      obj.character = CharacterState.toJSON(message.character);
+    if (message.state !== undefined) {
+      obj.state = CharacterState.toJSON(message.state);
     }
     if (message.serverPing !== 0) {
       obj.serverPing = Math.round(message.serverPing);
@@ -764,9 +764,9 @@ export const Me: MessageFns<Me> = {
     message.buildRange = object.buildRange ?? 0;
     message.punchRange = object.punchRange ?? 0;
     message.pos = (object.pos !== undefined && object.pos !== null) ? Vec2F.fromPartial(object.pos) : undefined;
-    message.state = object.state ?? 0;
-    message.character = (object.character !== undefined && object.character !== null)
-      ? CharacterState.fromPartial(object.character)
+    message.flags = object.flags ?? 0;
+    message.state = (object.state !== undefined && object.state !== null)
+      ? CharacterState.fromPartial(object.state)
       : undefined;
     message.serverPing = object.serverPing ?? 0;
     message.clientPing = object.clientPing ?? 0;
