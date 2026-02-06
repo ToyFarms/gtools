@@ -44,8 +44,8 @@ class CharacterState:
     build_range: int = 2  # tank.jump_count - 126
     punch_range: int = 2  # tank.animation_type - 126
     flags: CharacterFlags = CharacterFlags.NONE  # tank.value
-    gravity: float = 250.0  # tank.vector_x2
-    velocity: float = 1000.0  # tank.vector_y2
+    velocity: float = 250.0  # tank.vector_x2
+    gravity: float = 1000.0  # tank.vector_y2
     acceleration: float = 1200.0  # tank.vector_x
     velocity_in_water: float = 125.0  # tank.float_var
     jump_strength: float = 200.0  # tank.vector_y

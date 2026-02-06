@@ -474,8 +474,8 @@ class Proxy:
                                     build_range=pkt.tank.jump_count - 128 + 2,  # + 2 for default range
                                     punch_range=pkt.tank.animation_type - 128 + 2,
                                     flags=pkt.tank.value,
-                                    gravity=pkt.tank.vector_x2,
-                                    velocity=pkt.tank.vector_y2,
+                                    velocity=pkt.tank.vector_x2,
+                                    gravity=pkt.tank.vector_y2,
                                     acceleration=pkt.tank.vector_x,
                                     velocity_in_water=pkt.tank.float_var,
                                     jump_strength=pkt.tank.vector_y,

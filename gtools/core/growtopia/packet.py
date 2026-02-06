@@ -102,7 +102,7 @@ class TankFlags(IntFlag):
     POWER_UP_PUNCH_END = 1 << 23
     UNK_TILE_CHANGE = 1 << 24
     HAY_CART_RELATED = 1 << 25
-    ACID_RELATED_DAMAGE = 1 << 26
+    DOUBLE_JUMPED = 1 << 26
     UNK3 = 1 << 27
     ACID_DAMAGE = 1 << 28
 

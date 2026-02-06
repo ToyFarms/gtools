@@ -16,7 +16,7 @@ s = helper()
 
 class FOO(Extension):
     def __init__(self) -> None:
-        super().__init__(name="FOO", interest=[Interest(INTEREST_STATE_UPDATE)])
+        super().__init__(name="FOO", interest=[Interest(interest=INTEREST_STATE_UPDATE)])
 
     @dispatch(
         Interest(
