@@ -18,7 +18,7 @@ class Me:
     build_range: int = 0
     punch_range: int = 0
     pos: vec2 = field(default_factory=vec2)
-    state: TankFlags = TankFlags.NONE
+    flags: TankFlags = TankFlags.NONE
     character: CharacterState = field(default_factory=CharacterState)
     server_ping: int = 0
     client_ping: int = 0
@@ -46,7 +46,7 @@ class Me:
             build_range=self.build_range,
             punch_range=self.punch_range,
             pos=growtopia_pb2.Vec2F(x=self.pos.x, y=self.pos.y),
-            state=self.state,
+            state=self.flags,
             character=self.character.to_proto(),
             server_ping=self.server_ping,
             client_ping=self.client_ping,
@@ -108,12 +108,12 @@ class State:
 
                 if net_id == 0:
                     self.me.pos = pos
-                    self.me.state = TankFlags(upd.player_update.state)
+                    self.me.flags = TankFlags(upd.player_update.flags)
                     net_id = self.me.net_id
 
                 if player := self.world.get_player(net_id):
                     player.pos = pos
-                    player.state = TankFlags(upd.player_update.state)
+                    player.flags = TankFlags(upd.player_update.flags)
             case StateUpdateWhat.STATE_MODIFY_WORLD:
                 if not self.world:
                     self.logger.warning("modify world, but world is not initialized")

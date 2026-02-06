@@ -147,9 +147,9 @@ class PlayerUpdate(_message.Message):
     NET_ID_FIELD_NUMBER: _ClassVar[int]
     X_FIELD_NUMBER: _ClassVar[int]
     Y_FIELD_NUMBER: _ClassVar[int]
-    STATE_FIELD_NUMBER: _ClassVar[int]
+    FLAGS_FIELD_NUMBER: _ClassVar[int]
     net_id: int
     x: float
     y: float
-    state: int
-    def __init__(self, net_id: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., state: _Optional[int] = ...) -> None: ...
+    flags: int
+    def __init__(self, net_id: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., flags: _Optional[int] = ...) -> None: ...

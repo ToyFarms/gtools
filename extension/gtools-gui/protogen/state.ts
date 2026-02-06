@@ -257,7 +257,7 @@ export interface PlayerUpdate {
   netId: number;
   x: number;
   y: number;
-  state: number;
+  flags: number;
 }
 
 function createBaseStateUpdate(): StateUpdate {
@@ -1119,7 +1119,7 @@ export const ModifyInventory: MessageFns<ModifyInventory> = {
 };
 
 function createBasePlayerUpdate(): PlayerUpdate {
-  return { netId: 0, x: 0, y: 0, state: 0 };
+  return { netId: 0, x: 0, y: 0, flags: 0 };
 }
 
 export const PlayerUpdate: MessageFns<PlayerUpdate> = {
@@ -1133,8 +1133,8 @@ export const PlayerUpdate: MessageFns<PlayerUpdate> = {
     if (message.y !== 0) {
       writer.uint32(29).float(message.y);
     }
-    if (message.state !== 0) {
-      writer.uint32(32).uint32(message.state);
+    if (message.flags !== 0) {
+      writer.uint32(32).uint32(message.flags);
     }
     return writer;
   },
@@ -1175,7 +1175,7 @@ export const PlayerUpdate: MessageFns<PlayerUpdate> = {
             break;
           }
 
-          message.state = reader.uint32();
+          message.flags = reader.uint32();
           continue;
         }
       }
@@ -1196,7 +1196,7 @@ export const PlayerUpdate: MessageFns<PlayerUpdate> = {
         : 0,
       x: isSet(object.x) ? globalThis.Number(object.x) : 0,
       y: isSet(object.y) ? globalThis.Number(object.y) : 0,
-      state: isSet(object.state) ? globalThis.Number(object.state) : 0,
+      flags: isSet(object.flags) ? globalThis.Number(object.flags) : 0,
     };
   },
 
@@ -1211,8 +1211,8 @@ export const PlayerUpdate: MessageFns<PlayerUpdate> = {
     if (message.y !== 0) {
       obj.y = message.y;
     }
-    if (message.state !== 0) {
-      obj.state = Math.round(message.state);
+    if (message.flags !== 0) {
+      obj.flags = Math.round(message.flags);
     }
     return obj;
   },
@@ -1225,7 +1225,7 @@ export const PlayerUpdate: MessageFns<PlayerUpdate> = {
     message.netId = object.netId ?? 0;
     message.x = object.x ?? 0;
     message.y = object.y ?? 0;
-    message.state = object.state ?? 0;
+    message.flags = object.flags ?? 0;
     return message;
   },
 };

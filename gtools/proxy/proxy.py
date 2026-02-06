@@ -316,7 +316,7 @@ class Proxy:
                                     net_id=pkt.tank.net_id,
                                     x=pkt.tank.vector_x,
                                     y=pkt.tank.vector_y,
-                                    state=pkt.tank.flags,
+                                    flags=pkt.tank.flags,
                                 ),
                             ),
                         )
