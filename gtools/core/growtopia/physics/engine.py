@@ -2,9 +2,11 @@ import pygame
 import sys
 import math
 import keyboard
+import threading
+import time
 
 from pyglm.glm import vec2
-from gtools.core.growtopia.packet import NetPacket
+from gtools.core.growtopia.packet import NetPacket, TankFlags
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
@@ -30,14 +32,19 @@ SCREEN_HEIGHT = 800
 FPS = 60
 TPS = 60
 
-GRAVITY = 1000.0
+MULTIPLIER = 1
+GRAVITY = 1000.0 / MULTIPLIER
 MAX_HORIZONTAL_SPEED = 250.0
 HORIZONTAL_ACCELERATION = 1200.0
-HORIZONTAL_DECELERATION = 1800.0
+HORIZONTAL_DECELERATION = 1300.0
 AIR_CONTROL_MULTIPLIER = 1
 
+VERTICAL_MOMENTUM = 100 * MULTIPLIER
 JUMP_FORCE = -450.0
-MAX_FALL_SPEED = 800.0
+MAX_FALL_SPEED = 800.0 / MULTIPLIER
+
+APEX_GRAVITY_MULTIPLIER = 0.55 if MULTIPLIER > 1 else 0.90
+APEX_VELOCITY_THRESHOLD = 100.0
 
 GROUND_Y = 700
 
@@ -98,10 +105,15 @@ class Player:
 
         if not self.on_ground:
             if not GlobalKeys.pressed("space"):
-                if self.velocity_y < 0:
-                    self.velocity_y = 0
+                if self.velocity_y < -VERTICAL_MOMENTUM:
+                    self.velocity_y = -VERTICAL_MOMENTUM
 
-            self.velocity_y += GRAVITY * dt
+            gravity = GRAVITY
+
+            if abs(self.velocity_y) < APEX_VELOCITY_THRESHOLD:
+                gravity *= APEX_GRAVITY_MULTIPLIER
+
+            self.velocity_y += gravity * dt
 
             if self.velocity_y > MAX_FALL_SPEED:
                 self.velocity_y = MAX_FALL_SPEED
@@ -197,27 +209,55 @@ def main():
     font = pygame.font.Font(None, 24)
 
     tick_interval = 1.0 / TPS
-    accumulator = 0.0
-    tick_count = 0
 
     current_fps_cap = FPS
 
-    tps_timer = 0.0
+    state_lock = threading.Lock()
+    physics_stop_event = threading.Event()
+
+    tick_count = 0
     tps_tick_count = 0
-    actual_tps = TPS
+    tps_timer = 0.0
+    actual_tps = float(TPS)
+    last_physics_time = time.perf_counter()
+
+    def physics_loop():
+        nonlocal tick_count, tps_tick_count, tps_timer, actual_tps, last_physics_time
+        next_tick = time.perf_counter()
+        while not physics_stop_event.is_set():
+            now = time.perf_counter()
+            if now >= next_tick:
+                with state_lock:
+                    player.update(tick_interval)
+                    tick_count += 1
+                    tps_tick_count += 1
+                    last_physics_time = now
+
+                next_tick += tick_interval
+                if now - next_tick > 1.0:
+                    next_tick = now + tick_interval
+
+                tps_timer += tick_interval
+                if tps_timer >= 1.0:
+                    with state_lock:
+                        actual_tps = tps_tick_count / tps_timer if tps_timer > 0 else 0.0
+                        tps_tick_count = 0
+                        tps_timer = 0.0
+            else:
+                time_to_sleep = next_tick - now
+                if time_to_sleep > 0:
+                    time.sleep(min(time_to_sleep, 0.001))
+
+    physics_thread = threading.Thread(target=physics_loop, daemon=True)
+    physics_thread.start()
 
     running = True
-    last_time = pygame.time.get_ticks() / 1000.0
+    jumped = False
 
     while running:
-        current_time = pygame.time.get_ticks() / 1000.0
-        frame_time = current_time - last_time
-        last_time = current_time
-
-        if frame_time > 0.25:
-            frame_time = 0.25
-
-        accumulator += frame_time
+        frame_time = clock.get_time() / 1000.0
+        if frame_time <= 0:
+            frame_time = 1.0 / 1000.0
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -227,42 +267,45 @@ def main():
                     running = False
                 elif event.key == pygame.K_c:
                     current_fps_cap = 60 if current_fps_cap == 5 else 5 if current_fps_cap == 60 else 60
+
         if GlobalKeys.pressed("space"):
-            player.jump()
+            if not jumped:
+                with state_lock:
+                    player.jump()
+            jumped = True
+        else:
+            jumped = False
 
-        while accumulator >= tick_interval:
-            player.update(tick_interval)
-            accumulator -= tick_interval
-            tick_count += 1
-            tps_tick_count += 1
+        with state_lock:
+            local_last_physics_time = last_physics_time
+            local_tick_count = tick_count
+            local_actual_tps = actual_tps
+            screen.fill((0, 0, 0))
 
-        alpha = accumulator / tick_interval
+            pygame.draw.line(screen, (200, 200, 200), (0, GROUND_Y), (SCREEN_WIDTH, GROUND_Y), 3)
 
-        tps_timer += frame_time
-        if tps_timer >= 1.0:
-            actual_tps = tps_tick_count / tps_timer
-            tps_tick_count = 0
-            tps_timer = 0.0
+            grid_spacing = 32
+            for x in range(0, SCREEN_WIDTH, grid_spacing):
+                pygame.draw.line(screen, (40, 40, 40), (x, 0), (x, SCREEN_HEIGHT), 1)
+            for y in range(0, SCREEN_HEIGHT, grid_spacing):
+                pygame.draw.line(screen, (40, 40, 40), (0, y), (SCREEN_WIDTH, y), 1)
 
-        screen.fill((0, 0, 0))
+            now_perf = time.perf_counter()
+            alpha = (now_perf - local_last_physics_time) / tick_interval
+            if alpha < 0:
+                alpha = 0.0
+            elif alpha > 1:
+                alpha = 1.0
 
-        pygame.draw.line(screen, (200, 200, 200), (0, GROUND_Y), (SCREEN_WIDTH, GROUND_Y), 3)
+            player.draw(screen, alpha)
+            gt_player.color = (255, 100, 100)
+            gt_player.draw(screen, alpha)
 
-        grid_spacing = 32
-        for x in range(0, SCREEN_WIDTH, grid_spacing):
-            pygame.draw.line(screen, (40, 40, 40), (x, 0), (x, SCREEN_HEIGHT), 1)
-        for y in range(0, SCREEN_HEIGHT, grid_spacing):
-            pygame.draw.line(screen, (40, 40, 40), (0, y), (SCREEN_WIDTH, y), 1)
+            draw_hud(screen, player, font, clock, local_tick_count, local_actual_tps)
 
-        player.draw(screen, alpha)
-        gt_player.color = (255, 100, 100)
-        gt_player.draw(screen, alpha)
-
-        draw_hud(screen, player, font, clock, tick_count, actual_tps)
-
-        fps_text = f"FPS Cap: {'Uncapped' if current_fps_cap == 0 else current_fps_cap}"
-        fps_render = font.render(fps_text, True, (0, 255, 255))
-        screen.blit(fps_render, (SCREEN_WIDTH - 200, 20))
+            fps_text = f"FPS Cap: {'Uncapped' if current_fps_cap == 0 else current_fps_cap}"
+            fps_render = font.render(fps_text, True, (0, 255, 255))
+            screen.blit(fps_render, (SCREEN_WIDTH - 200, 20))
 
         pygame.display.flip()
 
@@ -270,6 +313,9 @@ def main():
             clock.tick(current_fps_cap)
         else:
             clock.tick()
+
+    physics_stop_event.set()
+    physics_thread.join(timeout=1.0)
 
     pygame.quit()
     sys.exit()
@@ -295,9 +341,10 @@ class MovementTest(Extension):
     )
     def on_move(self, event: PendingPacket) -> PendingPacket | None:
         pkt = NetPacket.deserialize(event.buf)
-        self.pos = vec2(pkt.tank.vector_x, pkt.tank.vector_x)
-        gt_player.x = self.origin.x - pkt.tank.vector_x + self.offset.x
-        gt_player.y = self.origin.y - pkt.tank.vector_y + self.offset.y
+        self.pos = vec2(pkt.tank.vector_x, pkt.tank.vector_y)
+        gt_player.x = pkt.tank.vector_x - self.origin.x + self.offset.x
+        gt_player.y = pkt.tank.vector_y - self.origin.y + self.offset.y
+        gt_player.facing_left = pkt.tank.flags & TankFlags.FACING_LEFT != 0
 
     @dispatch(s.command_toggle("/set", s.auto))
     def set_origin(self, _event: PendingPacket) -> PendingPacket | None:
@@ -311,5 +358,6 @@ class MovementTest(Extension):
 
 
 if __name__ == "__main__":
+    # MovementTest().standalone()
     MovementTest().start(block=False)
     main()
