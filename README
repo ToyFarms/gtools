@@ -1,4 +1,23 @@
+prerequisites:
+
+- uv (https://docs.astral.sh/uv)
+
+setup:
+
+install python:
+$ uv python install 3.13
+(at least python >= 3.12)
+
+$ uv venv --python 3.13
+$ source .venv/bin/activate
+(or `.\.venv\Scripts\activate` on windows)
+$ uv sync
+(use `uv sync --extra gui` if you want to use pygame gui)
+
 usage:
+
+help:
+$ python main.py --help
 
 to test connectivity:
 $ python main.py test
