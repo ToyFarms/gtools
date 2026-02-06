@@ -11,6 +11,7 @@ from gtools.core.growtopia.world import World
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.state_pb2 import ModifyItem, ModifyWorld, StateUpdate, StateUpdateWhat
 
+
 @dataclass(slots=True)
 class Me:
     net_id: int = 0
@@ -148,7 +149,12 @@ class State:
             case StateUpdateWhat.STATE_SET_MY_PLAYER:
                 self.me.net_id = upd.set_my_player
             case StateUpdateWhat.STATE_SET_CHARACTER_STATE:
-                self.me.character = CharacterState.from_proto(upd.character_state)
+                state = CharacterState.from_proto(upd.character_state)
+                if upd.character_state.net_id == self.me.net_id:
+                    self.me.character = state
+
+                if self.world and (player := self.world.get_player(upd.character_state.net_id)):
+                    player.state = state
             case StateUpdateWhat.STATE_SEND_INVENTORY:
                 self.inventory = Inventory.from_proto(upd.send_inventory)
             case StateUpdateWhat.STATE_MODIFY_INVENTORY:

@@ -21,11 +21,15 @@ export interface Inventory {
 }
 
 export interface CharacterState {
+  netId: number;
   buildRange: number;
   punchRange: number;
   flags: number;
   gravity: number;
   velocity: number;
+  acceleration: number;
+  velocityInWater: number;
+  jumpStrength: number;
 }
 
 export interface Me {
@@ -93,7 +97,8 @@ export interface Player {
   /** 0 */
   smstate: number;
   onlineID: Uint8Array;
-  state: number;
+  flags: number;
+  state: CharacterState | undefined;
 }
 
 export interface DroppedItem {
@@ -309,11 +314,24 @@ export const Inventory: MessageFns<Inventory> = {
 };
 
 function createBaseCharacterState(): CharacterState {
-  return { buildRange: 0, punchRange: 0, flags: 0, gravity: 0, velocity: 0 };
+  return {
+    netId: 0,
+    buildRange: 0,
+    punchRange: 0,
+    flags: 0,
+    gravity: 0,
+    velocity: 0,
+    acceleration: 0,
+    velocityInWater: 0,
+    jumpStrength: 0,
+  };
 }
 
 export const CharacterState: MessageFns<CharacterState> = {
   encode(message: CharacterState, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.netId !== 0) {
+      writer.uint32(72).uint32(message.netId);
+    }
     if (message.buildRange !== 0) {
       writer.uint32(8).uint32(message.buildRange);
     }
@@ -329,6 +347,15 @@ export const CharacterState: MessageFns<CharacterState> = {
     if (message.velocity !== 0) {
       writer.uint32(45).float(message.velocity);
     }
+    if (message.acceleration !== 0) {
+      writer.uint32(53).float(message.acceleration);
+    }
+    if (message.velocityInWater !== 0) {
+      writer.uint32(61).float(message.velocityInWater);
+    }
+    if (message.jumpStrength !== 0) {
+      writer.uint32(69).float(message.jumpStrength);
+    }
     return writer;
   },
 
@@ -339,6 +366,14 @@ export const CharacterState: MessageFns<CharacterState> = {
     while (reader.pos < end) {
       const tag = reader.uint32();
       switch (tag >>> 3) {
+        case 9: {
+          if (tag !== 72) {
+            break;
+          }
+
+          message.netId = reader.uint32();
+          continue;
+        }
         case 1: {
           if (tag !== 8) {
             break;
@@ -379,6 +414,30 @@ export const CharacterState: MessageFns<CharacterState> = {
           message.velocity = reader.float();
           continue;
         }
+        case 6: {
+          if (tag !== 53) {
+            break;
+          }
+
+          message.acceleration = reader.float();
+          continue;
+        }
+        case 7: {
+          if (tag !== 61) {
+            break;
+          }
+
+          message.velocityInWater = reader.float();
+          continue;
+        }
+        case 8: {
+          if (tag !== 69) {
+            break;
+          }
+
+          message.jumpStrength = reader.float();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -390,6 +449,11 @@ export const CharacterState: MessageFns<CharacterState> = {
 
   fromJSON(object: any): CharacterState {
     return {
+      netId: isSet(object.netId)
+        ? globalThis.Number(object.netId)
+        : isSet(object.net_id)
+        ? globalThis.Number(object.net_id)
+        : 0,
       buildRange: isSet(object.buildRange)
         ? globalThis.Number(object.buildRange)
         : isSet(object.build_range)
@@ -403,11 +467,25 @@ export const CharacterState: MessageFns<CharacterState> = {
       flags: isSet(object.flags) ? globalThis.Number(object.flags) : 0,
       gravity: isSet(object.gravity) ? globalThis.Number(object.gravity) : 0,
       velocity: isSet(object.velocity) ? globalThis.Number(object.velocity) : 0,
+      acceleration: isSet(object.acceleration) ? globalThis.Number(object.acceleration) : 0,
+      velocityInWater: isSet(object.velocityInWater)
+        ? globalThis.Number(object.velocityInWater)
+        : isSet(object.velocity_in_water)
+        ? globalThis.Number(object.velocity_in_water)
+        : 0,
+      jumpStrength: isSet(object.jumpStrength)
+        ? globalThis.Number(object.jumpStrength)
+        : isSet(object.jump_strength)
+        ? globalThis.Number(object.jump_strength)
+        : 0,
     };
   },
 
   toJSON(message: CharacterState): unknown {
     const obj: any = {};
+    if (message.netId !== 0) {
+      obj.netId = Math.round(message.netId);
+    }
     if (message.buildRange !== 0) {
       obj.buildRange = Math.round(message.buildRange);
     }
@@ -423,6 +501,15 @@ export const CharacterState: MessageFns<CharacterState> = {
     if (message.velocity !== 0) {
       obj.velocity = message.velocity;
     }
+    if (message.acceleration !== 0) {
+      obj.acceleration = message.acceleration;
+    }
+    if (message.velocityInWater !== 0) {
+      obj.velocityInWater = message.velocityInWater;
+    }
+    if (message.jumpStrength !== 0) {
+      obj.jumpStrength = message.jumpStrength;
+    }
     return obj;
   },
 
@@ -431,11 +518,15 @@ export const CharacterState: MessageFns<CharacterState> = {
   },
   fromPartial<I extends Exact<DeepPartial<CharacterState>, I>>(object: I): CharacterState {
     const message = createBaseCharacterState();
+    message.netId = object.netId ?? 0;
     message.buildRange = object.buildRange ?? 0;
     message.punchRange = object.punchRange ?? 0;
     message.flags = object.flags ?? 0;
     message.gravity = object.gravity ?? 0;
     message.velocity = object.velocity ?? 0;
+    message.acceleration = object.acceleration ?? 0;
+    message.velocityInWater = object.velocityInWater ?? 0;
+    message.jumpStrength = object.jumpStrength ?? 0;
     return message;
   },
 };
@@ -1053,7 +1144,8 @@ function createBasePlayer(): Player {
     mstate: 0,
     smstate: 0,
     onlineID: new Uint8Array(0),
-    state: 0,
+    flags: 0,
+    state: undefined,
   };
 }
 
@@ -1101,8 +1193,11 @@ export const Player: MessageFns<Player> = {
     if (message.onlineID.length !== 0) {
       writer.uint32(114).bytes(message.onlineID);
     }
-    if (message.state !== 0) {
-      writer.uint32(120).uint32(message.state);
+    if (message.flags !== 0) {
+      writer.uint32(120).uint32(message.flags);
+    }
+    if (message.state !== undefined) {
+      CharacterState.encode(message.state, writer.uint32(130).fork()).join();
     }
     return writer;
   },
@@ -1231,7 +1326,15 @@ export const Player: MessageFns<Player> = {
             break;
           }
 
-          message.state = reader.uint32();
+          message.flags = reader.uint32();
+          continue;
+        }
+        case 16: {
+          if (tag !== 130) {
+            break;
+          }
+
+          message.state = CharacterState.decode(reader, reader.uint32());
           continue;
         }
       }
@@ -1259,7 +1362,8 @@ export const Player: MessageFns<Player> = {
       mstate: isSet(object.mstate) ? globalThis.Number(object.mstate) : 0,
       smstate: isSet(object.smstate) ? globalThis.Number(object.smstate) : 0,
       onlineID: isSet(object.onlineID) ? bytesFromBase64(object.onlineID) : new Uint8Array(0),
-      state: isSet(object.state) ? globalThis.Number(object.state) : 0,
+      flags: isSet(object.flags) ? globalThis.Number(object.flags) : 0,
+      state: isSet(object.state) ? CharacterState.fromJSON(object.state) : undefined,
     };
   },
 
@@ -1307,8 +1411,11 @@ export const Player: MessageFns<Player> = {
     if (message.onlineID.length !== 0) {
       obj.onlineID = base64FromBytes(message.onlineID);
     }
-    if (message.state !== 0) {
-      obj.state = Math.round(message.state);
+    if (message.flags !== 0) {
+      obj.flags = Math.round(message.flags);
+    }
+    if (message.state !== undefined) {
+      obj.state = CharacterState.toJSON(message.state);
     }
     return obj;
   },
@@ -1334,7 +1441,10 @@ export const Player: MessageFns<Player> = {
     message.mstate = object.mstate ?? 0;
     message.smstate = object.smstate ?? 0;
     message.onlineID = object.onlineID ?? new Uint8Array(0);
-    message.state = object.state ?? 0;
+    message.flags = object.flags ?? 0;
+    message.state = (object.state !== undefined && object.state !== null)
+      ? CharacterState.fromPartial(object.state)
+      : undefined;
     return message;
   },
 };
