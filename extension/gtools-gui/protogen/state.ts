@@ -251,7 +251,6 @@ export interface EnterWorld {
 export interface ModifyInventory {
   id: number;
   toAdd: number;
-  isGhost: boolean;
 }
 
 export interface PlayerUpdate {
@@ -1040,7 +1039,7 @@ export const EnterWorld: MessageFns<EnterWorld> = {
 };
 
 function createBaseModifyInventory(): ModifyInventory {
-  return { id: 0, toAdd: 0, isGhost: false };
+  return { id: 0, toAdd: 0 };
 }
 
 export const ModifyInventory: MessageFns<ModifyInventory> = {
@@ -1050,9 +1049,6 @@ export const ModifyInventory: MessageFns<ModifyInventory> = {
     }
     if (message.toAdd !== 0) {
       writer.uint32(16).int32(message.toAdd);
-    }
-    if (message.isGhost !== false) {
-      writer.uint32(24).bool(message.isGhost);
     }
     return writer;
   },
@@ -1080,14 +1076,6 @@ export const ModifyInventory: MessageFns<ModifyInventory> = {
           message.toAdd = reader.int32();
           continue;
         }
-        case 3: {
-          if (tag !== 24) {
-            break;
-          }
-
-          message.isGhost = reader.bool();
-          continue;
-        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1105,11 +1093,6 @@ export const ModifyInventory: MessageFns<ModifyInventory> = {
         : isSet(object.to_add)
         ? globalThis.Number(object.to_add)
         : 0,
-      isGhost: isSet(object.isGhost)
-        ? globalThis.Boolean(object.isGhost)
-        : isSet(object.is_ghost)
-        ? globalThis.Boolean(object.is_ghost)
-        : false,
     };
   },
 
@@ -1121,9 +1104,6 @@ export const ModifyInventory: MessageFns<ModifyInventory> = {
     if (message.toAdd !== 0) {
       obj.toAdd = Math.round(message.toAdd);
     }
-    if (message.isGhost !== false) {
-      obj.isGhost = message.isGhost;
-    }
     return obj;
   },
 
@@ -1134,7 +1114,6 @@ export const ModifyInventory: MessageFns<ModifyInventory> = {
     const message = createBaseModifyInventory();
     message.id = object.id ?? 0;
     message.toAdd = object.toAdd ?? 0;
-    message.isGhost = object.isGhost ?? false;
     return message;
   },
 };
@@ -1146,7 +1125,7 @@ function createBasePlayerUpdate(): PlayerUpdate {
 export const PlayerUpdate: MessageFns<PlayerUpdate> = {
   encode(message: PlayerUpdate, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.netId !== 0) {
-      writer.uint32(8).uint32(message.netId);
+      writer.uint32(8).int32(message.netId);
     }
     if (message.x !== 0) {
       writer.uint32(21).float(message.x);
@@ -1172,7 +1151,7 @@ export const PlayerUpdate: MessageFns<PlayerUpdate> = {
             break;
           }
 
-          message.netId = reader.uint32();
+          message.netId = reader.int32();
           continue;
         }
         case 2: {

@@ -455,13 +455,14 @@ class Proxy:
                             )
                         )
                     case TankType.MODIFY_ITEM_INVENTORY:
+                        # jump count = remove, animation_type = add
+                        to_add = -pkt.tank.jump_count if pkt.tank.jump_count != 0 else pkt.tank.animation_type
                         self._send_state_update(
                             StateUpdate(
                                 what=STATE_MODIFY_INVENTORY,
                                 modify_inventory=ModifyInventory(
                                     id=pkt.tank.value,
-                                    to_add=-pkt.tank.jump_count,
-                                    is_ghost=pkt.tank.animation_type == 1,
+                                    to_add=to_add,
                                 ),
                             ),
                         )

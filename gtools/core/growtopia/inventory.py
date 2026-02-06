@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 import struct
 from typing import Iterator, OrderedDict
 
+from gtools.baked.items import MAGPLANT_5000_REMOTE, WORLD_KEY
 from gtools.core.buffer import Buffer
 from gtools.core.protocol import Serializable
 from gtools.protogen import growtopia_pb2
@@ -94,14 +95,17 @@ class Inventory(Serializable):
     def set_item(self, item: Item) -> None:
         self._items_map[item.id] = item
 
-    def add(self, id: int, to_add: int, ghost: bool = False) -> Item:
+    def _is_ghost_item(self, id: int) -> bool:
+        return id in (WORLD_KEY, MAGPLANT_5000_REMOTE)
+
+    def add(self, id: int, to_add: int) -> Item:
         item = self._items_map.get(id)
         if item is None:
             item = Item(id=id)
-            item.is_ghost = ghost
+            item.is_ghost = self._is_ghost_item(id)
             self._items_map[id] = item
 
-            if ghost:
+            if item.is_ghost:
                 return item
 
         if item.add(to_add) == 0:

@@ -152,7 +152,7 @@ class State:
             case StateUpdateWhat.STATE_SEND_INVENTORY:
                 self.inventory = Inventory.from_proto(upd.send_inventory)
             case StateUpdateWhat.STATE_MODIFY_INVENTORY:
-                self.inventory.add(upd.modify_inventory.id, upd.modify_inventory.to_add, upd.modify_inventory.is_ghost)
+                self.inventory.add(upd.modify_inventory.id, upd.modify_inventory.to_add)
             case StateUpdateWhat.STATE_ENTER_WORLD:
                 self.world = World.from_proto(upd.enter_world.enter_world)
             case StateUpdateWhat.STATE_EXIT_WORLD:

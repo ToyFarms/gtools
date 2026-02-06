@@ -458,7 +458,7 @@ function createBaseMe(): Me {
 export const Me: MessageFns<Me> = {
   encode(message: Me, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.netId !== 0) {
-      writer.uint32(24).uint32(message.netId);
+      writer.uint32(24).int32(message.netId);
     }
     if (message.buildRange !== 0) {
       writer.uint32(8).uint32(message.buildRange);
@@ -502,7 +502,7 @@ export const Me: MessageFns<Me> = {
             break;
           }
 
-          message.netId = reader.uint32();
+          message.netId = reader.int32();
           continue;
         }
         case 1: {
