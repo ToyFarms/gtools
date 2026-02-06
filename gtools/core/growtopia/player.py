@@ -49,6 +49,7 @@ class CharacterState:
     acceleration: float = 1200.0  # tank.vector_x
     velocity_in_water: float = 125.0  # tank.float_var
     jump_strength: float = 200.0  # tank.vector_y
+    # TODO: unknown values: tank.target_net_id, tank.value, tank.int_x, tank.int_y
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.CharacterState) -> "CharacterState":

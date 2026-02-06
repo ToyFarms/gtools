@@ -470,7 +470,7 @@ class Proxy:
                             StateUpdate(
                                 what=STATE_SET_CHARACTER_STATE,
                                 character_state=growtopia_pb2.CharacterState(
-                                    net_id=pkt.tank.target_net_id,
+                                    net_id=pkt.tank.net_id,
                                     build_range=pkt.tank.jump_count - 128 + 2,  # + 2 for default range
                                     punch_range=pkt.tank.animation_type - 128 + 2,
                                     flags=pkt.tank.value,
