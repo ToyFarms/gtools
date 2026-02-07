@@ -174,23 +174,25 @@ class Tile(_message.Message):
     __slots__ = ()
     FG_ID_FIELD_NUMBER: _ClassVar[int]
     BG_ID_FIELD_NUMBER: _ClassVar[int]
-    PARENT_BLOCK_INDEX_FIELD_NUMBER: _ClassVar[int]
+    LOCK_INDEX_FIELD_NUMBER: _ClassVar[int]
+    PARENT_INDEX_FIELD_NUMBER: _ClassVar[int]
     FLAGS_FIELD_NUMBER: _ClassVar[int]
     EXTRA_FIELD_NUMBER: _ClassVar[int]
+    INDEX_FIELD_NUMBER: _ClassVar[int]
     X_FIELD_NUMBER: _ClassVar[int]
     Y_FIELD_NUMBER: _ClassVar[int]
-    LOCK_BLOCK_INDEX_FIELD_NUMBER: _ClassVar[int]
     JSON_DATA_FIELD_NUMBER: _ClassVar[int]
     fg_id: int
     bg_id: int
-    parent_block_index: int
+    lock_index: int
+    parent_index: int
     flags: int
     extra: bytes
+    index: int
     x: int
     y: int
-    lock_block_index: int
     json_data: bytes
-    def __init__(self, fg_id: _Optional[int] = ..., bg_id: _Optional[int] = ..., parent_block_index: _Optional[int] = ..., flags: _Optional[int] = ..., extra: _Optional[bytes] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., lock_block_index: _Optional[int] = ..., json_data: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, fg_id: _Optional[int] = ..., bg_id: _Optional[int] = ..., lock_index: _Optional[int] = ..., parent_index: _Optional[int] = ..., flags: _Optional[int] = ..., extra: _Optional[bytes] = ..., index: _Optional[int] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., json_data: _Optional[bytes] = ...) -> None: ...
 
 class WorldInner(_message.Message):
     __slots__ = ()

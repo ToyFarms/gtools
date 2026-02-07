@@ -13,7 +13,7 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, Tan
 from gtools.core.growtopia.player import CharacterState, Player
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
-from gtools.core.growtopia.world import Tile, World
+from gtools.core.growtopia.world import LockTile, Tile, TileExtraType, TileFlags, World
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
@@ -102,6 +102,7 @@ class Status(IntEnum):
     IN_WORLD = 5
 
 
+# **BIGGGGGGGG** TODO: completely rewrite this "emit state" and "handle state", what we should do instead is relay the raw buffer and leave the interpretation to only the receiver (handle state), this way we only need to handle in one place, this means completely removing all from_proto and to_proto convention, and alike.
 @dataclass(slots=True)
 class State:
     world: World | None = None
@@ -219,8 +220,22 @@ class State:
                                 ),
                             )
                     case TankType.SEND_TILE_TREE_STATE:
-                        # NOTE: literally the trees, something with trees
-                        pass
+                        if not self.world:
+                            self.logger.warning("SEND_TILE_TREE_STATE, but world is not initialized")
+                            return
+
+                        if tile := self.world.get_tile(ivec2(pkt.tank.int_x, pkt.tank.int_y)):
+                            self.world.update_tree(tile, pkt.tank)
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_MODIFY_WORLD,
+                                    modify_world=ModifyWorld(
+                                        op=ModifyWorld.OP_REPLACE,
+                                        tile=tile.to_proto(),
+                                    ),
+                                ),
+                            )
                     case TankType.SEND_TILE_UPDATE_DATA:
                         tile = Tile.deserialize(Buffer(pkt.tank.extended_data))
                         tile.pos.x = pkt.tank.int_x
@@ -255,6 +270,65 @@ class State:
                                     ),
                                 ),
                             )
+                    case TankType.SEND_LOCK:
+                        if not self.world:
+                            self.logger.warning("send lock, but world is not initialized")
+                            return
+
+                        if lock_tile := self.world.get_tile(ivec2(pkt.tank.int_x, pkt.tank.int_y)):
+                            # place lock if it doesn't exists
+                            if (
+                                (lock_tile.extra and lock_tile.extra.type != TileExtraType.LOCK_TILE)
+                                or lock_tile.extra is None
+                                or lock_tile.extra.expect(LockTile).owner_uid != pkt.tank.net_id
+                            ):
+                                self.world.replace_fg(lock_tile, pkt.tank.value)
+                                assert lock_tile.extra
+                                lock_tile.extra.expect(LockTile).owner_uid = pkt.tank.net_id
+
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_MODIFY_WORLD,
+                                        modify_world=ModifyWorld(
+                                            op=ModifyWorld.OP_PLACE,
+                                            tile=lock_tile.to_proto(),
+                                        ),
+                                    ),
+                                )
+
+                            for tile in self.world.remove_locked(lock_tile):
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_MODIFY_WORLD,
+                                        modify_world=ModifyWorld(
+                                            op=ModifyWorld.OP_REPLACE,
+                                            tile=tile.to_proto(),
+                                        ),
+                                    ),
+                                )
+
+                            buf = Buffer(pkt.tank.extended_data)
+                            assert len(buf) == pkt.tank.target_net_id * 2, f"expected {pkt.tank.target_net_id} 2 bytes element, got {len(buf)}"
+                            for _ in range(pkt.tank.target_net_id):
+                                index = buf.read_u16()
+                                target_tile = self.world.get_tile(index)
+                                if not target_tile:
+                                    raise ValueError(f"send_lock: tile at {index=} should exists, but it doesn't")
+
+                                target_tile.flags |= TileFlags.LOCKED
+                                target_tile.lock_index = index
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_MODIFY_WORLD,
+                                        modify_world=ModifyWorld(
+                                            op=ModifyWorld.OP_REPLACE,
+                                            tile=target_tile.to_proto(),
+                                        ),
+                                    ),
+                                )
                     case TankType.CALL_FUNCTION:
                         v = Variant.deserialize(pkt.tank.extended_data)
                         fn = v.as_string[0]
@@ -437,7 +511,7 @@ class State:
                     case ModifyWorld.OP_DESTROY:
                         self.world.destroy_tile(pos)
                     case ModifyWorld.OP_REPLACE:
-                        self.world.replace_tile(world.Tile.from_proto(upd.modify_world.tile))
+                        self.world.replace_whole_tile(world.Tile.from_proto(upd.modify_world.tile))
             case StateUpdateWhat.STATE_MODIFY_ITEM:
                 if not self.world:
                     self.logger.warning("modify world item, but world is not initialized")

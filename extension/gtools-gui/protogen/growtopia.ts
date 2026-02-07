@@ -119,12 +119,13 @@ export interface Dropped {
 export interface Tile {
   fgId: number;
   bgId: number;
-  parentBlockIndex: number;
+  lockIndex: number;
+  parentIndex: number;
   flags: number;
   extra: Uint8Array;
+  index: number;
   x: number;
   y: number;
-  lockBlockIndex: number;
   jsonData: Uint8Array;
 }
 
@@ -1693,12 +1694,13 @@ function createBaseTile(): Tile {
   return {
     fgId: 0,
     bgId: 0,
-    parentBlockIndex: 0,
+    lockIndex: 0,
+    parentIndex: 0,
     flags: 0,
     extra: new Uint8Array(0),
+    index: 0,
     x: 0,
     y: 0,
-    lockBlockIndex: 0,
     jsonData: new Uint8Array(0),
   };
 }
@@ -1711,8 +1713,11 @@ export const Tile: MessageFns<Tile> = {
     if (message.bgId !== 0) {
       writer.uint32(16).uint32(message.bgId);
     }
-    if (message.parentBlockIndex !== 0) {
-      writer.uint32(24).uint32(message.parentBlockIndex);
+    if (message.lockIndex !== 0) {
+      writer.uint32(24).uint32(message.lockIndex);
+    }
+    if (message.parentIndex !== 0) {
+      writer.uint32(88).uint32(message.parentIndex);
     }
     if (message.flags !== 0) {
       writer.uint32(32).uint32(message.flags);
@@ -1720,14 +1725,14 @@ export const Tile: MessageFns<Tile> = {
     if (message.extra.length !== 0) {
       writer.uint32(42).bytes(message.extra);
     }
+    if (message.index !== 0) {
+      writer.uint32(80).uint32(message.index);
+    }
     if (message.x !== 0) {
       writer.uint32(48).uint32(message.x);
     }
     if (message.y !== 0) {
       writer.uint32(56).uint32(message.y);
-    }
-    if (message.lockBlockIndex !== 0) {
-      writer.uint32(64).uint32(message.lockBlockIndex);
     }
     if (message.jsonData.length !== 0) {
       writer.uint32(74).bytes(message.jsonData);
@@ -1763,7 +1768,15 @@ export const Tile: MessageFns<Tile> = {
             break;
           }
 
-          message.parentBlockIndex = reader.uint32();
+          message.lockIndex = reader.uint32();
+          continue;
+        }
+        case 11: {
+          if (tag !== 88) {
+            break;
+          }
+
+          message.parentIndex = reader.uint32();
           continue;
         }
         case 4: {
@@ -1782,6 +1795,14 @@ export const Tile: MessageFns<Tile> = {
           message.extra = reader.bytes();
           continue;
         }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.index = reader.uint32();
+          continue;
+        }
         case 6: {
           if (tag !== 48) {
             break;
@@ -1796,14 +1817,6 @@ export const Tile: MessageFns<Tile> = {
           }
 
           message.y = reader.uint32();
-          continue;
-        }
-        case 8: {
-          if (tag !== 64) {
-            break;
-          }
-
-          message.lockBlockIndex = reader.uint32();
           continue;
         }
         case 9: {
@@ -1835,20 +1848,21 @@ export const Tile: MessageFns<Tile> = {
         : isSet(object.bg_id)
         ? globalThis.Number(object.bg_id)
         : 0,
-      parentBlockIndex: isSet(object.parentBlockIndex)
-        ? globalThis.Number(object.parentBlockIndex)
-        : isSet(object.parent_block_index)
-        ? globalThis.Number(object.parent_block_index)
+      lockIndex: isSet(object.lockIndex)
+        ? globalThis.Number(object.lockIndex)
+        : isSet(object.lock_index)
+        ? globalThis.Number(object.lock_index)
+        : 0,
+      parentIndex: isSet(object.parentIndex)
+        ? globalThis.Number(object.parentIndex)
+        : isSet(object.parent_index)
+        ? globalThis.Number(object.parent_index)
         : 0,
       flags: isSet(object.flags) ? globalThis.Number(object.flags) : 0,
       extra: isSet(object.extra) ? bytesFromBase64(object.extra) : new Uint8Array(0),
+      index: isSet(object.index) ? globalThis.Number(object.index) : 0,
       x: isSet(object.x) ? globalThis.Number(object.x) : 0,
       y: isSet(object.y) ? globalThis.Number(object.y) : 0,
-      lockBlockIndex: isSet(object.lockBlockIndex)
-        ? globalThis.Number(object.lockBlockIndex)
-        : isSet(object.lock_block_index)
-        ? globalThis.Number(object.lock_block_index)
-        : 0,
       jsonData: isSet(object.jsonData)
         ? bytesFromBase64(object.jsonData)
         : isSet(object.json_data)
@@ -1865,8 +1879,11 @@ export const Tile: MessageFns<Tile> = {
     if (message.bgId !== 0) {
       obj.bgId = Math.round(message.bgId);
     }
-    if (message.parentBlockIndex !== 0) {
-      obj.parentBlockIndex = Math.round(message.parentBlockIndex);
+    if (message.lockIndex !== 0) {
+      obj.lockIndex = Math.round(message.lockIndex);
+    }
+    if (message.parentIndex !== 0) {
+      obj.parentIndex = Math.round(message.parentIndex);
     }
     if (message.flags !== 0) {
       obj.flags = Math.round(message.flags);
@@ -1874,14 +1891,14 @@ export const Tile: MessageFns<Tile> = {
     if (message.extra.length !== 0) {
       obj.extra = base64FromBytes(message.extra);
     }
+    if (message.index !== 0) {
+      obj.index = Math.round(message.index);
+    }
     if (message.x !== 0) {
       obj.x = Math.round(message.x);
     }
     if (message.y !== 0) {
       obj.y = Math.round(message.y);
-    }
-    if (message.lockBlockIndex !== 0) {
-      obj.lockBlockIndex = Math.round(message.lockBlockIndex);
     }
     if (message.jsonData.length !== 0) {
       obj.jsonData = base64FromBytes(message.jsonData);
@@ -1896,12 +1913,13 @@ export const Tile: MessageFns<Tile> = {
     const message = createBaseTile();
     message.fgId = object.fgId ?? 0;
     message.bgId = object.bgId ?? 0;
-    message.parentBlockIndex = object.parentBlockIndex ?? 0;
+    message.lockIndex = object.lockIndex ?? 0;
+    message.parentIndex = object.parentIndex ?? 0;
     message.flags = object.flags ?? 0;
     message.extra = object.extra ?? new Uint8Array(0);
+    message.index = object.index ?? 0;
     message.x = object.x ?? 0;
     message.y = object.y ?? 0;
-    message.lockBlockIndex = object.lockBlockIndex ?? 0;
     message.jsonData = object.jsonData ?? new Uint8Array(0);
     return message;
   },
