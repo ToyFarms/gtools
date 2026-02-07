@@ -1,15 +1,45 @@
 from dataclasses import dataclass, field
 from enum import IntEnum
 import logging
+import time
 from pyglm.glm import ivec2, vec2
 
+from gtools import setting
+from gtools.core.async_writer import write_async
+from gtools.core.buffer import Buffer
 from gtools.core.growtopia import world
 from gtools.core.growtopia.inventory import Inventory
-from gtools.core.growtopia.packet import TankFlags
+from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, TankType
 from gtools.core.growtopia.player import CharacterState, Player
-from gtools.core.growtopia.world import World
+from gtools.core.growtopia.strkv import StrKV
+from gtools.core.growtopia.variant import Variant
+from gtools.core.growtopia.world import Tile, World
 from gtools.protogen import growtopia_pb2
-from gtools.protogen.state_pb2 import ModifyItem, ModifyWorld, StateUpdate, StateUpdateWhat
+from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet
+from gtools.protogen.state_pb2 import (
+    STATE_ENTER_WORLD,
+    STATE_EXIT_WORLD,
+    STATE_MODIFY_INVENTORY,
+    STATE_MODIFY_ITEM,
+    STATE_MODIFY_WORLD,
+    STATE_PLAYER_JOIN,
+    STATE_PLAYER_LEAVE,
+    STATE_PLAYER_UPDATE,
+    STATE_SEND_INVENTORY,
+    STATE_SET_CHARACTER_STATE,
+    STATE_SET_MY_PLAYER,
+    STATE_SET_MY_TELEMETRY,
+    STATE_UPDATE_STATUS,
+    EnterWorld,
+    ModifyInventory,
+    ModifyItem,
+    ModifyWorld,
+    PlayerUpdate,
+    SetMyTelemetry,
+    StateUpdate,
+    StateUpdateWhat,
+)
+from gtools.proxy.extension.broker import Broker
 
 
 @dataclass(slots=True)
@@ -55,6 +85,14 @@ class Me:
         )
 
 
+@dataclass(slots=True)
+class Telemetry:
+    server_ping: int = 0
+    client_ping: int = 0
+    enter_world_time: float = 0
+    logged_in_time: float = 0
+
+
 class Status(IntEnum):
     DISCONNECTED = 0
     CONNECTED = 1
@@ -70,6 +108,7 @@ class State:
     me: Me = field(default_factory=Me)
     status: Status = Status.DISCONNECTED
     inventory: Inventory = field(default_factory=Inventory)
+    telemetry: Telemetry = field(default_factory=Telemetry)
 
     logger = logging.getLogger("state")
 
@@ -89,6 +128,277 @@ class State:
             status=self.status,
             inventory=self.inventory.to_proto(),
         )
+
+    def send_state_update(self, broker: Broker, upd: StateUpdate) -> None:
+        self.update(upd)
+        broker.process_event_any(INTEREST_STATE_UPDATE, Packet(type=Packet.TYPE_STATE_UPDATE, state_update=upd))
+
+    def update_status(self, broker: Broker, status: Status) -> None:
+        match status:
+            case Status.IN_WORLD:
+                self.telemetry.enter_world_time = time.time()
+            case Status.CONNECTED:
+                self.telemetry.enter_world_time = 0.0
+            case Status.LOGGED_IN:
+                self.telemetry.logged_in_time = time.time()
+            case Status.DISCONNECTED:
+                self.telemetry.logged_in_time = 0.0
+
+        self.send_state_update(broker, StateUpdate(what=STATE_UPDATE_STATUS, update_status=status))
+
+    def emit_telemetry(self, broker: Broker) -> None:
+        now = time.time()
+        self.send_state_update(
+            broker,
+            StateUpdate(
+                what=STATE_SET_MY_TELEMETRY,
+                set_my_telemetry=SetMyTelemetry(
+                    server_ping=self.telemetry.server_ping,
+                    client_ping=self.telemetry.client_ping,
+                    time_since_login=now - self.telemetry.logged_in_time if self.telemetry.logged_in_time != 0.0 else 0.0,
+                    time_in_world=now - self.telemetry.enter_world_time if self.telemetry.enter_world_time != 0.0 else 0.0,
+                ),
+            ),
+        )
+
+    def emit_event(self, broker: Broker, event: PreparedPacket) -> None:
+        pkt = event.as_net
+        match pkt.type:
+            case NetType.GAME_MESSAGE:
+                match bytes(pkt.game_message[b"action", 1]):
+                    case b"quit":
+                        self.send_state_update(broker, StateUpdate(what=STATE_EXIT_WORLD))
+                        self.update_status(broker, Status.DISCONNECTED)
+                    case b"quit_to_exit":
+                        self.send_state_update(broker, StateUpdate(what=STATE_EXIT_WORLD))
+                        self.update_status(broker, Status.CONNECTED)
+            case NetType.TANK_PACKET:
+                match pkt.tank.type:
+                    case TankType.STATE:
+                        # NOTE: net_id of 0 is self
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_PLAYER_UPDATE,
+                                player_update=PlayerUpdate(
+                                    net_id=pkt.tank.net_id,
+                                    x=pkt.tank.vector_x,
+                                    y=pkt.tank.vector_y,
+                                    flags=pkt.tank.flags,
+                                ),
+                            ),
+                        )
+                    case TankType.TILE_CHANGE_REQUEST:
+                        if event.direction != DIRECTION_SERVER_TO_CLIENT or not self.world:
+                            return
+
+                        op = ModifyWorld.OP_PLACE if pkt.tank.value != 18 else ModifyWorld.OP_DESTROY
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_MODIFY_WORLD,
+                                modify_world=ModifyWorld(
+                                    op=op,
+                                    tile=growtopia_pb2.Tile(
+                                        fg_id=pkt.tank.value if op == ModifyWorld.OP_PLACE else 0,
+                                        x=pkt.tank.int_x,
+                                        y=pkt.tank.int_y,
+                                    ),
+                                ),
+                            ),
+                        )
+                        if pkt.tank.net_id == self.me.net_id and op == ModifyWorld.OP_PLACE:
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_MODIFY_INVENTORY,
+                                    modify_inventory=ModifyInventory(
+                                        id=pkt.tank.value,
+                                        to_add=-1,
+                                    ),
+                                ),
+                            )
+                    case TankType.SEND_TILE_TREE_STATE:
+                        # NOTE: literally the trees, something with trees
+                        pass
+                    case TankType.SEND_TILE_UPDATE_DATA:
+                        tile = Tile.deserialize(Buffer(pkt.tank.extended_data))
+                        tile.pos.x = pkt.tank.int_x
+                        tile.pos.y = pkt.tank.int_y
+
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_MODIFY_WORLD,
+                                modify_world=ModifyWorld(
+                                    op=ModifyWorld.OP_REPLACE,
+                                    tile=tile.to_proto(),
+                                ),
+                            ),
+                        )
+                    case TankType.SEND_TILE_UPDATE_DATA_MULTIPLE:
+                        buf = Buffer(pkt.tank.extended_data)
+                        while not buf.eof():
+                            x = buf.read_i32()
+                            y = buf.read_i32()
+                            tile = Tile.deserialize(buf)
+                            tile.pos.x = x
+                            tile.pos.y = y
+
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_MODIFY_WORLD,
+                                    modify_world=ModifyWorld(
+                                        op=ModifyWorld.OP_REPLACE,
+                                        tile=tile.to_proto(),
+                                    ),
+                                ),
+                            )
+                    case TankType.CALL_FUNCTION:
+                        v = Variant.deserialize(pkt.tank.extended_data)
+                        fn = v.as_string[0]
+                        if fn == b"OnSpawn":
+                            kv = StrKV.deserialize(v.as_string[1])
+                            if b"type" in kv:
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_SET_MY_PLAYER,
+                                        set_my_player=int(kv[b"netID", 1]),
+                                    ),
+                                )
+
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_PLAYER_JOIN,
+                                    player_join=growtopia_pb2.Player(
+                                        netID=int(kv[b"netID", 1]),
+                                        userID=int(kv[b"userID", 1]),
+                                        eid=b"|".join(kv[b"eid", 1:]),
+                                        ip=bytes(kv[b"ip", 1]),
+                                        colrect=growtopia_pb2.Vec4I(
+                                            x=int(kv[b"colrect", 1]),
+                                            y=int(kv[b"colrect", 2]),
+                                            w=int(kv[b"colrect", 3]),
+                                            h=int(kv[b"colrect", 4]),
+                                        ),
+                                        posXY=growtopia_pb2.Vec2F(
+                                            x=float(kv[b"posXY", 1]),
+                                            y=float(kv[b"posXY", 2]),
+                                        ),
+                                        name=bytes(kv[b"name", 1]),
+                                        titleIcon=bytes(kv[b"titleIcon", 1]),
+                                        country=b"|".join(kv[b"country", 1:]),
+                                        invis=int(kv[b"invis", 1]),
+                                        mstate=int(kv[b"mstate", 1]),
+                                        smstate=int(kv[b"smstate", 1]),
+                                        onlineID=bytes(kv[b"onlineID", 1]),
+                                    ),
+                                ),
+                            )
+                        elif fn == b"OnRemove":
+                            kv = StrKV.deserialize(v.as_string[1])
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_PLAYER_LEAVE,
+                                    player_leave=int(kv[b"netID", 1]),
+                                ),
+                            )
+                    case TankType.ITEM_CHANGE_OBJECT:
+                        if pkt.tank.net_id == -1:  # add new
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_MODIFY_ITEM,
+                                    modify_item=ModifyItem(
+                                        op=ModifyItem.OP_CREATE,
+                                        item_id=pkt.tank.value,
+                                        x=pkt.tank.vector_x,
+                                        y=pkt.tank.vector_y,
+                                        amount=int(pkt.tank.float_var),
+                                        flags=pkt.tank.object_type,
+                                    ),
+                                ),
+                            )
+                        elif pkt.tank.net_id == -3:  # set amount
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_MODIFY_ITEM,
+                                    modify_item=ModifyItem(
+                                        op=ModifyItem.OP_SET_AMOUNT,
+                                        uid=pkt.tank.value,
+                                        amount=pkt.tank.jump_count,
+                                    ),
+                                ),
+                            )
+                        else:  # someone took it
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_MODIFY_ITEM,
+                                    modify_item=ModifyItem(
+                                        op=ModifyItem.OP_TAKE,
+                                        uid=pkt.tank.value,
+                                    ),
+                                ),
+                            )
+                    case TankType.SEND_INVENTORY_STATE:
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_SEND_INVENTORY,
+                                send_inventory=Inventory.deserialize(pkt.tank.extended_data).to_proto(),
+                            ),
+                        )
+                    case TankType.MODIFY_ITEM_INVENTORY:
+                        # jump count = remove, animation_type = add
+                        to_add = -pkt.tank.jump_count if pkt.tank.jump_count != 0 else pkt.tank.animation_type
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_MODIFY_INVENTORY,
+                                modify_inventory=ModifyInventory(
+                                    id=pkt.tank.value,
+                                    to_add=to_add,
+                                ),
+                            ),
+                        )
+                    case TankType.SET_CHARACTER_STATE:
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_SET_CHARACTER_STATE,
+                                character_state=growtopia_pb2.CharacterState(
+                                    net_id=pkt.tank.net_id,
+                                    build_range=pkt.tank.jump_count - 128 + 2,  # + 2 for default range
+                                    punch_range=pkt.tank.animation_type - 128 + 2,
+                                    flags=pkt.tank.value,
+                                    velocity=pkt.tank.vector_x2,
+                                    gravity=pkt.tank.vector_y2,
+                                    acceleration=pkt.tank.vector_x,
+                                    velocity_in_water=pkt.tank.float_var,
+                                    jump_strength=pkt.tank.vector_y,
+                                ),
+                            ),
+                        )
+                    case TankType.SEND_MAP_DATA:
+                        world = World.deserialize(pkt.tank.extended_data).to_proto()
+                        write_async(pkt.serialize(), setting.appdir / "worlds" / world.inner.name.decode(), "wb")
+
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_ENTER_WORLD,
+                                enter_world=EnterWorld(
+                                    enter_world=world,
+                                ),
+                            ),
+                        )
+                        self.update_status(broker, Status.IN_WORLD)
 
     # TODO: make this code hot reload-able
     def update(self, upd: StateUpdate) -> None:

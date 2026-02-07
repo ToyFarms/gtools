@@ -27,6 +27,9 @@ class Buffer:
     def serialize(self) -> bytes:
         return bytes(self.buffer)
 
+    def eof(self) -> bool:
+        return self.rpos >= len(self.buffer) - 1
+
     def _ensure_capacity(self, size: int) -> None:
         if size <= len(self.buffer):
             return
