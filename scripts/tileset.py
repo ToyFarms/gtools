@@ -1,4 +1,3 @@
-# pyright: reportUnreachable=false, reportOperatorIssue=false
 from PIL import Image
 import click
 from pyglm.glm import ivec2, ivec4

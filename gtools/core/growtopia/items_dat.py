@@ -530,6 +530,7 @@ class Item:
         return self.item_type in (
             ItemInfoType.BACKGROUND,
             ItemInfoType.BACKGD_SFX_EXTRA_FRAME,
+            ItemInfoType.BACK_BOOMBOX,
             ItemInfoType.MUSICNOTE,
         )
 

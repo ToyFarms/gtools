@@ -1,3 +1,4 @@
 {
   "typeCheckingMode": "basic",
+  "exclude": ["scripts/tileset.py"]
 }

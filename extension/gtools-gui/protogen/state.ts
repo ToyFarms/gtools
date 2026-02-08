@@ -28,6 +28,7 @@ export enum StateUpdateWhat {
   STATE_SET_MY_TELEMETRY = 14,
   STATE_SEND_LOCK = 16,
   STATE_UPDATE_TREE_STATE = 17,
+  STATE_TILE_CHANGE_REQUEST = 18,
   UNRECOGNIZED = -1,
 }
 
@@ -84,6 +85,9 @@ export function stateUpdateWhatFromJSON(object: any): StateUpdateWhat {
     case 17:
     case "STATE_UPDATE_TREE_STATE":
       return StateUpdateWhat.STATE_UPDATE_TREE_STATE;
+    case 18:
+    case "STATE_TILE_CHANGE_REQUEST":
+      return StateUpdateWhat.STATE_TILE_CHANGE_REQUEST;
     case -1:
     case "UNRECOGNIZED":
     default:
@@ -127,6 +131,8 @@ export function stateUpdateWhatToJSON(object: StateUpdateWhat): string {
       return "STATE_SEND_LOCK";
     case StateUpdateWhat.STATE_UPDATE_TREE_STATE:
       return "STATE_UPDATE_TREE_STATE";
+    case StateUpdateWhat.STATE_TILE_CHANGE_REQUEST:
+      return "STATE_TILE_CHANGE_REQUEST";
     case StateUpdateWhat.UNRECOGNIZED:
     default:
       return "UNRECOGNIZED";
@@ -150,6 +156,16 @@ export interface StateUpdate {
   setMyTelemetry?: SetMyTelemetry | undefined;
   sendLock?: SendLock | undefined;
   updateTreeState?: UpdateTreeState | undefined;
+  tileChangeReq?: TileChangeRequest | undefined;
+}
+
+export interface TileChangeRequest {
+  x: number;
+  y: number;
+  id: number;
+  flags: number;
+  splice: boolean;
+  seedId: number;
 }
 
 export interface UpdateTreeState {
@@ -327,6 +343,7 @@ function createBaseStateUpdate(): StateUpdate {
     setMyTelemetry: undefined,
     sendLock: undefined,
     updateTreeState: undefined,
+    tileChangeReq: undefined,
   };
 }
 
@@ -379,6 +396,9 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     }
     if (message.updateTreeState !== undefined) {
       UpdateTreeState.encode(message.updateTreeState, writer.uint32(130).fork()).join();
+    }
+    if (message.tileChangeReq !== undefined) {
+      TileChangeRequest.encode(message.tileChangeReq, writer.uint32(138).fork()).join();
     }
     return writer;
   },
@@ -518,6 +538,14 @@ export const StateUpdate: MessageFns<StateUpdate> = {
           message.updateTreeState = UpdateTreeState.decode(reader, reader.uint32());
           continue;
         }
+        case 17: {
+          if (tag !== 138) {
+            break;
+          }
+
+          message.tileChangeReq = TileChangeRequest.decode(reader, reader.uint32());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -605,6 +633,11 @@ export const StateUpdate: MessageFns<StateUpdate> = {
         : isSet(object.update_tree_state)
         ? UpdateTreeState.fromJSON(object.update_tree_state)
         : undefined,
+      tileChangeReq: isSet(object.tileChangeReq)
+        ? TileChangeRequest.fromJSON(object.tileChangeReq)
+        : isSet(object.tile_change_req)
+        ? TileChangeRequest.fromJSON(object.tile_change_req)
+        : undefined,
     };
   },
 
@@ -658,6 +691,9 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     if (message.updateTreeState !== undefined) {
       obj.updateTreeState = UpdateTreeState.toJSON(message.updateTreeState);
     }
+    if (message.tileChangeReq !== undefined) {
+      obj.tileChangeReq = TileChangeRequest.toJSON(message.tileChangeReq);
+    }
     return obj;
   },
 
@@ -706,6 +742,153 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     message.updateTreeState = (object.updateTreeState !== undefined && object.updateTreeState !== null)
       ? UpdateTreeState.fromPartial(object.updateTreeState)
       : undefined;
+    message.tileChangeReq = (object.tileChangeReq !== undefined && object.tileChangeReq !== null)
+      ? TileChangeRequest.fromPartial(object.tileChangeReq)
+      : undefined;
+    return message;
+  },
+};
+
+function createBaseTileChangeRequest(): TileChangeRequest {
+  return { x: 0, y: 0, id: 0, flags: 0, splice: false, seedId: 0 };
+}
+
+export const TileChangeRequest: MessageFns<TileChangeRequest> = {
+  encode(message: TileChangeRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.x !== 0) {
+      writer.uint32(8).int32(message.x);
+    }
+    if (message.y !== 0) {
+      writer.uint32(16).int32(message.y);
+    }
+    if (message.id !== 0) {
+      writer.uint32(24).uint32(message.id);
+    }
+    if (message.flags !== 0) {
+      writer.uint32(32).uint32(message.flags);
+    }
+    if (message.splice !== false) {
+      writer.uint32(48).bool(message.splice);
+    }
+    if (message.seedId !== 0) {
+      writer.uint32(40).uint32(message.seedId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): TileChangeRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseTileChangeRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.x = reader.int32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.y = reader.int32();
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.id = reader.uint32();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.flags = reader.uint32();
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.splice = reader.bool();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.seedId = reader.uint32();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): TileChangeRequest {
+    return {
+      x: isSet(object.x) ? globalThis.Number(object.x) : 0,
+      y: isSet(object.y) ? globalThis.Number(object.y) : 0,
+      id: isSet(object.id) ? globalThis.Number(object.id) : 0,
+      flags: isSet(object.flags) ? globalThis.Number(object.flags) : 0,
+      splice: isSet(object.splice) ? globalThis.Boolean(object.splice) : false,
+      seedId: isSet(object.seedId)
+        ? globalThis.Number(object.seedId)
+        : isSet(object.seed_id)
+        ? globalThis.Number(object.seed_id)
+        : 0,
+    };
+  },
+
+  toJSON(message: TileChangeRequest): unknown {
+    const obj: any = {};
+    if (message.x !== 0) {
+      obj.x = Math.round(message.x);
+    }
+    if (message.y !== 0) {
+      obj.y = Math.round(message.y);
+    }
+    if (message.id !== 0) {
+      obj.id = Math.round(message.id);
+    }
+    if (message.flags !== 0) {
+      obj.flags = Math.round(message.flags);
+    }
+    if (message.splice !== false) {
+      obj.splice = message.splice;
+    }
+    if (message.seedId !== 0) {
+      obj.seedId = Math.round(message.seedId);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<TileChangeRequest>, I>>(base?: I): TileChangeRequest {
+    return TileChangeRequest.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<TileChangeRequest>, I>>(object: I): TileChangeRequest {
+    const message = createBaseTileChangeRequest();
+    message.x = object.x ?? 0;
+    message.y = object.y ?? 0;
+    message.id = object.id ?? 0;
+    message.flags = object.flags ?? 0;
+    message.splice = object.splice ?? false;
+    message.seedId = object.seedId ?? 0;
     return message;
   },
 };

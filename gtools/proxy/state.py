@@ -15,7 +15,7 @@ from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.growtopia.world import LockTile, Tile, TileExtraType, TileFlags, World
 from gtools.protogen import growtopia_pb2
-from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet
+from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
     STATE_ENTER_WORLD,
     STATE_EXIT_WORLD,
@@ -30,6 +30,7 @@ from gtools.protogen.state_pb2 import (
     STATE_SET_CHARACTER_STATE,
     STATE_SET_MY_PLAYER,
     STATE_SET_MY_TELEMETRY,
+    STATE_TILE_CHANGE_REQUEST,
     STATE_UPDATE_STATUS,
     STATE_UPDATE_TREE_STATE,
     EnterWorld,
@@ -41,6 +42,7 @@ from gtools.protogen.state_pb2 import (
     SetMyTelemetry,
     StateUpdate,
     StateUpdateWhat,
+    TileChangeRequest,
     UpdateTreeState,
 )
 from gtools.proxy.extension.broker import Broker
@@ -165,6 +167,7 @@ class State:
             ),
         )
 
+    # TODO: remove ModifyWorld, just make it super specific to one event
     def emit_event(self, broker: Broker, event: PreparedPacket) -> None:
         """emit event only sends command through the protobuf, no state update should be happening inside this function"""
         pkt = event.as_net
@@ -194,35 +197,20 @@ class State:
                             ),
                         )
                     case TankType.TILE_CHANGE_REQUEST:
-                        if event.direction != DIRECTION_SERVER_TO_CLIENT or not self.world:
-                            return
-
-                        op = ModifyWorld.OP_PLACE if pkt.tank.value != 18 else ModifyWorld.OP_DESTROY
                         self.send_state_update(
                             broker,
                             StateUpdate(
-                                what=STATE_MODIFY_WORLD,
-                                modify_world=ModifyWorld(
-                                    op=op,
-                                    tile=growtopia_pb2.Tile(
-                                        fg_id=pkt.tank.value if op == ModifyWorld.OP_PLACE else 0,
-                                        x=pkt.tank.int_x,
-                                        y=pkt.tank.int_y,
-                                    ),
+                                what=STATE_TILE_CHANGE_REQUEST,
+                                tile_change_req=TileChangeRequest(
+                                    x=pkt.tank.int_x,
+                                    y=pkt.tank.int_y,
+                                    id=pkt.tank.value,
+                                    flags=pkt.tank.flags,
+                                    splice=pkt.tank.jump_count == 1,
+                                    seed_id=pkt.tank.animation_type,
                                 ),
                             ),
                         )
-                        if pkt.tank.net_id == self.me.net_id and op == ModifyWorld.OP_PLACE:
-                            self.send_state_update(
-                                broker,
-                                StateUpdate(
-                                    what=STATE_MODIFY_INVENTORY,
-                                    modify_inventory=ModifyInventory(
-                                        id=pkt.tank.value,
-                                        to_add=-1,
-                                    ),
-                                ),
-                            )
                     case TankType.SEND_TILE_TREE_STATE:
                         self.send_state_update(
                             broker,
@@ -536,7 +524,7 @@ class State:
                         or lock_tile.extra is None
                         or lock_tile.extra.expect(LockTile).owner_uid != upd.send_lock.lock_owner_id
                     ):
-                        self.world.replace_fg(lock_tile, upd.send_lock.lock_item_id)
+                        self.world.place_fg(lock_tile, upd.send_lock.lock_item_id)
                         assert lock_tile.extra
                         lock_tile.extra.expect(LockTile).owner_uid = upd.send_lock.lock_owner_id
 
@@ -561,4 +549,17 @@ class State:
                         harvest=upd.update_tree_state.harvest,
                         spawn_seed_flag=upd.update_tree_state.add_spawn_seeds_flag,
                         seedling_flag=upd.update_tree_state.add_seedling_flag,
+                    )
+            case StateUpdateWhat.STATE_TILE_CHANGE_REQUEST:
+                if not self.world:
+                    self.logger.warning("tile change request, but world is not initialized")
+                    return
+
+                if tile := self.world.get_tile(ivec2(upd.tile_change_req.x, upd.tile_change_req.y)):
+                    self.world.tile_change(
+                        tile=tile,
+                        id=upd.tile_change_req.id,
+                        flags=TankFlags(upd.tile_change_req.flags),
+                        splice=upd.tile_change_req.splice,
+                        seed_id=upd.tile_change_req.seed_id,
                     )

@@ -22,6 +22,7 @@ enum StateUpdateWhat {
   STATE_SET_MY_TELEMETRY = 14;
   STATE_SEND_LOCK = 16;
   STATE_UPDATE_TREE_STATE = 17;
+  STATE_TILE_CHANGE_REQUEST = 18;
 }
 
 message StateUpdate {
@@ -42,7 +43,17 @@ message StateUpdate {
     SetMyTelemetry set_my_telemetry = 12;
     SendLock send_lock = 15;
     UpdateTreeState update_tree_state = 16;
+    TileChangeRequest tile_change_req = 17;
   }
+}
+
+message TileChangeRequest {
+  int32 x = 1;
+  int32 y = 2;
+  uint32 id = 3;
+  uint32 flags = 4;
+  bool splice = 6;
+  uint32 seed_id = 5;
 }
 
 message UpdateTreeState {

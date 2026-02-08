@@ -7,6 +7,7 @@ from typing import Iterator, Type
 
 from pyglm.glm import ivec2, vec2
 from gtools.baked.items import (
+    ANGRY_ADVENTURE_GORILLA,
     AUCTION_BLOCK,
     AUTO_SURGEON_STATION,
     BATTLE_PET_CAGE,
@@ -36,13 +37,14 @@ from gtools.baked.items import (
     OFFERING_TABLE,
     OPERATING_TABLE,
     PARTY_PROJECTOR,
+    TRANSDIMENSIONAL_VAPORIZER_RAY,
     WEATHER_MACHINE_BACKGROUND,
 )
 from gtools.core.buffer import Buffer
 import cbor2
 
-from gtools.core.growtopia.items_dat import ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, item_database
-from gtools.core.growtopia.packet import NetPacket, TankPacket
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, item_database
+from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RtTexManager
 from gtools.protogen import growtopia_pb2
@@ -1968,12 +1970,25 @@ class World:
         self.nb_tiles = len(self.tiles)
         self.tiles.sort(key=lambda tile: (tile.pos.y, tile.pos.x))
 
-    def tile_exists(self, pos: ivec2) -> bool:
+    def tile_exists(self, pos: ivec2 | int) -> bool:
+        if isinstance(pos, int):
+            pos = ivec2(pos % self.width, pos // self.width)
+
         for tile in self.tiles:
             if tile.pos == pos:
                 return True
 
         return False
+
+    def get_front(self, pos: ivec2 | int) -> int:
+        if isinstance(pos, int):
+            pos = ivec2(pos % self.width, pos // self.width)
+
+        for tile in self.tiles:
+            if tile.pos == pos:
+                return tile.front
+
+        return 0
 
     def get_tile(self, pos: ivec2 | int) -> Tile | None:
         if isinstance(pos, int):
@@ -2019,7 +2034,7 @@ class World:
         if idx := self.index_tile(tile.pos):
             self.tiles[idx] = tile
 
-    def replace_fg(self, tile: Tile, fg: int, tex_index: int = 0, a5: bool = False) -> None:
+    def place_fg(self, tile: Tile, fg: int, connection: int = 0, a5: bool = False) -> None:
         item = item_database.get(fg)
         if item:
             if tile.extra:
@@ -2027,7 +2042,7 @@ class World:
                     self.remove_locked(tile)
                 tile.extra = None
             tile.fg_id = fg
-            tile.fg_tex_index = tex_index
+            tile.fg_tex_index = connection
 
             if tile.fg_id == 0:
                 tile.flags &= ~(TileFlags.WAS_SPLICED | TileFlags.IS_ON | TileFlags.IS_OPEN_TO_PUBLIC | TileFlags.FG_ALT_MODE)
@@ -2153,6 +2168,14 @@ class World:
                 tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
                 tile.flags |= TileFlags.HAS_EXTRA_DATA
 
+    def place_bg(self, tile: Tile, bg: int, connection: int = 0) -> None:
+        if bg == TRANSDIMENSIONAL_VAPORIZER_RAY:
+            tile.bg_id = 0
+            tile.flags &= ~TileFlags.BG_IS_ON
+        else:
+            tile.bg_id = bg
+        tile.bg_tex_index = connection
+
     def update_all_connection(self) -> None:
         for tile in self.tiles:
             update_tile_connectivity(self, tile)
@@ -2176,7 +2199,7 @@ class World:
 
         if harvest:
             tile.flags &= ~(TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE)
-            self.replace_fg(tile, 0)
+            self.place_fg(tile, 0)
             self.update_3x3_connection(tile)
         else:
             seed = tile.extra.expect(SeedTile)
@@ -2203,6 +2226,50 @@ class World:
                 tile.flags &= ~TileFlags.LOCKED
                 tile.lock_index = 0
                 yield tile
+
+    def plant(self, tile: Tile, id: int, tree_item_id: int = 0, splice: bool = False) -> None:
+        if splice:
+            tile.flags |= TileFlags.WILL_SPAWN_SEEDS_TOO
+        self.place_fg(tile, id)
+        assert tile.extra
+        tile.extra.expect(SeedTile).item_on_tree = tree_item_id
+
+    def tile_change(self, tile: Tile, id: int, flags: TankFlags, splice: bool = False, seed_id: int = 0) -> None:
+        item = item_database.get(id)
+        if item.item_type == ItemInfoType.SEED:
+            if tile.fg_id == 0:
+                self.plant(tile, id)
+            return
+
+        if item.is_background():
+            self.place_bg(tile, id)
+            self.update_3x3_connection(tile)
+        else:
+            if item.item_type == ItemInfoType.FIST:
+                self.place_fg(tile, id)
+                if id == ANGRY_ADVENTURE_GORILLA:
+                    tile.flags |= TileFlags.IS_ON
+            elif tile.front:
+                self.place_fg(tile, 0)
+            elif tile.bg_id:
+                self.place_bg(tile, 0)
+
+        if item.is_background():
+            if item.item_type == ItemInfoType.SEED and tile.extra:
+                if splice:
+                    tile.flags |= TileFlags.WILL_SPAWN_SEEDS_TOO
+                else:
+                    tile.flags &= ~TileFlags.WILL_SPAWN_SEEDS_TOO
+                tile.flags |= TileFlags.IS_SEEDLING
+                tile.extra.expect(SeedTile).item_on_tree = seed_id
+
+        if item.flags2 & ItemFlag.FLIPPABLE != 0:
+            if flags & TankFlags.FACING_LEFT:
+                tile.flags |= TileFlags.FLIPPED_X
+            else:
+                tile.flags &= ~TileFlags.FLIPPED_X
+
+        self.update_3x3_connection(tile)
 
     def create_dropped(self, id: int, pos: vec2, amount: int, flags: int) -> None:
         dropped = DroppedItem(
