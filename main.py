@@ -38,7 +38,6 @@ from gtools.proxy.http_proxy import setup_server
 from gtools.proxy.extension.broker import Broker
 from gtools.proxy.extension.sdk import Extension, register_thread
 from gtools.proxy.proxy import Proxy
-from scripts.tileset import update_tile_connectivity
 from thirdparty.enet.bindings import ENetPacketFlag
 from gtools import setting
 from gtools.setting import Setting
@@ -449,8 +448,7 @@ if __name__ == "__main__":
         img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
         start = time.perf_counter()
         try:
-            for tile in world.tiles:
-                update_tile_connectivity(world, tile)
+            world.update_all_connection()
         except Exception as e:
             print_exc()
 

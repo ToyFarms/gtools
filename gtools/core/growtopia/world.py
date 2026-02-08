@@ -52,7 +52,6 @@ import numpy as np
 import numpy.typing as npt
 
 from gtools import setting
-from scripts.tileset import update_tile_connectivity
 
 
 @dataclass(slots=True)
@@ -1753,14 +1752,16 @@ class Tile:
         item = item_database.get(id)
 
         stride = item.get_tex_stride()
-        is_flipped = self.flags & TileFlags.FLIPPED_X != 0
-        # TODO: we need to determine to ignore flipped, because some tile just doesn't care
-        if is_flipped and item.texture_type == ItemInfoTextureType.SMART_EDGE_HORIZ:
-            # handle flipped couch texture
-            if tex_index == 0:
-                tex_index = 2
-            elif tex_index == 2:
-                tex_index = 0
+        if item.flags & ItemFlag.FLIPPABLE != 0:
+            is_flipped = self.flags & TileFlags.FLIPPED_X != 0
+            if is_flipped and item.texture_type == ItemInfoTextureType.SMART_EDGE_HORIZ:
+                # handle flipped couch texture
+                if tex_index == 0:
+                    tex_index = 2
+                elif tex_index == 2:
+                    tex_index = 0
+        else:
+            is_flipped = False
 
         off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
         tex = (ivec2(item.tex_coord_x, item.tex_coord_y) + off) * 32
@@ -2177,10 +2178,15 @@ class World:
         tile.bg_tex_index = connection
 
     def update_all_connection(self) -> None:
+        # TODO: need to do ts to avoid circular import (need to integrate to this class, but its causing so much lag it needed ot be in a separate file, so the next step is to simplify the function so it can be integrated)
+        from gtools.core.growtopia.tile_connection import update_tile_connectivity
+
         for tile in self.tiles:
             update_tile_connectivity(self, tile)
 
     def update_3x3_connection(self, tile: Tile | ivec2 | int) -> None:
+        from gtools.core.growtopia.tile_connection import update_tile_connectivity
+
         if isinstance(tile, Tile):
             pos = tile.pos
         elif isinstance(tile, int):

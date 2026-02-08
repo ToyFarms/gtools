@@ -1,5 +1,4 @@
-from collections import defaultdict
-from pyglm.glm import ivec2, vec2, vec4
+from pyglm.glm import ivec2, vec4
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.renderer.renderer import RenderCommand
 from gtools.core.growtopia.rttex import RtTexManager

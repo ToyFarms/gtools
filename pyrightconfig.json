@@ -1,4 +1,4 @@
 {
   "typeCheckingMode": "basic",
-  "exclude": ["scripts/tileset.py"]
+  "exclude": ["gtools/core/growtopia/tile_connection.py"]
 }
