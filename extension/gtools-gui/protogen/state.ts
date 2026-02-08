@@ -21,10 +21,13 @@ export enum StateUpdateWhat {
   STATE_PLAYER_JOIN = 8,
   STATE_PLAYER_LEAVE = 9,
   STATE_MODIFY_WORLD = 10,
+  STATE_MODIFY_WORLD_BATCHED = 15,
   STATE_MODIFY_ITEM = 11,
   STATE_UPDATE_STATUS = 12,
   STATE_SET_CHARACTER_STATE = 13,
   STATE_SET_MY_TELEMETRY = 14,
+  STATE_SEND_LOCK = 16,
+  STATE_UPDATE_TREE_STATE = 17,
   UNRECOGNIZED = -1,
 }
 
@@ -60,6 +63,9 @@ export function stateUpdateWhatFromJSON(object: any): StateUpdateWhat {
     case 10:
     case "STATE_MODIFY_WORLD":
       return StateUpdateWhat.STATE_MODIFY_WORLD;
+    case 15:
+    case "STATE_MODIFY_WORLD_BATCHED":
+      return StateUpdateWhat.STATE_MODIFY_WORLD_BATCHED;
     case 11:
     case "STATE_MODIFY_ITEM":
       return StateUpdateWhat.STATE_MODIFY_ITEM;
@@ -72,6 +78,12 @@ export function stateUpdateWhatFromJSON(object: any): StateUpdateWhat {
     case 14:
     case "STATE_SET_MY_TELEMETRY":
       return StateUpdateWhat.STATE_SET_MY_TELEMETRY;
+    case 16:
+    case "STATE_SEND_LOCK":
+      return StateUpdateWhat.STATE_SEND_LOCK;
+    case 17:
+    case "STATE_UPDATE_TREE_STATE":
+      return StateUpdateWhat.STATE_UPDATE_TREE_STATE;
     case -1:
     case "UNRECOGNIZED":
     default:
@@ -101,6 +113,8 @@ export function stateUpdateWhatToJSON(object: StateUpdateWhat): string {
       return "STATE_PLAYER_LEAVE";
     case StateUpdateWhat.STATE_MODIFY_WORLD:
       return "STATE_MODIFY_WORLD";
+    case StateUpdateWhat.STATE_MODIFY_WORLD_BATCHED:
+      return "STATE_MODIFY_WORLD_BATCHED";
     case StateUpdateWhat.STATE_MODIFY_ITEM:
       return "STATE_MODIFY_ITEM";
     case StateUpdateWhat.STATE_UPDATE_STATUS:
@@ -109,6 +123,10 @@ export function stateUpdateWhatToJSON(object: StateUpdateWhat): string {
       return "STATE_SET_CHARACTER_STATE";
     case StateUpdateWhat.STATE_SET_MY_TELEMETRY:
       return "STATE_SET_MY_TELEMETRY";
+    case StateUpdateWhat.STATE_SEND_LOCK:
+      return "STATE_SEND_LOCK";
+    case StateUpdateWhat.STATE_UPDATE_TREE_STATE:
+      return "STATE_UPDATE_TREE_STATE";
     case StateUpdateWhat.UNRECOGNIZED:
     default:
       return "UNRECOGNIZED";
@@ -125,15 +143,36 @@ export interface StateUpdate {
   playerJoin?: Player | undefined;
   playerLeave?: number | undefined;
   modifyWorld?: ModifyWorld | undefined;
+  modifyWorldBatched?: ModifyWorldBatched | undefined;
   modifyItem?: ModifyItem | undefined;
   updateStatus?: number | undefined;
   characterState?: CharacterState | undefined;
   setMyTelemetry?: SetMyTelemetry | undefined;
+  sendLock?: SendLock | undefined;
+  updateTreeState?: UpdateTreeState | undefined;
+}
+
+export interface UpdateTreeState {
+  x: number;
+  y: number;
+  itemId: number;
+  harvest: boolean;
+  addSpawnSeedsFlag: boolean;
+  addSeedlingFlag: boolean;
+}
+
+export interface SendLock {
+  x: number;
+  y: number;
+  lockOwnerId: number;
+  lockItemId: number;
+  tilesAffected: number[];
 }
 
 export interface ModifyWorld {
   op: ModifyWorld_Op;
-  tile: Tile | undefined;
+  tile?: Tile | undefined;
+  extra?: Uint8Array | undefined;
 }
 
 export enum ModifyWorld_Op {
@@ -141,6 +180,7 @@ export enum ModifyWorld_Op {
   OP_REPLACE = 1,
   OP_PLACE = 2,
   OP_DESTROY = 3,
+  OP_UPDATE_EXTRA_DATA = 4,
   UNRECOGNIZED = -1,
 }
 
@@ -158,6 +198,9 @@ export function modifyWorld_OpFromJSON(object: any): ModifyWorld_Op {
     case 3:
     case "OP_DESTROY":
       return ModifyWorld_Op.OP_DESTROY;
+    case 4:
+    case "OP_UPDATE_EXTRA_DATA":
+      return ModifyWorld_Op.OP_UPDATE_EXTRA_DATA;
     case -1:
     case "UNRECOGNIZED":
     default:
@@ -175,10 +218,16 @@ export function modifyWorld_OpToJSON(object: ModifyWorld_Op): string {
       return "OP_PLACE";
     case ModifyWorld_Op.OP_DESTROY:
       return "OP_DESTROY";
+    case ModifyWorld_Op.OP_UPDATE_EXTRA_DATA:
+      return "OP_UPDATE_EXTRA_DATA";
     case ModifyWorld_Op.UNRECOGNIZED:
     default:
       return "UNRECOGNIZED";
   }
+}
+
+export interface ModifyWorldBatched {
+  events: ModifyWorld[];
 }
 
 export interface SetMyTelemetry {
@@ -271,10 +320,13 @@ function createBaseStateUpdate(): StateUpdate {
     playerJoin: undefined,
     playerLeave: undefined,
     modifyWorld: undefined,
+    modifyWorldBatched: undefined,
     modifyItem: undefined,
     updateStatus: undefined,
     characterState: undefined,
     setMyTelemetry: undefined,
+    sendLock: undefined,
+    updateTreeState: undefined,
   };
 }
 
@@ -307,6 +359,9 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     if (message.modifyWorld !== undefined) {
       ModifyWorld.encode(message.modifyWorld, writer.uint32(106).fork()).join();
     }
+    if (message.modifyWorldBatched !== undefined) {
+      ModifyWorldBatched.encode(message.modifyWorldBatched, writer.uint32(114).fork()).join();
+    }
     if (message.modifyItem !== undefined) {
       ModifyItem.encode(message.modifyItem, writer.uint32(74).fork()).join();
     }
@@ -318,6 +373,12 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     }
     if (message.setMyTelemetry !== undefined) {
       SetMyTelemetry.encode(message.setMyTelemetry, writer.uint32(98).fork()).join();
+    }
+    if (message.sendLock !== undefined) {
+      SendLock.encode(message.sendLock, writer.uint32(122).fork()).join();
+    }
+    if (message.updateTreeState !== undefined) {
+      UpdateTreeState.encode(message.updateTreeState, writer.uint32(130).fork()).join();
     }
     return writer;
   },
@@ -401,6 +462,14 @@ export const StateUpdate: MessageFns<StateUpdate> = {
           message.modifyWorld = ModifyWorld.decode(reader, reader.uint32());
           continue;
         }
+        case 14: {
+          if (tag !== 114) {
+            break;
+          }
+
+          message.modifyWorldBatched = ModifyWorldBatched.decode(reader, reader.uint32());
+          continue;
+        }
         case 9: {
           if (tag !== 74) {
             break;
@@ -431,6 +500,22 @@ export const StateUpdate: MessageFns<StateUpdate> = {
           }
 
           message.setMyTelemetry = SetMyTelemetry.decode(reader, reader.uint32());
+          continue;
+        }
+        case 15: {
+          if (tag !== 122) {
+            break;
+          }
+
+          message.sendLock = SendLock.decode(reader, reader.uint32());
+          continue;
+        }
+        case 16: {
+          if (tag !== 130) {
+            break;
+          }
+
+          message.updateTreeState = UpdateTreeState.decode(reader, reader.uint32());
           continue;
         }
       }
@@ -485,6 +570,11 @@ export const StateUpdate: MessageFns<StateUpdate> = {
         : isSet(object.modify_world)
         ? ModifyWorld.fromJSON(object.modify_world)
         : undefined,
+      modifyWorldBatched: isSet(object.modifyWorldBatched)
+        ? ModifyWorldBatched.fromJSON(object.modifyWorldBatched)
+        : isSet(object.modify_world_batched)
+        ? ModifyWorldBatched.fromJSON(object.modify_world_batched)
+        : undefined,
       modifyItem: isSet(object.modifyItem)
         ? ModifyItem.fromJSON(object.modifyItem)
         : isSet(object.modify_item)
@@ -504,6 +594,16 @@ export const StateUpdate: MessageFns<StateUpdate> = {
         ? SetMyTelemetry.fromJSON(object.setMyTelemetry)
         : isSet(object.set_my_telemetry)
         ? SetMyTelemetry.fromJSON(object.set_my_telemetry)
+        : undefined,
+      sendLock: isSet(object.sendLock)
+        ? SendLock.fromJSON(object.sendLock)
+        : isSet(object.send_lock)
+        ? SendLock.fromJSON(object.send_lock)
+        : undefined,
+      updateTreeState: isSet(object.updateTreeState)
+        ? UpdateTreeState.fromJSON(object.updateTreeState)
+        : isSet(object.update_tree_state)
+        ? UpdateTreeState.fromJSON(object.update_tree_state)
         : undefined,
     };
   },
@@ -537,6 +637,9 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     if (message.modifyWorld !== undefined) {
       obj.modifyWorld = ModifyWorld.toJSON(message.modifyWorld);
     }
+    if (message.modifyWorldBatched !== undefined) {
+      obj.modifyWorldBatched = ModifyWorldBatched.toJSON(message.modifyWorldBatched);
+    }
     if (message.modifyItem !== undefined) {
       obj.modifyItem = ModifyItem.toJSON(message.modifyItem);
     }
@@ -548,6 +651,12 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     }
     if (message.setMyTelemetry !== undefined) {
       obj.setMyTelemetry = SetMyTelemetry.toJSON(message.setMyTelemetry);
+    }
+    if (message.sendLock !== undefined) {
+      obj.sendLock = SendLock.toJSON(message.sendLock);
+    }
+    if (message.updateTreeState !== undefined) {
+      obj.updateTreeState = UpdateTreeState.toJSON(message.updateTreeState);
     }
     return obj;
   },
@@ -578,6 +687,9 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     message.modifyWorld = (object.modifyWorld !== undefined && object.modifyWorld !== null)
       ? ModifyWorld.fromPartial(object.modifyWorld)
       : undefined;
+    message.modifyWorldBatched = (object.modifyWorldBatched !== undefined && object.modifyWorldBatched !== null)
+      ? ModifyWorldBatched.fromPartial(object.modifyWorldBatched)
+      : undefined;
     message.modifyItem = (object.modifyItem !== undefined && object.modifyItem !== null)
       ? ModifyItem.fromPartial(object.modifyItem)
       : undefined;
@@ -588,21 +700,330 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     message.setMyTelemetry = (object.setMyTelemetry !== undefined && object.setMyTelemetry !== null)
       ? SetMyTelemetry.fromPartial(object.setMyTelemetry)
       : undefined;
+    message.sendLock = (object.sendLock !== undefined && object.sendLock !== null)
+      ? SendLock.fromPartial(object.sendLock)
+      : undefined;
+    message.updateTreeState = (object.updateTreeState !== undefined && object.updateTreeState !== null)
+      ? UpdateTreeState.fromPartial(object.updateTreeState)
+      : undefined;
+    return message;
+  },
+};
+
+function createBaseUpdateTreeState(): UpdateTreeState {
+  return { x: 0, y: 0, itemId: 0, harvest: false, addSpawnSeedsFlag: false, addSeedlingFlag: false };
+}
+
+export const UpdateTreeState: MessageFns<UpdateTreeState> = {
+  encode(message: UpdateTreeState, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.x !== 0) {
+      writer.uint32(8).int32(message.x);
+    }
+    if (message.y !== 0) {
+      writer.uint32(16).int32(message.y);
+    }
+    if (message.itemId !== 0) {
+      writer.uint32(40).uint32(message.itemId);
+    }
+    if (message.harvest !== false) {
+      writer.uint32(48).bool(message.harvest);
+    }
+    if (message.addSpawnSeedsFlag !== false) {
+      writer.uint32(24).bool(message.addSpawnSeedsFlag);
+    }
+    if (message.addSeedlingFlag !== false) {
+      writer.uint32(32).bool(message.addSeedlingFlag);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): UpdateTreeState {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseUpdateTreeState();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.x = reader.int32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.y = reader.int32();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.itemId = reader.uint32();
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.harvest = reader.bool();
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.addSpawnSeedsFlag = reader.bool();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.addSeedlingFlag = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): UpdateTreeState {
+    return {
+      x: isSet(object.x) ? globalThis.Number(object.x) : 0,
+      y: isSet(object.y) ? globalThis.Number(object.y) : 0,
+      itemId: isSet(object.itemId)
+        ? globalThis.Number(object.itemId)
+        : isSet(object.item_id)
+        ? globalThis.Number(object.item_id)
+        : 0,
+      harvest: isSet(object.harvest) ? globalThis.Boolean(object.harvest) : false,
+      addSpawnSeedsFlag: isSet(object.addSpawnSeedsFlag)
+        ? globalThis.Boolean(object.addSpawnSeedsFlag)
+        : isSet(object.add_spawn_seeds_flag)
+        ? globalThis.Boolean(object.add_spawn_seeds_flag)
+        : false,
+      addSeedlingFlag: isSet(object.addSeedlingFlag)
+        ? globalThis.Boolean(object.addSeedlingFlag)
+        : isSet(object.add_seedling_flag)
+        ? globalThis.Boolean(object.add_seedling_flag)
+        : false,
+    };
+  },
+
+  toJSON(message: UpdateTreeState): unknown {
+    const obj: any = {};
+    if (message.x !== 0) {
+      obj.x = Math.round(message.x);
+    }
+    if (message.y !== 0) {
+      obj.y = Math.round(message.y);
+    }
+    if (message.itemId !== 0) {
+      obj.itemId = Math.round(message.itemId);
+    }
+    if (message.harvest !== false) {
+      obj.harvest = message.harvest;
+    }
+    if (message.addSpawnSeedsFlag !== false) {
+      obj.addSpawnSeedsFlag = message.addSpawnSeedsFlag;
+    }
+    if (message.addSeedlingFlag !== false) {
+      obj.addSeedlingFlag = message.addSeedlingFlag;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<UpdateTreeState>, I>>(base?: I): UpdateTreeState {
+    return UpdateTreeState.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<UpdateTreeState>, I>>(object: I): UpdateTreeState {
+    const message = createBaseUpdateTreeState();
+    message.x = object.x ?? 0;
+    message.y = object.y ?? 0;
+    message.itemId = object.itemId ?? 0;
+    message.harvest = object.harvest ?? false;
+    message.addSpawnSeedsFlag = object.addSpawnSeedsFlag ?? false;
+    message.addSeedlingFlag = object.addSeedlingFlag ?? false;
+    return message;
+  },
+};
+
+function createBaseSendLock(): SendLock {
+  return { x: 0, y: 0, lockOwnerId: 0, lockItemId: 0, tilesAffected: [] };
+}
+
+export const SendLock: MessageFns<SendLock> = {
+  encode(message: SendLock, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.x !== 0) {
+      writer.uint32(8).int32(message.x);
+    }
+    if (message.y !== 0) {
+      writer.uint32(16).int32(message.y);
+    }
+    if (message.lockOwnerId !== 0) {
+      writer.uint32(24).int32(message.lockOwnerId);
+    }
+    if (message.lockItemId !== 0) {
+      writer.uint32(32).uint32(message.lockItemId);
+    }
+    writer.uint32(42).fork();
+    for (const v of message.tilesAffected) {
+      writer.uint32(v);
+    }
+    writer.join();
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): SendLock {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseSendLock();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.x = reader.int32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.y = reader.int32();
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.lockOwnerId = reader.int32();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.lockItemId = reader.uint32();
+          continue;
+        }
+        case 5: {
+          if (tag === 40) {
+            message.tilesAffected.push(reader.uint32());
+
+            continue;
+          }
+
+          if (tag === 42) {
+            const end2 = reader.uint32() + reader.pos;
+            while (reader.pos < end2) {
+              message.tilesAffected.push(reader.uint32());
+            }
+
+            continue;
+          }
+
+          break;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): SendLock {
+    return {
+      x: isSet(object.x) ? globalThis.Number(object.x) : 0,
+      y: isSet(object.y) ? globalThis.Number(object.y) : 0,
+      lockOwnerId: isSet(object.lockOwnerId)
+        ? globalThis.Number(object.lockOwnerId)
+        : isSet(object.lock_owner_id)
+        ? globalThis.Number(object.lock_owner_id)
+        : 0,
+      lockItemId: isSet(object.lockItemId)
+        ? globalThis.Number(object.lockItemId)
+        : isSet(object.lock_item_id)
+        ? globalThis.Number(object.lock_item_id)
+        : 0,
+      tilesAffected: globalThis.Array.isArray(object?.tilesAffected)
+        ? object.tilesAffected.map((e: any) => globalThis.Number(e))
+        : globalThis.Array.isArray(object?.tiles_affected)
+        ? object.tiles_affected.map((e: any) => globalThis.Number(e))
+        : [],
+    };
+  },
+
+  toJSON(message: SendLock): unknown {
+    const obj: any = {};
+    if (message.x !== 0) {
+      obj.x = Math.round(message.x);
+    }
+    if (message.y !== 0) {
+      obj.y = Math.round(message.y);
+    }
+    if (message.lockOwnerId !== 0) {
+      obj.lockOwnerId = Math.round(message.lockOwnerId);
+    }
+    if (message.lockItemId !== 0) {
+      obj.lockItemId = Math.round(message.lockItemId);
+    }
+    if (message.tilesAffected?.length) {
+      obj.tilesAffected = message.tilesAffected.map((e) => Math.round(e));
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<SendLock>, I>>(base?: I): SendLock {
+    return SendLock.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<SendLock>, I>>(object: I): SendLock {
+    const message = createBaseSendLock();
+    message.x = object.x ?? 0;
+    message.y = object.y ?? 0;
+    message.lockOwnerId = object.lockOwnerId ?? 0;
+    message.lockItemId = object.lockItemId ?? 0;
+    message.tilesAffected = object.tilesAffected?.map((e) => e) || [];
     return message;
   },
 };
 
 function createBaseModifyWorld(): ModifyWorld {
-  return { op: 0, tile: undefined };
+  return { op: 0, tile: undefined, extra: undefined };
 }
 
 export const ModifyWorld: MessageFns<ModifyWorld> = {
   encode(message: ModifyWorld, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.op !== 0) {
-      writer.uint32(48).int32(message.op);
+      writer.uint32(8).int32(message.op);
     }
     if (message.tile !== undefined) {
-      Tile.encode(message.tile, writer.uint32(10).fork()).join();
+      Tile.encode(message.tile, writer.uint32(18).fork()).join();
+    }
+    if (message.extra !== undefined) {
+      writer.uint32(26).bytes(message.extra);
     }
     return writer;
   },
@@ -614,20 +1035,28 @@ export const ModifyWorld: MessageFns<ModifyWorld> = {
     while (reader.pos < end) {
       const tag = reader.uint32();
       switch (tag >>> 3) {
-        case 6: {
-          if (tag !== 48) {
+        case 1: {
+          if (tag !== 8) {
             break;
           }
 
           message.op = reader.int32() as any;
           continue;
         }
-        case 1: {
-          if (tag !== 10) {
+        case 2: {
+          if (tag !== 18) {
             break;
           }
 
           message.tile = Tile.decode(reader, reader.uint32());
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.extra = reader.bytes();
           continue;
         }
       }
@@ -643,6 +1072,7 @@ export const ModifyWorld: MessageFns<ModifyWorld> = {
     return {
       op: isSet(object.op) ? modifyWorld_OpFromJSON(object.op) : 0,
       tile: isSet(object.tile) ? Tile.fromJSON(object.tile) : undefined,
+      extra: isSet(object.extra) ? bytesFromBase64(object.extra) : undefined,
     };
   },
 
@@ -654,6 +1084,9 @@ export const ModifyWorld: MessageFns<ModifyWorld> = {
     if (message.tile !== undefined) {
       obj.tile = Tile.toJSON(message.tile);
     }
+    if (message.extra !== undefined) {
+      obj.extra = base64FromBytes(message.extra);
+    }
     return obj;
   },
 
@@ -664,6 +1097,67 @@ export const ModifyWorld: MessageFns<ModifyWorld> = {
     const message = createBaseModifyWorld();
     message.op = object.op ?? 0;
     message.tile = (object.tile !== undefined && object.tile !== null) ? Tile.fromPartial(object.tile) : undefined;
+    message.extra = object.extra ?? undefined;
+    return message;
+  },
+};
+
+function createBaseModifyWorldBatched(): ModifyWorldBatched {
+  return { events: [] };
+}
+
+export const ModifyWorldBatched: MessageFns<ModifyWorldBatched> = {
+  encode(message: ModifyWorldBatched, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    for (const v of message.events) {
+      ModifyWorld.encode(v!, writer.uint32(10).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ModifyWorldBatched {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseModifyWorldBatched();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.events.push(ModifyWorld.decode(reader, reader.uint32()));
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): ModifyWorldBatched {
+    return {
+      events: globalThis.Array.isArray(object?.events) ? object.events.map((e: any) => ModifyWorld.fromJSON(e)) : [],
+    };
+  },
+
+  toJSON(message: ModifyWorldBatched): unknown {
+    const obj: any = {};
+    if (message.events?.length) {
+      obj.events = message.events.map((e) => ModifyWorld.toJSON(e));
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<ModifyWorldBatched>, I>>(base?: I): ModifyWorldBatched {
+    return ModifyWorldBatched.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<ModifyWorldBatched>, I>>(object: I): ModifyWorldBatched {
+    const message = createBaseModifyWorldBatched();
+    message.events = object.events?.map((e) => ModifyWorld.fromPartial(e)) || [];
     return message;
   },
 };

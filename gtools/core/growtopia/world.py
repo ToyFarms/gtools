@@ -50,6 +50,7 @@ import numpy as np
 import numpy.typing as npt
 
 from gtools import setting
+from scripts.tileset import update_tile_connectivity
 
 
 @dataclass(slots=True)
@@ -1991,6 +1992,9 @@ class World:
 
         self.logger.warning(f"tile {pos} in {self.name} does not exists")
 
+    def index_to_pos(self, index: int) -> ivec2:
+        return ivec2(index % self.width, index // self.width)
+
     def destroy_tile(self, pos: ivec2) -> None:
         if (tile := self.get_tile(pos)) is None:
             return
@@ -2149,27 +2153,45 @@ class World:
                 tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
                 tile.flags |= TileFlags.HAS_EXTRA_DATA
 
-    def update_tree(self, tile: Tile, tank: TankPacket) -> None:
+    def update_all_connection(self) -> None:
+        for tile in self.tiles:
+            update_tile_connectivity(self, tile)
+
+    def update_3x3_connection(self, tile: Tile | ivec2 | int) -> None:
+        if isinstance(tile, Tile):
+            pos = tile.pos
+        elif isinstance(tile, int):
+            pos = self.index_to_pos(tile)
+        else:
+            pos = ivec2(tile)
+
+        for y in range(-1, 2):
+            for x in range(-1, 2):
+                if n := self.get_tile(pos + ivec2(x, y)):
+                    update_tile_connectivity(self, n)
+
+    def update_tree(self, tile: Tile, item_id: int, harvest: bool, spawn_seed_flag: bool, seedling_flag: bool) -> None:
         if not tile.extra or tile.extra.type != TileExtraType.SEED_TILE:
             return
 
-        if tank.target_net_id == -1:
+        if harvest:
             tile.flags &= ~(TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE)
             self.replace_fg(tile, 0)
-            # TODO: update connectivity 3x3 around this
+            self.update_3x3_connection(tile)
         else:
-            tile.extra.expect(SeedTile).item_on_tree = tank.value
-            if tank.jump_count == 1:
+            seed = tile.extra.expect(SeedTile)
+            seed.item_on_tree = item_id
+            if spawn_seed_flag:
                 tile.flags |= TileFlags.WILL_SPAWN_SEEDS_TOO
             else:
                 tile.flags &= ~TileFlags.WILL_SPAWN_SEEDS_TOO
 
-            if tank.animation_type == 1:
+            if seedling_flag:
                 tile.flags |= TileFlags.IS_SEEDLING
             else:
                 tile.flags &= ~TileFlags.IS_SEEDLING
 
-            # TODO: set time here
+            # TODO: set current time here
             # TODO: store somewhere the seed placed time
 
     def remove_locked(self, locked: Tile) -> Iterator[Tile]:

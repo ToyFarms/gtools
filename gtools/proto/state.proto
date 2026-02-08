@@ -15,10 +15,13 @@ enum StateUpdateWhat {
   STATE_PLAYER_JOIN = 8;
   STATE_PLAYER_LEAVE = 9;
   STATE_MODIFY_WORLD = 10;
+  STATE_MODIFY_WORLD_BATCHED = 15;
   STATE_MODIFY_ITEM = 11;
   STATE_UPDATE_STATUS = 12;
   STATE_SET_CHARACTER_STATE = 13;
   STATE_SET_MY_TELEMETRY = 14;
+  STATE_SEND_LOCK = 16;
+  STATE_UPDATE_TREE_STATE = 17;
 }
 
 message StateUpdate {
@@ -32,11 +35,31 @@ message StateUpdate {
     gtools.growtopia.Player player_join = 7;
     uint32 player_leave = 8;
     ModifyWorld modify_world = 13;
+    ModifyWorldBatched modify_world_batched = 14;
     ModifyItem modify_item = 9;
     uint32 update_status = 10;
     gtools.growtopia.CharacterState character_state = 11;
     SetMyTelemetry set_my_telemetry = 12;
+    SendLock send_lock = 15;
+    UpdateTreeState update_tree_state = 16;
   }
+}
+
+message UpdateTreeState {
+  int32 x = 1;
+  int32 y = 2;
+  uint32 item_id = 5;
+  bool harvest = 6;
+  bool add_spawn_seeds_flag = 3;
+  bool add_seedling_flag = 4;
+}
+
+message SendLock {
+  int32 x = 1;
+  int32 y = 2;
+  int32 lock_owner_id = 3;
+  uint32 lock_item_id = 4;
+  repeated uint32 tiles_affected = 5;
 }
 
 message ModifyWorld {
@@ -45,10 +68,16 @@ message ModifyWorld {
     OP_REPLACE = 1;
     OP_PLACE = 2;
     OP_DESTROY = 3;
+    OP_UPDATE_EXTRA_DATA = 4;
   }
-  Op op = 6;
-  gtools.growtopia.Tile tile = 1;
+  Op op = 1;
+  oneof payload {
+    gtools.growtopia.Tile tile = 2;
+    bytes extra = 3;
+  }
 }
+
+message ModifyWorldBatched { repeated ModifyWorld events = 1; }
 
 message SetMyTelemetry {
   uint32 server_ping = 5;

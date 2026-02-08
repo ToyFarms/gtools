@@ -26,18 +26,22 @@ from gtools.protogen.state_pb2 import (
     STATE_PLAYER_LEAVE,
     STATE_PLAYER_UPDATE,
     STATE_SEND_INVENTORY,
+    STATE_SEND_LOCK,
     STATE_SET_CHARACTER_STATE,
     STATE_SET_MY_PLAYER,
     STATE_SET_MY_TELEMETRY,
     STATE_UPDATE_STATUS,
+    STATE_UPDATE_TREE_STATE,
     EnterWorld,
     ModifyInventory,
     ModifyItem,
     ModifyWorld,
     PlayerUpdate,
+    SendLock,
     SetMyTelemetry,
     StateUpdate,
     StateUpdateWhat,
+    UpdateTreeState,
 )
 from gtools.proxy.extension.broker import Broker
 
@@ -102,7 +106,6 @@ class Status(IntEnum):
     IN_WORLD = 5
 
 
-# **BIGGGGGGGG** TODO: completely rewrite this "emit state" and "handle state", what we should do instead is relay the raw buffer and leave the interpretation to only the receiver (handle state), this way we only need to handle in one place, this means completely removing all from_proto and to_proto convention, and alike.
 @dataclass(slots=True)
 class State:
     world: World | None = None
@@ -163,6 +166,7 @@ class State:
         )
 
     def emit_event(self, broker: Broker, event: PreparedPacket) -> None:
+        """emit event only sends command through the protobuf, no state update should be happening inside this function"""
         pkt = event.as_net
         match pkt.type:
             case NetType.GAME_MESSAGE:
@@ -220,22 +224,18 @@ class State:
                                 ),
                             )
                     case TankType.SEND_TILE_TREE_STATE:
-                        if not self.world:
-                            self.logger.warning("SEND_TILE_TREE_STATE, but world is not initialized")
-                            return
-
-                        if tile := self.world.get_tile(ivec2(pkt.tank.int_x, pkt.tank.int_y)):
-                            self.world.update_tree(tile, pkt.tank)
-                            self.send_state_update(
-                                broker,
-                                StateUpdate(
-                                    what=STATE_MODIFY_WORLD,
-                                    modify_world=ModifyWorld(
-                                        op=ModifyWorld.OP_REPLACE,
-                                        tile=tile.to_proto(),
-                                    ),
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_UPDATE_TREE_STATE,
+                                update_tree_state=UpdateTreeState(
+                                    x=pkt.tank.int_x,
+                                    y=pkt.tank.int_y,
+                                    item_id=pkt.tank.value,
+                                    harvest=pkt.tank.target_net_id == -1,
                                 ),
-                            )
+                            ),
+                        )
                     case TankType.SEND_TILE_UPDATE_DATA:
                         tile = Tile.deserialize(Buffer(pkt.tank.extended_data))
                         tile.pos.x = pkt.tank.int_x
@@ -271,64 +271,26 @@ class State:
                                 ),
                             )
                     case TankType.SEND_LOCK:
-                        if not self.world:
-                            self.logger.warning("send lock, but world is not initialized")
-                            return
+                        buf = Buffer(pkt.tank.extended_data)
+                        assert len(buf) == pkt.tank.target_net_id * 2, f"expected {pkt.tank.target_net_id} 2 bytes element, got {len(buf)}"
 
-                        if lock_tile := self.world.get_tile(ivec2(pkt.tank.int_x, pkt.tank.int_y)):
-                            # place lock if it doesn't exists
-                            if (
-                                (lock_tile.extra and lock_tile.extra.type != TileExtraType.LOCK_TILE)
-                                or lock_tile.extra is None
-                                or lock_tile.extra.expect(LockTile).owner_uid != pkt.tank.net_id
-                            ):
-                                self.world.replace_fg(lock_tile, pkt.tank.value)
-                                assert lock_tile.extra
-                                lock_tile.extra.expect(LockTile).owner_uid = pkt.tank.net_id
+                        affected: list[int] = []
+                        for _ in range(pkt.tank.target_net_id):
+                            affected.append(buf.read_u16())
 
-                                self.send_state_update(
-                                    broker,
-                                    StateUpdate(
-                                        what=STATE_MODIFY_WORLD,
-                                        modify_world=ModifyWorld(
-                                            op=ModifyWorld.OP_PLACE,
-                                            tile=lock_tile.to_proto(),
-                                        ),
-                                    ),
-                                )
-
-                            for tile in self.world.remove_locked(lock_tile):
-                                self.send_state_update(
-                                    broker,
-                                    StateUpdate(
-                                        what=STATE_MODIFY_WORLD,
-                                        modify_world=ModifyWorld(
-                                            op=ModifyWorld.OP_REPLACE,
-                                            tile=tile.to_proto(),
-                                        ),
-                                    ),
-                                )
-
-                            buf = Buffer(pkt.tank.extended_data)
-                            assert len(buf) == pkt.tank.target_net_id * 2, f"expected {pkt.tank.target_net_id} 2 bytes element, got {len(buf)}"
-                            for _ in range(pkt.tank.target_net_id):
-                                index = buf.read_u16()
-                                target_tile = self.world.get_tile(index)
-                                if not target_tile:
-                                    raise ValueError(f"send_lock: tile at {index=} should exists, but it doesn't")
-
-                                target_tile.flags |= TileFlags.LOCKED
-                                target_tile.lock_index = index
-                                self.send_state_update(
-                                    broker,
-                                    StateUpdate(
-                                        what=STATE_MODIFY_WORLD,
-                                        modify_world=ModifyWorld(
-                                            op=ModifyWorld.OP_REPLACE,
-                                            tile=target_tile.to_proto(),
-                                        ),
-                                    ),
-                                )
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_SEND_LOCK,
+                                send_lock=SendLock(
+                                    x=pkt.tank.int_x,
+                                    y=pkt.tank.int_y,
+                                    lock_owner_id=pkt.tank.net_id,
+                                    lock_item_id=pkt.tank.value,
+                                    tiles_affected=affected,
+                                ),
+                            ),
+                        )
                     case TankType.CALL_FUNCTION:
                         v = Variant.deserialize(pkt.tank.extended_data)
                         fn = v.as_string[0]
@@ -460,7 +422,7 @@ class State:
                             ),
                         )
                     case TankType.SEND_MAP_DATA:
-                        world = World.deserialize(pkt.tank.extended_data).to_proto()
+                        world = World.deserialize(pkt.tank.extended_data, pkt.tank.int_x).to_proto()
                         write_async(pkt.serialize(), setting.appdir / "worlds" / world.inner.name.decode(), "wb")
 
                         self.send_state_update(
@@ -562,3 +524,41 @@ class State:
                 self.world.remove_player_by_id(upd.player_leave)
             case StateUpdateWhat.STATE_UPDATE_STATUS:
                 self.status = Status(upd.update_status)
+            case StateUpdateWhat.STATE_SEND_LOCK:
+                if not self.world:
+                    self.logger.warning("send lock, but world is not initialized")
+                    return
+
+                if lock_tile := self.world.get_tile(ivec2(upd.send_lock.x, upd.send_lock.y)):
+                    # place lock if it doesn't exists
+                    if (
+                        (lock_tile.extra and lock_tile.extra.type != TileExtraType.LOCK_TILE)
+                        or lock_tile.extra is None
+                        or lock_tile.extra.expect(LockTile).owner_uid != upd.send_lock.lock_owner_id
+                    ):
+                        self.world.replace_fg(lock_tile, upd.send_lock.lock_item_id)
+                        assert lock_tile.extra
+                        lock_tile.extra.expect(LockTile).owner_uid = upd.send_lock.lock_owner_id
+
+                    self.world.remove_locked(lock_tile)
+
+                    for tile in upd.send_lock.tiles_affected:
+                        target_tile = self.world.get_tile(tile)
+                        if not target_tile:
+                            raise ValueError(f"send_lock: tile at {tile=} should exists, but it doesn't")
+
+                        target_tile.flags |= TileFlags.LOCKED
+                        target_tile.lock_index = lock_tile.index
+            case StateUpdateWhat.STATE_UPDATE_TREE_STATE:
+                if not self.world:
+                    self.logger.warning("update tree state, but world is not initialized")
+                    return
+
+                if tile := self.world.get_tile(ivec2(upd.update_tree_state.x, upd.update_tree_state.y)):
+                    self.world.update_tree(
+                        tile=tile,
+                        item_id=upd.update_tree_state.item_id,
+                        harvest=upd.update_tree_state.harvest,
+                        spawn_seed_flag=upd.update_tree_state.add_spawn_seeds_flag,
+                        seedling_flag=upd.update_tree_state.add_seedling_flag,
+                    )

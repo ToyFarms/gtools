@@ -2558,6 +2558,7 @@ def handle_smart_edge_diagon_texture(world: World, a1: Tile, a3: int, /) -> int:
     return result
 
 
+# TODO: move this somewhere else
 def update_tile_connectivity(world: World, tile: Tile, /) -> None:
     __goto_label = "start"
     while True:
