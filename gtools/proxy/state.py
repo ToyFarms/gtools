@@ -232,17 +232,19 @@ class State:
                     case TankType.NPC:
                         match pkt.tank.animation_type:
                             case 0:
-                                npc = Npc.deserialize(Buffer(pkt.tank.extended_data))
-                                self.send_state_update(
-                                    broker,
-                                    StateUpdate(
-                                        what=STATE_NPC_UPDATE,
-                                        npc_update=NpcUpdate(
-                                            op=NpcUpdate.OP_ADD,
-                                            npc=npc.to_proto(),
+                                buf = Buffer(pkt.tank.extended_data)
+                                for _ in range(buf.read_u8()):
+                                    npc = Npc.deserialize(buf)
+                                    self.send_state_update(
+                                        broker,
+                                        StateUpdate(
+                                            what=STATE_NPC_UPDATE,
+                                            npc_update=NpcUpdate(
+                                                op=NpcUpdate.OP_ADD,
+                                                npc=npc.to_proto(),
+                                            ),
                                         ),
-                                    ),
-                                )
+                                    )
                             case 1:
                                 self.send_state_update(
                                     broker,
