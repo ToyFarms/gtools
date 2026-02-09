@@ -149,7 +149,7 @@ export interface World {
 
 export interface Npc {
   id: number;
-  state: number;
+  type: number;
   x: number;
   y: number;
   targetX: number;
@@ -2200,7 +2200,7 @@ export const World: MessageFns<World> = {
 };
 
 function createBaseNpc(): Npc {
-  return { id: 0, state: 0, x: 0, y: 0, targetX: 0, targetY: 0, param1: 0, param2: 0, param3: 0, facingLeft: false };
+  return { id: 0, type: 0, x: 0, y: 0, targetX: 0, targetY: 0, param1: 0, param2: 0, param3: 0, facingLeft: false };
 }
 
 export const Npc: MessageFns<Npc> = {
@@ -2208,8 +2208,8 @@ export const Npc: MessageFns<Npc> = {
     if (message.id !== 0) {
       writer.uint32(8).uint32(message.id);
     }
-    if (message.state !== 0) {
-      writer.uint32(16).uint32(message.state);
+    if (message.type !== 0) {
+      writer.uint32(16).uint32(message.type);
     }
     if (message.x !== 0) {
       writer.uint32(29).float(message.x);
@@ -2258,7 +2258,7 @@ export const Npc: MessageFns<Npc> = {
             break;
           }
 
-          message.state = reader.uint32();
+          message.type = reader.uint32();
           continue;
         }
         case 3: {
@@ -2337,7 +2337,7 @@ export const Npc: MessageFns<Npc> = {
   fromJSON(object: any): Npc {
     return {
       id: isSet(object.id) ? globalThis.Number(object.id) : 0,
-      state: isSet(object.state) ? globalThis.Number(object.state) : 0,
+      type: isSet(object.type) ? globalThis.Number(object.type) : 0,
       x: isSet(object.x) ? globalThis.Number(object.x) : 0,
       y: isSet(object.y) ? globalThis.Number(object.y) : 0,
       targetX: isSet(object.targetX)
@@ -2366,8 +2366,8 @@ export const Npc: MessageFns<Npc> = {
     if (message.id !== 0) {
       obj.id = Math.round(message.id);
     }
-    if (message.state !== 0) {
-      obj.state = Math.round(message.state);
+    if (message.type !== 0) {
+      obj.type = Math.round(message.type);
     }
     if (message.x !== 0) {
       obj.x = message.x;
@@ -2402,7 +2402,7 @@ export const Npc: MessageFns<Npc> = {
   fromPartial<I extends Exact<DeepPartial<Npc>, I>>(object: I): Npc {
     const message = createBaseNpc();
     message.id = object.id ?? 0;
-    message.state = object.state ?? 0;
+    message.type = object.type ?? 0;
     message.x = object.x ?? 0;
     message.y = object.y ?? 0;
     message.targetX = object.targetX ?? 0;

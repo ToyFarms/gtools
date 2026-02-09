@@ -225,7 +225,7 @@ class World(_message.Message):
 class Npc(_message.Message):
     __slots__ = ()
     ID_FIELD_NUMBER: _ClassVar[int]
-    STATE_FIELD_NUMBER: _ClassVar[int]
+    TYPE_FIELD_NUMBER: _ClassVar[int]
     X_FIELD_NUMBER: _ClassVar[int]
     Y_FIELD_NUMBER: _ClassVar[int]
     TARGET_X_FIELD_NUMBER: _ClassVar[int]
@@ -235,7 +235,7 @@ class Npc(_message.Message):
     PARAM3_FIELD_NUMBER: _ClassVar[int]
     FACING_LEFT_FIELD_NUMBER: _ClassVar[int]
     id: int
-    state: int
+    type: int
     x: float
     y: float
     target_x: float
@@ -244,4 +244,4 @@ class Npc(_message.Message):
     param2: int
     param3: float
     facing_left: bool
-    def __init__(self, id: _Optional[int] = ..., state: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., target_x: _Optional[float] = ..., target_y: _Optional[float] = ..., param1: _Optional[int] = ..., param2: _Optional[int] = ..., param3: _Optional[float] = ..., facing_left: _Optional[bool] = ...) -> None: ...
+    def __init__(self, id: _Optional[int] = ..., type: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., target_x: _Optional[float] = ..., target_y: _Optional[float] = ..., param1: _Optional[int] = ..., param2: _Optional[int] = ..., param3: _Optional[float] = ..., facing_left: _Optional[bool] = ...) -> None: ...

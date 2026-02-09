@@ -92,10 +92,10 @@ class StateUpdate(_message.Message):
 class NpcRemove(_message.Message):
     __slots__ = ()
     ID_FIELD_NUMBER: _ClassVar[int]
-    STATE_FIELD_NUMBER: _ClassVar[int]
+    TYPE_FIELD_NUMBER: _ClassVar[int]
     id: int
-    state: int
-    def __init__(self, id: _Optional[int] = ..., state: _Optional[int] = ...) -> None: ...
+    type: int
+    def __init__(self, id: _Optional[int] = ..., type: _Optional[int] = ...) -> None: ...
 
 class NpcUpdatePos(_message.Message):
     __slots__ = ()
@@ -120,26 +120,26 @@ class NpcUpdate(_message.Message):
         OP_UNSPECIFIED: _ClassVar[NpcUpdate.Op]
         OP_ADD: _ClassVar[NpcUpdate.Op]
         OP_REMOVE: _ClassVar[NpcUpdate.Op]
-        OP_RESET_STATE: _ClassVar[NpcUpdate.Op]
+        OP_RESET_TYPE: _ClassVar[NpcUpdate.Op]
         OP_UPDATE_TARGET: _ClassVar[NpcUpdate.Op]
         OP_UPDATE_POS: _ClassVar[NpcUpdate.Op]
     OP_UNSPECIFIED: NpcUpdate.Op
     OP_ADD: NpcUpdate.Op
     OP_REMOVE: NpcUpdate.Op
-    OP_RESET_STATE: NpcUpdate.Op
+    OP_RESET_TYPE: NpcUpdate.Op
     OP_UPDATE_TARGET: NpcUpdate.Op
     OP_UPDATE_POS: NpcUpdate.Op
     OP_FIELD_NUMBER: _ClassVar[int]
     NPC_FIELD_NUMBER: _ClassVar[int]
     ID_FIELD_NUMBER: _ClassVar[int]
     REMOVE_FIELD_NUMBER: _ClassVar[int]
-    UPDATE_TARGET_FIELD_NUMBER: _ClassVar[int]
+    UPDATE_POS_FIELD_NUMBER: _ClassVar[int]
     op: NpcUpdate.Op
     npc: _growtopia_pb2.Npc
     id: int
     remove: NpcRemove
-    update_target: NpcUpdatePos
-    def __init__(self, op: _Optional[_Union[NpcUpdate.Op, str]] = ..., npc: _Optional[_Union[_growtopia_pb2.Npc, _Mapping]] = ..., id: _Optional[int] = ..., remove: _Optional[_Union[NpcRemove, _Mapping]] = ..., update_target: _Optional[_Union[NpcUpdatePos, _Mapping]] = ...) -> None: ...
+    update_pos: NpcUpdatePos
+    def __init__(self, op: _Optional[_Union[NpcUpdate.Op, str]] = ..., npc: _Optional[_Union[_growtopia_pb2.Npc, _Mapping]] = ..., id: _Optional[int] = ..., remove: _Optional[_Union[NpcRemove, _Mapping]] = ..., update_pos: _Optional[_Union[NpcUpdatePos, _Mapping]] = ...) -> None: ...
 
 class TileChangeRequest(_message.Message):
     __slots__ = ()

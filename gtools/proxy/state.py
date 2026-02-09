@@ -13,7 +13,7 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, Tan
 from gtools.core.growtopia.player import CharacterState, Player
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
-from gtools.core.growtopia.world import LockTile, Npc, NpcState, Tile, TileExtraType, TileFlags, World
+from gtools.core.growtopia.world import LockTile, Npc, NpcType, Tile, TileExtraType, TileFlags, World
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
@@ -41,7 +41,6 @@ from gtools.protogen.state_pb2 import (
     NpcRemove,
     NpcUpdate,
     NpcUpdatePos,
-    NpcUpdateTarget,
     PlayerUpdate,
     SendLock,
     SetMyTelemetry,
@@ -251,14 +250,14 @@ class State:
                                     StateUpdate(
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
-                                            op=NpcUpdate.OP_RESET_STATE,
+                                            op=NpcUpdate.OP_RESET_TYPE,
                                             id=pkt.tank.jump_count,
                                         ),
                                     ),
                                 )
                             case 2:
                                 npc = Npc()
-                                npc.state = NpcState(pkt.tank.object_type)
+                                npc.type = NpcType(pkt.tank.object_type)
                                 npc.id = pkt.tank.jump_count
                                 npc.pos = vec2(pkt.tank.vector_x, pkt.tank.vector_y)
                                 npc.target_pos = vec2(pkt.tank.vector_x2, pkt.tank.vector_y2)
@@ -283,7 +282,7 @@ class State:
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
                                             op=NpcUpdate.OP_UPDATE_TARGET,
-                                            update_target=NpcUpdatePos(
+                                            update_pos=NpcUpdatePos(
                                                 id=pkt.tank.jump_count,
                                                 param1=pkt.tank.int_x,
                                                 param2=pkt.tank.int_y,
@@ -301,7 +300,7 @@ class State:
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
                                             op=NpcUpdate.OP_REMOVE,
-                                            remove=NpcRemove(id=pkt.tank.jump_count, state=pkt.tank.object_type),
+                                            remove=NpcRemove(id=pkt.tank.jump_count, type=pkt.tank.object_type),
                                         ),
                                     ),
                                 )
@@ -315,7 +314,7 @@ class State:
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
                                             op=NpcUpdate.OP_UPDATE_POS,
-                                            update_target=NpcUpdatePos(
+                                            update_pos=NpcUpdatePos(
                                                 id=pkt.tank.jump_count,
                                                 param1=pkt.tank.int_x,
                                                 param2=pkt.tank.int_y,
@@ -334,7 +333,7 @@ class State:
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
                                             op=NpcUpdate.OP_UPDATE_POS,
-                                            update_target=NpcUpdatePos(
+                                            update_pos=NpcUpdatePos(
                                                 id=pkt.tank.jump_count,
                                                 x=pkt.tank.vector_x,
                                                 y=pkt.tank.vector_y,
@@ -347,7 +346,7 @@ class State:
                                     StateUpdate(
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
-                                            op=NpcUpdate.OP_RESET_STATE,
+                                            op=NpcUpdate.OP_RESET_TYPE,
                                             id=pkt.tank.jump_count,
                                         ),
                                     ),
@@ -704,11 +703,11 @@ class State:
                         self.world.add_npc(Npc.from_proto(upd.npc_update.npc))
                     case NpcUpdate.OP_REMOVE:
                         self.world.remove_npc_by_id(upd.npc_update.id)
-                    case NpcUpdate.OP_RESET_STATE:
+                    case NpcUpdate.OP_RESET_TYPE:
                         if npc := self.world.get_npc(upd.npc_update.id):
-                            npc.reset_state()
+                            npc.reset_type()
                     case NpcUpdate.OP_UPDATE_TARGET:
-                        tgt = upd.npc_update.update_target
+                        tgt = upd.npc_update.update_pos
                         if npc := self.world.get_npc(tgt.id):
                             if tgt.param1 != 0:
                                 npc.param1 = tgt.param1
@@ -718,7 +717,7 @@ class State:
                                 npc.param3 = tgt.param3
                             npc.target_pos = vec2(tgt.x, tgt.y)
                     case NpcUpdate.OP_UPDATE_POS:
-                        tgt = upd.npc_update.update_target
+                        tgt = upd.npc_update.update_pos
                         if npc := self.world.get_npc(tgt.id):
                             if tgt.param1 != 0:
                                 npc.param1 = tgt.param1

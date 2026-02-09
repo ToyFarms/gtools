@@ -1916,7 +1916,7 @@ class Dropped:
         )
 
 
-class NpcState(IntEnum):
+class NpcType(IntEnum):
     NONE = 0
     GHOST_SHARK = 1
     TRAPPED_GHOST_JAR = 2  # trapped by ghost jar
@@ -1939,7 +1939,7 @@ class NpcState(IntEnum):
 @dataclass(slots=True)
 class Npc:
     id: int = 0
-    state: NpcState = NpcState.NONE
+    type: NpcType = NpcType.NONE
     pos: vec2 = field(default_factory=vec2)
     target_pos: vec2 = field(default_factory=vec2)
     param1: int = 0  # next state, scale
@@ -1951,7 +1951,7 @@ class Npc:
     def deserialize(cls, s: Buffer) -> "Npc":
         t = cls()
 
-        t.state = NpcState(s.read_u8())
+        t.type = NpcType(s.read_u8())
         t.id = s.read_u8()
         t.pos.x = s.read_f32()
         t.pos.y = s.read_f32()
@@ -1967,7 +1967,7 @@ class Npc:
     def from_proto(cls, proto: growtopia_pb2.Npc) -> "Npc":
         return cls(
             id=proto.id,
-            state=NpcState(proto.state),
+            type=NpcType(proto.type),
             pos=vec2(proto.x, proto.y),
             target_pos=vec2(proto.target_x, proto.target_y),
             param1=proto.param1,
@@ -1979,7 +1979,7 @@ class Npc:
     def to_proto(self) -> growtopia_pb2.Npc:
         return growtopia_pb2.Npc(
             id=self.id,
-            state=self.state,
+            type=self.type,
             x=self.pos.x,
             y=self.pos.y,
             target_x=self.target_pos.x,
@@ -1990,8 +1990,8 @@ class Npc:
             facing_left=self.facing_left,
         )
 
-    def reset_state(self) -> None:
-        self.state = NpcState.NONE
+    def reset_type(self) -> None:
+        self.type = NpcType.NONE
 
 
 @dataclass(slots=True)

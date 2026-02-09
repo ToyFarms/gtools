@@ -129,7 +129,7 @@ message World {
 
 message Npc {
   uint32 id = 1;
-  uint32 state = 2;
+  uint32 type = 2;
   float x = 3;
   float y = 4;
   float target_x = 5;

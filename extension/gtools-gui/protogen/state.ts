@@ -168,7 +168,7 @@ export interface StateUpdate {
 
 export interface NpcRemove {
   id: number;
-  state: number;
+  type: number;
 }
 
 export interface NpcUpdatePos {
@@ -186,14 +186,14 @@ export interface NpcUpdate {
   npc?: Npc | undefined;
   id?: number | undefined;
   remove?: NpcRemove | undefined;
-  updateTarget?: NpcUpdatePos | undefined;
+  updatePos?: NpcUpdatePos | undefined;
 }
 
 export enum NpcUpdate_Op {
   OP_UNSPECIFIED = 0,
   OP_ADD = 1,
   OP_REMOVE = 3,
-  OP_RESET_STATE = 2,
+  OP_RESET_TYPE = 2,
   OP_UPDATE_TARGET = 4,
   OP_UPDATE_POS = 5,
   UNRECOGNIZED = -1,
@@ -211,8 +211,8 @@ export function npcUpdate_OpFromJSON(object: any): NpcUpdate_Op {
     case "OP_REMOVE":
       return NpcUpdate_Op.OP_REMOVE;
     case 2:
-    case "OP_RESET_STATE":
-      return NpcUpdate_Op.OP_RESET_STATE;
+    case "OP_RESET_TYPE":
+      return NpcUpdate_Op.OP_RESET_TYPE;
     case 4:
     case "OP_UPDATE_TARGET":
       return NpcUpdate_Op.OP_UPDATE_TARGET;
@@ -234,8 +234,8 @@ export function npcUpdate_OpToJSON(object: NpcUpdate_Op): string {
       return "OP_ADD";
     case NpcUpdate_Op.OP_REMOVE:
       return "OP_REMOVE";
-    case NpcUpdate_Op.OP_RESET_STATE:
-      return "OP_RESET_STATE";
+    case NpcUpdate_Op.OP_RESET_TYPE:
+      return "OP_RESET_TYPE";
     case NpcUpdate_Op.OP_UPDATE_TARGET:
       return "OP_UPDATE_TARGET";
     case NpcUpdate_Op.OP_UPDATE_POS:
@@ -860,7 +860,7 @@ export const StateUpdate: MessageFns<StateUpdate> = {
 };
 
 function createBaseNpcRemove(): NpcRemove {
-  return { id: 0, state: 0 };
+  return { id: 0, type: 0 };
 }
 
 export const NpcRemove: MessageFns<NpcRemove> = {
@@ -868,8 +868,8 @@ export const NpcRemove: MessageFns<NpcRemove> = {
     if (message.id !== 0) {
       writer.uint32(8).uint32(message.id);
     }
-    if (message.state !== 0) {
-      writer.uint32(16).uint32(message.state);
+    if (message.type !== 0) {
+      writer.uint32(16).uint32(message.type);
     }
     return writer;
   },
@@ -894,7 +894,7 @@ export const NpcRemove: MessageFns<NpcRemove> = {
             break;
           }
 
-          message.state = reader.uint32();
+          message.type = reader.uint32();
           continue;
         }
       }
@@ -909,7 +909,7 @@ export const NpcRemove: MessageFns<NpcRemove> = {
   fromJSON(object: any): NpcRemove {
     return {
       id: isSet(object.id) ? globalThis.Number(object.id) : 0,
-      state: isSet(object.state) ? globalThis.Number(object.state) : 0,
+      type: isSet(object.type) ? globalThis.Number(object.type) : 0,
     };
   },
 
@@ -918,8 +918,8 @@ export const NpcRemove: MessageFns<NpcRemove> = {
     if (message.id !== 0) {
       obj.id = Math.round(message.id);
     }
-    if (message.state !== 0) {
-      obj.state = Math.round(message.state);
+    if (message.type !== 0) {
+      obj.type = Math.round(message.type);
     }
     return obj;
   },
@@ -930,7 +930,7 @@ export const NpcRemove: MessageFns<NpcRemove> = {
   fromPartial<I extends Exact<DeepPartial<NpcRemove>, I>>(object: I): NpcRemove {
     const message = createBaseNpcRemove();
     message.id = object.id ?? 0;
-    message.state = object.state ?? 0;
+    message.type = object.type ?? 0;
     return message;
   },
 };
@@ -1076,7 +1076,7 @@ export const NpcUpdatePos: MessageFns<NpcUpdatePos> = {
 };
 
 function createBaseNpcUpdate(): NpcUpdate {
-  return { op: 0, npc: undefined, id: undefined, remove: undefined, updateTarget: undefined };
+  return { op: 0, npc: undefined, id: undefined, remove: undefined, updatePos: undefined };
 }
 
 export const NpcUpdate: MessageFns<NpcUpdate> = {
@@ -1093,8 +1093,8 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
     if (message.remove !== undefined) {
       NpcRemove.encode(message.remove, writer.uint32(34).fork()).join();
     }
-    if (message.updateTarget !== undefined) {
-      NpcUpdatePos.encode(message.updateTarget, writer.uint32(42).fork()).join();
+    if (message.updatePos !== undefined) {
+      NpcUpdatePos.encode(message.updatePos, writer.uint32(42).fork()).join();
     }
     return writer;
   },
@@ -1143,7 +1143,7 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
             break;
           }
 
-          message.updateTarget = NpcUpdatePos.decode(reader, reader.uint32());
+          message.updatePos = NpcUpdatePos.decode(reader, reader.uint32());
           continue;
         }
       }
@@ -1161,10 +1161,10 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
       npc: isSet(object.npc) ? Npc.fromJSON(object.npc) : undefined,
       id: isSet(object.id) ? globalThis.Number(object.id) : undefined,
       remove: isSet(object.remove) ? NpcRemove.fromJSON(object.remove) : undefined,
-      updateTarget: isSet(object.updateTarget)
-        ? NpcUpdatePos.fromJSON(object.updateTarget)
-        : isSet(object.update_target)
-        ? NpcUpdatePos.fromJSON(object.update_target)
+      updatePos: isSet(object.updatePos)
+        ? NpcUpdatePos.fromJSON(object.updatePos)
+        : isSet(object.update_pos)
+        ? NpcUpdatePos.fromJSON(object.update_pos)
         : undefined,
     };
   },
@@ -1183,8 +1183,8 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
     if (message.remove !== undefined) {
       obj.remove = NpcRemove.toJSON(message.remove);
     }
-    if (message.updateTarget !== undefined) {
-      obj.updateTarget = NpcUpdatePos.toJSON(message.updateTarget);
+    if (message.updatePos !== undefined) {
+      obj.updatePos = NpcUpdatePos.toJSON(message.updatePos);
     }
     return obj;
   },
@@ -1200,8 +1200,8 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
     message.remove = (object.remove !== undefined && object.remove !== null)
       ? NpcRemove.fromPartial(object.remove)
       : undefined;
-    message.updateTarget = (object.updateTarget !== undefined && object.updateTarget !== null)
-      ? NpcUpdatePos.fromPartial(object.updateTarget)
+    message.updatePos = (object.updatePos !== undefined && object.updatePos !== null)
+      ? NpcUpdatePos.fromPartial(object.updatePos)
       : undefined;
     return message;
   },
