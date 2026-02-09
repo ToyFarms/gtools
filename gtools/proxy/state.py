@@ -38,7 +38,7 @@ from gtools.protogen.state_pb2 import (
     ModifyInventory,
     ModifyItem,
     ModifyWorld,
-    NpcRemove,
+    NpcResetByCond,
     NpcUpdate,
     NpcUpdatePos,
     PlayerUpdate,
@@ -299,8 +299,11 @@ class State:
                                     StateUpdate(
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
-                                            op=NpcUpdate.OP_REMOVE,
-                                            remove=NpcRemove(id=pkt.tank.jump_count, type=pkt.tank.object_type),
+                                            op=NpcUpdate.OP_RESET_BY_COND,
+                                            reset_by_cond=NpcResetByCond(
+                                                id=pkt.tank.jump_count,
+                                                id_non_normal=pkt.tank.object_type,
+                                            ),
                                         ),
                                     ),
                                 )
@@ -706,6 +709,10 @@ class State:
                     case NpcUpdate.OP_RESET_TYPE:
                         if npc := self.world.get_npc(upd.npc_update.id):
                             npc.reset_type()
+                    case NpcUpdate.OP_RESET_BY_COND:
+                        for npc in self.world.npcs:
+                            if (npc.id == upd.npc_update.reset_by_cond.id and npc.type == NpcType.NORMAL) or npc.id == upd.npc_update.reset_by_cond.id_non_normal:
+                                npc.reset_type()
                     case NpcUpdate.OP_UPDATE_TARGET:
                         tgt = upd.npc_update.update_pos
                         if npc := self.world.get_npc(tgt.id):

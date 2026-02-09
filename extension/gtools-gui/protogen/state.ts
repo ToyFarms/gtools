@@ -166,9 +166,9 @@ export interface StateUpdate {
   npcUpdate?: NpcUpdate | undefined;
 }
 
-export interface NpcRemove {
+export interface NpcResetByCond {
   id: number;
-  type: number;
+  idNonNormal: number;
 }
 
 export interface NpcUpdatePos {
@@ -185,8 +185,8 @@ export interface NpcUpdate {
   op: NpcUpdate_Op;
   npc?: Npc | undefined;
   id?: number | undefined;
-  remove?: NpcRemove | undefined;
   updatePos?: NpcUpdatePos | undefined;
+  resetByCond?: NpcResetByCond | undefined;
 }
 
 export enum NpcUpdate_Op {
@@ -196,6 +196,7 @@ export enum NpcUpdate_Op {
   OP_RESET_TYPE = 2,
   OP_UPDATE_TARGET = 4,
   OP_UPDATE_POS = 5,
+  OP_RESET_BY_COND = 6,
   UNRECOGNIZED = -1,
 }
 
@@ -219,6 +220,9 @@ export function npcUpdate_OpFromJSON(object: any): NpcUpdate_Op {
     case 5:
     case "OP_UPDATE_POS":
       return NpcUpdate_Op.OP_UPDATE_POS;
+    case 6:
+    case "OP_RESET_BY_COND":
+      return NpcUpdate_Op.OP_RESET_BY_COND;
     case -1:
     case "UNRECOGNIZED":
     default:
@@ -240,6 +244,8 @@ export function npcUpdate_OpToJSON(object: NpcUpdate_Op): string {
       return "OP_UPDATE_TARGET";
     case NpcUpdate_Op.OP_UPDATE_POS:
       return "OP_UPDATE_POS";
+    case NpcUpdate_Op.OP_RESET_BY_COND:
+      return "OP_RESET_BY_COND";
     case NpcUpdate_Op.UNRECOGNIZED:
     default:
       return "UNRECOGNIZED";
@@ -859,25 +865,25 @@ export const StateUpdate: MessageFns<StateUpdate> = {
   },
 };
 
-function createBaseNpcRemove(): NpcRemove {
-  return { id: 0, type: 0 };
+function createBaseNpcResetByCond(): NpcResetByCond {
+  return { id: 0, idNonNormal: 0 };
 }
 
-export const NpcRemove: MessageFns<NpcRemove> = {
-  encode(message: NpcRemove, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+export const NpcResetByCond: MessageFns<NpcResetByCond> = {
+  encode(message: NpcResetByCond, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.id !== 0) {
       writer.uint32(8).uint32(message.id);
     }
-    if (message.type !== 0) {
-      writer.uint32(16).uint32(message.type);
+    if (message.idNonNormal !== 0) {
+      writer.uint32(16).uint32(message.idNonNormal);
     }
     return writer;
   },
 
-  decode(input: BinaryReader | Uint8Array, length?: number): NpcRemove {
+  decode(input: BinaryReader | Uint8Array, length?: number): NpcResetByCond {
     const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
     const end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseNpcRemove();
+    const message = createBaseNpcResetByCond();
     while (reader.pos < end) {
       const tag = reader.uint32();
       switch (tag >>> 3) {
@@ -894,7 +900,7 @@ export const NpcRemove: MessageFns<NpcRemove> = {
             break;
           }
 
-          message.type = reader.uint32();
+          message.idNonNormal = reader.uint32();
           continue;
         }
       }
@@ -906,31 +912,35 @@ export const NpcRemove: MessageFns<NpcRemove> = {
     return message;
   },
 
-  fromJSON(object: any): NpcRemove {
+  fromJSON(object: any): NpcResetByCond {
     return {
       id: isSet(object.id) ? globalThis.Number(object.id) : 0,
-      type: isSet(object.type) ? globalThis.Number(object.type) : 0,
+      idNonNormal: isSet(object.idNonNormal)
+        ? globalThis.Number(object.idNonNormal)
+        : isSet(object.id_non_normal)
+        ? globalThis.Number(object.id_non_normal)
+        : 0,
     };
   },
 
-  toJSON(message: NpcRemove): unknown {
+  toJSON(message: NpcResetByCond): unknown {
     const obj: any = {};
     if (message.id !== 0) {
       obj.id = Math.round(message.id);
     }
-    if (message.type !== 0) {
-      obj.type = Math.round(message.type);
+    if (message.idNonNormal !== 0) {
+      obj.idNonNormal = Math.round(message.idNonNormal);
     }
     return obj;
   },
 
-  create<I extends Exact<DeepPartial<NpcRemove>, I>>(base?: I): NpcRemove {
-    return NpcRemove.fromPartial(base ?? ({} as any));
+  create<I extends Exact<DeepPartial<NpcResetByCond>, I>>(base?: I): NpcResetByCond {
+    return NpcResetByCond.fromPartial(base ?? ({} as any));
   },
-  fromPartial<I extends Exact<DeepPartial<NpcRemove>, I>>(object: I): NpcRemove {
-    const message = createBaseNpcRemove();
+  fromPartial<I extends Exact<DeepPartial<NpcResetByCond>, I>>(object: I): NpcResetByCond {
+    const message = createBaseNpcResetByCond();
     message.id = object.id ?? 0;
-    message.type = object.type ?? 0;
+    message.idNonNormal = object.idNonNormal ?? 0;
     return message;
   },
 };
@@ -1076,7 +1086,7 @@ export const NpcUpdatePos: MessageFns<NpcUpdatePos> = {
 };
 
 function createBaseNpcUpdate(): NpcUpdate {
-  return { op: 0, npc: undefined, id: undefined, remove: undefined, updatePos: undefined };
+  return { op: 0, npc: undefined, id: undefined, updatePos: undefined, resetByCond: undefined };
 }
 
 export const NpcUpdate: MessageFns<NpcUpdate> = {
@@ -1090,11 +1100,11 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
     if (message.id !== undefined) {
       writer.uint32(24).uint32(message.id);
     }
-    if (message.remove !== undefined) {
-      NpcRemove.encode(message.remove, writer.uint32(34).fork()).join();
-    }
     if (message.updatePos !== undefined) {
       NpcUpdatePos.encode(message.updatePos, writer.uint32(42).fork()).join();
+    }
+    if (message.resetByCond !== undefined) {
+      NpcResetByCond.encode(message.resetByCond, writer.uint32(50).fork()).join();
     }
     return writer;
   },
@@ -1130,20 +1140,20 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
           message.id = reader.uint32();
           continue;
         }
-        case 4: {
-          if (tag !== 34) {
-            break;
-          }
-
-          message.remove = NpcRemove.decode(reader, reader.uint32());
-          continue;
-        }
         case 5: {
           if (tag !== 42) {
             break;
           }
 
           message.updatePos = NpcUpdatePos.decode(reader, reader.uint32());
+          continue;
+        }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.resetByCond = NpcResetByCond.decode(reader, reader.uint32());
           continue;
         }
       }
@@ -1160,11 +1170,15 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
       op: isSet(object.op) ? npcUpdate_OpFromJSON(object.op) : 0,
       npc: isSet(object.npc) ? Npc.fromJSON(object.npc) : undefined,
       id: isSet(object.id) ? globalThis.Number(object.id) : undefined,
-      remove: isSet(object.remove) ? NpcRemove.fromJSON(object.remove) : undefined,
       updatePos: isSet(object.updatePos)
         ? NpcUpdatePos.fromJSON(object.updatePos)
         : isSet(object.update_pos)
         ? NpcUpdatePos.fromJSON(object.update_pos)
+        : undefined,
+      resetByCond: isSet(object.resetByCond)
+        ? NpcResetByCond.fromJSON(object.resetByCond)
+        : isSet(object.reset_by_cond)
+        ? NpcResetByCond.fromJSON(object.reset_by_cond)
         : undefined,
     };
   },
@@ -1180,11 +1194,11 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
     if (message.id !== undefined) {
       obj.id = Math.round(message.id);
     }
-    if (message.remove !== undefined) {
-      obj.remove = NpcRemove.toJSON(message.remove);
-    }
     if (message.updatePos !== undefined) {
       obj.updatePos = NpcUpdatePos.toJSON(message.updatePos);
+    }
+    if (message.resetByCond !== undefined) {
+      obj.resetByCond = NpcResetByCond.toJSON(message.resetByCond);
     }
     return obj;
   },
@@ -1197,11 +1211,11 @@ export const NpcUpdate: MessageFns<NpcUpdate> = {
     message.op = object.op ?? 0;
     message.npc = (object.npc !== undefined && object.npc !== null) ? Npc.fromPartial(object.npc) : undefined;
     message.id = object.id ?? undefined;
-    message.remove = (object.remove !== undefined && object.remove !== null)
-      ? NpcRemove.fromPartial(object.remove)
-      : undefined;
     message.updatePos = (object.updatePos !== undefined && object.updatePos !== null)
       ? NpcUpdatePos.fromPartial(object.updatePos)
+      : undefined;
+    message.resetByCond = (object.resetByCond !== undefined && object.resetByCond !== null)
+      ? NpcResetByCond.fromPartial(object.resetByCond)
       : undefined;
     return message;
   },

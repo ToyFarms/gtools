@@ -25,47 +25,47 @@ _sym_db = _symbol_database.Default()
 from . import growtopia_pb2 as growtopia__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bstate.proto\x12\x0cgtools.state\x1a\x0fgrowtopia.proto\"\x88\x07\n\x0bStateUpdate\x12+\n\x04what\x18\x01 \x01(\x0e\x32\x1d.gtools.state.StateUpdateWhat\x12\x33\n\rplayer_update\x18\x02 \x01(\x0b\x32\x1a.gtools.state.PlayerUpdateH\x00\x12\x17\n\rset_my_player\x18\x03 \x01(\rH\x00\x12\x35\n\x0esend_inventory\x18\x04 \x01(\x0b\x32\x1b.gtools.growtopia.InventoryH\x00\x12\x39\n\x10modify_inventory\x18\x05 \x01(\x0b\x32\x1d.gtools.state.ModifyInventoryH\x00\x12/\n\x0b\x65nter_world\x18\x06 \x01(\x0b\x32\x18.gtools.state.EnterWorldH\x00\x12/\n\x0bplayer_join\x18\x07 \x01(\x0b\x32\x18.gtools.growtopia.PlayerH\x00\x12\x16\n\x0cplayer_leave\x18\x08 \x01(\rH\x00\x12\x31\n\x0cmodify_world\x18\r \x01(\x0b\x32\x19.gtools.state.ModifyWorldH\x00\x12@\n\x14modify_world_batched\x18\x0e \x01(\x0b\x32 .gtools.state.ModifyWorldBatchedH\x00\x12/\n\x0bmodify_item\x18\t \x01(\x0b\x32\x18.gtools.state.ModifyItemH\x00\x12\x17\n\rupdate_status\x18\n \x01(\rH\x00\x12;\n\x0f\x63haracter_state\x18\x0b \x01(\x0b\x32 .gtools.growtopia.CharacterStateH\x00\x12\x38\n\x10set_my_telemetry\x18\x0c \x01(\x0b\x32\x1c.gtools.state.SetMyTelemetryH\x00\x12+\n\tsend_lock\x18\x0f \x01(\x0b\x32\x16.gtools.state.SendLockH\x00\x12:\n\x11update_tree_state\x18\x10 \x01(\x0b\x32\x1d.gtools.state.UpdateTreeStateH\x00\x12:\n\x0ftile_change_req\x18\x11 \x01(\x0b\x32\x1f.gtools.state.TileChangeRequestH\x00\x12-\n\nnpc_update\x18\x12 \x01(\x0b\x32\x17.gtools.state.NpcUpdateH\x00\x42\x08\n\x06update\"%\n\tNpcRemove\x12\n\n\x02id\x18\x01 \x01(\r\x12\x0c\n\x04type\x18\x02 \x01(\r\"`\n\x0cNpcUpdatePos\x12\n\n\x02id\x18\x06 \x01(\r\x12\x0e\n\x06param1\x18\x01 \x01(\x05\x12\x0e\n\x06param2\x18\x02 \x01(\x05\x12\x0e\n\x06param3\x18\x03 \x01(\x02\x12\t\n\x01x\x18\x04 \x01(\x02\x12\t\n\x01y\x18\x05 \x01(\x02\"\xc0\x02\n\tNpcUpdate\x12&\n\x02op\x18\x01 \x01(\x0e\x32\x1a.gtools.state.NpcUpdate.Op\x12$\n\x03npc\x18\x02 \x01(\x0b\x32\x15.gtools.growtopia.NpcH\x00\x12\x0c\n\x02id\x18\x03 \x01(\rH\x00\x12)\n\x06remove\x18\x04 \x01(\x0b\x32\x17.gtools.state.NpcRemoveH\x00\x12\x30\n\nupdate_pos\x18\x05 \x01(\x0b\x32\x1a.gtools.state.NpcUpdatePosH\x00\"o\n\x02Op\x12\x12\n\x0eOP_UNSPECIFIED\x10\x00\x12\n\n\x06OP_ADD\x10\x01\x12\r\n\tOP_REMOVE\x10\x03\x12\x11\n\rOP_RESET_TYPE\x10\x02\x12\x14\n\x10OP_UPDATE_TARGET\x10\x04\x12\x11\n\rOP_UPDATE_POS\x10\x05\x42\t\n\x07payload\"e\n\x11TileChangeRequest\x12\t\n\x01x\x18\x01 \x01(\x05\x12\t\n\x01y\x18\x02 \x01(\x05\x12\n\n\x02id\x18\x03 \x01(\r\x12\r\n\x05\x66lags\x18\x04 \x01(\r\x12\x0e\n\x06splice\x18\x06 \x01(\x08\x12\x0f\n\x07seed_id\x18\x05 \x01(\r\"\x82\x01\n\x0fUpdateTreeState\x12\t\n\x01x\x18\x01 \x01(\x05\x12\t\n\x01y\x18\x02 \x01(\x05\x12\x0f\n\x07item_id\x18\x05 \x01(\r\x12\x0f\n\x07harvest\x18\x06 \x01(\x08\x12\x1c\n\x14\x61\x64\x64_spawn_seeds_flag\x18\x03 \x01(\x08\x12\x19\n\x11\x61\x64\x64_seedling_flag\x18\x04 \x01(\x08\"e\n\x08SendLock\x12\t\n\x01x\x18\x01 \x01(\x05\x12\t\n\x01y\x18\x02 \x01(\x05\x12\x15\n\rlock_owner_id\x18\x03 \x01(\x05\x12\x14\n\x0clock_item_id\x18\x04 \x01(\r\x12\x16\n\x0etiles_affected\x18\x05 \x03(\r\"\xdd\x01\n\x0bModifyWorld\x12(\n\x02op\x18\x01 \x01(\x0e\x32\x1c.gtools.state.ModifyWorld.Op\x12&\n\x04tile\x18\x02 \x01(\x0b\x32\x16.gtools.growtopia.TileH\x00\x12\x0f\n\x05\x65xtra\x18\x03 \x01(\x0cH\x00\"`\n\x02Op\x12\x12\n\x0eOP_UNSPECIFIED\x10\x00\x12\x0e\n\nOP_REPLACE\x10\x01\x12\x0c\n\x08OP_PLACE\x10\x02\x12\x0e\n\nOP_DESTROY\x10\x03\x12\x18\n\x14OP_UPDATE_EXTRA_DATA\x10\x04\x42\t\n\x07payload\"?\n\x12ModifyWorldBatched\x12)\n\x06\x65vents\x18\x01 \x03(\x0b\x32\x19.gtools.state.ModifyWorld\"k\n\x0eSetMyTelemetry\x12\x13\n\x0bserver_ping\x18\x05 \x01(\r\x12\x13\n\x0b\x63lient_ping\x18\x08 \x01(\r\x12\x18\n\x10time_since_login\x18\x06 \x01(\x02\x12\x15\n\rtime_in_world\x18\x07 \x01(\x02\"\xd1\x01\n\nModifyItem\x12\'\n\x02op\x18\x01 \x01(\x0e\x32\x1b.gtools.state.ModifyItem.Op\x12\x0f\n\x07item_id\x18\x02 \x01(\r\x12\x0b\n\x03uid\x18\x03 \x01(\r\x12\x0e\n\x06\x61mount\x18\x06 \x01(\r\x12\t\n\x01x\x18\x04 \x01(\x02\x12\t\n\x01y\x18\x05 \x01(\x02\x12\r\n\x05\x66lags\x18\x07 \x01(\r\"G\n\x02Op\x12\x12\n\x0eOP_UNSPECIFIED\x10\x00\x12\r\n\tOP_CREATE\x10\x01\x12\x11\n\rOP_SET_AMOUNT\x10\x03\x12\x0b\n\x07OP_TAKE\x10\x04\"K\n\nEnterWorld\x12,\n\x0b\x65nter_world\x18\x01 \x01(\x0b\x32\x17.gtools.growtopia.World\x12\x0f\n\x07\x64oor_id\x18\x02 \x01(\x0c\"-\n\x0fModifyInventory\x12\n\n\x02id\x18\x01 \x01(\r\x12\x0e\n\x06to_add\x18\x02 \x01(\x05\"C\n\x0cPlayerUpdate\x12\x0e\n\x06net_id\x18\x01 \x01(\x05\x12\t\n\x01x\x18\x02 \x01(\x02\x12\t\n\x01y\x18\x03 \x01(\x02\x12\r\n\x05\x66lags\x18\x04 \x01(\r*\xf6\x03\n\x0fStateUpdateWhat\x12\x15\n\x11STATE_UNSPECIFIED\x10\x00\x12\x17\n\x13STATE_PLAYER_UPDATE\x10\x01\x12\x17\n\x13STATE_SET_MY_PLAYER\x10\x02\x12\x18\n\x14STATE_SEND_INVENTORY\x10\x03\x12\x1a\n\x16STATE_MODIFY_INVENTORY\x10\x04\x12\x15\n\x11STATE_ENTER_WORLD\x10\x05\x12\x14\n\x10STATE_EXIT_WORLD\x10\x06\x12\x15\n\x11STATE_PLAYER_JOIN\x10\x08\x12\x16\n\x12STATE_PLAYER_LEAVE\x10\t\x12\x16\n\x12STATE_MODIFY_WORLD\x10\n\x12\x1e\n\x1aSTATE_MODIFY_WORLD_BATCHED\x10\x0f\x12\x15\n\x11STATE_MODIFY_ITEM\x10\x0b\x12\x17\n\x13STATE_UPDATE_STATUS\x10\x0c\x12\x1d\n\x19STATE_SET_CHARACTER_STATE\x10\r\x12\x1a\n\x16STATE_SET_MY_TELEMETRY\x10\x0e\x12\x13\n\x0fSTATE_SEND_LOCK\x10\x10\x12\x1b\n\x17STATE_UPDATE_TREE_STATE\x10\x11\x12\x1d\n\x19STATE_TILE_CHANGE_REQUEST\x10\x12\x12\x14\n\x10STATE_NPC_UPDATE\x10\x13\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bstate.proto\x12\x0cgtools.state\x1a\x0fgrowtopia.proto\"\x88\x07\n\x0bStateUpdate\x12+\n\x04what\x18\x01 \x01(\x0e\x32\x1d.gtools.state.StateUpdateWhat\x12\x33\n\rplayer_update\x18\x02 \x01(\x0b\x32\x1a.gtools.state.PlayerUpdateH\x00\x12\x17\n\rset_my_player\x18\x03 \x01(\rH\x00\x12\x35\n\x0esend_inventory\x18\x04 \x01(\x0b\x32\x1b.gtools.growtopia.InventoryH\x00\x12\x39\n\x10modify_inventory\x18\x05 \x01(\x0b\x32\x1d.gtools.state.ModifyInventoryH\x00\x12/\n\x0b\x65nter_world\x18\x06 \x01(\x0b\x32\x18.gtools.state.EnterWorldH\x00\x12/\n\x0bplayer_join\x18\x07 \x01(\x0b\x32\x18.gtools.growtopia.PlayerH\x00\x12\x16\n\x0cplayer_leave\x18\x08 \x01(\rH\x00\x12\x31\n\x0cmodify_world\x18\r \x01(\x0b\x32\x19.gtools.state.ModifyWorldH\x00\x12@\n\x14modify_world_batched\x18\x0e \x01(\x0b\x32 .gtools.state.ModifyWorldBatchedH\x00\x12/\n\x0bmodify_item\x18\t \x01(\x0b\x32\x18.gtools.state.ModifyItemH\x00\x12\x17\n\rupdate_status\x18\n \x01(\rH\x00\x12;\n\x0f\x63haracter_state\x18\x0b \x01(\x0b\x32 .gtools.growtopia.CharacterStateH\x00\x12\x38\n\x10set_my_telemetry\x18\x0c \x01(\x0b\x32\x1c.gtools.state.SetMyTelemetryH\x00\x12+\n\tsend_lock\x18\x0f \x01(\x0b\x32\x16.gtools.state.SendLockH\x00\x12:\n\x11update_tree_state\x18\x10 \x01(\x0b\x32\x1d.gtools.state.UpdateTreeStateH\x00\x12:\n\x0ftile_change_req\x18\x11 \x01(\x0b\x32\x1f.gtools.state.TileChangeRequestH\x00\x12-\n\nnpc_update\x18\x12 \x01(\x0b\x32\x17.gtools.state.NpcUpdateH\x00\x42\x08\n\x06update\"3\n\x0eNpcResetByCond\x12\n\n\x02id\x18\x01 \x01(\r\x12\x15\n\rid_non_normal\x18\x02 \x01(\r\"`\n\x0cNpcUpdatePos\x12\n\n\x02id\x18\x06 \x01(\r\x12\x0e\n\x06param1\x18\x01 \x01(\x05\x12\x0e\n\x06param2\x18\x02 \x01(\x05\x12\x0e\n\x06param3\x18\x03 \x01(\x02\x12\t\n\x01x\x18\x04 \x01(\x02\x12\t\n\x01y\x18\x05 \x01(\x02\"\xe3\x02\n\tNpcUpdate\x12&\n\x02op\x18\x01 \x01(\x0e\x32\x1a.gtools.state.NpcUpdate.Op\x12$\n\x03npc\x18\x02 \x01(\x0b\x32\x15.gtools.growtopia.NpcH\x00\x12\x0c\n\x02id\x18\x03 \x01(\rH\x00\x12\x30\n\nupdate_pos\x18\x05 \x01(\x0b\x32\x1a.gtools.state.NpcUpdatePosH\x00\x12\x35\n\rreset_by_cond\x18\x06 \x01(\x0b\x32\x1c.gtools.state.NpcResetByCondH\x00\"\x85\x01\n\x02Op\x12\x12\n\x0eOP_UNSPECIFIED\x10\x00\x12\n\n\x06OP_ADD\x10\x01\x12\r\n\tOP_REMOVE\x10\x03\x12\x11\n\rOP_RESET_TYPE\x10\x02\x12\x14\n\x10OP_UPDATE_TARGET\x10\x04\x12\x11\n\rOP_UPDATE_POS\x10\x05\x12\x14\n\x10OP_RESET_BY_COND\x10\x06\x42\t\n\x07payload\"e\n\x11TileChangeRequest\x12\t\n\x01x\x18\x01 \x01(\x05\x12\t\n\x01y\x18\x02 \x01(\x05\x12\n\n\x02id\x18\x03 \x01(\r\x12\r\n\x05\x66lags\x18\x04 \x01(\r\x12\x0e\n\x06splice\x18\x06 \x01(\x08\x12\x0f\n\x07seed_id\x18\x05 \x01(\r\"\x82\x01\n\x0fUpdateTreeState\x12\t\n\x01x\x18\x01 \x01(\x05\x12\t\n\x01y\x18\x02 \x01(\x05\x12\x0f\n\x07item_id\x18\x05 \x01(\r\x12\x0f\n\x07harvest\x18\x06 \x01(\x08\x12\x1c\n\x14\x61\x64\x64_spawn_seeds_flag\x18\x03 \x01(\x08\x12\x19\n\x11\x61\x64\x64_seedling_flag\x18\x04 \x01(\x08\"e\n\x08SendLock\x12\t\n\x01x\x18\x01 \x01(\x05\x12\t\n\x01y\x18\x02 \x01(\x05\x12\x15\n\rlock_owner_id\x18\x03 \x01(\x05\x12\x14\n\x0clock_item_id\x18\x04 \x01(\r\x12\x16\n\x0etiles_affected\x18\x05 \x03(\r\"\xdd\x01\n\x0bModifyWorld\x12(\n\x02op\x18\x01 \x01(\x0e\x32\x1c.gtools.state.ModifyWorld.Op\x12&\n\x04tile\x18\x02 \x01(\x0b\x32\x16.gtools.growtopia.TileH\x00\x12\x0f\n\x05\x65xtra\x18\x03 \x01(\x0cH\x00\"`\n\x02Op\x12\x12\n\x0eOP_UNSPECIFIED\x10\x00\x12\x0e\n\nOP_REPLACE\x10\x01\x12\x0c\n\x08OP_PLACE\x10\x02\x12\x0e\n\nOP_DESTROY\x10\x03\x12\x18\n\x14OP_UPDATE_EXTRA_DATA\x10\x04\x42\t\n\x07payload\"?\n\x12ModifyWorldBatched\x12)\n\x06\x65vents\x18\x01 \x03(\x0b\x32\x19.gtools.state.ModifyWorld\"k\n\x0eSetMyTelemetry\x12\x13\n\x0bserver_ping\x18\x05 \x01(\r\x12\x13\n\x0b\x63lient_ping\x18\x08 \x01(\r\x12\x18\n\x10time_since_login\x18\x06 \x01(\x02\x12\x15\n\rtime_in_world\x18\x07 \x01(\x02\"\xd1\x01\n\nModifyItem\x12\'\n\x02op\x18\x01 \x01(\x0e\x32\x1b.gtools.state.ModifyItem.Op\x12\x0f\n\x07item_id\x18\x02 \x01(\r\x12\x0b\n\x03uid\x18\x03 \x01(\r\x12\x0e\n\x06\x61mount\x18\x06 \x01(\r\x12\t\n\x01x\x18\x04 \x01(\x02\x12\t\n\x01y\x18\x05 \x01(\x02\x12\r\n\x05\x66lags\x18\x07 \x01(\r\"G\n\x02Op\x12\x12\n\x0eOP_UNSPECIFIED\x10\x00\x12\r\n\tOP_CREATE\x10\x01\x12\x11\n\rOP_SET_AMOUNT\x10\x03\x12\x0b\n\x07OP_TAKE\x10\x04\"K\n\nEnterWorld\x12,\n\x0b\x65nter_world\x18\x01 \x01(\x0b\x32\x17.gtools.growtopia.World\x12\x0f\n\x07\x64oor_id\x18\x02 \x01(\x0c\"-\n\x0fModifyInventory\x12\n\n\x02id\x18\x01 \x01(\r\x12\x0e\n\x06to_add\x18\x02 \x01(\x05\"C\n\x0cPlayerUpdate\x12\x0e\n\x06net_id\x18\x01 \x01(\x05\x12\t\n\x01x\x18\x02 \x01(\x02\x12\t\n\x01y\x18\x03 \x01(\x02\x12\r\n\x05\x66lags\x18\x04 \x01(\r*\xf6\x03\n\x0fStateUpdateWhat\x12\x15\n\x11STATE_UNSPECIFIED\x10\x00\x12\x17\n\x13STATE_PLAYER_UPDATE\x10\x01\x12\x17\n\x13STATE_SET_MY_PLAYER\x10\x02\x12\x18\n\x14STATE_SEND_INVENTORY\x10\x03\x12\x1a\n\x16STATE_MODIFY_INVENTORY\x10\x04\x12\x15\n\x11STATE_ENTER_WORLD\x10\x05\x12\x14\n\x10STATE_EXIT_WORLD\x10\x06\x12\x15\n\x11STATE_PLAYER_JOIN\x10\x08\x12\x16\n\x12STATE_PLAYER_LEAVE\x10\t\x12\x16\n\x12STATE_MODIFY_WORLD\x10\n\x12\x1e\n\x1aSTATE_MODIFY_WORLD_BATCHED\x10\x0f\x12\x15\n\x11STATE_MODIFY_ITEM\x10\x0b\x12\x17\n\x13STATE_UPDATE_STATUS\x10\x0c\x12\x1d\n\x19STATE_SET_CHARACTER_STATE\x10\r\x12\x1a\n\x16STATE_SET_MY_TELEMETRY\x10\x0e\x12\x13\n\x0fSTATE_SEND_LOCK\x10\x10\x12\x1b\n\x17STATE_UPDATE_TREE_STATE\x10\x11\x12\x1d\n\x19STATE_TILE_CHANGE_REQUEST\x10\x12\x12\x14\n\x10STATE_NPC_UPDATE\x10\x13\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'state_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_STATEUPDATEWHAT']._serialized_start=2556
-  _globals['_STATEUPDATEWHAT']._serialized_end=3058
+  _globals['_STATEUPDATEWHAT']._serialized_start=2605
+  _globals['_STATEUPDATEWHAT']._serialized_end=3107
   _globals['_STATEUPDATE']._serialized_start=47
   _globals['_STATEUPDATE']._serialized_end=951
-  _globals['_NPCREMOVE']._serialized_start=953
-  _globals['_NPCREMOVE']._serialized_end=990
-  _globals['_NPCUPDATEPOS']._serialized_start=992
-  _globals['_NPCUPDATEPOS']._serialized_end=1088
-  _globals['_NPCUPDATE']._serialized_start=1091
-  _globals['_NPCUPDATE']._serialized_end=1411
-  _globals['_NPCUPDATE_OP']._serialized_start=1289
-  _globals['_NPCUPDATE_OP']._serialized_end=1400
-  _globals['_TILECHANGEREQUEST']._serialized_start=1413
-  _globals['_TILECHANGEREQUEST']._serialized_end=1514
-  _globals['_UPDATETREESTATE']._serialized_start=1517
-  _globals['_UPDATETREESTATE']._serialized_end=1647
-  _globals['_SENDLOCK']._serialized_start=1649
-  _globals['_SENDLOCK']._serialized_end=1750
-  _globals['_MODIFYWORLD']._serialized_start=1753
-  _globals['_MODIFYWORLD']._serialized_end=1974
-  _globals['_MODIFYWORLD_OP']._serialized_start=1867
-  _globals['_MODIFYWORLD_OP']._serialized_end=1963
-  _globals['_MODIFYWORLDBATCHED']._serialized_start=1976
-  _globals['_MODIFYWORLDBATCHED']._serialized_end=2039
-  _globals['_SETMYTELEMETRY']._serialized_start=2041
-  _globals['_SETMYTELEMETRY']._serialized_end=2148
-  _globals['_MODIFYITEM']._serialized_start=2151
-  _globals['_MODIFYITEM']._serialized_end=2360
-  _globals['_MODIFYITEM_OP']._serialized_start=2289
-  _globals['_MODIFYITEM_OP']._serialized_end=2360
-  _globals['_ENTERWORLD']._serialized_start=2362
-  _globals['_ENTERWORLD']._serialized_end=2437
-  _globals['_MODIFYINVENTORY']._serialized_start=2439
-  _globals['_MODIFYINVENTORY']._serialized_end=2484
-  _globals['_PLAYERUPDATE']._serialized_start=2486
-  _globals['_PLAYERUPDATE']._serialized_end=2553
+  _globals['_NPCRESETBYCOND']._serialized_start=953
+  _globals['_NPCRESETBYCOND']._serialized_end=1004
+  _globals['_NPCUPDATEPOS']._serialized_start=1006
+  _globals['_NPCUPDATEPOS']._serialized_end=1102
+  _globals['_NPCUPDATE']._serialized_start=1105
+  _globals['_NPCUPDATE']._serialized_end=1460
+  _globals['_NPCUPDATE_OP']._serialized_start=1316
+  _globals['_NPCUPDATE_OP']._serialized_end=1449
+  _globals['_TILECHANGEREQUEST']._serialized_start=1462
+  _globals['_TILECHANGEREQUEST']._serialized_end=1563
+  _globals['_UPDATETREESTATE']._serialized_start=1566
+  _globals['_UPDATETREESTATE']._serialized_end=1696
+  _globals['_SENDLOCK']._serialized_start=1698
+  _globals['_SENDLOCK']._serialized_end=1799
+  _globals['_MODIFYWORLD']._serialized_start=1802
+  _globals['_MODIFYWORLD']._serialized_end=2023
+  _globals['_MODIFYWORLD_OP']._serialized_start=1916
+  _globals['_MODIFYWORLD_OP']._serialized_end=2012
+  _globals['_MODIFYWORLDBATCHED']._serialized_start=2025
+  _globals['_MODIFYWORLDBATCHED']._serialized_end=2088
+  _globals['_SETMYTELEMETRY']._serialized_start=2090
+  _globals['_SETMYTELEMETRY']._serialized_end=2197
+  _globals['_MODIFYITEM']._serialized_start=2200
+  _globals['_MODIFYITEM']._serialized_end=2409
+  _globals['_MODIFYITEM_OP']._serialized_start=2338
+  _globals['_MODIFYITEM_OP']._serialized_end=2409
+  _globals['_ENTERWORLD']._serialized_start=2411
+  _globals['_ENTERWORLD']._serialized_end=2486
+  _globals['_MODIFYINVENTORY']._serialized_start=2488
+  _globals['_MODIFYINVENTORY']._serialized_end=2533
+  _globals['_PLAYERUPDATE']._serialized_start=2535
+  _globals['_PLAYERUPDATE']._serialized_end=2602
 # @@protoc_insertion_point(module_scope)

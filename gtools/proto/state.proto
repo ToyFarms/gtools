@@ -49,9 +49,9 @@ message StateUpdate {
   }
 }
 
-message NpcRemove {
+message NpcResetByCond {
   uint32 id = 1;
-  uint32 type = 2;
+  uint32 id_non_normal = 2;
 }
 
 message NpcUpdatePos {
@@ -71,14 +71,15 @@ message NpcUpdate {
     OP_RESET_TYPE = 2;
     OP_UPDATE_TARGET = 4;
     OP_UPDATE_POS = 5;
+    OP_RESET_BY_COND = 6;
   }
 
   Op op = 1;
   oneof payload {
     gtools.growtopia.Npc npc = 2;
     uint32 id = 3;
-    NpcRemove remove = 4;
     NpcUpdatePos update_pos = 5;
+    NpcResetByCond reset_by_cond = 6;
   }
 }
 

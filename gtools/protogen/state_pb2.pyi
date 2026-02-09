@@ -89,13 +89,13 @@ class StateUpdate(_message.Message):
     npc_update: NpcUpdate
     def __init__(self, what: _Optional[_Union[StateUpdateWhat, str]] = ..., player_update: _Optional[_Union[PlayerUpdate, _Mapping]] = ..., set_my_player: _Optional[int] = ..., send_inventory: _Optional[_Union[_growtopia_pb2.Inventory, _Mapping]] = ..., modify_inventory: _Optional[_Union[ModifyInventory, _Mapping]] = ..., enter_world: _Optional[_Union[EnterWorld, _Mapping]] = ..., player_join: _Optional[_Union[_growtopia_pb2.Player, _Mapping]] = ..., player_leave: _Optional[int] = ..., modify_world: _Optional[_Union[ModifyWorld, _Mapping]] = ..., modify_world_batched: _Optional[_Union[ModifyWorldBatched, _Mapping]] = ..., modify_item: _Optional[_Union[ModifyItem, _Mapping]] = ..., update_status: _Optional[int] = ..., character_state: _Optional[_Union[_growtopia_pb2.CharacterState, _Mapping]] = ..., set_my_telemetry: _Optional[_Union[SetMyTelemetry, _Mapping]] = ..., send_lock: _Optional[_Union[SendLock, _Mapping]] = ..., update_tree_state: _Optional[_Union[UpdateTreeState, _Mapping]] = ..., tile_change_req: _Optional[_Union[TileChangeRequest, _Mapping]] = ..., npc_update: _Optional[_Union[NpcUpdate, _Mapping]] = ...) -> None: ...
 
-class NpcRemove(_message.Message):
+class NpcResetByCond(_message.Message):
     __slots__ = ()
     ID_FIELD_NUMBER: _ClassVar[int]
-    TYPE_FIELD_NUMBER: _ClassVar[int]
+    ID_NON_NORMAL_FIELD_NUMBER: _ClassVar[int]
     id: int
-    type: int
-    def __init__(self, id: _Optional[int] = ..., type: _Optional[int] = ...) -> None: ...
+    id_non_normal: int
+    def __init__(self, id: _Optional[int] = ..., id_non_normal: _Optional[int] = ...) -> None: ...
 
 class NpcUpdatePos(_message.Message):
     __slots__ = ()
@@ -123,23 +123,25 @@ class NpcUpdate(_message.Message):
         OP_RESET_TYPE: _ClassVar[NpcUpdate.Op]
         OP_UPDATE_TARGET: _ClassVar[NpcUpdate.Op]
         OP_UPDATE_POS: _ClassVar[NpcUpdate.Op]
+        OP_RESET_BY_COND: _ClassVar[NpcUpdate.Op]
     OP_UNSPECIFIED: NpcUpdate.Op
     OP_ADD: NpcUpdate.Op
     OP_REMOVE: NpcUpdate.Op
     OP_RESET_TYPE: NpcUpdate.Op
     OP_UPDATE_TARGET: NpcUpdate.Op
     OP_UPDATE_POS: NpcUpdate.Op
+    OP_RESET_BY_COND: NpcUpdate.Op
     OP_FIELD_NUMBER: _ClassVar[int]
     NPC_FIELD_NUMBER: _ClassVar[int]
     ID_FIELD_NUMBER: _ClassVar[int]
-    REMOVE_FIELD_NUMBER: _ClassVar[int]
     UPDATE_POS_FIELD_NUMBER: _ClassVar[int]
+    RESET_BY_COND_FIELD_NUMBER: _ClassVar[int]
     op: NpcUpdate.Op
     npc: _growtopia_pb2.Npc
     id: int
-    remove: NpcRemove
     update_pos: NpcUpdatePos
-    def __init__(self, op: _Optional[_Union[NpcUpdate.Op, str]] = ..., npc: _Optional[_Union[_growtopia_pb2.Npc, _Mapping]] = ..., id: _Optional[int] = ..., remove: _Optional[_Union[NpcRemove, _Mapping]] = ..., update_pos: _Optional[_Union[NpcUpdatePos, _Mapping]] = ...) -> None: ...
+    reset_by_cond: NpcResetByCond
+    def __init__(self, op: _Optional[_Union[NpcUpdate.Op, str]] = ..., npc: _Optional[_Union[_growtopia_pb2.Npc, _Mapping]] = ..., id: _Optional[int] = ..., update_pos: _Optional[_Union[NpcUpdatePos, _Mapping]] = ..., reset_by_cond: _Optional[_Union[NpcResetByCond, _Mapping]] = ...) -> None: ...
 
 class TileChangeRequest(_message.Message):
     __slots__ = ()
