@@ -13,7 +13,7 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, Tan
 from gtools.core.growtopia.player import CharacterState, Player
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
-from gtools.core.growtopia.world import LockTile, Tile, TileExtraType, TileFlags, World
+from gtools.core.growtopia.world import LockTile, Npc, NpcState, Tile, TileExtraType, TileFlags, World
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
@@ -22,6 +22,7 @@ from gtools.protogen.state_pb2 import (
     STATE_MODIFY_INVENTORY,
     STATE_MODIFY_ITEM,
     STATE_MODIFY_WORLD,
+    STATE_NPC_UPDATE,
     STATE_PLAYER_JOIN,
     STATE_PLAYER_LEAVE,
     STATE_PLAYER_UPDATE,
@@ -37,6 +38,10 @@ from gtools.protogen.state_pb2 import (
     ModifyInventory,
     ModifyItem,
     ModifyWorld,
+    NpcRemove,
+    NpcUpdate,
+    NpcUpdatePos,
+    NpcUpdateTarget,
     PlayerUpdate,
     SendLock,
     SetMyTelemetry,
@@ -224,6 +229,130 @@ class State:
                                 ),
                             ),
                         )
+                    case TankType.NPC:
+                        match pkt.tank.animation_type:
+                            case 0:
+                                npc = Npc.deserialize(Buffer(pkt.tank.extended_data))
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_NPC_UPDATE,
+                                        npc_update=NpcUpdate(
+                                            op=NpcUpdate.OP_ADD,
+                                            npc=npc.to_proto(),
+                                        ),
+                                    ),
+                                )
+                            case 1:
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_NPC_UPDATE,
+                                        npc_update=NpcUpdate(
+                                            op=NpcUpdate.OP_RESET_STATE,
+                                            id=pkt.tank.jump_count,
+                                        ),
+                                    ),
+                                )
+                            case 2:
+                                npc = Npc()
+                                npc.state = NpcState(pkt.tank.object_type)
+                                npc.id = pkt.tank.jump_count
+                                npc.pos = vec2(pkt.tank.vector_x, pkt.tank.vector_y)
+                                npc.target_pos = vec2(pkt.tank.vector_x2, pkt.tank.vector_y2)
+                                npc.param1 = pkt.tank.int_x
+                                npc.param2 = pkt.tank.int_y
+                                npc.param3 = pkt.tank.particle_rotation
+
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_NPC_UPDATE,
+                                        npc_update=NpcUpdate(
+                                            op=NpcUpdate.OP_ADD,
+                                            npc=npc.to_proto(),
+                                        ),
+                                    ),
+                                )
+                            case 3:
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_NPC_UPDATE,
+                                        npc_update=NpcUpdate(
+                                            op=NpcUpdate.OP_UPDATE_TARGET,
+                                            update_target=NpcUpdatePos(
+                                                id=pkt.tank.jump_count,
+                                                param1=pkt.tank.int_x,
+                                                param2=pkt.tank.int_y,
+                                                param3=pkt.tank.particle_rotation,
+                                                x=pkt.tank.vector_x2,
+                                                y=pkt.tank.vector_y2,
+                                            ),
+                                        ),
+                                    ),
+                                )
+                            case 4:
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_NPC_UPDATE,
+                                        npc_update=NpcUpdate(
+                                            op=NpcUpdate.OP_REMOVE,
+                                            remove=NpcRemove(id=pkt.tank.jump_count, state=pkt.tank.object_type),
+                                        ),
+                                    ),
+                                )
+                            case 5:
+                                # send particle and play audio for GHOST_SHARK, TRAPPED_GHOST_JAR, HOMING_PROJECTILE, UNK4
+                                pass
+                            case 6:
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_NPC_UPDATE,
+                                        npc_update=NpcUpdate(
+                                            op=NpcUpdate.OP_UPDATE_POS,
+                                            update_target=NpcUpdatePos(
+                                                id=pkt.tank.jump_count,
+                                                param1=pkt.tank.int_x,
+                                                param2=pkt.tank.int_y,
+                                                param3=pkt.tank.particle_rotation,
+                                                x=pkt.tank.vector_x,
+                                                y=pkt.tank.vector_y,
+                                            ),
+                                        ),
+                                    ),
+                                )
+                            case 7:
+                                # send particle and play audio for NORMAL_FEATHER_ATTACK, ROTATING, THANKSGIVING_TURKEY, and ULT_FEATHER_ATTACK
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_NPC_UPDATE,
+                                        npc_update=NpcUpdate(
+                                            op=NpcUpdate.OP_UPDATE_POS,
+                                            update_target=NpcUpdatePos(
+                                                id=pkt.tank.jump_count,
+                                                x=pkt.tank.vector_x,
+                                                y=pkt.tank.vector_y,
+                                            ),
+                                        ),
+                                    ),
+                                )
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_NPC_UPDATE,
+                                        npc_update=NpcUpdate(
+                                            op=NpcUpdate.OP_RESET_STATE,
+                                            id=pkt.tank.jump_count,
+                                        ),
+                                    ),
+                                )
+                            case 9:
+                                # just spawning particle for THANKSGIVING_TURKEY, and ROTATING
+                                pass
                     case TankType.SEND_TILE_UPDATE_DATA:
                         tile = Tile.deserialize(Buffer(pkt.tank.extended_data))
                         tile.pos.x = pkt.tank.int_x
@@ -563,3 +692,36 @@ class State:
                         splice=upd.tile_change_req.splice,
                         seed_id=upd.tile_change_req.seed_id,
                     )
+            case StateUpdateWhat.STATE_NPC_UPDATE:
+                if not self.world:
+                    self.logger.warning("npc update, but world is not initialized")
+                    return
+
+                match upd.npc_update.op:
+                    case NpcUpdate.OP_ADD:
+                        self.world.add_npc(Npc.from_proto(upd.npc_update.npc))
+                    case NpcUpdate.OP_REMOVE:
+                        self.world.remove_npc_by_id(upd.npc_update.id)
+                    case NpcUpdate.OP_RESET_STATE:
+                        if npc := self.world.get_npc(upd.npc_update.id):
+                            npc.reset_state()
+                    case NpcUpdate.OP_UPDATE_TARGET:
+                        tgt = upd.npc_update.update_target
+                        if npc := self.world.get_npc(tgt.id):
+                            if tgt.param1 != 0:
+                                npc.param1 = tgt.param1
+                            if tgt.param2 != 0:
+                                npc.param2 = tgt.param2
+                            if tgt.param3 != 0.0:
+                                npc.param3 = tgt.param3
+                            npc.target_pos = vec2(tgt.x, tgt.y)
+                    case NpcUpdate.OP_UPDATE_POS:
+                        tgt = upd.npc_update.update_target
+                        if npc := self.world.get_npc(tgt.id):
+                            if tgt.param1 != 0:
+                                npc.param1 = tgt.param1
+                            if tgt.param2 != 0:
+                                npc.param2 = tgt.param2
+                            if tgt.param3 != 0.0:
+                                npc.param3 = tgt.param3
+                            npc.pos = vec2(tgt.x, tgt.y)

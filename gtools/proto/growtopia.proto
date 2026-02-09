@@ -124,4 +124,18 @@ message WorldInner {
 message World {
   WorldInner inner = 1;
   repeated Player player = 3;
+  repeated Npc npcs = 2;
+}
+
+message Npc {
+  uint32 id = 1;
+  uint32 state = 2;
+  float x = 3;
+  float y = 4;
+  float target_x = 5;
+  float target_y = 6;
+  int32 param1 = 7;
+  int32 param2 = 8;
+  float param3 = 9;
+  bool facing_left = 10;
 }

@@ -216,6 +216,32 @@ class World(_message.Message):
     __slots__ = ()
     INNER_FIELD_NUMBER: _ClassVar[int]
     PLAYER_FIELD_NUMBER: _ClassVar[int]
+    NPCS_FIELD_NUMBER: _ClassVar[int]
     inner: WorldInner
     player: _containers.RepeatedCompositeFieldContainer[Player]
-    def __init__(self, inner: _Optional[_Union[WorldInner, _Mapping]] = ..., player: _Optional[_Iterable[_Union[Player, _Mapping]]] = ...) -> None: ...
+    npcs: _containers.RepeatedCompositeFieldContainer[Npc]
+    def __init__(self, inner: _Optional[_Union[WorldInner, _Mapping]] = ..., player: _Optional[_Iterable[_Union[Player, _Mapping]]] = ..., npcs: _Optional[_Iterable[_Union[Npc, _Mapping]]] = ...) -> None: ...
+
+class Npc(_message.Message):
+    __slots__ = ()
+    ID_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    TARGET_X_FIELD_NUMBER: _ClassVar[int]
+    TARGET_Y_FIELD_NUMBER: _ClassVar[int]
+    PARAM1_FIELD_NUMBER: _ClassVar[int]
+    PARAM2_FIELD_NUMBER: _ClassVar[int]
+    PARAM3_FIELD_NUMBER: _ClassVar[int]
+    FACING_LEFT_FIELD_NUMBER: _ClassVar[int]
+    id: int
+    state: int
+    x: float
+    y: float
+    target_x: float
+    target_y: float
+    param1: int
+    param2: int
+    param3: float
+    facing_left: bool
+    def __init__(self, id: _Optional[int] = ..., state: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., target_x: _Optional[float] = ..., target_y: _Optional[float] = ..., param1: _Optional[int] = ..., param2: _Optional[int] = ..., param3: _Optional[float] = ..., facing_left: _Optional[bool] = ...) -> None: ...

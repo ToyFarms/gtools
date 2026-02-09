@@ -23,6 +23,7 @@ enum StateUpdateWhat {
   STATE_SEND_LOCK = 16;
   STATE_UPDATE_TREE_STATE = 17;
   STATE_TILE_CHANGE_REQUEST = 18;
+  STATE_NPC_UPDATE = 19;
 }
 
 message StateUpdate {
@@ -44,6 +45,40 @@ message StateUpdate {
     SendLock send_lock = 15;
     UpdateTreeState update_tree_state = 16;
     TileChangeRequest tile_change_req = 17;
+    NpcUpdate npc_update = 18;
+  }
+}
+
+message NpcRemove {
+  uint32 id = 1;
+  uint32 state = 2;
+}
+
+message NpcUpdatePos {
+  uint32 id = 6;
+  int32 param1 = 1;  // 0 means ignore for param
+  int32 param2 = 2;
+  float param3 = 3;
+  float x = 4;
+  float y = 5;
+}
+
+message NpcUpdate {
+  enum Op {
+    OP_UNSPECIFIED = 0;
+    OP_ADD = 1;
+    OP_REMOVE = 3;
+    OP_RESET_STATE = 2;
+    OP_UPDATE_TARGET = 4;
+    OP_UPDATE_POS = 5;
+  }
+
+  Op op = 1;
+  oneof payload {
+    gtools.growtopia.Npc npc = 2;
+    uint32 id = 3;
+    NpcRemove remove = 4;
+    NpcUpdatePos update_target = 5;
   }
 }
 

@@ -144,6 +144,20 @@ export interface WorldInner {
 export interface World {
   inner: WorldInner | undefined;
   player: Player[];
+  npcs: Npc[];
+}
+
+export interface Npc {
+  id: number;
+  state: number;
+  x: number;
+  y: number;
+  targetX: number;
+  targetY: number;
+  param1: number;
+  param2: number;
+  param3: number;
+  facingLeft: boolean;
 }
 
 function createBaseState(): State {
@@ -2092,7 +2106,7 @@ export const WorldInner: MessageFns<WorldInner> = {
 };
 
 function createBaseWorld(): World {
-  return { inner: undefined, player: [] };
+  return { inner: undefined, player: [], npcs: [] };
 }
 
 export const World: MessageFns<World> = {
@@ -2102,6 +2116,9 @@ export const World: MessageFns<World> = {
     }
     for (const v of message.player) {
       Player.encode(v!, writer.uint32(26).fork()).join();
+    }
+    for (const v of message.npcs) {
+      Npc.encode(v!, writer.uint32(18).fork()).join();
     }
     return writer;
   },
@@ -2129,6 +2146,14 @@ export const World: MessageFns<World> = {
           message.player.push(Player.decode(reader, reader.uint32()));
           continue;
         }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.npcs.push(Npc.decode(reader, reader.uint32()));
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2142,6 +2167,7 @@ export const World: MessageFns<World> = {
     return {
       inner: isSet(object.inner) ? WorldInner.fromJSON(object.inner) : undefined,
       player: globalThis.Array.isArray(object?.player) ? object.player.map((e: any) => Player.fromJSON(e)) : [],
+      npcs: globalThis.Array.isArray(object?.npcs) ? object.npcs.map((e: any) => Npc.fromJSON(e)) : [],
     };
   },
 
@@ -2152,6 +2178,9 @@ export const World: MessageFns<World> = {
     }
     if (message.player?.length) {
       obj.player = message.player.map((e) => Player.toJSON(e));
+    }
+    if (message.npcs?.length) {
+      obj.npcs = message.npcs.map((e) => Npc.toJSON(e));
     }
     return obj;
   },
@@ -2165,6 +2194,223 @@ export const World: MessageFns<World> = {
       ? WorldInner.fromPartial(object.inner)
       : undefined;
     message.player = object.player?.map((e) => Player.fromPartial(e)) || [];
+    message.npcs = object.npcs?.map((e) => Npc.fromPartial(e)) || [];
+    return message;
+  },
+};
+
+function createBaseNpc(): Npc {
+  return { id: 0, state: 0, x: 0, y: 0, targetX: 0, targetY: 0, param1: 0, param2: 0, param3: 0, facingLeft: false };
+}
+
+export const Npc: MessageFns<Npc> = {
+  encode(message: Npc, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.id !== 0) {
+      writer.uint32(8).uint32(message.id);
+    }
+    if (message.state !== 0) {
+      writer.uint32(16).uint32(message.state);
+    }
+    if (message.x !== 0) {
+      writer.uint32(29).float(message.x);
+    }
+    if (message.y !== 0) {
+      writer.uint32(37).float(message.y);
+    }
+    if (message.targetX !== 0) {
+      writer.uint32(45).float(message.targetX);
+    }
+    if (message.targetY !== 0) {
+      writer.uint32(53).float(message.targetY);
+    }
+    if (message.param1 !== 0) {
+      writer.uint32(56).int32(message.param1);
+    }
+    if (message.param2 !== 0) {
+      writer.uint32(64).int32(message.param2);
+    }
+    if (message.param3 !== 0) {
+      writer.uint32(77).float(message.param3);
+    }
+    if (message.facingLeft !== false) {
+      writer.uint32(80).bool(message.facingLeft);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): Npc {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseNpc();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.id = reader.uint32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.state = reader.uint32();
+          continue;
+        }
+        case 3: {
+          if (tag !== 29) {
+            break;
+          }
+
+          message.x = reader.float();
+          continue;
+        }
+        case 4: {
+          if (tag !== 37) {
+            break;
+          }
+
+          message.y = reader.float();
+          continue;
+        }
+        case 5: {
+          if (tag !== 45) {
+            break;
+          }
+
+          message.targetX = reader.float();
+          continue;
+        }
+        case 6: {
+          if (tag !== 53) {
+            break;
+          }
+
+          message.targetY = reader.float();
+          continue;
+        }
+        case 7: {
+          if (tag !== 56) {
+            break;
+          }
+
+          message.param1 = reader.int32();
+          continue;
+        }
+        case 8: {
+          if (tag !== 64) {
+            break;
+          }
+
+          message.param2 = reader.int32();
+          continue;
+        }
+        case 9: {
+          if (tag !== 77) {
+            break;
+          }
+
+          message.param3 = reader.float();
+          continue;
+        }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.facingLeft = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): Npc {
+    return {
+      id: isSet(object.id) ? globalThis.Number(object.id) : 0,
+      state: isSet(object.state) ? globalThis.Number(object.state) : 0,
+      x: isSet(object.x) ? globalThis.Number(object.x) : 0,
+      y: isSet(object.y) ? globalThis.Number(object.y) : 0,
+      targetX: isSet(object.targetX)
+        ? globalThis.Number(object.targetX)
+        : isSet(object.target_x)
+        ? globalThis.Number(object.target_x)
+        : 0,
+      targetY: isSet(object.targetY)
+        ? globalThis.Number(object.targetY)
+        : isSet(object.target_y)
+        ? globalThis.Number(object.target_y)
+        : 0,
+      param1: isSet(object.param1) ? globalThis.Number(object.param1) : 0,
+      param2: isSet(object.param2) ? globalThis.Number(object.param2) : 0,
+      param3: isSet(object.param3) ? globalThis.Number(object.param3) : 0,
+      facingLeft: isSet(object.facingLeft)
+        ? globalThis.Boolean(object.facingLeft)
+        : isSet(object.facing_left)
+        ? globalThis.Boolean(object.facing_left)
+        : false,
+    };
+  },
+
+  toJSON(message: Npc): unknown {
+    const obj: any = {};
+    if (message.id !== 0) {
+      obj.id = Math.round(message.id);
+    }
+    if (message.state !== 0) {
+      obj.state = Math.round(message.state);
+    }
+    if (message.x !== 0) {
+      obj.x = message.x;
+    }
+    if (message.y !== 0) {
+      obj.y = message.y;
+    }
+    if (message.targetX !== 0) {
+      obj.targetX = message.targetX;
+    }
+    if (message.targetY !== 0) {
+      obj.targetY = message.targetY;
+    }
+    if (message.param1 !== 0) {
+      obj.param1 = Math.round(message.param1);
+    }
+    if (message.param2 !== 0) {
+      obj.param2 = Math.round(message.param2);
+    }
+    if (message.param3 !== 0) {
+      obj.param3 = message.param3;
+    }
+    if (message.facingLeft !== false) {
+      obj.facingLeft = message.facingLeft;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<Npc>, I>>(base?: I): Npc {
+    return Npc.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<Npc>, I>>(object: I): Npc {
+    const message = createBaseNpc();
+    message.id = object.id ?? 0;
+    message.state = object.state ?? 0;
+    message.x = object.x ?? 0;
+    message.y = object.y ?? 0;
+    message.targetX = object.targetX ?? 0;
+    message.targetY = object.targetY ?? 0;
+    message.param1 = object.param1 ?? 0;
+    message.param2 = object.param2 ?? 0;
+    message.param3 = object.param3 ?? 0;
+    message.facingLeft = object.facingLeft ?? false;
     return message;
   },
 };

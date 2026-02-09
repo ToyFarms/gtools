@@ -28,6 +28,7 @@ class StateUpdateWhat(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     STATE_SEND_LOCK: _ClassVar[StateUpdateWhat]
     STATE_UPDATE_TREE_STATE: _ClassVar[StateUpdateWhat]
     STATE_TILE_CHANGE_REQUEST: _ClassVar[StateUpdateWhat]
+    STATE_NPC_UPDATE: _ClassVar[StateUpdateWhat]
 STATE_UNSPECIFIED: StateUpdateWhat
 STATE_PLAYER_UPDATE: StateUpdateWhat
 STATE_SET_MY_PLAYER: StateUpdateWhat
@@ -46,6 +47,7 @@ STATE_SET_MY_TELEMETRY: StateUpdateWhat
 STATE_SEND_LOCK: StateUpdateWhat
 STATE_UPDATE_TREE_STATE: StateUpdateWhat
 STATE_TILE_CHANGE_REQUEST: StateUpdateWhat
+STATE_NPC_UPDATE: StateUpdateWhat
 
 class StateUpdate(_message.Message):
     __slots__ = ()
@@ -66,6 +68,7 @@ class StateUpdate(_message.Message):
     SEND_LOCK_FIELD_NUMBER: _ClassVar[int]
     UPDATE_TREE_STATE_FIELD_NUMBER: _ClassVar[int]
     TILE_CHANGE_REQ_FIELD_NUMBER: _ClassVar[int]
+    NPC_UPDATE_FIELD_NUMBER: _ClassVar[int]
     what: StateUpdateWhat
     player_update: PlayerUpdate
     set_my_player: int
@@ -83,7 +86,60 @@ class StateUpdate(_message.Message):
     send_lock: SendLock
     update_tree_state: UpdateTreeState
     tile_change_req: TileChangeRequest
-    def __init__(self, what: _Optional[_Union[StateUpdateWhat, str]] = ..., player_update: _Optional[_Union[PlayerUpdate, _Mapping]] = ..., set_my_player: _Optional[int] = ..., send_inventory: _Optional[_Union[_growtopia_pb2.Inventory, _Mapping]] = ..., modify_inventory: _Optional[_Union[ModifyInventory, _Mapping]] = ..., enter_world: _Optional[_Union[EnterWorld, _Mapping]] = ..., player_join: _Optional[_Union[_growtopia_pb2.Player, _Mapping]] = ..., player_leave: _Optional[int] = ..., modify_world: _Optional[_Union[ModifyWorld, _Mapping]] = ..., modify_world_batched: _Optional[_Union[ModifyWorldBatched, _Mapping]] = ..., modify_item: _Optional[_Union[ModifyItem, _Mapping]] = ..., update_status: _Optional[int] = ..., character_state: _Optional[_Union[_growtopia_pb2.CharacterState, _Mapping]] = ..., set_my_telemetry: _Optional[_Union[SetMyTelemetry, _Mapping]] = ..., send_lock: _Optional[_Union[SendLock, _Mapping]] = ..., update_tree_state: _Optional[_Union[UpdateTreeState, _Mapping]] = ..., tile_change_req: _Optional[_Union[TileChangeRequest, _Mapping]] = ...) -> None: ...
+    npc_update: NpcUpdate
+    def __init__(self, what: _Optional[_Union[StateUpdateWhat, str]] = ..., player_update: _Optional[_Union[PlayerUpdate, _Mapping]] = ..., set_my_player: _Optional[int] = ..., send_inventory: _Optional[_Union[_growtopia_pb2.Inventory, _Mapping]] = ..., modify_inventory: _Optional[_Union[ModifyInventory, _Mapping]] = ..., enter_world: _Optional[_Union[EnterWorld, _Mapping]] = ..., player_join: _Optional[_Union[_growtopia_pb2.Player, _Mapping]] = ..., player_leave: _Optional[int] = ..., modify_world: _Optional[_Union[ModifyWorld, _Mapping]] = ..., modify_world_batched: _Optional[_Union[ModifyWorldBatched, _Mapping]] = ..., modify_item: _Optional[_Union[ModifyItem, _Mapping]] = ..., update_status: _Optional[int] = ..., character_state: _Optional[_Union[_growtopia_pb2.CharacterState, _Mapping]] = ..., set_my_telemetry: _Optional[_Union[SetMyTelemetry, _Mapping]] = ..., send_lock: _Optional[_Union[SendLock, _Mapping]] = ..., update_tree_state: _Optional[_Union[UpdateTreeState, _Mapping]] = ..., tile_change_req: _Optional[_Union[TileChangeRequest, _Mapping]] = ..., npc_update: _Optional[_Union[NpcUpdate, _Mapping]] = ...) -> None: ...
+
+class NpcRemove(_message.Message):
+    __slots__ = ()
+    ID_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    id: int
+    state: int
+    def __init__(self, id: _Optional[int] = ..., state: _Optional[int] = ...) -> None: ...
+
+class NpcUpdatePos(_message.Message):
+    __slots__ = ()
+    ID_FIELD_NUMBER: _ClassVar[int]
+    PARAM1_FIELD_NUMBER: _ClassVar[int]
+    PARAM2_FIELD_NUMBER: _ClassVar[int]
+    PARAM3_FIELD_NUMBER: _ClassVar[int]
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    id: int
+    param1: int
+    param2: int
+    param3: float
+    x: float
+    y: float
+    def __init__(self, id: _Optional[int] = ..., param1: _Optional[int] = ..., param2: _Optional[int] = ..., param3: _Optional[float] = ..., x: _Optional[float] = ..., y: _Optional[float] = ...) -> None: ...
+
+class NpcUpdate(_message.Message):
+    __slots__ = ()
+    class Op(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        OP_UNSPECIFIED: _ClassVar[NpcUpdate.Op]
+        OP_ADD: _ClassVar[NpcUpdate.Op]
+        OP_REMOVE: _ClassVar[NpcUpdate.Op]
+        OP_RESET_STATE: _ClassVar[NpcUpdate.Op]
+        OP_UPDATE_TARGET: _ClassVar[NpcUpdate.Op]
+        OP_UPDATE_POS: _ClassVar[NpcUpdate.Op]
+    OP_UNSPECIFIED: NpcUpdate.Op
+    OP_ADD: NpcUpdate.Op
+    OP_REMOVE: NpcUpdate.Op
+    OP_RESET_STATE: NpcUpdate.Op
+    OP_UPDATE_TARGET: NpcUpdate.Op
+    OP_UPDATE_POS: NpcUpdate.Op
+    OP_FIELD_NUMBER: _ClassVar[int]
+    NPC_FIELD_NUMBER: _ClassVar[int]
+    ID_FIELD_NUMBER: _ClassVar[int]
+    REMOVE_FIELD_NUMBER: _ClassVar[int]
+    UPDATE_TARGET_FIELD_NUMBER: _ClassVar[int]
+    op: NpcUpdate.Op
+    npc: _growtopia_pb2.Npc
+    id: int
+    remove: NpcRemove
+    update_target: NpcUpdatePos
+    def __init__(self, op: _Optional[_Union[NpcUpdate.Op, str]] = ..., npc: _Optional[_Union[_growtopia_pb2.Npc, _Mapping]] = ..., id: _Optional[int] = ..., remove: _Optional[_Union[NpcRemove, _Mapping]] = ..., update_target: _Optional[_Union[NpcUpdatePos, _Mapping]] = ...) -> None: ...
 
 class TileChangeRequest(_message.Message):
     __slots__ = ()

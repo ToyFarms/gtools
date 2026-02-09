@@ -1916,6 +1916,84 @@ class Dropped:
         )
 
 
+class NpcState(IntEnum):
+    NONE = 0
+    GHOST_SHARK = 1
+    TRAPPED_GHOST_JAR = 2  # trapped by ghost jar
+    HOMING_PROJECTILE = 3  # moves toward something
+    UNK4 = 4  # plays "audio/barf.wav"
+    DAMAGED = 5  # damaged, wait 250ms then recalculate target position
+    UNK6 = 6
+    UNK7 = 7
+    NORMAL_FEATHER_ATTACK = 8
+    ROTATING = 9  # ultra pinata
+    TRAPPED_GHOST_TRAP = 10  # trapped by ghost trap
+    NORMAL = 11  # normal ghost
+    UNK11 = 11
+    UNK12 = 12
+    UNK13 = 13
+    THANKSGIVING_TURKEY = 14
+    ULT_FEATHER_ATTACK = 15  # gold feather, will kill if collision occur
+
+
+@dataclass(slots=True)
+class Npc:
+    id: int = 0
+    state: NpcState = NpcState.NONE
+    pos: vec2 = field(default_factory=vec2)
+    target_pos: vec2 = field(default_factory=vec2)
+    param1: int = 0  # next state, scale
+    param2: int = 0  # orbit radius
+    param3: float = 0.0  # speed, orbit radius
+    facing_left: bool = False
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "Npc":
+        t = cls()
+
+        t.state = NpcState(s.read_u8())
+        t.id = s.read_u8()
+        t.pos.x = s.read_f32()
+        t.pos.y = s.read_f32()
+        t.target_pos.x = s.read_f32()
+        t.target_pos.y = s.read_f32()
+        t.param1 = s.read_i32()
+        t.param2 = s.read_i32()
+        t.param3 = s.read_f32()
+
+        return t
+
+    @classmethod
+    def from_proto(cls, proto: growtopia_pb2.Npc) -> "Npc":
+        return cls(
+            id=proto.id,
+            state=NpcState(proto.state),
+            pos=vec2(proto.x, proto.y),
+            target_pos=vec2(proto.target_x, proto.target_y),
+            param1=proto.param1,
+            param2=proto.param2,
+            param3=proto.param3,
+            facing_left=proto.facing_left,
+        )
+
+    def to_proto(self) -> growtopia_pb2.Npc:
+        return growtopia_pb2.Npc(
+            id=self.id,
+            state=self.state,
+            x=self.pos.x,
+            y=self.pos.y,
+            target_x=self.target_pos.x,
+            target_y=self.target_pos.y,
+            param1=self.param1,
+            param2=self.param2,
+            param3=self.param3,
+            facing_left=self.facing_left,
+        )
+
+    def reset_state(self) -> None:
+        self.state = NpcState.NONE
+
+
 @dataclass(slots=True)
 class World:
     id: int = 0  # u32, from int_x in tank packet
@@ -1939,6 +2017,23 @@ class World:
     player: list[Player] = field(default_factory=list)
     garbage_start: int = -1
     logger = logging.getLogger("world")
+    npcs: list[Npc] = field(default_factory=list)
+
+    def get_npc(self, id: int) -> Npc | None:
+        for npc in self.npcs:
+            if npc.id == id:
+                return npc
+
+        self.logger.warning(f"no npc with id {id} on {self.name}")
+
+    def add_npc(self, npc: Npc) -> None:
+        self.npcs.append(npc)
+
+    def remove_npc(self, npc: Npc) -> None:
+        self.npcs.remove(npc)
+
+    def remove_npc_by_id(self, id: int) -> None:
+        self.npcs = [x for x in self.npcs if x.id != id]
 
     def get_player(self, net_id: int) -> Player | None:
         for p in self.player:
@@ -2430,6 +2525,7 @@ class World:
             dropped=Dropped.from_proto(proto.inner.dropped),
             garbage_start=proto.inner.garbage_start,
             player=[Player.from_proto(x) for x in proto.player],
+            npcs=[Npc.from_proto(x) for x in proto.npcs],
         )
 
     def to_proto(self) -> growtopia_pb2.World:
@@ -2444,4 +2540,5 @@ class World:
                 garbage_start=self.garbage_start,
             ),
             player=[x.to_proto() for x in self.player],
+            npcs=[x.to_proto() for x in self.npcs],
         )

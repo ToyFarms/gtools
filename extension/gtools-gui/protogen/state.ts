@@ -6,7 +6,7 @@
 
 /* eslint-disable */
 import { BinaryReader, BinaryWriter } from "@bufbuild/protobuf/wire";
-import { CharacterState, Inventory, Player, Tile, World } from "./growtopia";
+import { CharacterState, Inventory, Npc, Player, Tile, World } from "./growtopia";
 
 export const protobufPackage = "gtools.state";
 
@@ -29,6 +29,7 @@ export enum StateUpdateWhat {
   STATE_SEND_LOCK = 16,
   STATE_UPDATE_TREE_STATE = 17,
   STATE_TILE_CHANGE_REQUEST = 18,
+  STATE_NPC_UPDATE = 19,
   UNRECOGNIZED = -1,
 }
 
@@ -88,6 +89,9 @@ export function stateUpdateWhatFromJSON(object: any): StateUpdateWhat {
     case 18:
     case "STATE_TILE_CHANGE_REQUEST":
       return StateUpdateWhat.STATE_TILE_CHANGE_REQUEST;
+    case 19:
+    case "STATE_NPC_UPDATE":
+      return StateUpdateWhat.STATE_NPC_UPDATE;
     case -1:
     case "UNRECOGNIZED":
     default:
@@ -133,6 +137,8 @@ export function stateUpdateWhatToJSON(object: StateUpdateWhat): string {
       return "STATE_UPDATE_TREE_STATE";
     case StateUpdateWhat.STATE_TILE_CHANGE_REQUEST:
       return "STATE_TILE_CHANGE_REQUEST";
+    case StateUpdateWhat.STATE_NPC_UPDATE:
+      return "STATE_NPC_UPDATE";
     case StateUpdateWhat.UNRECOGNIZED:
     default:
       return "UNRECOGNIZED";
@@ -157,6 +163,87 @@ export interface StateUpdate {
   sendLock?: SendLock | undefined;
   updateTreeState?: UpdateTreeState | undefined;
   tileChangeReq?: TileChangeRequest | undefined;
+  npcUpdate?: NpcUpdate | undefined;
+}
+
+export interface NpcRemove {
+  id: number;
+  state: number;
+}
+
+export interface NpcUpdatePos {
+  id: number;
+  /** 0 means ignore for param */
+  param1: number;
+  param2: number;
+  param3: number;
+  x: number;
+  y: number;
+}
+
+export interface NpcUpdate {
+  op: NpcUpdate_Op;
+  npc?: Npc | undefined;
+  id?: number | undefined;
+  remove?: NpcRemove | undefined;
+  updateTarget?: NpcUpdatePos | undefined;
+}
+
+export enum NpcUpdate_Op {
+  OP_UNSPECIFIED = 0,
+  OP_ADD = 1,
+  OP_REMOVE = 3,
+  OP_RESET_STATE = 2,
+  OP_UPDATE_TARGET = 4,
+  OP_UPDATE_POS = 5,
+  UNRECOGNIZED = -1,
+}
+
+export function npcUpdate_OpFromJSON(object: any): NpcUpdate_Op {
+  switch (object) {
+    case 0:
+    case "OP_UNSPECIFIED":
+      return NpcUpdate_Op.OP_UNSPECIFIED;
+    case 1:
+    case "OP_ADD":
+      return NpcUpdate_Op.OP_ADD;
+    case 3:
+    case "OP_REMOVE":
+      return NpcUpdate_Op.OP_REMOVE;
+    case 2:
+    case "OP_RESET_STATE":
+      return NpcUpdate_Op.OP_RESET_STATE;
+    case 4:
+    case "OP_UPDATE_TARGET":
+      return NpcUpdate_Op.OP_UPDATE_TARGET;
+    case 5:
+    case "OP_UPDATE_POS":
+      return NpcUpdate_Op.OP_UPDATE_POS;
+    case -1:
+    case "UNRECOGNIZED":
+    default:
+      return NpcUpdate_Op.UNRECOGNIZED;
+  }
+}
+
+export function npcUpdate_OpToJSON(object: NpcUpdate_Op): string {
+  switch (object) {
+    case NpcUpdate_Op.OP_UNSPECIFIED:
+      return "OP_UNSPECIFIED";
+    case NpcUpdate_Op.OP_ADD:
+      return "OP_ADD";
+    case NpcUpdate_Op.OP_REMOVE:
+      return "OP_REMOVE";
+    case NpcUpdate_Op.OP_RESET_STATE:
+      return "OP_RESET_STATE";
+    case NpcUpdate_Op.OP_UPDATE_TARGET:
+      return "OP_UPDATE_TARGET";
+    case NpcUpdate_Op.OP_UPDATE_POS:
+      return "OP_UPDATE_POS";
+    case NpcUpdate_Op.UNRECOGNIZED:
+    default:
+      return "UNRECOGNIZED";
+  }
 }
 
 export interface TileChangeRequest {
@@ -344,6 +431,7 @@ function createBaseStateUpdate(): StateUpdate {
     sendLock: undefined,
     updateTreeState: undefined,
     tileChangeReq: undefined,
+    npcUpdate: undefined,
   };
 }
 
@@ -399,6 +487,9 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     }
     if (message.tileChangeReq !== undefined) {
       TileChangeRequest.encode(message.tileChangeReq, writer.uint32(138).fork()).join();
+    }
+    if (message.npcUpdate !== undefined) {
+      NpcUpdate.encode(message.npcUpdate, writer.uint32(146).fork()).join();
     }
     return writer;
   },
@@ -546,6 +637,14 @@ export const StateUpdate: MessageFns<StateUpdate> = {
           message.tileChangeReq = TileChangeRequest.decode(reader, reader.uint32());
           continue;
         }
+        case 18: {
+          if (tag !== 146) {
+            break;
+          }
+
+          message.npcUpdate = NpcUpdate.decode(reader, reader.uint32());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -638,6 +737,11 @@ export const StateUpdate: MessageFns<StateUpdate> = {
         : isSet(object.tile_change_req)
         ? TileChangeRequest.fromJSON(object.tile_change_req)
         : undefined,
+      npcUpdate: isSet(object.npcUpdate)
+        ? NpcUpdate.fromJSON(object.npcUpdate)
+        : isSet(object.npc_update)
+        ? NpcUpdate.fromJSON(object.npc_update)
+        : undefined,
     };
   },
 
@@ -694,6 +798,9 @@ export const StateUpdate: MessageFns<StateUpdate> = {
     if (message.tileChangeReq !== undefined) {
       obj.tileChangeReq = TileChangeRequest.toJSON(message.tileChangeReq);
     }
+    if (message.npcUpdate !== undefined) {
+      obj.npcUpdate = NpcUpdate.toJSON(message.npcUpdate);
+    }
     return obj;
   },
 
@@ -744,6 +851,357 @@ export const StateUpdate: MessageFns<StateUpdate> = {
       : undefined;
     message.tileChangeReq = (object.tileChangeReq !== undefined && object.tileChangeReq !== null)
       ? TileChangeRequest.fromPartial(object.tileChangeReq)
+      : undefined;
+    message.npcUpdate = (object.npcUpdate !== undefined && object.npcUpdate !== null)
+      ? NpcUpdate.fromPartial(object.npcUpdate)
+      : undefined;
+    return message;
+  },
+};
+
+function createBaseNpcRemove(): NpcRemove {
+  return { id: 0, state: 0 };
+}
+
+export const NpcRemove: MessageFns<NpcRemove> = {
+  encode(message: NpcRemove, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.id !== 0) {
+      writer.uint32(8).uint32(message.id);
+    }
+    if (message.state !== 0) {
+      writer.uint32(16).uint32(message.state);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): NpcRemove {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseNpcRemove();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.id = reader.uint32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.state = reader.uint32();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): NpcRemove {
+    return {
+      id: isSet(object.id) ? globalThis.Number(object.id) : 0,
+      state: isSet(object.state) ? globalThis.Number(object.state) : 0,
+    };
+  },
+
+  toJSON(message: NpcRemove): unknown {
+    const obj: any = {};
+    if (message.id !== 0) {
+      obj.id = Math.round(message.id);
+    }
+    if (message.state !== 0) {
+      obj.state = Math.round(message.state);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<NpcRemove>, I>>(base?: I): NpcRemove {
+    return NpcRemove.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<NpcRemove>, I>>(object: I): NpcRemove {
+    const message = createBaseNpcRemove();
+    message.id = object.id ?? 0;
+    message.state = object.state ?? 0;
+    return message;
+  },
+};
+
+function createBaseNpcUpdatePos(): NpcUpdatePos {
+  return { id: 0, param1: 0, param2: 0, param3: 0, x: 0, y: 0 };
+}
+
+export const NpcUpdatePos: MessageFns<NpcUpdatePos> = {
+  encode(message: NpcUpdatePos, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.id !== 0) {
+      writer.uint32(48).uint32(message.id);
+    }
+    if (message.param1 !== 0) {
+      writer.uint32(8).int32(message.param1);
+    }
+    if (message.param2 !== 0) {
+      writer.uint32(16).int32(message.param2);
+    }
+    if (message.param3 !== 0) {
+      writer.uint32(29).float(message.param3);
+    }
+    if (message.x !== 0) {
+      writer.uint32(37).float(message.x);
+    }
+    if (message.y !== 0) {
+      writer.uint32(45).float(message.y);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): NpcUpdatePos {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseNpcUpdatePos();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.id = reader.uint32();
+          continue;
+        }
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.param1 = reader.int32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.param2 = reader.int32();
+          continue;
+        }
+        case 3: {
+          if (tag !== 29) {
+            break;
+          }
+
+          message.param3 = reader.float();
+          continue;
+        }
+        case 4: {
+          if (tag !== 37) {
+            break;
+          }
+
+          message.x = reader.float();
+          continue;
+        }
+        case 5: {
+          if (tag !== 45) {
+            break;
+          }
+
+          message.y = reader.float();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): NpcUpdatePos {
+    return {
+      id: isSet(object.id) ? globalThis.Number(object.id) : 0,
+      param1: isSet(object.param1) ? globalThis.Number(object.param1) : 0,
+      param2: isSet(object.param2) ? globalThis.Number(object.param2) : 0,
+      param3: isSet(object.param3) ? globalThis.Number(object.param3) : 0,
+      x: isSet(object.x) ? globalThis.Number(object.x) : 0,
+      y: isSet(object.y) ? globalThis.Number(object.y) : 0,
+    };
+  },
+
+  toJSON(message: NpcUpdatePos): unknown {
+    const obj: any = {};
+    if (message.id !== 0) {
+      obj.id = Math.round(message.id);
+    }
+    if (message.param1 !== 0) {
+      obj.param1 = Math.round(message.param1);
+    }
+    if (message.param2 !== 0) {
+      obj.param2 = Math.round(message.param2);
+    }
+    if (message.param3 !== 0) {
+      obj.param3 = message.param3;
+    }
+    if (message.x !== 0) {
+      obj.x = message.x;
+    }
+    if (message.y !== 0) {
+      obj.y = message.y;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<NpcUpdatePos>, I>>(base?: I): NpcUpdatePos {
+    return NpcUpdatePos.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<NpcUpdatePos>, I>>(object: I): NpcUpdatePos {
+    const message = createBaseNpcUpdatePos();
+    message.id = object.id ?? 0;
+    message.param1 = object.param1 ?? 0;
+    message.param2 = object.param2 ?? 0;
+    message.param3 = object.param3 ?? 0;
+    message.x = object.x ?? 0;
+    message.y = object.y ?? 0;
+    return message;
+  },
+};
+
+function createBaseNpcUpdate(): NpcUpdate {
+  return { op: 0, npc: undefined, id: undefined, remove: undefined, updateTarget: undefined };
+}
+
+export const NpcUpdate: MessageFns<NpcUpdate> = {
+  encode(message: NpcUpdate, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.op !== 0) {
+      writer.uint32(8).int32(message.op);
+    }
+    if (message.npc !== undefined) {
+      Npc.encode(message.npc, writer.uint32(18).fork()).join();
+    }
+    if (message.id !== undefined) {
+      writer.uint32(24).uint32(message.id);
+    }
+    if (message.remove !== undefined) {
+      NpcRemove.encode(message.remove, writer.uint32(34).fork()).join();
+    }
+    if (message.updateTarget !== undefined) {
+      NpcUpdatePos.encode(message.updateTarget, writer.uint32(42).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): NpcUpdate {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseNpcUpdate();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.op = reader.int32() as any;
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.npc = Npc.decode(reader, reader.uint32());
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.id = reader.uint32();
+          continue;
+        }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.remove = NpcRemove.decode(reader, reader.uint32());
+          continue;
+        }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.updateTarget = NpcUpdatePos.decode(reader, reader.uint32());
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): NpcUpdate {
+    return {
+      op: isSet(object.op) ? npcUpdate_OpFromJSON(object.op) : 0,
+      npc: isSet(object.npc) ? Npc.fromJSON(object.npc) : undefined,
+      id: isSet(object.id) ? globalThis.Number(object.id) : undefined,
+      remove: isSet(object.remove) ? NpcRemove.fromJSON(object.remove) : undefined,
+      updateTarget: isSet(object.updateTarget)
+        ? NpcUpdatePos.fromJSON(object.updateTarget)
+        : isSet(object.update_target)
+        ? NpcUpdatePos.fromJSON(object.update_target)
+        : undefined,
+    };
+  },
+
+  toJSON(message: NpcUpdate): unknown {
+    const obj: any = {};
+    if (message.op !== 0) {
+      obj.op = npcUpdate_OpToJSON(message.op);
+    }
+    if (message.npc !== undefined) {
+      obj.npc = Npc.toJSON(message.npc);
+    }
+    if (message.id !== undefined) {
+      obj.id = Math.round(message.id);
+    }
+    if (message.remove !== undefined) {
+      obj.remove = NpcRemove.toJSON(message.remove);
+    }
+    if (message.updateTarget !== undefined) {
+      obj.updateTarget = NpcUpdatePos.toJSON(message.updateTarget);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<NpcUpdate>, I>>(base?: I): NpcUpdate {
+    return NpcUpdate.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<NpcUpdate>, I>>(object: I): NpcUpdate {
+    const message = createBaseNpcUpdate();
+    message.op = object.op ?? 0;
+    message.npc = (object.npc !== undefined && object.npc !== null) ? Npc.fromPartial(object.npc) : undefined;
+    message.id = object.id ?? undefined;
+    message.remove = (object.remove !== undefined && object.remove !== null)
+      ? NpcRemove.fromPartial(object.remove)
+      : undefined;
+    message.updateTarget = (object.updateTarget !== undefined && object.updateTarget !== null)
+      ? NpcUpdatePos.fromPartial(object.updateTarget)
       : undefined;
     return message;
   },

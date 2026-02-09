@@ -98,10 +98,10 @@ class Buffer:
     def read_i64(self) -> int:
         return self.read_fmt("q")
 
-    def read_f32(self) -> int:
+    def read_f32(self) -> float:
         return self.read_fmt("f")
 
-    def read_f64(self) -> int:
+    def read_f64(self) -> float:
         return self.read_fmt("d")
 
     def read_bool(self) -> int:
