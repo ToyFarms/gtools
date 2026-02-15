@@ -1996,6 +1996,20 @@ class NpcType(IntEnum):
     XML_RENDERED = 21
 
 
+class NpcEvent(IntEnum):
+    FULL_STATE = 0
+    DELETE = 1
+    ADD = 2
+    MOVE = 3
+    SUCKED = 4
+    BURP = 5
+    TELEPORT = 6
+    DIE = 7
+    PUNCH = 8
+    OUCH = 9
+    ATTACK = 10
+    PREPARE_TO_ATACK = 11
+
 
 @dataclass(slots=True)
 class Npc:

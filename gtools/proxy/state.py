@@ -13,7 +13,7 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, Tan
 from gtools.core.growtopia.player import CharacterState, Player
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
-from gtools.core.growtopia.world import LockTile, Npc, NpcType, Tile, TileExtraType, TileFlags, World
+from gtools.core.growtopia.world import LockTile, Npc, NpcEvent, NpcType, Tile, TileExtraType, TileFlags, World
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
@@ -230,7 +230,7 @@ class State:
                         )
                     case TankType.NPC:
                         match pkt.tank.animation_type:
-                            case 0:
+                            case NpcEvent.FULL_STATE:
                                 buf = Buffer(pkt.tank.extended_data)
                                 for _ in range(buf.read_u8()):
                                     npc = Npc.deserialize(buf)
@@ -244,7 +244,7 @@ class State:
                                             ),
                                         ),
                                     )
-                            case 1:
+                            case NpcEvent.DELETE:
                                 self.send_state_update(
                                     broker,
                                     StateUpdate(
@@ -255,7 +255,7 @@ class State:
                                         ),
                                     ),
                                 )
-                            case 2:
+                            case NpcEvent.ADD:
                                 npc = Npc()
                                 npc.type = NpcType(pkt.tank.object_type)
                                 npc.id = pkt.tank.jump_count
@@ -275,7 +275,7 @@ class State:
                                         ),
                                     ),
                                 )
-                            case 3:
+                            case NpcEvent.MOVE:
                                 self.send_state_update(
                                     broker,
                                     StateUpdate(
@@ -293,7 +293,7 @@ class State:
                                         ),
                                     ),
                                 )
-                            case 4:
+                            case NpcEvent.SUCKED:
                                 self.send_state_update(
                                     broker,
                                     StateUpdate(
@@ -307,10 +307,10 @@ class State:
                                         ),
                                     ),
                                 )
-                            case 5:
+                            case NpcEvent.BURP:
                                 # send particle and play audio for GHOST_SHARK, TRAPPED_GHOST_JAR, HOMING_PROJECTILE, UNK4
                                 pass
-                            case 6:
+                            case NpcEvent.TELEPORT:
                                 self.send_state_update(
                                     broker,
                                     StateUpdate(
@@ -328,7 +328,7 @@ class State:
                                         ),
                                     ),
                                 )
-                            case 7:
+                            case NpcEvent.DIE:
                                 # send particle and play audio for NORMAL_FEATHER_ATTACK, ROTATING, THANKSGIVING_TURKEY, and ULT_FEATHER_ATTACK
                                 self.send_state_update(
                                     broker,
@@ -354,8 +354,14 @@ class State:
                                         ),
                                     ),
                                 )
-                            case 9:
+                            case NpcEvent.PUNCH:
+                                pass
+                            case NpcEvent.OUCH:
                                 # just spawning particle for THANKSGIVING_TURKEY, and ROTATING
+                                pass
+                            case NpcEvent.ATTACK:
+                                pass
+                            case NpcEvent.PREPARE_TO_ATACK:
                                 pass
                     case TankType.SEND_TILE_UPDATE_DATA:
                         tile = Tile.deserialize(Buffer(pkt.tank.extended_data))
@@ -711,7 +717,7 @@ class State:
                             npc.reset_type()
                     case NpcUpdate.OP_RESET_BY_COND:
                         for npc in self.world.npcs:
-                            if (npc.id == upd.npc_update.reset_by_cond.id and npc.type == NpcType.NORMAL) or npc.id == upd.npc_update.reset_by_cond.id_non_normal:
+                            if (npc.id == upd.npc_update.reset_by_cond.id and npc.type == NpcType.BOSS_GHOST) or npc.id == upd.npc_update.reset_by_cond.id_non_normal:
                                 npc.reset_type()
                     case NpcUpdate.OP_UPDATE_TARGET:
                         tgt = upd.npc_update.update_pos
