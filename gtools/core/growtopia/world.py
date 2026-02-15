@@ -1973,22 +1973,28 @@ class Dropped:
 
 class NpcType(IntEnum):
     NONE = 0
-    GHOST_SHARK = 1
-    TRAPPED_GHOST_JAR = 2  # trapped by ghost jar
-    HOMING_PROJECTILE = 3  # moves toward something
-    UNK4 = 4  # plays "audio/barf.wav"
-    DAMAGED = 5  # damaged, wait 250ms then recalculate target position
-    UNK6 = 6
-    UNK7 = 7
-    NORMAL_FEATHER_ATTACK = 8
-    ROTATING = 9  # ultra pinata
-    TRAPPED_GHOST_TRAP = 10  # trapped by ghost trap
-    NORMAL = 11  # normal ghost
-    UNK11 = 11
-    UNK12 = 12
-    UNK13 = 13
-    THANKSGIVING_TURKEY = 14
-    ULT_FEATHER_ATTACK = 15  # gold feather, will kill if collision occur
+    GHOST = 1
+    GHOST_JAR = 2
+    BEE_SWARM = 3
+    HARVEST_GHOST = 4
+    GROWGANOTH = 5
+    GHOST_SHARK = 6
+    XMAS_GHOST = 7
+    BLAST = 8
+    PINATA = 9
+    GHOST_CAPTURE_MACHINE = 10
+    BOSS_GHOST = 11
+    MIND_CONTROL_GHOST = 12
+    GHOST_BE_GONE = 13
+    HUNTED_TURKEY = 14
+    TRICKSTER = 15
+    THANKSGIVING_TURKEY_BOSS = 16
+    THANKSGIVING_TURKEY_BOSS_FEATHER_PROJECTILE = 17
+    ATTACKER_MINION_TURKEY = 18
+    BEACH_ENEMY = 19
+    XML_CONFIGURED = 20
+    XML_RENDERED = 21
+
 
 
 @dataclass(slots=True)
