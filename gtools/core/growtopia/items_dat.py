@@ -949,7 +949,7 @@ class item_database:
         def combined_scorer(
             _s1: Sequence[Hashable],
             s2: Sequence[Hashable],
-            _score_cutoff: float | None = None,
+            score_cutoff: float | None = None,
         ) -> float:
             s2 = str(s2)
             choice_normalized = s2.lower()
