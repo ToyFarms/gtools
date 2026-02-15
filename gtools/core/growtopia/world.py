@@ -93,7 +93,7 @@ from gtools.baked.items import (
 from gtools.core.buffer import Buffer
 import cbor2
 
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, item_database
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RtTexManager
@@ -2069,92 +2069,6 @@ class Npc:
         self.type = NpcType.NONE
 
 
-class WeatherType(IntEnum):
-    DEFAULT = 0
-    SUNSET = 1
-    NIGHT = 2
-    DESERT = 3
-    SUNNY = 4
-    RAINY_CITY = 5
-    HARVEST = 6
-    MARS = 7
-    SPOOKY = 8
-    MAW = 9
-    BLANK = 10
-    SNOWY = 11
-    GROWCH = 12
-    GROWCH_HAPPY = 13
-    UNDERSEA = 14
-    WARP = 15
-    COMET = 16
-    COMET2 = 17
-    PARTY = 18
-    PINEAPPLE = 19
-    SNOWY_NIGHT = 20
-    SPRING = 21
-    WOLF = 22
-    NOT_INITIALIZED = 23
-    PURPLE_HAZE = 24
-    FIRE_HAZE = 25
-    GREEN_HAZE = 26
-    AQUA_HAZE = 27
-    CUSTOM_HAZE = 28
-    CUSTOM_ITEMS = 29
-    PAGODA = 30
-    APOCALYPSE = 31
-    JUNGLE = 32
-    BALLOON_WARZ = 33
-    BACKGROUND = 34
-    AUTUMN = 35
-    HEART = 36
-    STPATRICKS = 37
-    ICE_AGE = 38
-    VOLCANO = 39
-    FLOATING_ISLANDS = 40
-    MASCOT = 41
-    DIGITAL_RAIN = 42
-    MONOCHROME = 43
-    TREASURE = 44
-    SURGERY = 45
-    BOUNTIFUL = 46
-    METEOR = 47
-    STARS = 48
-    ASCENDED = 49
-    DESTROYED = 50
-    GROWTOPIA_SIGN = 51
-    DUNGEON = 52
-    LEGENDARY_CITY = 53
-    BLOOD_DRAGON = 54
-    POP_CITY = 55
-    ANZU = 56
-    TMNT_CITY = 57
-    RAD_CITY = 58
-    PLAZA = 59
-    NEBULA = 60
-    PROTOSTAR = 61
-    DARK_MOUNTAINS = 62
-    AC15 = 63
-    MOUNT_GROWMORE = 64
-    CRACK_IN_REALITY = 65
-    LNY_NIAN = 66
-    RAYMAN_LOCK = 67
-    STEAMPUNK = 68
-    REALM_OF_SPIRITS = 69
-    BLACK_HOLE = 70
-    GEMS = 71
-    HOLIDAY_HAVEN = 72
-    FENYX_LOCK = 73
-    ENCHANTED_LOCK = 74
-    ROYAL_ENCHANTED_LOCK = 75
-    NEPTUNES_ATLANTIS = 76
-    PINUSKI_PETAL_PURRFECT_HAVEN = 77
-    CANDY_LAND = 78
-    DRAGONS_KEEP = 79
-    EMERALD_CITY = 80
-    ANCESTRAL_PLANE = 81
-    BLACK_DIGITAL_RAIN = 82
-
-
 @dataclass(slots=True)
 class World:
     id: int = 0  # u32, from int_x in tank packet
@@ -2168,9 +2082,9 @@ class World:
     tiles: list[Tile] = field(default_factory=list, repr=False)
     unk4: bytes = b"\x00" * 12
     dropped: Dropped = field(default_factory=Dropped, repr=False)
-    unk5: int = 0  # u16
-    unk6: int = 0  # u16
-    unk7: int = 0  # u16
+    default_weather: WeatherType = WeatherType.DEFAULT  # u16
+    terraform: TerraformType = TerraformType.DEFAULT  # u16
+    active_weather: WeatherType = WeatherType.DEFAULT  # u16
     unk8: int = 0  # u16
     unk9: int = 0  # u32
 
@@ -2665,9 +2579,9 @@ class World:
             with s.reversed(keep=False):
                 world.unk9 = s.read_u32()
                 world.unk8 = s.read_u16()
-                world.unk7 = s.read_u16()
-                world.unk6 = s.read_u16()
-                world.unk5 = s.read_u16()
+                world.active_weather = WeatherType(s.read_u16())
+                world.terraform = TerraformType(s.read_u16())
+                world.default_weather = WeatherType(s.read_u16())
 
                 while True:
                     item = DroppedItem()
@@ -2717,9 +2631,9 @@ class World:
 
             world.dropped.items.append(item)
 
-        world.unk5 = s.read_u16()
-        world.unk6 = s.read_u16()
-        world.unk7 = s.read_u16()
+        world.default_weather = WeatherType(s.read_u16())
+        world.terraform = TerraformType(s.read_u16())
+        world.active_weather = WeatherType(s.read_u16())
         world.unk8 = s.read_u16()
         world.unk9 = s.read_u32()
 

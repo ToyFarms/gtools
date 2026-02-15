@@ -18,6 +18,136 @@ from gtools.core.buffer import Buffer
 from gtools import setting
 
 
+class WeatherType(IntEnum):
+    DEFAULT = 0
+    SUNSET = 1
+    NIGHT = 2
+    DESERT = 3
+    SUNNY = 4
+    RAINY_CITY = 5
+    HARVEST = 6
+    MARS = 7
+    SPOOKY = 8
+    MAW = 9
+    BLANK = 10
+    SNOWY = 11
+    GROWCH = 12
+    GROWCH_HAPPY = 13
+    UNDERSEA = 14
+    WARP = 15
+    COMET = 16
+    COMET2 = 17
+    PARTY = 18
+    PINEAPPLE = 19
+    SNOWY_NIGHT = 20
+    SPRING = 21
+    WOLF = 22
+    NOT_INITIALIZED = 23
+    PURPLE_HAZE = 24
+    FIRE_HAZE = 25
+    GREEN_HAZE = 26
+    AQUA_HAZE = 27
+    CUSTOM_HAZE = 28
+    CUSTOM_ITEMS = 29
+    PAGODA = 30
+    APOCALYPSE = 31
+    JUNGLE = 32
+    BALLOON_WARZ = 33
+    BACKGROUND = 34
+    AUTUMN = 35
+    HEART = 36
+    STPATRICKS = 37
+    ICE_AGE = 38
+    VOLCANO = 39
+    FLOATING_ISLANDS = 40
+    MASCOT = 41
+    DIGITAL_RAIN = 42
+    MONOCHROME = 43
+    TREASURE = 44
+    SURGERY = 45
+    BOUNTIFUL = 46
+    METEOR = 47
+    STARS = 48
+    ASCENDED = 49
+    DESTROYED = 50
+    GROWTOPIA_SIGN = 51
+    DUNGEON = 52
+    LEGENDARY_CITY = 53
+    BLOOD_DRAGON = 54
+    POP_CITY = 55
+    ANZU = 56
+    TMNT_CITY = 57
+    RAD_CITY = 58
+    PLAZA = 59
+    NEBULA = 60
+    PROTOSTAR = 61
+    DARK_MOUNTAINS = 62
+    AC15 = 63
+    MOUNT_GROWMORE = 64
+    CRACK_IN_REALITY = 65
+    LNY_NIAN = 66
+    RAYMAN_LOCK = 67
+    STEAMPUNK = 68
+    REALM_OF_SPIRITS = 69
+    BLACK_HOLE = 70
+    GEMS = 71
+    HOLIDAY_HAVEN = 72
+    FENYX_LOCK = 73
+    ENCHANTED_LOCK = 74
+    ROYAL_ENCHANTED_LOCK = 75
+    NEPTUNES_ATLANTIS = 76
+    PINUSKI_PETAL_PURRFECT_HAVEN = 77
+    CANDY_LAND = 78
+    DRAGONS_KEEP = 79
+    EMERALD_CITY = 80
+    ANCESTRAL_PLANE = 81
+    BLACK_DIGITAL_RAIN = 82
+
+    @classmethod
+    def _missing_(cls, value: int) -> "WeatherType":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+        return obj
+
+
+class TerraformType(IntEnum):
+    DEFAULT = 0
+    BEACH = 1
+    DESERT = 2
+    HARVEST = 3
+    MARS = 4
+    EMPTY = 5
+    UNDERSEA = 6
+    CAVE = 7
+    JUNGLE = 8
+    STARSHIP_IMPERIAL_HAWK = 9
+    STARSHIP_IMPERIAL_VULTURE = 10
+    STARSHIP_IMPERIAL_FALCON = 11
+    STARSHIP_STELLARIX_STARHUNTER = 12
+    STARSHIP_STELLARIX_ASSASIN = 13
+    STARSHIP_STELLARIX_LEGION = 14
+    STARSHIP_GREEZAK_DRAGONSTAR = 15
+    STARSHIP_GREEZAK_TRIUMPH = 16
+    STARSHIP_GREEZAK_PRAETORIAN = 17
+    STARSHIP_HYPERTECH_ETRENAL = 18
+    MONOCHROME = 19
+    TREASURE = 20
+    SURGERY = 21
+    BOUNTIFUL = 22
+    MINE = 23
+    FTUE = 24
+    DUNGEON_1 = 25
+    DUNGEON_2 = 26
+    DUNGEON_3 = 27
+    DUNGEON_4 = 28
+    DUNGEON_5 = 29
+    STARSHIP_STARTREK = 30
+    STARSHIP_STARTREK_LAND = 31
+    PLAYER_FIREST_WORLD = 32
+    CANDY_LAND = 33
+
+
 class ItemFlag(IntFlag):
     NONE = 0
     FLIPPABLE = 1 << 0

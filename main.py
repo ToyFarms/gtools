@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from traceback import print_exc
+import traceback
 
 from PIL import Image
 import numpy as np
@@ -437,9 +438,9 @@ if __name__ == "__main__":
             try:
                 pkt = NetPacket.deserialize(f.read_bytes())
                 w = World.from_net(pkt.tank)
-                # print(w)
             except:
                 print(f"\x1b[31mparsing {f} failed\x1b[0m")
+                traceback.print_exc()
                 break
     elif args.cmd == "render":
         renderer = WorldRenderer()
