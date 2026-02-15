@@ -18,9 +18,6 @@ from gtools.core.buffer import Buffer
 from gtools import setting
 
 
-SECRET = b"PBG892FXX982ABC*"
-
-
 class ItemFlag(IntFlag):
     NONE = 0
     FLIPPABLE = 1 << 0
@@ -409,23 +406,25 @@ class ItemInfoFlag2(IntFlag):
     GUILD_FLAG = 1 << 10
     STARSHIP_HELM = 1 << 11
     STARSHIP_REACTOR = 1 << 12
-    STARSHIP_VIEW_SCREEN = 1 << 13
+    STARSHIP_VIEWSCREEN = 1 << 13
     SUPER_MOD = 1 << 14
     TILE_DEADLY_IF_ON = 1 << 15
-    LONG_HAND_ITEM64X32 = 1 << 16
+    LONG_HAND_ITEM64x32 = 1 << 16
     GEMLESS = 1 << 17
-    TRANSMUTABLE = 1 << 18
-    DUNGEON_ITEM = 1 << 19
-    PVE_MELEE = 1 << 20
-    PVE_RANGED = 1 << 21
-    PVE_AUTO_AIM = 1 << 22
+    CLOTHES_TRANSMUTABLE = 1 << 18
+    ILLEGAL = 1 << 19
+    ILLEGAL_INVENTORY_FLOAT = 1 << 20
+    ILLEGAL_WORLD = 1 << 21
+    UNUSED = 1 << 22
     ONE_IN_WORLD = 1 << 23
     ONLY_FOR_WORLD_OWNER = 1 << 24
     NO_UPGRADE = 1 << 25
     EXTINGUISH_FIRE = 1 << 26
     EXTINGUISH_FIRE_NO_DAMAGE = 1 << 27
     NEED_RECEPTION_DESK = 1 << 28
-    USE_PAINT = 1 << 29
+
+
+SECRET = b"PBG892FXX982ABC*"
 
 
 def _decrypt(s: bytes, item_id: int) -> bytes:
