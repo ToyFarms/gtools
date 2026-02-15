@@ -949,7 +949,7 @@ class item_database:
         def combined_scorer(
             _s1: Sequence[Hashable],
             s2: Sequence[Hashable],
-            score_cutoff: float | None = None,
+            _score_cutoff: float | None = None,
         ) -> float:
             s2 = str(s2)
             choice_normalized = s2.lower()
@@ -1051,9 +1051,29 @@ class item_database:
         return db
 
     @classmethod
-    def is_background(cls, item_id: int) -> bool:
-        return cls.get(item_id).item_type in (
+    def is_background(cls, id: int) -> bool:
+        return cls.get(id).item_type in (
             ItemInfoType.BACKGROUND,
             ItemInfoType.BACKGD_SFX_EXTRA_FRAME,
+            ItemInfoType.BACK_BOOMBOX,
             ItemInfoType.MUSICNOTE,
+        )
+
+    @classmethod
+    def is_seed(cls, id: int) -> bool:
+        return id % 2 == 1
+
+    @classmethod
+    def is_steam(cls, id: int) -> bool:
+        return item_database.get(id).item_type in (
+            ItemInfoType.STEAMPUNK,
+            ItemInfoType.STEAM_LAVA_IF_ON,
+            ItemInfoType.STEAM_ORGAN,
+        ) or id in (
+            items.STEAM_DOOR,
+            items.STEAM_LAUNCHER,
+            items.STEAM_PIPE,
+            items.SPIRIT_STORAGE_UNIT,
+            items.STEAM_SPIKES,
+            items.STEAM_LAMP,
         )

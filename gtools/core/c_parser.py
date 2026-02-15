@@ -213,9 +213,10 @@ OP_DEF = {
     "NE": (80, 80, "binary_left"),
     "AND": (70, 70, "binary_left"),
     "AMP": (70, 70, "binary_left"),
-    "CARET": (60, 60, "binary_left"),
+    "XOR": (60, 60, "binary_left"),
     "PIPE": (50, 50, "binary_left"),
     "LAND": (40, 40, "binary_left"),
+    "OR": (30, 30, "binary_left"),
     "LOR": (30, 30, "binary_left"),
     "CONDOP": (20, 19, "ternary"),
     "COLON": (19, 0, "ternary_colon"),
@@ -605,12 +606,11 @@ class CParser:
             self.i = saved
             return False
 
-        is_cast = self.peek().type not in (
+        EXCLUDED_AFTER = {
             "LBRACE",
             "EQUALS",
             "PLUSEQUAL",
             "MINUSEQUAL",
-            "TIMESEQUAL",
             "TIMESEQUAL",
             "DIVEQUAL",
             "MODEQUAL",
@@ -629,7 +629,13 @@ class CParser:
             "GE",
             "EQ",
             "NE",
-        ) and all(self.is_valid_typename(x) for x in inbetween)
+        }
+        KEYWORD_TYPES = {"IF", "ELSE", "WHILE", "FOR", "RETURN", "SWITCH", "CASE", "DEFAULT", "BREAK", "CONTINUE", "GOTO", "DO"}
+
+        peek = self.peek()
+        is_keyword = peek.type in KEYWORD_TYPES
+        is_cast = (not is_keyword) and peek.type not in EXCLUDED_AFTER and all(self.is_valid_typename(x) for x in inbetween)
+
         self.i = saved
         return is_cast
 
@@ -653,7 +659,7 @@ class CParser:
 
         if t == "LPAREN":
             # handle cast
-            if self.is_cast(context):
+            if not context.get("mandatory_paren") and self.is_cast(context):
                 self.i -= 1
                 types = self.read_inbetween("LPAREN", "RPAREN")
                 right = self.parse_expr(130, context=context)
@@ -662,6 +668,7 @@ class CParser:
                 else:
                     return right
             elif self.is_tuple(context):
+                context["mandatory_paren"] = False
                 exprs = []
                 while True:
                     exprs.append(self.parse_expr())
@@ -671,6 +678,7 @@ class CParser:
                     self.expect_and_next("COMMA")
                 return ast.Subscript(ast.Tuple(exprs), ast.Constant(-1))
             else:
+                context["mandatory_paren"] = False
                 # normal grouping
                 expr = self.parse_expr(context=context)
                 self.expect_and_next("RPAREN")

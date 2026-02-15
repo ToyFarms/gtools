@@ -1,16 +1,20 @@
-# shoutout https://github.com/CLOEI/gtworld-r/tree/284a2bb9f501e740401c4f0aa025d11adbed2b02
-
 from dataclasses import dataclass, field
 from enum import IntFlag, IntEnum
 import logging
-from typing import Iterator, Type
+from typing import Iterator, Type, overload
 
 from pyglm.glm import ivec2, vec2
 from gtools.baked.items import (
+    ANCIENT_BLOCK,
     ANGRY_ADVENTURE_GORILLA,
+    AQUA_CAVE_CRYSTAL_SEED,
     AUCTION_BLOCK,
     AUTO_SURGEON_STATION,
     BATTLE_PET_CAGE,
+    BEDROCK,
+    BEDROCK_CANDY,
+    BLANK,
+    BONE_CHECKPOINT,
     BOUNTIFUL_BAMBOO_BACKGROUND_ROOTS,
     BOUNTIFUL_BAMBOO_LADDER_ROOTS,
     BOUNTIFUL_BAMBOO_PLATFORM_ROOTS,
@@ -27,18 +31,64 @@ from gtools.baked.items import (
     BOUNTIFUL_LATTICE_FENCE_ROOTS,
     BOUNTIFUL_MONKSHOOD_ROOTS,
     BOUNTIFUL_WHITE_DOLL_S_EYES_ROOTS,
+    CAVE_COLUMN,
+    CAVE_DIRT,
+    CAVE_PLATFORM,
+    CLIMBING_BOOTS_SEED,
+    CLIMBING_WALL,
+    DARK_CAVE_BACKGROUND,
     DATA_BEDROCK,
     DATA_BEDROCK_CANDY,
     DATA_STARSHIP_HULL,
+    DECORATIVE_ROOF_DRAGON,
+    DIAMOND_REGAL_BANNISTER,
+    DIAMOND_REGAL_STAIRS,
+    DIRT,
+    DWARVEN_BACKGROUND,
     EPOCH_MACHINE,
+    FISSURE,
+    GREAT_TURRET_OF_GROWTOPIA,
+    GREAT_WALL_OF_GROWTOPIA,
+    GROWMOJI_TURKEY_SEED,
+    GUILD_FLAG_POLE_SPEAR,
+    GUILD_FLAG_POLE_WINGS,
+    GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE_SEED,
+    GUILD_FLAG_TATTERS,
     GUILD_LOCK,
+    HAUNTED_HOUSE,
     INFINITY_WEATHER_MACHINE,
     KRANKEN_S_GALACTIC_BLOCK,
+    LOVEWILLOW,
+    MAGIC_INFUSED_STONE,
+    MAGIC_INFUSED_STONE_BACKGROUND_SEED,
+    MAGIC_INFUSED_VEIN,
+    MAGIC_INFUSED_VEIN_SEED,
+    MANOR_HOUSE_SANDSTONE,
+    MANOR_HOUSE_SANDSTONE_STEPS,
+    MASTER_PENG_STONEWORK,
+    MONOCHROMATIC_BEDROCK,
+    MYSTERY_DOOR,
     OFFERING_TABLE,
     OPERATING_TABLE,
     PARTY_PROJECTOR,
+    PURE_MAGIC_ORE,
+    PURPLE_CAVE_CRYSTAL,
+    REGAL_BANNISTER,
+    REGAL_STAIRS,
+    STALACTITE,
+    STALAGMITE,
+    STEAM_LAUNCHER,
+    STEAM_PIPE,
+    STONE_PAGODA,
+    STONE_PAGODA_BASE,
+    STONE_PAGODA_ROOF_ELEMENT_SEED,
     TRANSDIMENSIONAL_VAPORIZER_RAY,
+    TWISTED_ROOF,
+    TWISTED_WINDOWS,
     WEATHER_MACHINE_BACKGROUND,
+    WEEPING_WILLOW,
+    WEEPING_WILLOW_BRANCH,
+    WEEPING_WILLOW_FOLIAGE,
 )
 from gtools.core.buffer import Buffer
 import cbor2
@@ -52,6 +102,11 @@ import numpy as np
 import numpy.typing as npt
 
 from gtools import setting
+
+
+# shoutout https://github.com/CLOEI/gtworld-r/tree/284a2bb9f501e740401c4f0aa025d11adbed2b02
+# and https://github.com/badewen/Growtopia-Things/tree/187a6b312b5e0acec24ccf6749bda113a0279e02
+# for most of these tile
 
 
 @dataclass(slots=True)
@@ -1549,7 +1604,7 @@ class PveNpcTile(TileExtra):
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "PveNpcTile":
         t = cls()
-        for i in range(3):
+        for _ in range(3):
             t.arr.append(PveNpcData.deserialize(s))
 
         return t
@@ -2086,15 +2141,26 @@ class World:
 
         return 0
 
-    def get_tile(self, pos: ivec2 | int) -> Tile | None:
-        if isinstance(pos, int):
-            pos = ivec2(pos % self.width, pos // self.width)
+    @overload
+    def get_tile(self, x: ivec2) -> Tile | None: ...
+    @overload
+    def get_tile(self, x: int) -> Tile | None: ...
+    @overload
+    def get_tile(self, x: int, y: int) -> Tile | None: ...
+
+    def get_tile(self, x: ivec2 | int, y: int | None = None) -> Tile | None:
+        if isinstance(x, int):
+            if y is None:
+                x = ivec2(x % self.width, x // self.width)
+            else:
+                x = ivec2(x, y)
+
         for tile in self.tiles:
-            if tile.pos == pos:
+            if tile.pos == x:
                 return tile
 
-        self.logger.warning(f"tile {pos} in {self.name} does not exists")
-        # raise IndexError(f"tile {pos} in {self.name} does not exists")
+        self.logger.warning(f"tile {x} in {self.name} does not exist")
+        return None
 
     def index_tile(self, pos: ivec2) -> int | None:
         for i, tile in enumerate(self.tiles):
@@ -2272,16 +2338,55 @@ class World:
             tile.bg_id = bg
         tile.bg_tex_index = connection
 
-    def update_all_connection(self) -> None:
-        # TODO: need to do ts to avoid circular import (need to integrate to this class, but its causing so much lag it needed ot be in a separate file, so the next step is to simplify the function so it can be integrated)
-        from gtools.core.growtopia.tile_connection import update_tile_connectivity
+    def update_tile_connection(self, tile: Tile) -> None:
+        item = item_database.get(tile.fg_id)
+        match item.texture_type:
+            case ItemInfoTextureType.SINGLE_FRAME_ALONE | ItemInfoTextureType.SINGLE_FRAME | ItemInfoTextureType.SMART_OUTER:
+                tile.fg_tex_index = 0
+            case ItemInfoTextureType.SMART_EDGE:
+                tile.fg_tex_index = handle_smart_edge_connection(self, tile, 0)
+            case ItemInfoTextureType.SMART_EDGE_HORIZ:
+                if item.is_seed():
+                    tile.fg_tex_index = handle_smart_edge_horiz_seed_connection(self, tile, 0)
+                else:
+                    tile.fg_tex_index = handle_smart_edge_horiz_connection(self, tile, 0)
+            case ItemInfoTextureType.SMART_CLING2:
+                tile.fg_tex_index = handle_smart_cling2_connection(self, tile, 0)
+            case ItemInfoTextureType.RANDOM:
+                if item.is_seed():
+                    tile.fg_tex_index = handle_random_seed_connection(self, tile, 0)
+                else:
+                    tile.fg_tex_index = handle_random_connection(self, tile, 0)
+            case ItemInfoTextureType.SMART_EDGE_VERT:
+                tile.fg_tex_index = handle_smart_edge_vert_connection(self, tile, 0)
+            case ItemInfoTextureType.SMART_EDGE_DIAGON:
+                tile.fg_tex_index = handle_smart_edge_diagon_connection(self, tile, 0)
 
+        item = item_database.get(tile.bg_id)
+        match item.texture_type:
+            case ItemInfoTextureType.SINGLE_FRAME_ALONE | ItemInfoTextureType.SINGLE_FRAME | ItemInfoTextureType.SMART_OUTER:
+                tile.bg_tex_index = 0
+            case ItemInfoTextureType.SMART_EDGE:
+                tile.bg_tex_index = handle_smart_edge_connection(self, tile, 1)
+            case ItemInfoTextureType.SMART_EDGE_HORIZ:
+                if item.is_seed():
+                    tile.bg_tex_index = handle_smart_edge_horiz_seed_connection(self, tile, 1)
+                else:
+                    tile.bg_tex_index = handle_smart_edge_horiz_connection(self, tile, 1)
+            case ItemInfoTextureType.SMART_CLING2:
+                tile.bg_tex_index = handle_smart_cling2_connection(self, tile, 1)
+            case ItemInfoTextureType.RANDOM:
+                tile.bg_tex_index = handle_random_connection(self, tile, 1)
+            case ItemInfoTextureType.SMART_EDGE_VERT:
+                tile.bg_tex_index = handle_smart_edge_vert_connection(self, tile, 1)
+            case ItemInfoTextureType.SMART_EDGE_DIAGON:
+                tile.bg_tex_index = handle_smart_edge_horiz_seed_connection(self, tile, 1)
+
+    def update_all_connection(self) -> None:
         for tile in self.tiles:
-            update_tile_connectivity(self, tile)
+            self.update_tile_connection(tile)
 
     def update_3x3_connection(self, tile: Tile | ivec2 | int) -> None:
-        from gtools.core.growtopia.tile_connection import update_tile_connectivity
-
         if isinstance(tile, Tile):
             pos = tile.pos
         elif isinstance(tile, int):
@@ -2292,7 +2397,7 @@ class World:
         for y in range(-1, 2):
             for x in range(-1, 2):
                 if n := self.get_tile(pos + ivec2(x, y)):
-                    update_tile_connectivity(self, n)
+                    self.update_tile_connection(n)
 
     def update_tree(self, tile: Tile, item_id: int, harvest: bool, spawn_seed_flag: bool, seedling_flag: bool) -> None:
         if not tile.extra or tile.extra.type != TileExtraType.SEED_TILE:
@@ -2542,3 +2647,1087 @@ class World:
             player=[x.to_proto() for x in self.player],
             npcs=[x.to_proto() for x in self.npcs],
         )
+
+
+def is_steam(a1: World, a2: int, a3: int, /) -> bool:
+    width: int = 0
+    v5: Tile | None = None
+    result: bool = False
+    if a2 | a3 < 0:
+        return False
+    width = a1.width
+    if width <= a2 or a1.height <= a3:
+        return False
+    v5 = a1.get_tile(a2, a3)
+    if not v5:
+        return False
+    if ((v5.front == BLANK or v5.front & 1 != 0) or ((result := True), v5.flags & TileFlags.GLUED == 0)[-1],)[-1]:
+        if item_database.is_steam(v5.front):
+            return v5.front != STEAM_LAUNCHER
+        return False
+    return result
+
+
+def tile_bg_equal(a1: World, x: int, y: int, target_id: int, flag: int, /) -> bool:
+    result: bool = False
+    width: int = 0
+    v8: Tile | None = None
+    bg_id: int = 0
+    v10: int = 0
+    result = True
+    if x | y >= 0:
+        width = a1.width
+        if width > x and a1.height > y:
+            v8 = a1.get_tile(x, y)
+            if v8:
+                bg_id = v8.bg_id
+                if not v8.bg_id:
+                    return bg_id == target_id
+                if v8.flags & TileFlags.GLUED != 0:
+                    return result
+                if not flag | target_id ^ WEEPING_WILLOW_BRANCH:
+                    if bg_id == WEEPING_WILLOW:
+                        return result
+                    return bg_id == target_id
+                v10 = flag ^ 2
+                if (target_id != HAUNTED_HOUSE or (v10 | bg_id ^ TWISTED_ROOF != 0 and bg_id != TWISTED_WINDOWS)) and (
+                    target_id != DARK_CAVE_BACKGROUND or bg_id != DWARVEN_BACKGROUND
+                ):
+                    return bg_id == target_id
+    return result
+
+
+def tile_should_connect(a1: World, x: int, y: int, id: int, flag: int, /) -> bool:
+    width: int = 0
+    v9: Tile | None = None
+    v10: int = 0
+    v11: int = 0
+    v12: bool | int = False
+    __goto_return_value = False
+
+    def __block_start():
+        nonlocal v10, v11, v12, v9, width, __goto_return_value
+        if x | y < 0:
+            __goto_return_value = True
+            return None
+        width = a1.width
+        if width <= x:
+            __goto_return_value = True
+            return None
+        if a1.height <= y:
+            __goto_return_value = True
+            return None
+        v9 = a1.get_tile(x, y)
+        if not v9:
+            __goto_return_value = True
+            return None
+        if v9.front:
+            if v9.front & 1 == 0 and v9.flags & TileFlags.GLUED != 0:
+                __goto_return_value = True
+                return None
+        if (flag != 0 and id == CAVE_DIRT) and v9.front == CAVE_COLUMN:
+            __goto_return_value = True
+            return None
+        v10 = id ^ CAVE_DIRT
+        v11 = flag ^ 2
+        if not flag ^ 2 | id ^ CAVE_DIRT:
+            if v9.front == STALAGMITE:
+                __goto_return_value = True
+                return None
+            return "LABEL_15"
+        if not v10 | flag ^ 1:
+            if v9.front == STALACTITE:
+                __goto_return_value = True
+                return None
+            return "LABEL_15"
+        v12 = flag == 0
+        if not flag | v10:
+            v12 = 1
+            if v9.front == CAVE_PLATFORM:
+                __goto_return_value = v12
+                return None
+            if v9.front >= PURPLE_CAVE_CRYSTAL and v9.front < AQUA_CAVE_CRYSTAL_SEED or (v12 and v9.front == CLIMBING_WALL):
+                __goto_return_value = True
+                return None
+            return "LABEL_61"
+        if not v11 | id ^ CAVE_COLUMN:
+            v12 = 1
+            if v9.front == CAVE_PLATFORM:
+                __goto_return_value = v12
+                return None
+            __goto_return_value = v9.front == id
+            return None
+        if id == CAVE_DIRT:
+            return "LABEL_15"
+        if id > STONE_PAGODA_ROOF_ELEMENT_SEED:
+            if id <= GROWMOJI_TURKEY_SEED:
+                if id == DECORATIVE_ROOF_DRAGON:
+                    if v9.front == STONE_PAGODA_BASE:
+                        __goto_return_value = v12
+                        return None
+                else:
+                    if id == ANCIENT_BLOCK and v9.front == MYSTERY_DOOR:
+                        __goto_return_value = True
+                        return None
+                    return "LABEL_61"
+            if id != MONOCHROMATIC_BEDROCK:
+                if id == BEDROCK_CANDY:
+                    if v9.front == DATA_BEDROCK_CANDY:
+                        __goto_return_value = True
+                        return None
+                else:
+                    if id == DATA_BEDROCK_CANDY and v9.front == BEDROCK_CANDY:
+                        __goto_return_value = True
+                        return None
+                    return "LABEL_61"
+            return "LABEL_45"
+        if id <= CLIMBING_BOOTS_SEED:
+            if id == DIRT:
+                if v9.front == FISSURE:
+                    __goto_return_value = True
+                    return None
+                return "LABEL_61"
+            if id != BEDROCK:
+                return "LABEL_61"
+            return "LABEL_45"
+        while True:
+            __switch_on0 = id
+            _switch_matched_any0 = False
+            __matched0 = False
+            if __matched0 or __switch_on0 == STEAM_PIPE:
+                if not __matched0 and __switch_on0 == STEAM_PIPE:
+                    _switch_matched_any0 = True
+                __matched0 = True
+                if item_database.is_steam(v9.front):
+                    __goto_return_value = True
+                    return None
+                break
+            if __matched0 or __switch_on0 == DATA_BEDROCK:
+                if not __matched0 and __switch_on0 == DATA_BEDROCK:
+                    _switch_matched_any0 = True
+                __matched0 = True
+                if v9.front == BEDROCK or v9.front == MONOCHROMATIC_BEDROCK:
+                    __goto_return_value = True
+                    return None
+                break
+            if __matched0 or __switch_on0 == STONE_PAGODA:
+                if not __matched0 and __switch_on0 == STONE_PAGODA:
+                    _switch_matched_any0 = True
+                __matched0 = True
+                if v9.front == MASTER_PENG_STONEWORK:
+                    __goto_return_value = True
+                    return None
+                if v9.front == STONE_PAGODA_BASE:
+                    __goto_return_value = flag != 2
+                    return None
+                break
+            break
+        if not flag:
+            if id > MAGIC_INFUSED_STONE_BACKGROUND_SEED:
+                if id == MAGIC_INFUSED_VEIN:
+                    return "LABEL_95"
+                return "LABEL_70"
+            if id != MANOR_HOUSE_SANDSTONE:
+                if id != MAGIC_INFUSED_STONE:
+                    __goto_return_value = v9.front == id
+                    return None
+                return "LABEL_79"
+            return "LABEL_81"
+        if id != GUILD_FLAG_POLE_SPEAR:
+            if id != MANOR_HOUSE_SANDSTONE:
+                if id == GUILD_FLAG_POLE_WINGS:
+                    return "LABEL_65"
+                if not v11 | id ^ 8934:
+                    v12 = 1
+                    if v9.front == WEEPING_WILLOW_FOLIAGE:
+                        __goto_return_value = v12
+                        return None
+                    __goto_return_value = v9.front == id
+                    return None
+                if not v11 | id ^ 9308:
+                    v12 = 1
+                    if v9.front == LOVEWILLOW:
+                        __goto_return_value = v12
+                        return None
+                    __goto_return_value = v9.front == id
+                    return None
+                if not v11 | id ^ 8344:
+                    v12 = 1
+                    if v9.front == BONE_CHECKPOINT:
+                        __goto_return_value = v12
+                        return None
+                    __goto_return_value = v9.front == id
+                    return None
+                if id <= MAGIC_INFUSED_VEIN_SEED:
+                    if id != MAGIC_INFUSED_STONE:
+                        if id != MAGIC_INFUSED_VEIN:
+                            __goto_return_value = v9.front == id
+                            return None
+                        return "LABEL_95"
+                    return "LABEL_79"
+                return "LABEL_70"
+            return "LABEL_81"
+        if v9.front < GUILD_FLAG_TATTERS:
+            __goto_return_value = v9.front == id
+            return None
+        v12 = 1
+        if v9.front >= GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE_SEED:
+            __goto_return_value = v9.front == id
+            return None
+        __goto_return_value = v12
+        return None
+
+    def __block_LABEL_15():
+        nonlocal v12
+        v12 = 0
+        return "LABEL_16"
+
+    def __block_LABEL_16():
+        nonlocal __goto_return_value
+        assert v9 is not None, "v9 must not be None"
+        if v9.front >= PURPLE_CAVE_CRYSTAL and v9.front < AQUA_CAVE_CRYSTAL_SEED or (v12 and v9.front == CLIMBING_WALL):
+            __goto_return_value = True
+            return None
+        return "LABEL_61"
+
+    def __block_LABEL_45():
+        nonlocal __goto_return_value
+        assert v9 is not None, "v9 must not be None"
+        if v9.front == DATA_BEDROCK:
+            __goto_return_value = True
+            return None
+        return "LABEL_61"
+
+    def __block_LABEL_61():
+        nonlocal __goto_return_value, v12
+        assert v9 is not None, "v9 must not be None"
+        if not flag:
+            if id > MAGIC_INFUSED_STONE_BACKGROUND_SEED:
+                if id == MAGIC_INFUSED_VEIN:
+                    return "LABEL_95"
+                return "LABEL_70"
+            if id != MANOR_HOUSE_SANDSTONE:
+                if id != MAGIC_INFUSED_STONE:
+                    __goto_return_value = v9.front == id
+                    return None
+                return "LABEL_79"
+            return "LABEL_81"
+        if id != GUILD_FLAG_POLE_SPEAR:
+            if id != MANOR_HOUSE_SANDSTONE:
+                if id == GUILD_FLAG_POLE_WINGS:
+                    return "LABEL_65"
+                if not v11 | id ^ 8934:
+                    v12 = 1
+                    if v9.front == WEEPING_WILLOW_FOLIAGE:
+                        __goto_return_value = v12
+                        return None
+                    __goto_return_value = v9.front == id
+                    return None
+                if not v11 | id ^ 9308:
+                    v12 = 1
+                    if v9.front == LOVEWILLOW:
+                        __goto_return_value = v12
+                        return None
+                    __goto_return_value = v9.front == id
+                    return None
+                if not v11 | id ^ 8344:
+                    v12 = 1
+                    if v9.front == BONE_CHECKPOINT:
+                        __goto_return_value = v12
+                        return None
+                    __goto_return_value = v9.front == id
+                    return None
+                if id <= MAGIC_INFUSED_VEIN_SEED:
+                    if id != MAGIC_INFUSED_STONE:
+                        if id != MAGIC_INFUSED_VEIN:
+                            __goto_return_value = v9.front == id
+                            return None
+                        return "LABEL_95"
+                    return "LABEL_79"
+                return "LABEL_70"
+            return "LABEL_81"
+        return "LABEL_65"
+
+    def __block_LABEL_65():
+        nonlocal __goto_return_value, v12
+        assert v9 is not None, "v9 must not be None"
+        if v9.front < GUILD_FLAG_TATTERS:
+            __goto_return_value = v9.front == id
+            return None
+        v12 = 1
+        if v9.front >= GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE_SEED:
+            __goto_return_value = v9.front == id
+            return None
+        __goto_return_value = v12
+        return None
+
+    def __block_LABEL_70():
+        nonlocal __goto_return_value, v12
+        assert v9 is not None, "v9 must not be None"
+        if id != PURE_MAGIC_ORE:
+            if id != GREAT_WALL_OF_GROWTOPIA:
+                __goto_return_value = v9.front == id
+                return None
+            v12 = 1
+            if v9.front != GREAT_TURRET_OF_GROWTOPIA:
+                __goto_return_value = v9.front == id
+                return None
+            __goto_return_value = v12
+            return None
+        if v9.front == MAGIC_INFUSED_STONE:
+            __goto_return_value = True
+            return None
+        return "LABEL_87"
+
+    def __block_LABEL_79():
+        nonlocal __goto_return_value
+        assert v9 is not None, "v9 must not be None"
+        if v9.front == PURE_MAGIC_ORE:
+            __goto_return_value = True
+            return None
+        return "LABEL_87"
+
+    def __block_LABEL_81():
+        nonlocal __goto_return_value, v12
+        assert v9 is not None, "v9 must not be None"
+        v12 = 1
+        if v9.front == MANOR_HOUSE_SANDSTONE_STEPS:
+            __goto_return_value = v12
+            return None
+        __goto_return_value = v9.front == id
+        return None
+
+    def __block_LABEL_87():
+        nonlocal __goto_return_value, v12
+        assert v9 is not None, "v9 must not be None"
+        v12 = 1
+        if v9.front == MAGIC_INFUSED_VEIN:
+            __goto_return_value = v12
+            return None
+        __goto_return_value = v9.front == id
+        return None
+
+    def __block_LABEL_95():
+        nonlocal __goto_return_value, v12
+        assert v9 is not None, "v9 must not be None"
+        if v9.front != PURE_MAGIC_ORE:
+            v12 = 1
+            if v9.front == MAGIC_INFUSED_STONE:
+                __goto_return_value = v12
+                return None
+            __goto_return_value = v9.front == id
+            return None
+        __goto_return_value = True
+        return None
+
+    __goto_label = "start"
+    while True:
+        if __goto_label == "start":
+            __goto_label = __block_start()
+        elif __goto_label == "LABEL_15":
+            __goto_label = __block_LABEL_15()
+        elif __goto_label == "LABEL_16":
+            __goto_label = __block_LABEL_16()
+        elif __goto_label == "LABEL_45":
+            __goto_label = __block_LABEL_45()
+        elif __goto_label == "LABEL_61":
+            __goto_label = __block_LABEL_61()
+        elif __goto_label == "LABEL_65":
+            __goto_label = __block_LABEL_65()
+        elif __goto_label == "LABEL_70":
+            __goto_label = __block_LABEL_70()
+        elif __goto_label == "LABEL_79":
+            __goto_label = __block_LABEL_79()
+        elif __goto_label == "LABEL_81":
+            __goto_label = __block_LABEL_81()
+        elif __goto_label == "LABEL_87":
+            __goto_label = __block_LABEL_87()
+        elif __goto_label == "LABEL_95":
+            __goto_label = __block_LABEL_95()
+        else:
+            break
+        if __goto_label is None:
+            break
+    return __goto_return_value
+
+
+def handle_smart_edge_connection(world: World, a2: Tile | None, mode: int, /) -> int:
+    x: int = 0
+    y: int = 0
+    x_plus_1: int = 0
+    bg_id: int = 0
+    x_min_1: int = 0
+    y_min_1_1: int = 0
+    v9: bool | int = False
+    v10: bool | int = False
+    bg_id_1: int = 0
+    v12: bool | int = False
+    v13: bool | int = False
+    v14: int = 0
+    y_min_1: int = 0
+    fg_or_bg: int = 0
+    v17: int = 0
+    v18: int = 0
+    v19: int = 0
+    v20: int = 0
+    v21: int = 0
+    v22: int = 0
+    v23: int = 0
+    v24: int = 0
+    v25: int = 0
+    v26: bool | int = False
+    v27: bool | int = False
+    v28: bool | int = False
+    v29: bool | int = False
+    v30: int = 0
+    v31: int = 0
+    v32: bool | int = False
+    v33: int = 0
+    v34: bool | int = False
+    v35: bool | int = False
+    v36: int = 0
+    x_1: int = 0
+    x_plus_1_1: int = 0
+    v40: bool | int = False
+    should_connect: bool | int = False
+    v42: bool | int = False
+    v43: bool | int = False
+    v44: bool | int = False
+    v45: bool | int = False
+    __goto_return_value: int = 0
+
+    def __block_start():
+        nonlocal fg_or_bg, should_connect, bg_id, bg_id_1, v10, v12, v13, v14, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v40, v42, v43, v44, v45, v9, x, x_1, x_min_1, x_plus_1, x_plus_1_1, y, y_min_1, y_min_1_1, __goto_return_value
+        if not a2:
+            __goto_return_value = 12
+            return None
+        x = a2.pos.x
+        y = a2.pos.y
+        x_plus_1 = x + 1
+        x_plus_1_1 = x + 1
+        if mode == 2:
+            should_connect = is_steam(world, x_plus_1, y)
+            v45 = is_steam(world, x_plus_1, y + 1)
+            v42 = is_steam(world, x, y + 1)
+            v40 = is_steam(world, x - 1, y + 1)
+            v12 = is_steam(world, x - 1, y)
+            y_min_1 = y - 1
+            v9 = is_steam(world, x - 1, y_min_1)
+            v10 = is_steam(world, x, y_min_1)
+            v13 = is_steam(world, x_plus_1_1, y_min_1)
+        else:
+            x_1 = a2.pos.x
+            if mode == 1:
+                bg_id = a2.bg_id
+                should_connect = tile_bg_equal(world, x_plus_1, y, bg_id, 0)
+                v45 = tile_bg_equal(world, x_plus_1, y + 1, bg_id, 0)
+                v42 = tile_bg_equal(world, x, y + 1, bg_id, 0)
+                x_min_1 = x - 1
+                v40 = tile_bg_equal(world, x_min_1, y + 1, bg_id, 0)
+                v43 = tile_bg_equal(world, x_min_1, y, bg_id, 0)
+                y_min_1_1 = y - 1
+                v9 = tile_bg_equal(world, x_min_1, y_min_1_1, bg_id, 0)
+                v10 = tile_bg_equal(world, x_1, y_min_1_1, bg_id, 0)
+                bg_id_1 = bg_id
+                v12 = v43
+                v13 = tile_bg_equal(world, x_plus_1_1, y_min_1_1, bg_id_1, 0)
+            else:
+                fg_or_bg = a2.front
+                should_connect = tile_should_connect(world, x_plus_1, y, fg_or_bg, 0)
+                v17 = a2.front
+                v45 = tile_should_connect(world, x_plus_1, y + 1, v17, 0)
+                v18 = a2.front
+                v42 = tile_should_connect(world, x, y + 1, v18, 0)
+                v19 = x - 1
+                v20 = a2.front
+                v40 = tile_should_connect(world, v19, y + 1, v20, 0)
+                v21 = a2.front
+                v44 = tile_should_connect(world, v19, y, v21, 0)
+                v22 = y - 1
+                v23 = a2.front
+                v9 = tile_should_connect(world, v19, v22, v23, 0)
+                v24 = a2.front
+                v10 = tile_should_connect(world, x_1, v22, v24, 0)
+                v12 = v44
+                v25 = a2.front
+                v13 = tile_should_connect(world, x_plus_1_1, v22, v25, 0)
+        v26 = v42 and should_connect
+        v27 = (v12 and v42) and should_connect
+        if not v27 or not v10:
+            if v27:
+                v14 = 1
+                if v45 and v40:
+                    __goto_return_value = v14
+                    return None
+                v31 = v40 ^ 39
+                v32 = not v45
+                v14 = 37
+                return "LABEL_26"
+            if (v10 and v12) and should_connect:
+                v14 = 2
+                if v13 and v9:
+                    __goto_return_value = v14
+                    return None
+                v33 = 42 - v9
+                v34 = not v13
+                v14 = 40
+                return "LABEL_32"
+            if v10 and v26:
+                v14 = 3
+                if v45 and v13:
+                    __goto_return_value = v14
+                    return None
+                v31 = v13 ^ 33
+                v32 = not v45
+                v14 = 31
+                return "LABEL_26"
+            if (v10 and v12) and v42:
+                v14 = 4
+                if v9 and v40:
+                    __goto_return_value = v14
+                    return None
+                v33 = 36 - v9
+                v34 = not v40
+                v14 = 34
+                return "LABEL_32"
+            if v26:
+                v35 = not v45
+                v36 = 5
+                v14 = 45
+            else:
+                v14 = 28
+                if v12 and should_connect:
+                    __goto_return_value = v14
+                    return None
+                if v10 and should_connect:
+                    v35 = not v13
+                    v36 = 7
+                    v14 = 43
+                elif v12 and v42:
+                    v35 = not v40
+                    v36 = 6
+                    v14 = 46
+                else:
+                    v14 = 9
+                    if v10 and v42:
+                        __goto_return_value = v14
+                        return None
+                    if not v10 or not v12:
+                        v14 = 10
+                        if should_connect:
+                            v14 = 29
+                        if should_connect or v42:
+                            __goto_return_value = v14
+                            return None
+                        v33 = 12 - v10
+                        v34 = not v12
+                        v14 = 30
+                        if v34:
+                            __goto_return_value = v33
+                            return None
+                        __goto_return_value = v14
+                        return None
+                    v35 = not v9
+                    v36 = 8
+                    v14 = 44
+            if not v35:
+                __goto_return_value = v36
+                return None
+            __goto_return_value = v14
+            return None
+        v28 = v40 and v45
+        v14 = 0
+        if not v13:
+            v14 = 14
+        if not v9 or not v28:
+            v14 = 13
+            if not v13 or not v28:
+                v14 = 15
+                if (not v13 or not v9) or not v45:
+                    v29 = v28 or (v9 and v40)
+                    v30 = 3 * (not v28) + 17
+                    v14 = 16
+                    if not v13:
+                        v14 = v30
+                    if not v9 or not v40:
+                        v14 = v30
+                    if not v29:
+                        v14 = 18
+                        if not v13 or not v9:
+                            if v13 and v45 or (v9 and v45):
+                                __goto_return_value = 3 * (not v13 or not v45) + 19
+                                return None
+                            v14 = 21
+                            if not v13 or not v40:
+                                v14 = v45 + 25
+                            if not v45 and (not v40):
+                                v31 = 3 * (not v13) + 24
+                                v32 = not v9
+                                v14 = 23
+                                return "LABEL_26"
+        __goto_return_value = v14
+        return None
+
+    def __block_LABEL_26():
+        nonlocal __goto_return_value
+        if v32:
+            __goto_return_value = v31
+            return None
+        __goto_return_value = v14
+        return None
+
+    def __block_LABEL_32():
+        nonlocal __goto_return_value
+        if v34:
+            __goto_return_value = v33
+            return None
+        __goto_return_value = v14
+        return None
+
+    __goto_label = "start"
+    while True:
+        if __goto_label == "start":
+            __goto_label = __block_start()
+        elif __goto_label == "LABEL_26":
+            __goto_label = __block_LABEL_26()
+        elif __goto_label == "LABEL_32":
+            __goto_label = __block_LABEL_32()
+        else:
+            break
+        if __goto_label is None:
+            break
+    return __goto_return_value
+
+
+def handle_smart_edge_horiz_seed_connection(world: World, tile: Tile, mode: int, /) -> int:
+    x: int = 0
+    y: int = 0
+    flags: int = 0
+    v6: int = 0
+    bg_id: int = 0
+    v8: int = 0
+    v9: int = 0
+    can_connect: bool | int = False
+    v11: int = 0
+    fg_or_bg: int = 0
+    v13: int = 0
+    v14: int = 0
+    v15: int = 0
+    v16: int = 0
+    v17: int = 0
+    v18: int = 0
+    v19: bool | int = False
+    x = tile.pos.x
+    y = tile.pos.y
+    if mode:
+        flags = tile.flags
+        v6 = (flags & TileFlags.FLIPPED_X) >> 5
+        bg_id = tile.bg_id
+        v8 = bg_can_connect(world, x + 1, y, bg_id, v6)
+        v9 = bg_id
+        can_connect = v8
+        v11 = bg_can_connect(world, x - 1, y, v9, v6)
+    else:
+        fg_or_bg = tile.front
+        can_connect = fg_can_connect(world, x + 1, y, fg_or_bg, (tile.flags & TileFlags.FLIPPED_X) >> 5)
+        v13 = tile.pos.x - 1
+        v14 = tile.pos.y
+        v15 = tile.front
+        v11 = fg_can_connect(world, v13, v14, v15, (tile.flags & TileFlags.FLIPPED_X) >> 5)
+        flags = tile.flags
+    v16 = v11 & can_connect
+    v17 = 1
+    if flags & TileFlags.FLIPPED_X != 0:
+        if v16:
+            return v17
+        v18 = 3 * (v11 ^ 1)
+        v19 = not can_connect
+        v17 = 2
+    else:
+        if v16:
+            return v17
+        v18 = v11 ^ 3
+        v17 = 0
+        v19 = not can_connect
+    if v19:
+        return v18
+    return v17
+
+
+def bg_can_connect(world: World, x: int, y: int, target: int, flags: int, /) -> int:
+    result: int = 0
+    width: int = 0
+    v8: Tile | None = None
+    result = 1
+    if x | y >= 0:
+        width = world.width
+        if width > x and world.height > y:
+            v8 = world.get_tile(x, y)
+            if v8:
+                if not v8.bg_id or v8.flags & TileFlags.GLUED == 0:
+                    if v8.bg_id == target:
+                        return flags ^ (v8.flags & TileFlags.FLIPPED_X == 0)
+                    else:
+                        return 0
+    return result
+
+
+def fg_can_connect(world: World, x: int, y: int, target: int, flags: int, /) -> int:
+    v5: bool | int = False
+    width: int = 0
+    v10: Tile | None = None
+    v5 = 1
+    if x | y >= 0:
+        width = world.width
+        if width > x and world.height > y:
+            v10 = world.get_tile(x, y)
+            if v10:
+                if (v10.front == BLANK or v10.front & 1 != 0) or v10.flags & TileFlags.GLUED == 0:
+                    if v10.front == target:
+                        return flags ^ (v10.flags & TileFlags.FLIPPED_X == 0)
+                    else:
+                        return 0
+    return v5
+
+
+def handle_smart_edge_horiz_connection(world: World, tile: Tile, mode: int, /) -> int:
+    x: int = 0
+    v4: int = 0
+    y: int = 0
+    should_connect: bool | int = False
+    v8: bool | int = False
+    fg_or_bg: int = 0
+    v10: int = 0
+    v11: int = 0
+    v12: int = 0
+    result: int = 0
+    v14: bool | int = False
+    v15: bool | int = False
+    v16: bool | int = False
+    v17: bool | int = False
+    bg_id: int = 0
+    x = tile.pos.x
+    v4 = x + 1
+    y = tile.pos.y
+    if mode:
+        bg_id = tile.bg_id
+        should_connect = tile_bg_equal(world, v4, y, bg_id, 0)
+        v8 = tile_bg_equal(world, x - 1, y, bg_id, 0)
+    else:
+        fg_or_bg = tile.front
+        should_connect = tile_should_connect(world, v4, y, fg_or_bg, 0)
+        v10 = tile.pos.x - 1
+        v11 = tile.pos.y
+        v12 = tile.front
+        v8 = tile_should_connect(world, v10, v11, v12, 0)
+    if (not should_connect or ((result := 1), not v8)[-1],)[-1]:
+        if should_connect:
+            if (tile.front != REGAL_STAIRS or ((v14 := tile_should_connect(world, tile.pos.x, tile.pos.y - 1, REGAL_BANNISTER, 0)), (result := 4), not v14)[-1],)[-1]:
+                if tile.front != DIAMOND_REGAL_STAIRS:
+                    return 0
+                v15 = tile_should_connect(world, tile.pos.x, tile.pos.y - 1, DIAMOND_REGAL_BANNISTER, 0)
+                result = 4
+                if not v15:
+                    return 0
+        else:
+            result = 3
+            if v8:
+                if (tile.front != REGAL_STAIRS or ((v16 := tile_should_connect(world, tile.pos.x, tile.pos.y - 1, REGAL_BANNISTER, 0)), (result := 5), not v16)[-1],)[-1]:
+                    if tile.front != DIAMOND_REGAL_STAIRS:
+                        return 2
+                    v17 = tile_should_connect(world, tile.pos.x, tile.pos.y - 1, DIAMOND_REGAL_BANNISTER, 0)
+                    result = 5
+                    if not v17:
+                        return 2
+    return result
+
+
+def handle_smart_cling2_connection(world: World, tile: Tile, mode: int, /) -> int:
+    x: int = 0
+    y: int = 0
+    v5: int = 0
+    bg_id: int = 0
+    v7: bool | int = False
+    v8: bool | int = False
+    fg_or_bg: int = 0
+    v10: int = 0
+    v11: int = 0
+    v12: int = 0
+    v13: bool | int = False
+    v14: int = 0
+    v15: bool | int = False
+    v16: bool | int = False
+    v17: int = 0
+    v18: bool | int = False
+    should_connect: bool | int = False
+    v21: bool | int = False
+    x = tile.pos.x
+    y = tile.pos.y
+    v5 = x + 1
+    if mode:
+        bg_id = tile.bg_id
+        should_connect = tile_bg_equal(world, v5, y, bg_id, 0)
+        v21 = tile_bg_equal(world, x, y + 1, bg_id, 1)
+        v7 = tile_bg_equal(world, x - 1, y, bg_id, 0)
+        v8 = tile_bg_equal(world, x, y - 1, bg_id, 2)
+    else:
+        fg_or_bg = tile.front
+        should_connect = tile_should_connect(world, v5, y, fg_or_bg, 0)
+        v10 = tile.front
+        v21 = tile_should_connect(world, x, y + 1, v10, 1)
+        v11 = tile.front
+        v7 = tile_should_connect(world, x - 1, y, v11, 0)
+        v12 = tile.front
+        v8 = tile_should_connect(world, x, y - 1, v12, 2)
+    v13 = v21 and should_connect
+    if (v7 and v21) and should_connect:
+        return ((not v8 or not v7) or not v21) or not should_connect
+    else:
+        v14 = 2
+        if (not v8 or not v7) or not should_connect:
+            v14 = 3
+            if not v8 or not v13:
+                v15 = (v8 and v7) and v21
+                v16 = (v15 or v13) or (v7 and should_connect)
+                v17 = 8 * (not v13) + 5
+                v18 = not v15
+                v14 = 4
+                if v18:
+                    v14 = v17
+                if not v16:
+                    if v8 and should_connect or (v7 and v21):
+                        return (v8 and should_connect) | 6
+                    else:
+                        v14 = 9
+                        if not v8 or not v21:
+                            v14 = 8
+                            if not v8 or not v7:
+                                v14 = 4 * should_connect + 10
+                            if ((not v8 or not v7) and (not should_connect)) and (not v21):
+                                v14 = 15
+                                if not v7:
+                                    return 12 - v8
+    return v14
+
+
+def handle_random_seed_connection(world: World, tile: Tile, mode: int, /) -> int:
+    x: int = 0
+    y: int = 0
+    v5: int = 0
+    bg_id: int = 0
+    can_connect: int = 0
+    v8: int = 0
+    v9: bool | int = False
+    v10: int = 0
+    fg_or_bg: int = 0
+    v12: int = 0
+    v13: int = 0
+    v14: int = 0
+    v15: int = 0
+    result: int = 0
+    x = tile.pos.x
+    y = tile.pos.y
+    if mode:
+        v5 = (tile.flags & TileFlags.FLIPPED_X) >> 5
+        bg_id = tile.bg_id
+        can_connect = bg_can_connect(world, tile.pos.x, y - 1, bg_id, v5)
+        v8 = bg_id
+        v9 = can_connect
+        v10 = bg_can_connect(world, x, y + 1, v8, v5)
+    else:
+        fg_or_bg = tile.front
+        v9 = fg_can_connect(world, x, y - 1, fg_or_bg, (tile.flags & TileFlags.FLIPPED_X) >> 5)
+        v12 = tile.pos.x
+        v13 = tile.pos.y + 1
+        v14 = tile.front
+        v10 = fg_can_connect(world, v12, v13, v14, (tile.flags & TileFlags.FLIPPED_X) >> 5)
+    v15 = v10
+    result = v10 ^ 3
+    if v9:
+        return v15
+    return result
+
+
+def handle_random_connection(world: World, tile: Tile, mode: int, /) -> int:
+    x: int = 0
+    y: int = 0
+    v5: int = 0
+    bg_id: int = 0
+    should_connect: bool | int = False
+    v8: bool | int = False
+    fg_or_bg: int = 0
+    v10: int = 0
+    v11: int = 0
+    v12: int = 0
+    v13: bool | int = False
+    result: int = 0
+    x = tile.pos.x
+    y = tile.pos.y
+    v5 = y - 1
+    if mode:
+        bg_id = tile.bg_id
+        should_connect = tile_bg_equal(world, tile.pos.x, v5, bg_id, 0)
+        v8 = tile_bg_equal(world, x, y + 1, bg_id, 0)
+    else:
+        fg_or_bg = tile.front
+        should_connect = tile_should_connect(world, x, v5, fg_or_bg, 2)
+        v10 = tile.pos.x
+        v11 = tile.pos.y + 1
+        v12 = tile.front
+        v8 = tile_should_connect(world, v10, v11, v12, 1)
+    v13 = v8
+    result = v8 ^ 3
+    if should_connect:
+        return v13
+    return result
+
+
+def handle_smart_edge_diagon_connection(world: World, tile: Tile, mode: int, /) -> int:
+    flags: int = 0
+    x: int = 0
+    y: int = 0
+    v6: int = 0
+    v7: int = 0
+    bg_id: int = 0
+    can_connect: int = 0
+    v10: int = 0
+    v11: int = 0
+    v12: int = 0
+    v13: int = 0
+    fg_or_bg: int = 0
+    v15: int = 0
+    v16: World | None = None
+    v17: int = 0
+    v18: int = 0
+    v19: int = 0
+    v20: int = 0
+    v21: int = 0
+    result: int = 0
+    flags = tile.flags
+    x = tile.pos.x
+    y = tile.pos.y
+    v6 = y + 1
+    if mode:
+        v7 = y - 1
+        bg_id = tile.bg_id
+        if flags & 32 != 0:
+            can_connect = bg_can_connect(world, x + 1, v6, bg_id, 1)
+            v10 = x - 1
+            v11 = v7
+            v12 = bg_id
+            v13 = 1
+        else:
+            can_connect = bg_can_connect(world, x - 1, v6, bg_id, 0)
+            v10 = x + 1
+            v11 = v7
+            v12 = bg_id
+            v13 = 0
+        v18 = bg_can_connect(world, v10, v11, v12, v13)
+    else:
+        fg_or_bg = tile.front
+        v15 = (tile.flags & TileFlags.FLIPPED_X) >> 5
+        if flags & TileFlags.FLIPPED_X != 0:
+            v16 = world
+            can_connect = fg_can_connect(world, x + 1, v6, fg_or_bg, v15)
+            v17 = tile.pos.x - 1
+        else:
+            v16 = world
+            can_connect = fg_can_connect(world, x - 1, v6, fg_or_bg, v15)
+            v17 = tile.pos.x + 1
+        v19 = tile.pos.y - 1
+        v20 = tile.front
+        v18 = fg_can_connect(v16, v17, v19, v20, (tile.flags & TileFlags.FLIPPED_X) >> 5)
+    v21 = 3 * (v18 ^ 1)
+    result = 2 - v18
+    if not can_connect:
+        return v21
+    return result
+
+
+def handle_smart_edge_vert_connection(world: World, tile: Tile, mode: int, /) -> int:
+    x: int = 0
+    v6: int = 0
+    v7: int = 0
+    y: int = 0
+    width: int = 0
+    v10: bool | int = False
+    v11: int = 0
+    fg_or_bg: int = 0
+    v13: int = 0
+    v15: int = 0
+    v16: int = 0
+    v17: int = 0
+    v18: int = 0
+    v19: int = 0
+    bg_id: int = 0
+    v21: bool | int = False
+    v22: int = 0
+    v23: int = 0
+    v24: int = 0
+    v25: int = 0
+    v26: bool | int = False
+    result: int = 0
+    v28: bool | int = False
+    v29: bool | int = False
+    should_connect: bool | int = False
+    x = tile.pos.x
+    v6 = x
+    v7 = x + 1
+    y = tile.pos.y
+    width = world.width
+    v10 = 1
+    if width <= v7 or world.height <= y:
+        v29 = 1
+    else:
+        v11 = mode
+        t = world.get_tile(v7 + y * width)
+        if t:
+            fg_or_bg = t.front
+            mode = v11
+            v29 = fg_or_bg != CAVE_DIRT
+            x = tile.pos.x
+            y = tile.pos.y
+            v6 = x
+    if x:
+        v13 = world.width
+        if v13 >= v6 and world.height > y:
+            t = world.get_tile(v6 - 1 + y * v13)
+            if t:
+                v15 = mode
+                v16 = t.front
+                mode = v15
+                v10 = v16 != CAVE_DIRT
+    v28 = v10
+    v17 = tile.pos.x
+    v18 = v17 + 1
+    v19 = tile.pos.y
+    if mode:
+        bg_id = tile.bg_id
+        should_connect = tile_bg_equal(world, v18, v19, bg_id, 0)
+        v21 = tile_bg_equal(world, v17 - 1, v19, bg_id, 0)
+    else:
+        v22 = tile.front
+        should_connect = tile_should_connect(world, v18, v19, v22, 0)
+        v23 = tile.pos.x - 1
+        v24 = tile.pos.y
+        v25 = tile.front
+        v21 = tile_should_connect(world, v23, v24, v25, 0)
+        v17 = tile.pos.x
+        v19 = tile.pos.y
+    v26 = tile_should_connect(world, v17, v19 + 1, CAVE_COLUMN, 0)
+    result = 9
+    if not v26:
+        if v28:
+            if v29:
+                result = 1
+                if not v21 or not should_connect:
+                    result = 0
+                    if not should_connect:
+                        return v21 ^ 3
+            else:
+                return 3 * (not v21) + 5
+        else:
+            result = 6
+            if v29:
+                return 3 * (not should_connect) + 4
+    return result

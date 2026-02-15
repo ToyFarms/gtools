@@ -10,3 +10,4 @@ test*.c
 node_modules/
 test.txt
 test_klv.py
+re/

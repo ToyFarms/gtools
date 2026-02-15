@@ -80,6 +80,7 @@ def ctopy8(code: str) -> None:
     tree = clean(code)
     code = ast.unparse(tree)
     code = re.sub(r"get_foreground_or_background_id\(([^)]*)\)", r"\1.front", code)
+    code = re.sub(r"get_fg_or_bg\(([^)]*)\)", r"\1.front", code)
     code = re.sub(r"getForegroundOrBackgroundId\(([^)]*)\)", r"\1.front", code)
     code = re.sub(r"GLUED", r"TileFlags.GLUED", code)
     code = re.sub(r"FLIPPED_X", r"TileFlags.FLIPPED_X", code)
@@ -89,6 +90,8 @@ def ctopy8(code: str) -> None:
     code = re.sub(r"GUILD_FLAG_SHIELD_DIVISION", r"GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE", code)
     code = re.sub(r"tile\.tileX", r"tile.pos.x", code)
     code = re.sub(r"tile\.tileY", r"tile.pos.y", code)
+    code = re.sub(r"tile\.x", r"tile.pos.x", code)
+    code = re.sub(r"tile\.y", r"tile.pos.y", code)
     code = re.sub(r"tileX", r"tile_x", code)
     code = re.sub(r"tileY", r"tile_y", code)
     code = re.sub(r"textureType", r"texture_type", code)
@@ -99,6 +102,10 @@ def ctopy8(code: str) -> None:
     code = re.sub(r"maybe_get_item_by_id\(.*, ([^)]*)\)", r"item_database.get(\1)", code)
     code = re.sub(r"'ItemID' = None", r"int = 0", code)
     code = re.sub(r"a1\.tile_([xy])", r"a1.pos.\1", code)
-
+    code = re.sub(r"WorldView \| None", r"World", code)
+    code = re.sub(r"Tile \| None", r"Tile", code)
+    code = re.sub(r"'__int64___fastcall'", r"int", code)
+    code = re.sub(r"'bool___fastcall'", r"bool", code)
+    code = re.sub(r"'ItemID'", r"int", code)
 
     print(code)

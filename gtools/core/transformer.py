@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import re
 from typing import cast
+import copy
 
 
 class GotoResolver(ast.NodeTransformer):
@@ -223,19 +224,108 @@ class GotoResolver(ast.NodeTransformer):
         self.in_function = False
         return ast.copy_location(new_func, node)
 
-    # def visit_Module(self, node: ast.Module) -> ast.Module:
-    #     non_fn = [node for node in node.body if not isinstance(node, ast.FunctionDef)]
+    _FORBIDDEN_EXPR_TYPES = (
+        ast.Call,
+        ast.IfExp,
+        ast.Lambda,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+        ast.Await,
+        ast.Yield,
+        ast.YieldFrom,
+    )
 
-    #     non_fn_mod = ast.Module(body=non_fn)
-    #     has_goto = self._contains_goto_or_label(non_fn_mod)
-    #     if not has_goto:
-    #         return node
+    def _is_pure_initialization(self, stmt: ast.stmt) -> bool:
+        if isinstance(stmt, ast.Assign):
+            if not all(self._is_simple_target(t) for t in stmt.targets):
+                return False
+            return self._is_pure_value(stmt.value)
 
-    #     self._collect_all_labels(node.body)
-    #     self._extract_label_blocks(node.body)
-    #     transformed_body = self._create_state_machine(node.body)
-    #     node.body = transformed_body
-    #     return node
+        if isinstance(stmt, ast.AnnAssign):
+            if stmt.value is None:
+                return True
+            if not isinstance(stmt.target, ast.Name):
+                return False
+            return self._is_pure_value(stmt.value)
+
+        return False
+
+    def _is_simple_target(self, target: ast.AST) -> bool:
+        if isinstance(target, ast.Name):
+            return True
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return all(isinstance(elt, ast.Name) for elt in target.elts)
+        return False
+
+    def _is_pure_value(self, node: ast.AST | None) -> bool:
+        if node is None:
+            return True
+
+        for n in ast.walk(node):
+            if isinstance(n, self._FORBIDDEN_EXPR_TYPES):
+                return False
+        return True
+
+    def _extract_initializations(self, stmts: list[ast.stmt]) -> tuple[list[ast.stmt], list[ast.stmt]]:
+        inits = []
+        remaining = stmts
+
+        for i, stmt in enumerate(stmts):
+            is_label, _ = self._is_label_def(stmt)
+            if is_label:
+                remaining = stmts[i:]
+                break
+
+            if self._is_pure_initialization(stmt):
+                inits.append(stmt)
+            else:
+                remaining = stmts[i:]
+                break
+        else:
+            remaining = []
+
+        return inits, remaining
+
+    def _collect_assigned_variables(self, stmts: list[ast.stmt]) -> set[str]:
+        variables = set()
+
+        for stmt in stmts:
+            if isinstance(stmt, ast.Assign):
+                is_label, _ = self._is_label_def(stmt)
+                is_goto, _ = self._is_goto_call(stmt)
+
+                if not is_label and not is_goto:
+                    for target in stmt.targets:
+                        if isinstance(target, ast.Name):
+                            variables.add(target.id)
+
+            if isinstance(stmt, ast.If):
+                variables.update(self._collect_assigned_variables(stmt.body))
+                variables.update(self._collect_assigned_variables(stmt.orelse))
+            elif isinstance(stmt, (ast.While, ast.For)):
+                variables.update(self._collect_assigned_variables(stmt.body))
+                variables.update(self._collect_assigned_variables(stmt.orelse))
+            elif isinstance(stmt, ast.With):
+                variables.update(self._collect_assigned_variables(stmt.body))
+            elif isinstance(stmt, ast.Try):
+                variables.update(self._collect_assigned_variables(stmt.body))
+                variables.update(self._collect_assigned_variables(stmt.orelse))
+                variables.update(self._collect_assigned_variables(stmt.finalbody))
+                for handler in stmt.handlers:
+                    variables.update(self._collect_assigned_variables(handler.body))
+            elif isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    variables.update(self._collect_assigned_variables(case.body))
+            elif isinstance(stmt, ast.AugAssign):
+                if isinstance(stmt.target, ast.Name):
+                    variables.add(stmt.target.id)
+            elif isinstance(stmt, ast.AnnAssign):
+                if isinstance(stmt.target, ast.Name):
+                    variables.add(stmt.target.id)
+
+        return variables
 
     def _contains_goto_or_label(self, node: ast.AST) -> bool:
         for child in ast.walk(node):
@@ -317,48 +407,168 @@ class GotoResolver(ast.NodeTransformer):
                         return True, str(stmt.value.args[0].value)
         return False, None
 
+    def _find_used_and_assigned_names_in_stmts(self, stmts: list[ast.stmt], candidates: set[str]) -> tuple[set[str], set[str]]:
+        used: set[str] = set()
+        assigned: set[str] = set()
+
+        mod = ast.Module(body=stmts, type_ignores=[])
+        for node in ast.walk(mod):
+            if isinstance(node, ast.Attribute):
+                val = node.value
+                if isinstance(val, ast.Name) and val.id in candidates:
+                    used.add(val.id)
+
+            if isinstance(node, ast.Call):
+                for arg in node.args:
+                    for sub in ast.walk(arg):
+                        if isinstance(sub, ast.Name) and sub.id in candidates:
+                            used.add(sub.id)
+
+                for kw in node.keywords:
+                    if kw.value is None:
+                        continue
+                    for sub in ast.walk(kw.value):
+                        if isinstance(sub, ast.Name) and sub.id in candidates:
+                            used.add(sub.id)
+
+            if isinstance(node, ast.Name) and node.id in candidates:
+                if isinstance(node.ctx, ast.Store):
+                    assigned.add(node.id)
+
+        return used, assigned
+
     def _create_state_machine(self, body: list[ast.stmt]) -> list[ast.stmt]:
-        label_init = ast.Assign(targets=[ast.Name(id="__goto_label", ctx=ast.Store())], value=ast.Constant(value="start"), lineno=1, col_offset=0)
+        initializations, remaining_body = self._extract_initializations(body)
+        remaining_body = copy.deepcopy(remaining_body)
+        label_blocks_copy = {label: copy.deepcopy(stmts) for label, stmts in self.label_blocks.items()}
 
-        cases = []
-        goto_break = ast.Raise(ast.Call(ast.Name("Exception"), [ast.Constant("__GOTO_BREAK__")]))
+        def make_nonlocal_stmt(names: list[str] | None):
+            if not names:
+                return None
+            return ast.Nonlocal(names=names, lineno=1, col_offset=0)
 
-        start_body = self._transform_statements(body)
-        start_body.append(goto_break)
-        cases.append(("start", start_body))
+        block_functions: list[ast.FunctionDef] = []
+
+        transformed_start_body = self._transform_statements(remaining_body)
+
+        init_vars = self._collect_assigned_variables(initializations)
+        _, assigned_in_start = self._find_used_and_assigned_names_in_stmts(transformed_start_body, set(init_vars))
+        nonlocal_vars_start = sorted(assigned_in_start)
+
+        _, assigned_tmp = self._find_used_and_assigned_names_in_stmts(transformed_start_body, {"__goto_return_value"})
+        if "__goto_return_value" in assigned_tmp and "__goto_return_value" not in nonlocal_vars_start:
+            nonlocal_vars_start.append("__goto_return_value")
+        nonlocal_stmt_start = make_nonlocal_stmt(nonlocal_vars_start) if nonlocal_vars_start else None
+
+        start_body: list[ast.stmt] = []
+        if nonlocal_stmt_start:
+            start_body.append(nonlocal_stmt_start)
+        start_body.extend(transformed_start_body)
+        start_body.append(ast.Return(value=ast.Constant(value=None), lineno=1, col_offset=0))
+
+        start_func = ast.FunctionDef(
+            name="__block_start",
+            args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
+            body=start_body,
+            decorator_list=[],
+            lineno=1,
+            col_offset=0,
+        )
+        block_functions.append(start_func)
 
         for label_name in sorted(self.labels):
-            if label_name in self.label_blocks:
-                label_body = self._transform_statements(self.label_blocks[label_name])
-                label_body.append(goto_break)
-                cases.append((label_name, label_body))
+            if label_name in label_blocks_copy:
+                transformed_block = self._transform_statements(label_blocks_copy[label_name])
+
+                dead_code = DeadCodeEliminator()
+                mod = ast.Module(body=transformed_block)
+                mod = ast.fix_missing_locations(dead_code.visit(mod))
+                transformed_block = mod.body
+
+                used_in_block, assigned_in_block = self._find_used_and_assigned_names_in_stmts(transformed_block, set(init_vars))
+
+                nonlocal_vars = sorted(assigned_in_block)
+
+                _, assigned_tmp2 = self._find_used_and_assigned_names_in_stmts(transformed_block, {"__goto_return_value"})
+                if "__goto_return_value" in assigned_tmp2 and "__goto_return_value" not in nonlocal_vars:
+                    nonlocal_vars.append("__goto_return_value")
+                    nonlocal_vars.sort()
+
+                nonlocal_stmt = make_nonlocal_stmt(nonlocal_vars) if nonlocal_vars else None
+
+                label_body: list[ast.stmt] = []
+                if nonlocal_stmt:
+                    label_body.append(nonlocal_stmt)
+
+                if used_in_block:
+                    for var in sorted(used_in_block):
+                        assert_test = ast.Compare(
+                            left=ast.Name(id=var, ctx=ast.Load()),
+                            ops=[ast.IsNot()],
+                            comparators=[ast.Constant(value=None)],
+                        )
+                        assert_msg = ast.Constant(value=f"{var} must not be None")
+                        assert_node = ast.Assert(test=assert_test, msg=assert_msg, lineno=1, col_offset=0)
+                        label_body.append(assert_node)
+
+                label_body.extend(transformed_block)
+                label_body.append(ast.Return(value=ast.Constant(value=None), lineno=1, col_offset=0))
+
+                func_name = f"__block_{label_name.replace(' ', '_').replace('-', '_')}"
+                label_func = ast.FunctionDef(
+                    name=func_name,
+                    args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
+                    body=label_body,
+                    decorator_list=[],
+                    lineno=1,
+                    col_offset=0,
+                )
+                block_functions.append(label_func)
+
+        return_init = ast.Assign(targets=[ast.Name(id="__goto_return_value", ctx=ast.Store())], value=ast.Constant(value=None), lineno=1, col_offset=0)
+        label_init = ast.Assign(targets=[ast.Name(id="__goto_label", ctx=ast.Store())], value=ast.Constant(value="start"), lineno=1, col_offset=0)
 
         if_chain = None
         root_if = None
 
-        for label, case_body in cases:
-            condition = ast.Compare(left=ast.Name(id="__goto_label", ctx=ast.Load()), ops=[ast.Eq()], comparators=[ast.Constant(value=label)], lineno=1, col_offset=0)
+        condition = ast.Compare(left=ast.Name(id="__goto_label", ctx=ast.Load()), ops=[ast.Eq()], comparators=[ast.Constant(value="start")], lineno=1, col_offset=0)
+        call_start = ast.Assign(
+            targets=[ast.Name(id="__goto_label", ctx=ast.Store())], value=ast.Call(func=ast.Name(id="__block_start", ctx=ast.Load()), args=[], keywords=[]), lineno=1, col_offset=0
+        )
+        if_chain = ast.If(test=condition, body=[call_start], orelse=[], lineno=1, col_offset=0)
+        root_if = if_chain
 
-            if if_chain is None:
-                if_chain = ast.If(test=condition, body=case_body, orelse=[], lineno=1, col_offset=0)
-                root_if = if_chain
-            else:
-                new_if = ast.If(test=condition, body=case_body, orelse=[], lineno=1, col_offset=0)
+        for label_name in sorted(self.labels):
+            if label_name in self.label_blocks:
+                condition = ast.Compare(left=ast.Name(id="__goto_label", ctx=ast.Load()), ops=[ast.Eq()], comparators=[ast.Constant(value=label_name)], lineno=1, col_offset=0)
+                func_name = f"__block_{label_name.replace(' ', '_').replace('-', '_')}"
+                call_block = ast.Assign(
+                    targets=[ast.Name(id="__goto_label", ctx=ast.Store())],
+                    value=ast.Call(func=ast.Name(id=func_name, ctx=ast.Load()), args=[], keywords=[]),
+                    lineno=1,
+                    col_offset=0,
+                )
+                new_if = ast.If(test=condition, body=[call_block], orelse=[], lineno=1, col_offset=0)
                 if_chain.orelse = [new_if]
                 if_chain = new_if
 
         if if_chain is not None:
-            if_chain.orelse = [goto_break]
+            if_chain.orelse = [ast.Break(lineno=1, col_offset=0)]
 
-        handler: list[ast.stmt] = [
-            ast.If(ast.Compare(ast.Constant("__GOTO_CONTINUE__"), [ast.In()], [ast.Call(ast.Name("str"), [ast.Name("__goto_except")])]), [ast.Continue()]),
-            ast.If(ast.Compare(ast.Constant("__GOTO_BREAK__"), [ast.In()], [ast.Call(ast.Name("str"), [ast.Name("__goto_except")])]), [ast.Break()]),
-            ast.Raise(ast.Name("__goto_except")),
-        ]
-        root_if = ast.Try([root_if] if root_if else [goto_break], handlers=[ast.ExceptHandler(ast.Name("Exception"), "__goto_except", handler)])
-        while_loop = ast.While(test=ast.Constant(value=True), body=[root_if], orelse=[], lineno=1, col_offset=0)
+        none_check = ast.If(
+            test=ast.Compare(left=ast.Name(id="__goto_label", ctx=ast.Load()), ops=[ast.Is()], comparators=[ast.Constant(value=None)], lineno=1, col_offset=0),
+            body=[ast.Break(lineno=1, col_offset=0)],
+            orelse=[],
+            lineno=1,
+            col_offset=0,
+        )
 
-        return [label_init, while_loop]
+        while_body: list[ast.stmt] = [root_if, none_check] if root_if else [none_check]
+        while_loop = ast.While(test=ast.Constant(value=True), body=while_body, orelse=[], lineno=1, col_offset=0)
+
+        final_return = ast.Return(value=ast.Name(id="__goto_return_value", ctx=ast.Load()), lineno=1, col_offset=0)
+
+        return initializations + [return_init] + block_functions + [label_init, while_loop, final_return]
 
     def _transform_statements(self, stmts: list[ast.stmt]) -> list[ast.stmt]:
         result = []
@@ -370,12 +580,19 @@ class GotoResolver(ast.NodeTransformer):
 
             is_goto, target = self._is_goto_call(stmt)
             if is_goto and target in self.labels:
-                result.extend(
-                    [
-                        ast.Assign(targets=[ast.Name(id="__goto_label", ctx=ast.Store())], value=ast.Constant(value=target), lineno=stmt.lineno, col_offset=stmt.col_offset),
-                        ast.Raise(ast.Call(ast.Name("Exception"), [ast.Constant("__GOTO_CONTINUE__")])),
-                    ]
+                result.append(ast.Return(value=ast.Constant(value=target), lineno=stmt.lineno, col_offset=stmt.col_offset))
+                continue
+
+            if isinstance(stmt, ast.Return):
+                result.append(
+                    ast.Assign(
+                        targets=[ast.Name(id="__goto_return_value", ctx=ast.Store())],
+                        value=stmt.value if stmt.value else ast.Constant(value=None),
+                        lineno=stmt.lineno,
+                        col_offset=stmt.col_offset,
+                    )
                 )
+                result.append(ast.Return(value=ast.Constant(value=None), lineno=stmt.lineno, col_offset=stmt.col_offset))
                 continue
 
             transformed = self._transform_compound(stmt)
@@ -409,15 +626,14 @@ def to_snake_case(name: str) -> str:
     if not name:
         return name
 
-    s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
-    s2 = re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1)
-    s3 = re.sub("[^0-9a-zA-Z_]+", "_", s2)
+    if "_" in name and not re.search(r"[a-z][A-Z]", name):
+        return name
 
-    snake = s3.lower()
-    if not snake:
-        return name.lower()
+    # Otherwise convert CamelCase to snake_case
+    s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    s2 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1)
 
-    return snake
+    return s2.lower()
 
 
 def to_pascal_case(name: str) -> str:
@@ -922,6 +1138,29 @@ class NormalizeIdentifiers(ast.NodeTransformer):
 
         return node
 
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> ast.Nonlocal:
+        for i, old in enumerate(node.names):
+            new = to_snake_case(old)
+            if new == old:
+                continue
+
+            found = False
+            for scope in reversed(self.scope_stack[:-1]):
+                if old in scope:
+                    scope[old] = new
+                    found = True
+                    break
+
+            if not found:
+                if len(self.scope_stack) >= 2:
+                    self.scope_stack[-2][old] = new
+                else:
+                    self.scope_stack[0][old] = new
+
+            node.names[i] = new
+
+        return node
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         old_name = node.name
         new_name = to_snake_case(old_name)
@@ -1100,9 +1339,6 @@ class NormalizeIdentifiers(ast.NodeTransformer):
         return node
 
     def visit_Global(self, node: ast.Global) -> ast.Global:
-        return node
-
-    def visit_Nonlocal(self, node: ast.Nonlocal) -> ast.Nonlocal:
         return node
 
     def visit_Name(self, node: ast.Name) -> ast.AST:
