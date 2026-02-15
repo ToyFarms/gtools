@@ -1,0 +1,128 @@
+* packet structure:
+
+byte order is little endian
+
+every packet is a net packet,
+    [type:u32, payload:[u8, ...], gibberish:u8]
+net packet always contain 1 extra byte at the end, you can safely discard it.
+
+payload is determiend through the type,
+    SERVER_HELLO        (1): empty,       [\x01\x00\x00\x00\x00]
+    GENERIC_TEXT        (2): strkv,       [\x02\x00\x00\x00[strkv]\x00]
+    GAME_MESSAGE        (3): strkv,       [\x03\x00\x00\x00[strkv]\x00]
+    TANK_PACKET         (4): tank packet, [\x04\x00\x00\x00[tank packet]\x00]
+    ERROR               (5): empty,       [\x05\x00\x00\x00\x00]
+    TRACK               (6): strkv,       [\x06\x00\x00\x00[strkv]\x00]
+    CLIENT_LOG_REQUEST  (7): empty,       [\x07\x00\x00\x00\x00]
+    CLIENT_LOG_RESPONSE (8): empty,       [\x08\x00\x00\x00\x00]
+
+tank packet,
+    [
+        type             :u8 (tank type),
+        object_type      :u8,
+        jump_count       :u8,
+        animation_type   :u8,
+        net_id           :u32,
+        target_net_id    :u32
+        flags            :u32 (tank flags),
+        float_var        :f32,
+        value            :u32,
+        vector_x         :f32,
+        vector_y         :f32,
+        vector_x2        :f32,
+        vector_y2        :f32,
+        particle_rotation:f32,
+        int_x            :i32,
+        int_y            :i32,
+        extended_len     :u32,
+        extended_data    :[u8, ..., extended_len]
+    ]
+
+payload is determiend through the type,
+    STATE                            (0 ): your character state [\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \xd3D\x00\x80@D\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00]
+                                         : TankPacket(
+                                                type=<TankType.STATE: 0>,
+                                                object_type=0,
+                                                jump_count=0,
+                                                animation_type=0,
+                                                net_id=0,
+                                                target_net_id=0,
+                                                flags=<TankFlags.FACING_LEFT|STANDING: 48>,
+                                                float_var=0.0,
+                                                value=0,
+                                                vector_x=1689.0,
+                                                vector_y=770.0,
+                                                vector_x2=0.0,
+                                                vector_y2=0.0,
+                                                particle_rotation=0.0,
+                                                int_x=-1,
+                                                int_y=-1,
+                                                extended_len=0,
+                                                extended_data=b'',
+                                         )
+    CALL_FUNCTION                    (1 ): variant [\x04\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\xfa\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\x01\x00\x02\x15\x00\x00\x00OnClearItemTransforms\x00]
+                                         : TankPacket(
+                                             type=<TankType.CALL_FUNCTION: 1>,
+                                             object_type=0,
+                                             jump_count=0,
+                                             animation_type=0,
+                                             net_id=1,
+                                             target_net_id=0,
+                                             flags=<TankFlags.EXTENDED: 8>,
+                                             float_var=0.0,
+                                             value=250,
+                                             vector_x=0.0,
+                                             vector_y=0.0,
+                                             vector_x2=0.0,
+                                             vector_y2=0.0,
+                                             particle_rotation=0.0,
+                                             int_x=0,
+                                             int_y=0,
+                                             extended_len=28,
+                                             extended_data=b'\x01\x00\x02\x15\x00\x00\x00OnClearItemTransforms',
+                                         )
+    UPDATE_STATUS                    (2 ): (todo)
+    TILE_CHANGE_REQUEST              (3 ): (todo)
+    SEND_MAP_DATA                    (4 ): (todo)
+    SEND_TILE_UPDATE_DATA            (5 ): (todo)
+    SEND_TILE_UPDATE_DATA_MULTIPLE   (6 ): (todo)
+    TILE_ACTIVATE_REQUEST            (7 ): (todo)
+    TILE_APPLY_DAMAGE                (8 ): (todo)
+    SEND_INVENTORY_STATE             (9 ): (todo)
+    ITEM_ACTIVATE_REQUEST            (10): (todo)
+    ITEM_ACTIVATE_OBJECT_REQUEST     (11): (todo)
+    SEND_TILE_TREE_STATE             (12): (todo)
+    MODIFY_ITEM_INVENTORY            (13): (todo)
+    ITEM_CHANGE_OBJECT               (14): (todo)
+    SEND_LOCK                        (15): (todo)
+    SEND_ITEM_DATABASE_DATA          (16): (todo)
+    SEND_PARTICLE_EFFECT             (17): (todo)
+    SET_ICON_STATE                   (18): (todo)
+    ITEM_EFFECT                      (19): (todo)
+    SET_CHARACTER_STATE              (20): (todo)
+    PING_REPLY                       (21): (todo)
+    PING_REQUEST                     (22): (todo)
+    GOT_PUNCHED                      (23): (todo)
+    APP_CHECK_RESPONSE               (24): (todo)
+    APP_INTEGRITY_FAIL               (25): (todo)
+    DISCONNECT                       (26): (todo)
+    BATTLE_JOIN                      (27): (todo)
+    BATTLE_EVENT                     (28): (todo)
+    USE_DOOR                         (29): (todo)
+    SEND_PARENTAL                    (30): (todo)
+    GONE_FISHIN                      (31): (todo)
+    STEAM                            (32): (todo)
+    PET_BATTLE                       (33): (todo)
+    NPC                              (34): (todo)
+    SPECIAL                          (35): (todo)
+    SEND_PARTICLE_EFFECT_V2          (36): (todo)
+    ACTIVATE_ARROW_TO_ITEM           (37): (todo)
+    SELECT_TILE_INDEX                (38): (todo)
+    SEND_PLAYER_TRIBUTE_DATA         (39): (todo)
+    FTUE_SET_ITEM_TO_QUICK_INVENTORY (40): (todo)
+    PVE_NPC                          (41): (todo)
+    PVP_CARD_BATTLE                  (42): (todo)
+    PVE_APPLY_PLAYER_DAMAGE          (43): (todo)
+    PVE_NPC_POSITION_UPDATE          (44): (todo)
+    SET_EXTRA_MODS                   (45): (todo)
+    ON_STEP_TILE_MOD                 (46): (todo)

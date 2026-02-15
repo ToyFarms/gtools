@@ -1,0 +1,55 @@
+* server data
+
+server data is like a router, it contains all other endpoint for the server and login
+it also contains some metadata needed for login
+
+host: www.growtopia1.com, www.growtopia2.com
+endpoint: /growtopia/server_data.php
+
+1. growtopia requests https://www.growtopia1.com/growtopia/server_data.php
+    header:
+        {'Host': 'www.growtopia1.com', 'User-Agent': 'UbiServices_SDK_2022.Release.9_PC64_ansi_static', 'Accept': '*/*', 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': '36'}
+    body:
+        version=5.38&platform=0&protocol=219
+
+2. hosts configuration routes that endpoint to our local https server
+3. intercept the response
+    server|237.12.15.2\nport|17033\nloginurl|login.growtopiagame.com\ntype|1\nbeta_server|grow-main-test.growtopiagame.com\nbeta_loginurl|grow-main-test.growtopiagame.com\nbeta_port|56999\nbeta_type|1\nbeta2_server|grow-release-test.growtopiagame.com\nbeta2_loginurl|grow-release-test.growtopiagame.com\nbeta2_port|36999\nbeta2_type|1\nbeta3_server|grow-live-test.growtopiagame.com\nbeta3_loginurl|grow-live-test.growtopiagame.com\nbeta3_port|46999\nbeta3_type|1\ntype2|1\n#maint|Server is under maintenance. We will be back online shortly. Thank you for your patience!\nmeta|VOZ5jj5wgJAHsPD9EIBYrWFWJwQ4jmm4g55rtFxrBUY=\nRTENDMARKERBS1001
+
+4. change the server host and port to our local enet server, send back the modified response
+
+* enet
+
+for server (that the gt client connects to), use,
+    range coder
+    crc32 checksum
+    new packet for server
+
+    listen on port with ENET_HOST_ANY (0)
+    1 peer count (unless you want to multibox)
+    2 channel (tr/tx)
+
+for client (that connects to the real gt server), use,
+    range coder
+    crc32 checksum
+    new packet
+
+    create host with null address
+
+    1 peer count
+    2 channel
+
+* proxy tick
+
+wait until server data exists
+wait until gt client connects
+connect to gt server
+start polling both server and client
+
+if either client or server disconnects,
+    disconnect from both
+    back to waiting server data
+
+if packet is receive and packet is tank and tank type is disconnect,
+    disconnect the source (whoever sent that packet)
+    forward it to the destination

@@ -1,0 +1,335 @@
+add_popup_name
+add_popup_name|<name>|
+Sets the popup window name.
+
+embed_data
+embed_data|<key>|<value>|
+Embeds custom data in the dialog. Can have multiple values separated by |.
+
+end_dialog
+end_dialog|<name>|<button1>|<button2>|
+Ends the dialog with specified buttons (minimum 3 parameters, can have more).
+
+* text elements
+
+add_label
+add_label|<text>|<flags>|<color>|
+Adds a basic label (minimum 4 parameters).
+
+add_label_with_icon
+add_label_with_icon|<text>|<position>|<icon_id>|<flags>|
+Adds a label with an icon (minimum 5 parameters, can have 6th parameter for additional flags).
+
+add_inline_label
+add_inline_label|<text>|<flags>|<color>|<max_width>|
+Adds an inline label (minimum 4 parameters).
+
+add_label_with_counter
+add_label_with_counter|<text>|<flags>|<color>|<counter_data>|
+Adds a label with a counter display (minimum 4 parameters).
+
+add_smalltext
+add_smalltext|<text>|<alignment>|
+Adds small text (minimum 3 parameters).
+
+add_smalltext_forced
+add_smalltext_forced|<text>|<alignment>|
+Adds forced small text (minimum 3 parameters).
+
+add_smalltext_forced_alpha
+add_smalltext_forced_alpha|<alpha>|<text>|<alignment>|
+Adds small text with alpha transparency (minimum 4 parameters).
+
+add_textbox
+add_textbox|<text>|<alignment>|
+Adds a textbox (minimum 3 parameters).
+
+add_custom_textbox
+add_custom_textbox|<text>|<style>|
+Adds a custom styled textbox (minimum 3 parameters).
+
+add_custom_label
+add_custom_label|<text>|<properties>|
+Adds a custom label (minimum 3 parameters).
+
+text_scaling_string
+text_scaling_string|<text>|
+Sets text scaling string (minimum 2 parameters).
+
+* image elements
+
+add_image
+add_image|<image_path>|<width>|<height>|<scale>|<flags>|
+Adds an image (minimum 4 parameters, scale and flags optional).
+
+add_custom_image
+add_custom_image|<image_properties>|
+Adds a custom image (minimum 2 parameters).
+
+add_entity_animation
+add_entity_animation|<animation_data>|
+Adds entity animation (minimum 2 parameters).
+
+* button elements
+
+add_button
+add_button|<callback>|<text>|<flags>|<icon>|<style>|<disabled>|
+Adds a button (minimum 4 parameters, can have up to 7 with disabled flag).
+
+add_button_with_icon
+add_button_with_icon|<callback>|<text>|<flags>|<icon1>|<icon2>|<disabled>|
+Adds a button with icon (minimum 6 parameters).
+
+add_custom_button
+add_custom_button|<callback>|<properties>|
+Adds a custom button (minimum 2 parameters).
+
+add_community_button
+add_community_button|<callback>|<text>|<extra1>|<extra2>|
+Adds a community button (minimum 4 parameters).
+
+add_small_font_button
+add_small_font_button|<callback>|<text>|<flags>|
+Adds a small font button (minimum 4 parameters).
+
+add_image_button
+add_image_button|<callback>|<image1>|<image2>|<image3>|<image4>|<scale>|
+Adds an image button (minimum 6 parameters).
+
+add_url_button
+add_url_button|<type>|<text>|<flags>|<url>|<extra>|
+Adds a URL button (minimum 6 parameters). Skips if type is "survey".
+
+add_embedded_url_button
+add_embedded_url_button|<callback>|<text>|<flags>|<url>|<extra>|
+Adds an embedded URL button (minimum 6 parameters). Sets "embedded_url" flag.
+
+add_iap_button
+add_iap_button|<product1>|<product2>|<product3>|<product4>|
+Adds an IAP (In-App Purchase) button (minimum 5 parameters).
+
+add_adwatch_button
+add_adwatch_button|<param1>|<param2>|<param3>|
+Adds an ad watch button (minimum 3 parameters).
+
+add_inner_image_label_button
+add_inner_image_label_button|<callback>|<text>|<image>|<scale>|<color1>|<color2>|<color3>|
+Adds inner image label button (minimum 4 parameters).
+
+add_friend_image_label_button
+add_friend_image_label_button|<callback>|<text>|<image>|<color1>|<color2>|<color3>|<extra1>|<extra2>|
+Adds friend image label button (minimum 10 parameters).
+
+add_label_with_icon_button
+add_label_with_icon_button|<text>|<callback>|<color>|<icon>|<button_text>|<flags>|<extra1>|<extra2>|
+Adds label with icon button (minimum 6 parameters, can have 8).
+
+add_label_with_icon_button_list
+add_label_with_icon_button_list|<text>|<prefix>|<color>|<icon1>|<icon2>|<button_list>|
+Adds label with icon button list (minimum 7 parameters).
+
+add_label_with_ele_icon
+add_label_with_ele_icon|<text>|<alignment>|<color>|<icon1>|<icon2>|
+Adds label with element icon (minimum 6 parameters).
+
+* input elements
+
+add_text_input
+add_text_input|<callback>|<placeholder>|<default_value>|<max_length>|
+Adds a text input field (minimum 5 parameters).
+
+add_text_box_input
+add_text_box_input|<callback>|<default_value>|<max_length>|<lines>|
+Adds a multi-line text box input (minimum 6 parameters).
+
+add_text_input_password
+add_text_input_password|<callback>|<placeholder>|<default_value>|<max_length>|
+Adds a password input field (minimum 5 parameters).
+
+add_checkbox
+add_checkbox|<callback>|<text>|<checked>|<use_label>|
+Adds a checkbox (minimum 3 parameters, can have 5).
+
+dud_checkbox
+dud_checkbox|<callback>|<text>|<checked>|<use_label>|
+Adds a non-functional (display only) checkbox (minimum 3 parameters, can have 5).
+
+add_checkicon
+add_checkicon|<callback>|<text>|<icon1>|<icon2>|<icon3>|<checked>|
+Adds a check icon element (minimum 7 parameters).
+
+* picker elements
+
+add_player_picker
+add_player_picker|<callback>|<text>|
+Adds a player picker (minimum 3 parameters).
+
+add_item_picker
+add_item_picker|<callback>|<text>|<item_data>|
+Adds an item picker (minimum 4 parameters).
+
+add_confirm_item_picker
+add_confirm_item_picker|<callback>|<text>|<item_data>|<confirm_data>|
+Adds a confirm item picker (minimum 5 parameters).
+
+add_searchable_item_list
+add_searchable_item_list|<title>|<search_text>|<list_data>|
+Adds a searchable item list (minimum 3 parameters).
+
+add_rating_control
+add_rating_control|<callback>|<current_rating>|
+Adds a rating control (minimum 3 parameters).
+
+* special info elements
+
+add_player_info
+add_player_info|<text>|<icon1>|<icon2>|<icon3>|
+Adds player info display (minimum 5 parameters).
+
+add_player_info_small
+add_player_info_small|<text>|<icon1>|<icon2>|<icon3>|
+Adds small player info display (minimum 5 parameters).
+
+add_fish_info
+add_fish_info|<text>|<icon1>|<icon2>|<icon3>|
+Adds fish info display (minimum 5 parameters).
+
+add_achieve
+add_achieve|<title>|<desc>|<color>|<icon>|<flags>|
+Adds an achievement display (minimum 5 parameters, can have 6).
+
+add_achieve_button
+add_achieve_button|<title>|<desc>|<color>|<icon>|<flags>|
+Adds an achievement button (minimum 5 parameters, can have 6).
+
+add_achieve_custom
+add_achieve_custom|<title>|<desc>|<color>|<icon>|<custom_data>|<icon_ids>|
+Adds a custom achievement (minimum 8 parameters).
+
+add_achieve_custom_btn
+add_achieve_custom_btn|<title>|<desc>|<color>|<icon>|<custom_data>|<icon_ids>|
+Adds a custom achievement button (minimum 8 parameters).
+
+add_dual_layer_icon_label
+add_dual_layer_icon_label|<size>|<text>|<alignment>|<icon1>|<icon2>|<scale1>|<scale2>|<visible>|
+Adds a dual layer icon label (minimum 8 parameters).
+
+add_clock
+add_clock|<text>|<time_value>|<color>|
+Adds a clock display (minimum 4 parameters).
+
+* progress elements
+
+add_progress_bar
+add_progress_bar|<text>|<current>|<max>|<color1>|<color2>|<tooltip>|<id>|
+Adds a progress bar (minimum 5 parameters, can have tooltip and ID).
+
+add_textured_progress_bar
+add_textured_progress_bar|<type>|<size_data>|<bar_image>|<icon1>|<icon2>|<color1>|<color2>|<icon3>|<icon4>|<bg_image>|
+Adds a textured progress bar (minimum 13 parameters, can have 15). Types: "fixed", "relative", "pre_icon", "iconlist".
+
+add_textured_progress_bar_with_icon
+add_textured_progress_bar_with_icon|<type>|<size_data>|<bar_image>|<icon1>|<icon2>|<color1>|<color2>|<icon3>|<icon4>|<bg_image>|<extra_icon>|
+Adds textured progress bar with icon (minimum 15 parameters). Types: "fixed", "relative", "pre_icon", "iconlist".
+
+add_seed_color_icons
+add_seed_color_icons|<icon_id>|
+Adds seed color icons (minimum 2 parameters).
+
+* layout and spacing
+
+add_spacer
+add_spacer|<size>|
+Adds a spacer. Size affects vertical spacing.
+
+add_layout_spacer
+add_layout_spacer|<properties>|
+Adds a layout spacer (minimum 1 parameter).
+
+add_custom_spacer
+add_custom_spacer|<properties>|
+Adds a custom spacer (minimum 2 parameters).
+
+add_custom_break
+add_custom_break|
+Adds a custom line break.
+
+add_custom_margin
+add_custom_margin|<margin_data>|
+Adds custom margin (minimum 2 parameters).
+
+* community buttons
+
+add_cmmnty_toptoday_bttn
+add_cmmnty_toptoday_bttn|<callback>|<text>|<extra1>|<extra2>|<extra3>|
+Adds community top today button (minimum 6 parameters).
+
+add_cmmnty_toptotal_bttn
+add_cmmnty_toptotal_bttn|<callback>|<text>|<extra1>|<extra2>|<extra3>|
+Adds community top total button (minimum 6 parameters).
+
+add_cmmnty_toprated_bttn
+add_cmmnty_toprated_bttn|<callback>|<text>|<extra1>|<extra2>|<extra3>|
+Adds community top rated button (minimum 6 parameters).
+
+* configuration elements
+
+set_default_color
+set_default_color|<color_code>|
+Sets the default color for text elements.
+
+set_border_color
+set_border_color|<r,g,b,a>|
+Sets the border color (RGBA values).
+
+set_bg_color
+set_bg_color|<r,g,b,a>|
+Sets the background color (RGBA values).
+
+set_labelXMult
+set_labelXMult|<multiplier>|
+Sets label X position multiplier. Defaults to 0.75 if 0.
+
+set_custom_spacing
+set_custom_spacing|<spacing_data>|
+Sets custom spacing (minimum 2 parameters).
+
+set_custom_start
+set_custom_start|<start_data>|
+Sets custom start position (minimum 2 parameters).
+
+disable_resize
+disable_resize|
+Disables dialog resizing.
+
+reset_placement_x
+reset_placement_x|
+Resets X placement to default.
+
+set_survey_enabled
+set_survey_enabled|
+Enables survey mode (no visible effect in code).
+
+max_checks
+max_checks|<count>|
+Sets maximum number of checkboxes that can be checked.
+
+min_checks
+min_checks|<count>|
+Sets minimum number of checkboxes that must be checked.
+
+* tab system
+
+start_custom_tabs
+start_custom_tabs|
+Starts a custom tab container.
+
+end_custom_tabs
+end_custom_tabs|
+Ends the custom tab container and returns to parent.
+
+* misc
+
+add_quick_exit
+add_quick_exit|
+Adds a quick exit button to the dialog.

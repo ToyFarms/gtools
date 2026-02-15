@@ -1,0 +1,19 @@
+** see scripts/registry_val.py for a working demo and more details **
+stored on HKEY_CURRENT_USER\Software\Microsoft\<key>, and HKEY_CURRENT_USER\<key2>
+where,
+    cpuid_leaf0 = cpuid_checksum()
+    key = cpuid_leaf0 + 1
+    subkey = key >> 1
+
+    v = int(get_vsn_hash().decode())
+    key2 = abs(int(v / 3))
+    subkey2 = abs(int(v / 4))
+
+all values below is obfuscated
+ * <key>\<subkey>    = vsn hash
+ * <key>\<subkey>c   = checksum of vsn hash
+ * <key>\<subkey>w   = md5 hash of machine guid
+ * <key>\<subkey>wc  = checksum of md5 hash of machine guid
+
+ * <key2>\<subkey2>  = mac address
+ * <key2>\<subkey2>c = checksum of mac address
