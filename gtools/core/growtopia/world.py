@@ -93,7 +93,7 @@ from gtools.baked.items import (
 from gtools.core.buffer import Buffer
 import cbor2
 
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, item_database
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RtTexManager
@@ -1973,22 +1973,42 @@ class Dropped:
 
 class NpcType(IntEnum):
     NONE = 0
-    GHOST_SHARK = 1
-    TRAPPED_GHOST_JAR = 2  # trapped by ghost jar
-    HOMING_PROJECTILE = 3  # moves toward something
-    UNK4 = 4  # plays "audio/barf.wav"
-    DAMAGED = 5  # damaged, wait 250ms then recalculate target position
-    UNK6 = 6
-    UNK7 = 7
-    NORMAL_FEATHER_ATTACK = 8
-    ROTATING = 9  # ultra pinata
-    TRAPPED_GHOST_TRAP = 10  # trapped by ghost trap
-    NORMAL = 11  # normal ghost
-    UNK11 = 11
-    UNK12 = 12
-    UNK13 = 13
-    THANKSGIVING_TURKEY = 14
-    ULT_FEATHER_ATTACK = 15  # gold feather, will kill if collision occur
+    GHOST = 1
+    GHOST_JAR = 2
+    BEE_SWARM = 3
+    HARVEST_GHOST = 4
+    GROWGANOTH = 5
+    GHOST_SHARK = 6
+    XMAS_GHOST = 7
+    BLAST = 8
+    PINATA = 9
+    GHOST_CAPTURE_MACHINE = 10
+    BOSS_GHOST = 11
+    MIND_CONTROL_GHOST = 12
+    GHOST_BE_GONE = 13
+    HUNTED_TURKEY = 14
+    TRICKSTER = 15
+    THANKSGIVING_TURKEY_BOSS = 16
+    THANKSGIVING_TURKEY_BOSS_FEATHER_PROJECTILE = 17
+    ATTACKER_MINION_TURKEY = 18
+    BEACH_ENEMY = 19
+    XML_CONFIGURED = 20
+    XML_RENDERED = 21
+
+
+class NpcEvent(IntEnum):
+    FULL_STATE = 0
+    DELETE = 1
+    ADD = 2
+    MOVE = 3
+    SUCKED = 4
+    BURP = 5
+    TELEPORT = 6
+    DIE = 7
+    PUNCH = 8
+    OUCH = 9
+    ATTACK = 10
+    PREPARE_TO_ATACK = 11
 
 
 @dataclass(slots=True)
@@ -2062,9 +2082,9 @@ class World:
     tiles: list[Tile] = field(default_factory=list, repr=False)
     unk4: bytes = b"\x00" * 12
     dropped: Dropped = field(default_factory=Dropped, repr=False)
-    unk5: int = 0  # u16
-    unk6: int = 0  # u16
-    unk7: int = 0  # u16
+    default_weather: WeatherType = WeatherType.DEFAULT  # u16
+    terraform: TerraformType = TerraformType.DEFAULT  # u16
+    active_weather: WeatherType = WeatherType.DEFAULT  # u16
     unk8: int = 0  # u16
     unk9: int = 0  # u32
 
@@ -2559,9 +2579,9 @@ class World:
             with s.reversed(keep=False):
                 world.unk9 = s.read_u32()
                 world.unk8 = s.read_u16()
-                world.unk7 = s.read_u16()
-                world.unk6 = s.read_u16()
-                world.unk5 = s.read_u16()
+                world.active_weather = WeatherType(s.read_u16())
+                world.terraform = TerraformType(s.read_u16())
+                world.default_weather = WeatherType(s.read_u16())
 
                 while True:
                     item = DroppedItem()
@@ -2611,9 +2631,9 @@ class World:
 
             world.dropped.items.append(item)
 
-        world.unk5 = s.read_u16()
-        world.unk6 = s.read_u16()
-        world.unk7 = s.read_u16()
+        world.default_weather = WeatherType(s.read_u16())
+        world.terraform = TerraformType(s.read_u16())
+        world.active_weather = WeatherType(s.read_u16())
         world.unk8 = s.read_u16()
         world.unk9 = s.read_u32()
 

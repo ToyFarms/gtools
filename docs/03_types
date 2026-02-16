@@ -1,0 +1,36 @@
+strkv (also known as TextScanner officically), basically a table,
+    eventType|0\neventName|102_PLAYER.AUTHENTICATION\nAuthenticated|1\nAuthentication_error|0\nDevice_Id|^^\nGrow_Id|130179494\nName|^^mapqweufha\nWorldlock_balance|0\n
+
+    eventType|0\n
+    eventName|102_PLAYER.AUTHENTICATION\n
+    Authenticated|1\n
+    Authentication_error|0\n
+    Device_Id|^^\n
+    Grow_Id|130179494\n
+    Name|^^mapqweufha\n
+    Worldlock_balance|0\n
+
+    each row is separated by a newline
+    each cell is separated by a pipe
+
+    no escaping, just dont use newline and pipe in the string
+
+variant, a list with mixed data type,
+    variant kind:
+        TYPE_UNUSED    = 0
+        TYPE_FLOAT     = 1 (f32)
+        TYPE_STRING    = 2 ([length:u16, str:[u8, ..., length]])
+        TYPE_VECTOR2   = 3 (f32, f32)
+        TYPE_VECTOR3   = 4 (f32, f32, f32)
+        TYPE_UINT32    = 5 (u32)
+        TYPE_ENTITY    = 6 (?)
+        TYPE_COMPONENT = 7 (?)
+        TYPE_RECT      = 8 (f32, f32, f32, f32)
+        TYPE_INT32     = 9 (i32)
+
+    \x02\x00\x02\x04\x00\x00\x00Test\x01\x01\xa4p\x9d?
+    [\x02][\x00\x02 \x04\x00\x00\x00Test][\x01\x01 \xa4p\x9d?]
+    [count:u8, items:[index:u8, kind:u8, data: [u8, ...], ..., count]]
+
+
+(TODO VariantDB)

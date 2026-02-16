@@ -1,0 +1,109 @@
+this packet looks like,
+    b'\x02\x00\x00\x00tankIDName|somename
+    tankIDPass|
+    requestedName|
+    f|0
+    protocol|225
+    game_version|5.39
+    fz|22647480
+    cbits|1024
+    player_age|25
+    GDPR|2
+    FCMToken|
+    category|_-5100
+    totalPlaytime|0
+    klv|e2dabb123b123b12b312b31b23b12b3b12b3b12b3b1b23b12b31b2b3b1b23b0c
+    hash2|-123123123
+    meta|1123Htuawjalwdqwheuqwen123qo51/7T+912312312=
+    fhash|-123123123
+    rid|0897ABDBDBDBDBDBDB92183191231236
+    platformID|0,1,1
+    deviceVersion|0
+    country|us
+    hash|1231231235
+    mac|82:16:12:23:56:81
+    wk|EAEAEAEAEAEAEA123123FBBBDEE12311
+    zf|-1231231236lmode|1
+    user|100020200
+    token|1231237
+    UUIDToken|123123213213BFBFBFBFFBDEDEDBEBDB
+    doorID|0
+    aat|2\x00'
+
+
+** see scripts/login_val.py for a working demo and more details **
+each field what they mean and how to derive it,
+f             = swear filter, 0 or 1
+protocol      = growtopia protocol version
+game_version  = version
+fz            = size of Growtopia.exe in bytes
+cbits         = client bits (bitflags), values:
+                1    = unk1
+                2    = disable_add_friend
+                4    = hide_sign
+                8    = hide_iap
+                16   = is_child
+                32   = disable_broadcast
+                64   = no_guild_invite
+                128  = no_guild_flag
+                256  = disable_billboard
+                512  = use_classic_store
+                1024 = enable_profile
+                2048 = role_skin
+                4096 = role_icon
+                8192 = disable_chat
+player_age    = age
+GDPR          = General Data Protection Regulation, there is also OnOverrideGDPRFromServer
+                Call(Variant(b'OnOverrideGDPRFromServer', 22i, 2i, 0i, 1i))
+                values:
+                1 = adult (age > 12)
+                2 = child non-us (GDPR)
+                3 = child us (COPPA)
+                (yes apparently i'm a child, or am i misinterpreting it?)
+FCMToken      = Firebase Cloud Messaging token
+category      = world select category, default to _-5100
+totalPlaytime = playtime, always set to zero regardless
+klv           = hash of protocol, version, rid jumbled together, possibly used to verify the version field, see `gtools/core/growtopia/crypto.py` for implementation
+hash2         = hash of the active network adapter's mac address else mac is "", proton_hash(get_active_adapter().mac + "RT")
+meta          = obtained from server_data.php
+fhash         = field hash, calculated with proton_hash(b"tankIDName|tankIDPass|requestedName|f|protocol|game_version|fz|lmode|cbits|hash2|vid|aid|gid|meta|rid|platformID|deviceVersion|country|hash|mac|reconnect|1\nuser|token|doorID|ProductIdwk|fhash|")
+rid           = unique registration id encoding the first time growtopia is run, see `gtools/core/growtopia/crypto.py` for implementation
+platformID    = constant 0,1,1  values
+                enum ePlatformID
+                {
+                        PLATFORM_ID_UNKNOWN = -1,
+                        PLATFORM_ID_WINDOWS,
+                        PLATFORM_ID_IOS, //iPhone/iPad etc
+                        PLATFORM_ID_OSX,
+                        PLATFORM_ID_LINUX,
+                        PLATFORM_ID_ANDROID,
+                        PLATFORM_ID_WINDOWS_MOBILE, //yeah, right.  Doesn't look like we'll be porting here anytime soon.
+                        PLATFORM_ID_WEBOS,
+                        PLATFORM_ID_BBX, //RIM Playbook
+                        PLATFORM_ID_FLASH,
+                        PLATFORM_ID_HTML5, //javascript output via emscripten for web
+                        PLATFORM_ID_PSVITA,
+                        //new platforms will be added above here.  Don't count on PLATFORM_ID_COUNT not changing!
+                        PLATFORM_ID_COUNT
+                };
+
+deviceVersion = constant 0
+country       = country
+hash          = hash of vsn (Volume Serial Number) (either volume CDEFG, in that order, else empty string), proton_hash(GetVolumeInformation(either "CDEFG").lpVolumeSerialNumber + "RT")
+mac           = mac address of the computer else "WINNONE"
+wk            = windows key, md5 hash of MachineGuid, hashlib.md5(get_reg("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\\MachineGuid")).hexdigest().upper()
+zf            = hash of Growtopia.exe, proton_hash(read("Growtopia.exe", "rb"))
+lmode         = login mode, originally a separate field, but for some reason its now concatenated with zf, constant 1 f"zf|{}lmode|1"
+user          = unique user id (incremented each account), obtained from OnSendToServer index 3 (210578474i)
+token         = obtained from OnSendToServer, index 2 (13826541i, -1i part)
+UUIDToken     = obtained from OnSendToServer, kv index 2 (1231723EABABBABA826381726C545711)
+doorID        = obtained from OnSendToServer, 0 for white door, empty for not redirecting, else for the door id
+aat           = obtained from OnSendToServer, index 5 (1i, 3i part)
+                notice sometimes its omitted, in such situation means its not redirecting to a new server (i think)
+    Call(Variant(b'OnSendToServer', 17134i, 13826541i, 210578474i, b'213.179.209.177|0|1231723EABABBABA826381726C545711', 1i, b'username'))
+    Call(Variant(b'OnSendToServer', 17017i, -1i, 210578474i, b'213.179.209.175||-1', 3i))
+
+NOTE: some field are platform dependent (https://github.com/1i8/ENetSocks5/blob/946b0e00bd2e385d9ccd8a50fb5d88521284edfa/EBotNet/growtopia/TankProtocol.cpp#L51)
+    windows     = wk, zf
+    osx, ios    = aid, vid
+    android     = gid

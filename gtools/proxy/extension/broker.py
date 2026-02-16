@@ -17,6 +17,7 @@ from google.protobuf.message import Message
 import zmq
 import xxhash
 
+from gtools.core.auto_call import auto_call
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
@@ -658,6 +659,7 @@ class BrokerFunction:
 HandleFunction = Callable[[bytes, Packet, BrokerFunction], Any]
 
 
+@auto_call("stop")
 class Broker:
     logger = logging.getLogger("broker")
 

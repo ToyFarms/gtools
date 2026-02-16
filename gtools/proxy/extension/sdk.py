@@ -11,6 +11,7 @@ import zmq
 import logging
 import time
 
+from gtools.core.auto_call import auto_call
 from gtools.core.growtopia.packet import PreparedPacket
 from gtools.core.log import setup_logger
 from gtools.core.network import increment_port
@@ -19,6 +20,7 @@ from gtools.core.transport.protocol import Event
 from gtools.core.transport.zmq_transport import Push, Dealer
 from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
+    BLOCKING_MODE_UNSPECIFIED,
     CapabilityResponse,
     Packet,
     Interest,
@@ -41,6 +43,8 @@ type UnboundDispatchHandle[S: Extension] = Callable[[S, PendingPacket], PendingP
 
 def dispatch(interest: Interest) -> Callable[[UnboundDispatchHandle], UnboundDispatchHandle]:
     def wrapper(fn: UnboundDispatchHandle) -> UnboundDispatchHandle:
+        if interest.blocking_mode == BLOCKING_MODE_UNSPECIFIED:
+            raise ValueError(f"in {fn.__name__} interest blocking mode is unspecified")
 
         interests: list[Interest] | object | None = getattr(fn, "__dispatch_interest_list", None)
         if isinstance(interests, list):
@@ -58,6 +62,7 @@ def dispatch_fallback(fn: UnboundDispatchHandle) -> UnboundDispatchHandle:
     return fn
 
 
+@auto_call("stop")
 class Extension(ExtensionUtility):
     logger = logging.getLogger("extension")
 
@@ -141,7 +146,7 @@ class Extension(ExtensionUtility):
     def destroy(self) -> None: ...
 
     def _resolve_decorator(self) -> None:
-        seen_id: set[int] = set()
+        seen_id: dict[int, str] = {}
 
         for name, obj in vars(type(self)).items():
             if not callable(obj):
@@ -150,8 +155,9 @@ class Extension(ExtensionUtility):
             if dispatch := getattr(obj, "__dispatch_interest_list", []):
                 dispatch: list[Interest]
                 for interest in dispatch:
-                    assert interest.id not in seen_id, "duplicate id detected, something's wrong with the auto id system"
-                    seen_id.add(interest.id)
+                    if interest.id in seen_id:
+                        raise ValueError(f"duplicate id detected in {name} (id={interest.id}) and {seen_id[interest.id]} (id={interest.id})")
+                    seen_id[interest.id] = name
 
                     self._dispatch_routes[interest.id] = cast(DispatchHandle, getattr(self, name))
                     self._interest.append(interest)

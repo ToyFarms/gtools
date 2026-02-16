@@ -107,7 +107,7 @@ def _to_bytes(value: Any) -> bytes:
     return str(value).encode("utf-8")
 
 
-def _to_bytes_list(value: ValueType) -> list[bytes]:
+def _to_bytes_list(value: ValueType | Sequence[ValueType]) -> list[bytes]:
     if isinstance(value, (str, int, float, bytes)):
         return [_to_bytes(value)]
     return [_to_bytes(v) for v in value]
@@ -469,7 +469,7 @@ class StrKV:
             self._data[row_idx] = [key_bytes, _to_bytes(value)]
             self._key_map[key_bytes] = row_idx
 
-    def append(self, row: Sequence[Any]) -> None:
+    def append(self, row: Sequence[ValueType]) -> None:
         bs = _to_bytes_list(row)
         self._data.append(bs)
         if row:
