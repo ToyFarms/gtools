@@ -339,7 +339,7 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-extra = [
+gui = [
     { name = "keyboard" },
     { name = "pygame-ce" },
 ]
@@ -349,13 +349,13 @@ requires-dist = [
     { name = "cbor2", specifier = ">=5.7.1" },
     { name = "coverage", specifier = ">=7.13.0" },
     { name = "fix-protobuf-imports", specifier = ">=0.1.7" },
-    { name = "keyboard", marker = "extra == 'extra'", specifier = ">=0.13.5" },
+    { name = "keyboard", marker = "extra == 'gui'", specifier = ">=0.13.5" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "numpy", specifier = ">=2.4.0" },
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "protobuf", specifier = ">=6.33.2" },
     { name = "pycparser", specifier = ">=2.23" },
-    { name = "pygame-ce", marker = "extra == 'extra'", specifier = ">=2.5.6" },
+    { name = "pygame-ce", marker = "extra == 'gui'", specifier = ">=2.5.6" },
     { name = "pyglm", specifier = ">=2.8.3" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-forked", specifier = ">=1.6.0" },
@@ -365,7 +365,7 @@ requires-dist = [
     { name = "xxhash", specifier = ">=3.6.0" },
     { name = "zmq", specifier = ">=0.0.0" },
 ]
-provides-extras = ["extra"]
+provides-extras = ["gui"]
 
 [[package]]
 name = "iniconfig"
