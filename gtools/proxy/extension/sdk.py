@@ -11,6 +11,7 @@ import zmq
 import logging
 import time
 
+from gtools.core.auto_call import auto_call
 from gtools.core.growtopia.packet import PreparedPacket
 from gtools.core.log import setup_logger
 from gtools.core.network import increment_port
@@ -58,6 +59,7 @@ def dispatch_fallback(fn: UnboundDispatchHandle) -> UnboundDispatchHandle:
     return fn
 
 
+@auto_call("stop")
 class Extension(ExtensionUtility):
     logger = logging.getLogger("extension")
 
