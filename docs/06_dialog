@@ -1,3 +1,5 @@
+# TODO: fix and verify this documentation
+
 add_popup_name
 add_popup_name|<name>|
 Sets the popup window name.
@@ -333,3 +335,101 @@ Ends the custom tab container and returns to parent.
 add_quick_exit
 add_quick_exit|
 Adds a quick exit button to the dialog.
+
+* example
+
+set_default_color|`o
+add_label_with_icon|big|`wThe Growtopia Gazette``|left|5016|
+add_spacer|small|
+add_image_button|banner|interface/large/wtr_lvl11_xualqu.rttex|bannerlayout||
+add_spacer|small|
+add_textbox|`wDecember 29th: `5Merry Monday!``|left|
+add_spacer|small|
+add_image_button|iotm_layout|interface/large/gazette/gazette_3columns_feature_btn01.rttex|3imageslayout|OPENSTORE|main/rt_grope_battlepass_bundle01|
+add_image_button|iotm_layout|interface/large/gazette/gazette_3columns_feature_btn08.rttex|3imageslayout|OPENSTORE|main/gems_bundle06|
+add_image_button|iotm_layout|interface/large/gazette/gazette_3columns_feature_btn05.rttex|3imageslayout|OPENSTORE|main/gems_bundle05|
+add_spacer|small|
+add_textbox|It's time to sleigh the day as `4Merry Monday`` has arrived! For the next 24 hours, you will find `9Royal Winter Wishes`` bundled with selected Gem Packs in the store! Make your wishes come true and stay ahead of the `2WinterFest`` snowstorm with these festive treats!|left|
+add_spacer|small|
+add_textbox|This year's `2WinterFest`` rewards are bigger, brighter, and cooler than ever! Spend your `1Royal Winter Seals`` across all our `2Rewards Branches`` and work your way up to unlocking festive goodies galore! And because it's the season of giving, we've added a `2brand new fifth rewards branch`` packed with fresh rewards! The final reward of this new branch is the ultimate flex, the brand new `2Royal Winter Title``, perfect for spreading that holiday spirit wherever you go!|left|
+add_spacer|small|
+add_textbox|`cWinterFest Bingo`` is also making a merry return! Complete your `2Bingo Card`` by collecting items from various `2WinterFest`` activities and claim rewards along the way! Not vibing with the prizes on your card? No worries, you can reset your `2Bingo Card`` to roll for rewards that are more your style! After all, it's your holiday wish list!|left|
+add_spacer|small|
+add_textbox|`wGROWCH's`` heart has officially grown to its fullest and it's safe to say he's feeling extra warm and fuzzy (don't tell him we said that)! While his heart can't grow any bigger, you can still keep the holiday spirit alive by gifting `wGROWCH`` if you'd like, because spreading cheer is always in season, even when the heart is already full!|left|
+add_spacer|small|
+add_textbox|Learn more about the coldest event of the year by reading ThePsyborg's Dev Diary!|left|
+add_spacer|small|
+add_image_button|gazette_GrowtopiaForumUpdates|interface/large/gazette/gazette_3columns_forum_btn01.rttex|3imageslayout|https://www.growtopiagame.com/forums/forum/general/announcements/7274287-winterfest-2025|Do you want to open the Growtopia Forum and check out the latest update?|
+add_layout_spacer|3imageslayout|
+add_layout_spacer|3imageslayout|
+add_spacer|small|
+add_textbox|Take things to the next level and zoom through the Growtopian worlds with the December Grow Pass items!|left|
+add_spacer|small|
+add_label_with_icon|small|Item of the Season: `2Maverick Armor``|left|24|
+add_label_with_icon|small|Royal Item of the Season: `2Royal Maverick Armor``|left|24|
+add_label_with_icon|small|Subscriber Item: `8Molten Mining Tool`` chosen by BTKY!|left|24|
+add_spacer|small|
+add_textbox|Please make sure to check our announcement to find out more!|left|
+add_spacer|small|
+add_image_button|gazette_GrowtopiaForumUpdates|interface/large/gazette/gazette_3columns_forum_btn01.rttex|3imageslayout|https://www.growtopiagame.com/forums/forum/general/announcements/7274284-december-update-2025|Do you want to open the Growtopia Forum and check out the latest update?|
+add_layout_spacer|3imageslayout|
+add_layout_spacer|3imageslayout|
+add_spacer|small|
+add_textbox|The Growtopia survey for the November Update is still open! By completing the survey, you will receive `22 Growtokens`` if you have Advanced Account Protection enabled. Complete the survey and claim your reward on your mobile device to let us know what you think!|left|
+add_spacer|small|
+add_url_button|survey|`wGive us your opinion!``|noflags|OPENSURVEY||
+add_spacer|small|
+add_textbox|Don't forget to join our `2Official Growtopia Discord Server`` on `2discord.gg/growtopia`` or click the link below!|left|
+add_spacer|small|
+add_image_button|iotm_layout|interface/large/gazette/gazette_3columns_community_btn01.rttex|3imageslayout|OPENCOMMUNITY|community_growtorials/TUTORIAL_DOORS|
+add_image_button|gazette_DiscordServer|interface/large/gazette/gazette_3columns_community_btn04.rttex|3imageslayout|https://discord.gg/growtopia|Would you like to join our Discord Server?|
+add_image_button|gazette_Youtube|interface/large/gazette/gazette_3columns_community_btn03.rttex|3imageslayout|https://tiktok.com/@growtopia|Would you like to open this in TikTok?|
+add_spacer|small|
+add_textbox|Visit our Social Media pages for more Content!|left|
+add_spacer|small|
+add_image_button|gazette_DiscordServer|interface/large/gazette/gazette_5columns_social_btn01.rttex|7imageslayout20|https://discord.gg/growtopia|Would you like to join our Discord Server?|
+add_image_button|gazette_Instagram|interface/large/gazette/gazette_5columns_social_btn02.rttex|7imageslayout20|https://www.instagram.com/growtopia|Would you like to open this in Instagram?|
+add_image_button|gazette_TikTok|interface/large/gazette/gazette_5columns_social_btn03.rttex|7imageslayout20|https://tiktok.com/@growtopia|Would you like to open this in TikTok?|
+add_image_button|gazette_Twitch|interface/large/gazette/gazette_5columns_social_btn04.rttex|7imageslayout20|https://www.twitch.tv/growtopiagameofficial|Would you like to open this in Twitch?|
+add_image_button|gazette_Twitter|interface/large/gazette/gazette_5columns_social_btn06.rttex|7imageslayout20|https://twitter.com/growtopiagame|Would you like to open this in X?|
+add_image_button|gazette_Youtube|interface/large/gazette/gazette_5columns_btn04.rttex|7imageslayout20|https://www.youtube.com/growtopia_official|Would you like to open this in Youtube?|
+add_image_button|gazette_Facebook|interface/large/gazette/gazette_5columns_btn05.rttex|7imageslayout20|https://www.facebook.com/growtopia|Would you like to open this in Facebook?|
+add_spacer|small|
+add_image_button|gazette_PrivacyPolicy|interface/large/gazette/gazette_3columns_policy_btn02.rttex|3imageslayout|https://legal.ubi.com/privacypolicy/en-INTL|Do you want to read the Privacy Policy?|
+add_image_button|gazette_GrowtopianCode|interface/large/gazette/gazette_3columns_policy_btn01.rttex|3imageslayout|https://ubisoft-mobile.helpshift.com/hc/en/26-growtopia/section/337-the-growtopian-code/|Do you want to read the Growtopian Code?|
+add_image_button|gazette_TermsofUse|interface/large/gazette/gazette_3columns_policy_btn03.rttex|3imageslayout|https://legal.ubi.com/termsofuse/en-INTL|Do you want to read the Terms of Use?|
+add_spacer|small|
+add_spacer|small|
+add_quick_exit|add_spacer|small|
+add_url_button|gazette_visitforum|`wVisit Growtopia Forums``|noflags|https://www.growtopiagame.com/forums|Visit the Growtopia forums?|0|0|
+add_spacer|small|
+add_url_button||`wWOTD: `1COLDHAVEN`` by `#RAMJIRO````|NOFLAGS|OPENWORLD|COLDHAVEN|0|0|
+add_spacer|small|
+add_url_button||`wVOTW: `1DIY CHRISTMAS DECORATIONS - Celebrating Growtopia Winterfest!``|NOFLAGS|https://www.youtube.com/watch?v=hSLbje-Www8|Watch 'DIY CHRISTMAS DECORATIONS - Celebrating Growtopia Winterfest!' by LuckyCat009 on YouTube?|0|0|
+set_survey_enabled|1
+end_dialog|gazette||OK|
+!"
+
+* example 2
+
+set_default_color|`o
+add_label_with_icon|big|`wEdit World Lock``|left|242|
+add_popup_name|LockEdit|
+add_label|small|`wAccess list:``|left
+embed_data|tilex|23
+embed_data|tiley|22
+add_spacer|small|
+add_label|small|Currently, you're the only one with access.``|left
+add_spacer|small|
+add_player_picker|playerNetID|`wAdd``|
+add_checkbox|checkbox_public|Allow anyone to Build and Break|0
+add_checkbox|checkbox_disable_music|Disable Custom Music Blocks|0
+add_text_input|tempo|Music BPM|100|3|
+add_checkbox|checkbox_disable_music_render|Make Custom Music Blocks invisible|0
+add_checkbox|checkbox_set_as_home_world|Set as Home World|0|
+add_text_input|minimum_entry_level|World Level: |1|3|
+add_smalltext|Set minimum world entry level.|
+add_button|sessionlength_dialog|`wSet World Timer``|noflags|0|0|
+add_button|changecat|`wCategory: None``|noflags|0|0|
+add_button|getKey|Get World Key|noflags|0|0|
+end_dialog|lock_edit|Cancel|OK|
