@@ -6,6 +6,7 @@ import numpy as np
 import numpy.typing as npt
 
 from gtools.core.buffer import Buffer
+from gtools.core.growtopia.texmgr import TexMgr
 
 
 C_RTFILE_TEXTURE_HEADER = b"RTTXTR"
@@ -15,7 +16,7 @@ C_RTFILE_PACKAGE_HEADER_BYTE_SIZE = len(C_RTFILE_PACKAGE_HEADER)
 
 
 @dataclass(slots=True)
-class RtPackHeader:
+class RTPackHeader:
     file_type_id: bytes = b""
     version: int = 0
     _reserved: bytes = b""  # 1
@@ -25,7 +26,7 @@ class RtPackHeader:
     _reserved2: bytes = b""  # 15
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "RtPackHeader":
+    def deserialize(cls, s: Buffer) -> "RTPackHeader":
         header = cls()
         header.file_type_id = s.read_bytes(C_RTFILE_PACKAGE_HEADER_BYTE_SIZE)
         header.version = s.read_u8()
@@ -38,7 +39,7 @@ class RtPackHeader:
 
 
 @dataclass(slots=True)
-class RtTexHeader:
+class RTTexHeader:
     file_type_id: bytes = b""
     version: int = 0
     _reserved: bytes = b""  # 1
@@ -54,7 +55,7 @@ class RtTexHeader:
     _reserved3: bytes = b""  # 64
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "RtTexHeader":
+    def deserialize(cls, s: Buffer) -> "RTTexHeader":
         tex_header = cls()
         tex_header.file_type_id = s.read_bytes(6)
         tex_header.version = s.read_u8()
@@ -73,7 +74,7 @@ class RtTexHeader:
 
 
 @dataclass(slots=True)
-class RtTexMipHeader:
+class RTTexMipHeader:
     height: int = 0
     width: int = 0
     data_size: int = 0
@@ -81,7 +82,7 @@ class RtTexMipHeader:
     _reserved: bytes = b""  # 8
 
     @classmethod
-    def deserialize(cls, s: Buffer) -> "RtTexMipHeader":
+    def deserialize(cls, s: Buffer) -> "RTTexMipHeader":
         mip_header = cls()
         mip_header.height = s.read_i32()
         mip_header.width = s.read_i32()
@@ -97,7 +98,7 @@ def get_image_buffer(path: str) -> npt.NDArray[np.uint8] | None:
 
     if data.startswith(C_RTFILE_PACKAGE_HEADER):
         s = Buffer(data)
-        pack_header = RtPackHeader.deserialize(s)
+        pack_header = RTPackHeader.deserialize(s)
 
         if pack_header.version != C_RTFILE_PACKAGE_LATEST_VERSION:
             raise ValueError(f"unsupported package version: {pack_header.version}")
@@ -110,10 +111,10 @@ def get_image_buffer(path: str) -> npt.NDArray[np.uint8] | None:
 
         if decompressed.startswith(C_RTFILE_TEXTURE_HEADER):
             ts = Buffer(decompressed)
-            tex_header = RtTexHeader.deserialize(ts)
+            tex_header = RTTexHeader.deserialize(ts)
 
             for _ in range(tex_header.mip_map_count):
-                RtTexMipHeader.deserialize(ts)
+                RTTexMipHeader.deserialize(ts)
 
             pixel_count = tex_header.width * tex_header.height * 4
             pixel_data = ts.read_bytes(pixel_count)
@@ -125,18 +126,32 @@ def get_image_buffer(path: str) -> npt.NDArray[np.uint8] | None:
     return None
 
 
-class RtTexManager:
+class RTTexManager(TexMgr[npt.NDArray[np.uint8]]):
     _atlas_cache: dict[str, npt.NDArray[np.uint8]] = {}
-    _tex_cache: dict[tuple[str, int, int, int, int], npt.NDArray[np.uint8]] = {}
+    _tex_cache: dict[tuple[str, int, int, int, int, bool], npt.NDArray[np.uint8]] = {}
 
-    def get(self, file: str | Path, x: int, y: int, w: int, h: int, flip_x: bool = False) -> npt.NDArray[np.uint8]:
+    def get_nocache(self, file: str | Path, x: int, y: int, w: int = 32, h: int = 32, flip_x: bool = False) -> npt.NDArray[np.uint8]:
+        file = str(file)
+
+        img = get_image_buffer(file)
+        if img is None:
+            raise ValueError("failed to get texture")
+        RTTexManager._atlas_cache[file] = img
+
+        cropped = img[y : y + h, x : x + w, :]
+        if flip_x:
+            cropped = cropped[:, ::-1, :]
+
+        return cropped
+
+    def get(self, file: str | Path, x: int, y: int, w: int = 32, h: int = 32, flip_x: bool = False) -> npt.NDArray[np.uint8]:
         file = str(file)
 
         key = (file, x, y, w, h, flip_x)
         if key in self._tex_cache:
             return self._tex_cache[key]
 
-        cached = RtTexManager._atlas_cache.get(file)
+        cached = RTTexManager._atlas_cache.get(file)
         if cached is not None:
             cropped = cached[y : y + h, x : x + w, :]
             if flip_x:
@@ -147,7 +162,7 @@ class RtTexManager:
         img = get_image_buffer(file)
         if img is None:
             raise ValueError("failed to get texture")
-        RtTexManager._atlas_cache[file] = img
+        RTTexManager._atlas_cache[file] = img
 
         cropped = img[y : y + h, x : x + w, :]
         if flip_x:

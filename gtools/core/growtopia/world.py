@@ -96,10 +96,8 @@ import cbor2
 from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
-from gtools.core.growtopia.rttex import RtTexManager
+from gtools.core.growtopia.texmgr import TexMgr
 from gtools.protogen import growtopia_pb2
-import numpy as np
-import numpy.typing as npt
 
 from gtools import setting
 
@@ -1800,10 +1798,11 @@ class Tile:
     fg_tex_index: int = 0
     bg_tex_index: int = 0
     json_data: dict = field(default_factory=dict)
+    dirty: bool = True
 
     logger = logging.getLogger("tile")
 
-    def get_texture(self, mgr: RtTexManager, id: int, tex_index: int) -> npt.NDArray[np.uint8]:
+    def get_texture[T](self, mgr: TexMgr[T], id: int, tex_index: int) -> T:
         item = item_database.get(id)
 
         stride = item.get_tex_stride()
@@ -1823,10 +1822,10 @@ class Tile:
 
         return mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32, flip_x=is_flipped)
 
-    def get_fg_texture(self, mgr: RtTexManager) -> npt.NDArray[np.uint8]:
+    def get_fg_texture[T](self, mgr: TexMgr[T]) -> T:
         return self.get_texture(mgr, self.fg_id, self.fg_tex_index)
 
-    def get_bg_texture(self, mgr: RtTexManager) -> npt.NDArray[np.uint8]:
+    def get_bg_texture[T](self, mgr: TexMgr[T]) -> T:
         return self.get_texture(mgr, self.bg_id, self.bg_tex_index)
 
     @property
@@ -2094,6 +2093,10 @@ class World:
     logger = logging.getLogger("world")
     npcs: list[Npc] = field(default_factory=list)
 
+    def mark_all_dirty(self) -> None:
+        for tile in self.tiles:
+            tile.dirty = True
+
     def get_npc(self, id: int) -> Npc | None:
         for npc in self.npcs:
             if npc.id == id:
@@ -2193,164 +2196,166 @@ class World:
         return ivec2(index % self.width, index // self.width)
 
     def destroy_tile(self, pos: ivec2) -> None:
-        if (tile := self.get_tile(pos)) is None:
-            return
-
-        if tile.fg_id != 0:
-            tile.fg_id = 0
-        else:
-            tile.bg_id = 0
+        if tile := self.get_tile(pos):
+            if tile.fg_id != 0:
+                tile.fg_id = 0
+            else:
+                tile.bg_id = 0
+            tile.dirty = True
 
     def place_tile(self, id: int, pos: ivec2) -> None:
-        if (tile := self.get_tile(pos)) is None:
-            return
-
-        if item_database.is_background(id):
-            tile.bg_id = id
-        else:
-            tile.fg_id = id
-            if id % 2 != 0:
-                tile.extra = SeedTile()
+        if tile := self.get_tile(pos):
+            if item_database.is_background(id):
+                tile.bg_id = id
+            else:
+                tile.fg_id = id
+                if id % 2 != 0:
+                    tile.extra = SeedTile()
+            tile.dirty = True
 
     def replace_whole_tile(self, tile: Tile) -> None:
         if idx := self.index_tile(tile.pos):
+            tile.dirty = True
             self.tiles[idx] = tile
 
     def place_fg(self, tile: Tile, fg: int, connection: int = 0, a5: bool = False) -> None:
+        tile.dirty = True
+
         item = item_database.get(fg)
-        if item:
-            if tile.extra:
-                if tile.extra.type == TileExtraType.LOCK_TILE and tile.fg_id != fg:
-                    self.remove_locked(tile)
-                tile.extra = None
-            tile.fg_id = fg
-            tile.fg_tex_index = connection
+        if tile.extra:
+            if tile.extra.type == TileExtraType.LOCK_TILE and tile.fg_id != fg:
+                self.remove_locked(tile)
+            tile.extra = None
+        tile.fg_id = fg
+        tile.fg_tex_index = connection
 
-            if tile.fg_id == 0:
-                tile.flags &= ~(TileFlags.WAS_SPLICED | TileFlags.IS_ON | TileFlags.IS_OPEN_TO_PUBLIC | TileFlags.FG_ALT_MODE)
+        if tile.fg_id == 0:
+            tile.flags &= ~(TileFlags.WAS_SPLICED | TileFlags.IS_ON | TileFlags.IS_OPEN_TO_PUBLIC | TileFlags.FG_ALT_MODE)
 
-            if item.item_type in (ItemInfoType.DOOR, ItemInfoType.LOCK):
-                tile.flags &= ~(TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE)
+        if item.item_type in (ItemInfoType.DOOR, ItemInfoType.LOCK):
+            tile.flags &= ~(TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE)
 
-            if not a5:
-                tile.flags &= ~TileFlags.HAS_EXTRA_DATA
+        if not a5:
+            tile.flags &= ~TileFlags.HAS_EXTRA_DATA
 
-            match item.item_type:
-                case (
-                    ItemInfoType.USER_DOOR
-                    | ItemInfoType.LOCK
-                    | ItemInfoType.SIGN
-                    | ItemInfoType.DOOR
-                    | ItemInfoType.SEED
-                    | ItemInfoType.PORTAL
-                    | ItemInfoType.MAILBOX
-                    | ItemInfoType.BULLETIN
-                    | ItemInfoType.DICE
-                    | ItemInfoType.PROVIDER
-                    | ItemInfoType.ACHIEVEMENT
-                    | ItemInfoType.SUNGATE
-                    | ItemInfoType.HEART_MONITOR
-                    | ItemInfoType.DONATION_BOX
-                    | ItemInfoType.TOYBOX
-                    | ItemInfoType.MANNEQUIN
-                    | ItemInfoType.CAMERA
-                    | ItemInfoType.MAGICEGG
-                    | ItemInfoType.TEAM
-                    | ItemInfoType.GAME_GEN
-                    | ItemInfoType.XENONITE
-                    | ItemInfoType.DRESSUP
-                    | ItemInfoType.CRYSTAL
-                    | ItemInfoType.BURGLAR
-                    | ItemInfoType.SPOTLIGHT
-                    | ItemInfoType.DISPLAY_BLOCK
-                    | ItemInfoType.VENDING
-                    | ItemInfoType.FISHTANK
-                    | ItemInfoType.SOLAR
-                    | ItemInfoType.FORGE
-                    | ItemInfoType.GIVING_TREE
-                    | ItemInfoType.GIVING_TREE_STUMP
-                    | ItemInfoType.STEAM_ORGAN
-                    | ItemInfoType.TAMAGOTCHI
-                    | ItemInfoType.SEWING
-                    | ItemInfoType.FLAG
-                    | ItemInfoType.LOBSTER_TRAP
-                    | ItemInfoType.ARTCANVAS
-                    | ItemInfoType.BATTLE_CAGE
-                    | ItemInfoType.PET_TRAINER
-                    | ItemInfoType.STEAM_ENGINE
-                    | ItemInfoType.LOCK_BOT
-                    | ItemInfoType.WEATHER_SPECIAL
-                    | ItemInfoType.SPIRIT_STORAGE
-                    | ItemInfoType.DISPLAY_SHELF
-                    | ItemInfoType.VIP_DOOR
-                    | ItemInfoType.CHAL_TIMER
-                    | ItemInfoType.CHAL_FLAG
-                    | ItemInfoType.FISH_MOUNT
-                    | ItemInfoType.PORTRAIT
-                    | ItemInfoType.WEATHER_SPECIAL2
-                    | ItemInfoType.FOSSIL_PREP
-                    | ItemInfoType.DNA_MACHINE
-                    | ItemInfoType.BLASTER
-                    | ItemInfoType.CHEMTANK
-                    | ItemInfoType.STORAGE
-                    | ItemInfoType.OVEN
-                    | ItemInfoType.SUPER_MUSIC
-                    | ItemInfoType.GEIGERCHARGE
-                    | ItemInfoType.ADVENTURE_RESET
-                    | ItemInfoType.TOMB_ROBBER
-                    | ItemInfoType.FACTION
-                    | ItemInfoType.RED_FACTION
-                    | ItemInfoType.GREEN_FACTION
-                    | ItemInfoType.BLUE_FACTION
-                    | ItemInfoType.FISHGOTCHI_TANK
-                    | ItemInfoType.ITEM_SUCKER
-                    | ItemInfoType.ROBOT
-                    | ItemInfoType.LUCKY_TICKET
-                    | ItemInfoType.STATS_BLOCK
-                    | ItemInfoType.FIELD_NODE
-                    | ItemInfoType.OUIJA_BOARD
-                    | ItemInfoType.AUTO_ACTION_BREAK
-                    | ItemInfoType.AUTO_ACTION_HARVEST
-                    | ItemInfoType.AUTO_ACTION_HARVEST_SUCK
-                    | ItemInfoType.LIGHTNING_CLOUD
-                    | ItemInfoType.PHASED_BLOCK
-                    | ItemInfoType.PASSWORD_STORAGE
-                    | ItemInfoType.PHASED_BLOCK2
-                    | ItemInfoType.PVE_NPC
-                    | ItemInfoType.INFINITY_WEATHER_MACHINE
-                    | ItemInfoType.COMPLETIONIST
-                    | ItemInfoType.FEEDING_BLOCK
-                    | ItemInfoType.KRANKENS_BLOCK
-                    | ItemInfoType.FRIENDS_ENTRANCE
-                ):
-                    tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
-                    # set some default value
-                    if item.id == WEATHER_MACHINE_BACKGROUND:
-                        tile.extra.expect(WeatherMachineTile).item_id = 0
-                    if item.id == EPOCH_MACHINE:
-                        e = tile.extra.expect(GuildWeatherMachineTile)
-                        e.flags |= 0b11100
-                        e.cycle_time_ms = 600
-                    if item.id == INFINITY_WEATHER_MACHINE:
-                        e = tile.extra.expect(InfinityWeatherMachineTile)
-                        e.cycle_time_ms = 600
-                    if item.item_type == ItemInfoType.KRANKENS_BLOCK and not a5:
-                        new_tile_id = KRANKEN_S_GALACTIC_BLOCK + 2 * tile.extra.expect(KrankenGalaticBlockTile).pattern_index
-                        if new_tile_id - KRANKEN_S_GALACTIC_BLOCK <= 24:
-                            tile.fg_id = new_tile_id
-                    # if item.item_type == ItemInfoType.PVE_NPC:
-                    #     # initialize all three npc with some default value, idk what is it though
-                    #     pass
-                case ItemInfoType.BEDROCK:
-                    if item.id in (DATA_BEDROCK, DATA_STARSHIP_HULL, DATA_BEDROCK_CANDY):
-                        tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
-                        tile.flags |= TileFlags.HAS_EXTRA_DATA
-
-            if item.flags2 & ItemInfoFlag2.GUILD_ITEM != 0 and not tile.extra:
+        match item.item_type:
+            case (
+                ItemInfoType.USER_DOOR
+                | ItemInfoType.LOCK
+                | ItemInfoType.SIGN
+                | ItemInfoType.DOOR
+                | ItemInfoType.SEED
+                | ItemInfoType.PORTAL
+                | ItemInfoType.MAILBOX
+                | ItemInfoType.BULLETIN
+                | ItemInfoType.DICE
+                | ItemInfoType.PROVIDER
+                | ItemInfoType.ACHIEVEMENT
+                | ItemInfoType.SUNGATE
+                | ItemInfoType.HEART_MONITOR
+                | ItemInfoType.DONATION_BOX
+                | ItemInfoType.TOYBOX
+                | ItemInfoType.MANNEQUIN
+                | ItemInfoType.CAMERA
+                | ItemInfoType.MAGICEGG
+                | ItemInfoType.TEAM
+                | ItemInfoType.GAME_GEN
+                | ItemInfoType.XENONITE
+                | ItemInfoType.DRESSUP
+                | ItemInfoType.CRYSTAL
+                | ItemInfoType.BURGLAR
+                | ItemInfoType.SPOTLIGHT
+                | ItemInfoType.DISPLAY_BLOCK
+                | ItemInfoType.VENDING
+                | ItemInfoType.FISHTANK
+                | ItemInfoType.SOLAR
+                | ItemInfoType.FORGE
+                | ItemInfoType.GIVING_TREE
+                | ItemInfoType.GIVING_TREE_STUMP
+                | ItemInfoType.STEAM_ORGAN
+                | ItemInfoType.TAMAGOTCHI
+                | ItemInfoType.SEWING
+                | ItemInfoType.FLAG
+                | ItemInfoType.LOBSTER_TRAP
+                | ItemInfoType.ARTCANVAS
+                | ItemInfoType.BATTLE_CAGE
+                | ItemInfoType.PET_TRAINER
+                | ItemInfoType.STEAM_ENGINE
+                | ItemInfoType.LOCK_BOT
+                | ItemInfoType.WEATHER_SPECIAL
+                | ItemInfoType.SPIRIT_STORAGE
+                | ItemInfoType.DISPLAY_SHELF
+                | ItemInfoType.VIP_DOOR
+                | ItemInfoType.CHAL_TIMER
+                | ItemInfoType.CHAL_FLAG
+                | ItemInfoType.FISH_MOUNT
+                | ItemInfoType.PORTRAIT
+                | ItemInfoType.WEATHER_SPECIAL2
+                | ItemInfoType.FOSSIL_PREP
+                | ItemInfoType.DNA_MACHINE
+                | ItemInfoType.BLASTER
+                | ItemInfoType.CHEMTANK
+                | ItemInfoType.STORAGE
+                | ItemInfoType.OVEN
+                | ItemInfoType.SUPER_MUSIC
+                | ItemInfoType.GEIGERCHARGE
+                | ItemInfoType.ADVENTURE_RESET
+                | ItemInfoType.TOMB_ROBBER
+                | ItemInfoType.FACTION
+                | ItemInfoType.RED_FACTION
+                | ItemInfoType.GREEN_FACTION
+                | ItemInfoType.BLUE_FACTION
+                | ItemInfoType.FISHGOTCHI_TANK
+                | ItemInfoType.ITEM_SUCKER
+                | ItemInfoType.ROBOT
+                | ItemInfoType.LUCKY_TICKET
+                | ItemInfoType.STATS_BLOCK
+                | ItemInfoType.FIELD_NODE
+                | ItemInfoType.OUIJA_BOARD
+                | ItemInfoType.AUTO_ACTION_BREAK
+                | ItemInfoType.AUTO_ACTION_HARVEST
+                | ItemInfoType.AUTO_ACTION_HARVEST_SUCK
+                | ItemInfoType.LIGHTNING_CLOUD
+                | ItemInfoType.PHASED_BLOCK
+                | ItemInfoType.PASSWORD_STORAGE
+                | ItemInfoType.PHASED_BLOCK2
+                | ItemInfoType.PVE_NPC
+                | ItemInfoType.INFINITY_WEATHER_MACHINE
+                | ItemInfoType.COMPLETIONIST
+                | ItemInfoType.FEEDING_BLOCK
+                | ItemInfoType.KRANKENS_BLOCK
+                | ItemInfoType.FRIENDS_ENTRANCE
+            ):
                 tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
                 tile.flags |= TileFlags.HAS_EXTRA_DATA
+                # set some default value
+                if item.id == WEATHER_MACHINE_BACKGROUND:
+                    tile.extra.expect(WeatherMachineTile).item_id = 0
+                if item.id == EPOCH_MACHINE:
+                    e = tile.extra.expect(GuildWeatherMachineTile)
+                    e.flags |= 0b11100
+                    e.cycle_time_ms = 600
+                if item.id == INFINITY_WEATHER_MACHINE:
+                    e = tile.extra.expect(InfinityWeatherMachineTile)
+                    e.cycle_time_ms = 600
+                if item.item_type == ItemInfoType.KRANKENS_BLOCK and not a5:
+                    new_tile_id = KRANKEN_S_GALACTIC_BLOCK + 2 * tile.extra.expect(KrankenGalaticBlockTile).pattern_index
+                    if new_tile_id - KRANKEN_S_GALACTIC_BLOCK <= 24:
+                        tile.fg_id = new_tile_id
+                # if item.item_type == ItemInfoType.PVE_NPC:
+                #     # initialize all three npc with some default value, idk what is it though
+                #     pass
+            case ItemInfoType.BEDROCK:
+                if item.id in (DATA_BEDROCK, DATA_STARSHIP_HULL, DATA_BEDROCK_CANDY):
+                    tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
+                    tile.flags |= TileFlags.HAS_EXTRA_DATA
+
+        if item.flags2 & ItemInfoFlag2.GUILD_ITEM != 0 and not tile.extra:
+            tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
+            tile.flags |= TileFlags.HAS_EXTRA_DATA
 
     def place_bg(self, tile: Tile, bg: int, connection: int = 0) -> None:
+        tile.dirty = True
         if bg == TRANSDIMENSIONAL_VAPORIZER_RAY:
             tile.bg_id = 0
             tile.flags &= ~TileFlags.BG_IS_ON
@@ -2359,6 +2364,7 @@ class World:
         tile.bg_tex_index = connection
 
     def update_tile_connection(self, tile: Tile) -> None:
+        tile.dirty = True
         item = item_database.get(tile.fg_id)
         match item.texture_type:
             case ItemInfoTextureType.SINGLE_FRAME_ALONE | ItemInfoTextureType.SINGLE_FRAME | ItemInfoTextureType.SMART_OUTER:
@@ -2420,6 +2426,7 @@ class World:
                     self.update_tile_connection(n)
 
     def update_tree(self, tile: Tile, item_id: int, harvest: bool, spawn_seed_flag: bool, seedling_flag: bool) -> None:
+        tile.dirty = True
         if not tile.extra or tile.extra.type != TileExtraType.SEED_TILE:
             return
 
@@ -2454,6 +2461,7 @@ class World:
                 yield tile
 
     def plant(self, tile: Tile, id: int, tree_item_id: int = 0, splice: bool = False) -> None:
+        tile.dirty = True
         if splice:
             tile.flags |= TileFlags.WILL_SPAWN_SEEDS_TOO
         self.place_fg(tile, id)
@@ -2461,6 +2469,7 @@ class World:
         tile.extra.expect(SeedTile).item_on_tree = tree_item_id
 
     def tile_change(self, tile: Tile, id: int, flags: TankFlags, splice: bool = False, seed_id: int = 0) -> None:
+        tile.dirty = True
         item = item_database.get(id)
         if item.item_type == ItemInfoType.SEED:
             if tile.fg_id == 0:
@@ -2572,6 +2581,8 @@ class World:
             tile.index = p
             tile.pos = ivec2(p % world.width, p // world.width)
             world.tiles.append(tile)
+
+        world.update_all_connection()
 
         if failed:
             # if we fail, then we cannot parse dropped item, but we can take advantage of the fact that it always placed at the end

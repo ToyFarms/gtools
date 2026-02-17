@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from contextlib import contextmanager
 from queue import Empty
 import struct
-from typing import Callable, Iterator, cast
+from typing import Any, Callable, Iterator, cast
 import os
 import threading
 import traceback
@@ -26,7 +26,7 @@ from gtools.protogen.extension_pb2 import (
     Interest,
     PendingPacket,
 )
-from gtools.protogen.state_pb2 import STATE_SET_MY_TELEMETRY
+from gtools.protogen.state_pb2 import STATE_SET_MY_TELEMETRY, StateUpdate
 from gtools.proxy.extension.sdk_utils import ExtensionUtility
 from gtools.proxy.state import State, Status
 from gtools import setting
@@ -55,6 +55,16 @@ def dispatch(interest: Interest) -> Callable[[UnboundDispatchHandle], UnboundDis
         return fn
 
     return wrapper
+
+
+type DispatchStateHandle = Callable[[StateUpdate], Any]
+type UnboundDispatchStateHandle[S: Extension] = Callable[[S, StateUpdate], Any]
+
+
+# TODO: just a hacky workaround, ideally we should integrate state update into the existing interest system
+def dispatch_state(fn: UnboundDispatchStateHandle) -> UnboundDispatchStateHandle:
+    setattr(fn, "__dispatch_state", True)
+    return fn
 
 
 def dispatch_fallback(fn: UnboundDispatchHandle) -> UnboundDispatchHandle:
@@ -86,6 +96,7 @@ class Extension(ExtensionUtility):
         self._job_threads: dict[str, threading.Thread] = {}
         self._dispatch_routes: dict[int, DispatchHandle] = {}
         self._dispatch_fallback: DispatchHandle | None = None
+        self._dispatch_state: DispatchStateHandle | None = None
         self.state = State()
         self._last_heartbeat = 0
 
@@ -142,9 +153,6 @@ class Extension(ExtensionUtility):
 
         return pkt
 
-    @abstractmethod
-    def destroy(self) -> None: ...
-
     def _resolve_decorator(self) -> None:
         seen_id: dict[int, str] = {}
 
@@ -163,6 +171,8 @@ class Extension(ExtensionUtility):
                     self._interest.append(interest)
             elif getattr(obj, "__dispatch_interest_fallback", False):
                 self._dispatch_fallback = cast(DispatchHandle, getattr(self, name))
+            elif getattr(obj, "__dispatch_state", False):
+                self._dispatch_state = cast(DispatchStateHandle, getattr(self, name))
             elif getattr(obj, "_mark_thread", False):
                 bound_method = getattr(self, name)
 
@@ -393,6 +403,8 @@ class Extension(ExtensionUtility):
                             self.play_sound("audio/hit.wav")
                     case Packet.TYPE_STATE_UPDATE:
                         self.state.update(pkt.state_update)
+                        if self._dispatch_state:
+                            self._dispatch_state(pkt.state_update)
         except zmq.error.ZMQError as e:
             if not self._stop_event.get():
                 self.logger.debug(f"ZMQ error in main loop: {e}")
