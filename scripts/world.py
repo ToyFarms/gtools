@@ -9,6 +9,6 @@ from gtools.core.wsl import windows_home
 def world(name: str) -> None:
     f = windows_home() / ".gtools/worlds" / name
     pkt = NetPacket.deserialize(f.read_bytes())
-    w = World.from_net(pkt.tank)
+    w = World.from_tank(pkt.tank)
 
     print(w)

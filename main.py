@@ -437,13 +437,13 @@ if __name__ == "__main__":
         for f in (windows_home() / ".gtools/worlds").glob("*"):
             try:
                 pkt = NetPacket.deserialize(f.read_bytes())
-                w = World.from_net(pkt.tank)
+                w = World.from_tank(pkt.tank)
             except:
                 print(f"\x1b[31mparsing {f} failed\x1b[0m")
                 traceback.print_exc()
                 break
     elif args.cmd == "render":
-        world = World.from_net(Path(args.world).read_bytes())
+        world = World.from_tank(Path(args.world).read_bytes())
 
         img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
         start = time.perf_counter()

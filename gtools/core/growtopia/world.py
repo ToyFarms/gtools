@@ -1803,6 +1803,26 @@ class Tile:
 
     logger = logging.getLogger("tile")
 
+    def tex_pos(self, id: int, tex_index: int) -> tuple[ivec2, bool]:
+        item = item_database.get(id)
+
+        stride = item.get_tex_stride()
+        if item.flags & ItemFlag.FLIPPABLE != 0:
+            is_flipped = self.flags & TileFlags.FLIPPED_X != 0
+            if is_flipped and item.texture_type == ItemInfoTextureType.SMART_EDGE_HORIZ:
+                # handle flipped couch texture
+                if tex_index == 0:
+                    tex_index = 2
+                elif tex_index == 2:
+                    tex_index = 0
+        else:
+            is_flipped = False
+
+        off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
+        tex = ivec2(item.tex_coord_x, item.tex_coord_y) + off
+
+        return tex, is_flipped
+
     def get_texture(self, mgr: RTTexManager, id: int, tex_index: int) -> npt.NDArray[np.uint8]:
         item = item_database.get(id)
 
@@ -2526,7 +2546,7 @@ class World:
             item.amount = amount
 
     @classmethod
-    def from_net(cls, tank: TankPacket | bytes) -> "World":
+    def from_tank(cls, tank: TankPacket | bytes) -> "World":
         if isinstance(tank, bytes):
             tank = NetPacket.deserialize(tank).tank
 
@@ -2572,6 +2592,8 @@ class World:
             tile.index = p
             tile.pos = ivec2(p % world.width, p // world.width)
             world.tiles.append(tile)
+
+        world.update_all_connection()
 
         if failed:
             # if we fail, then we cannot parse dropped item, but we can take advantage of the fact that it always placed at the end

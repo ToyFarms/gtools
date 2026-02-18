@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
-import moderngl as mgl
 
 from gtools.core.buffer import Buffer
 
@@ -253,38 +252,6 @@ class RTTex:
         pil = self.to_pil(level)
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         pil.save(out_path, format="PNG")
-
-    def gl_upload(self) -> mgl.Texture:
-        ctx = mgl.get_context()
-
-        if not self.mips:
-            raise ValueError("invalid or unloaded texture")
-
-        base = self.mips[0]
-
-        if self.format.is_pvrtc():
-            self.logger.warning("pvrtc format is not supported")
-            tex = ctx.texture(
-                (base.width, base.height),
-                4,
-                data=base.pixels,
-                internal_format=self.format.value,
-            )
-        else:
-            tex = ctx.texture(
-                (base.width, base.height),
-                4,
-                data=base.pixels,
-                dtype="u1",
-            )
-
-        for mip in self.mips[1:]:
-            tex.write(mip.pixels.tobytes(), level=mip.mip_level)
-
-        if len(self.mips) == 1:
-            tex.build_mipmaps()
-
-        return tex
 
     def __repr__(self) -> str:
         return f"<RTTex v{self.header.version} {self.width}x{self.height} format={self.format.name} mips={len(self.mips)}>"
