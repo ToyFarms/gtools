@@ -2526,7 +2526,7 @@ class World:
             item.amount = amount
 
     @classmethod
-    def from_net(cls, tank: TankPacket | bytes) -> "World":
+    def from_tank(cls, tank: TankPacket | bytes) -> "World":
         if isinstance(tank, bytes):
             tank = NetPacket.deserialize(tank).tank
 
