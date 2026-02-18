@@ -18,7 +18,7 @@ from gtools import flags
 from gtools.core.block_sigint import block_sigint
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
-from gtools.core.growtopia.renderer.world_renderer import WorldRenderer
+from gtools.core.growtopia.rttex import RTTexManager
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.world import World
 from gtools.core.hosts import HostsFileManager
@@ -443,7 +443,6 @@ if __name__ == "__main__":
                 traceback.print_exc()
                 break
     elif args.cmd == "render":
-        renderer = WorldRenderer()
         world = World.from_net(Path(args.world).read_bytes())
 
         img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
@@ -453,16 +452,24 @@ if __name__ == "__main__":
         except Exception as e:
             print_exc()
 
+        mgr = RTTexManager()
         for i, tile in enumerate(world.tiles):
             if i == world.garbage_start:
                 break
             try:
-                for cmd in renderer.get_render_cmd(tile):
-                    for dst in cmd.dst:
-                        dst = ivec4(dst)
-                        alpha_mask = cmd.buffer[:, :, 3] > 4
-                        dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
-                        dst_slice[alpha_mask] = cmd.buffer[:, :, : dst_slice.shape[2]][alpha_mask]
+                if tile.bg_id > 0:
+                    tex = tile.get_bg_texture(mgr)
+                    dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
+                    alpha_mask = tex[:, :, 3] > 4
+                    dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                    dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
+
+                if tile.fg_id > 0:
+                    tex = tile.get_fg_texture(mgr)
+                    dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
+                    alpha_mask = tex[:, :, 3] > 4
+                    dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                    dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
             except:
                 break
         print(f"rendering took {time.perf_counter() - start:.3f}s")

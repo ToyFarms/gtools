@@ -6,12 +6,12 @@ from PIL import Image, ImageDraw
 import io
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import World
-from gtools.core.growtopia.rttex import RtTexManager
+from gtools.core.growtopia.rttex import RTTexManager
 import urllib.parse
 from gtools.core.wsl import windows_home
 from gtools import setting
 
-manager = RtTexManager()
+manager = RTTexManager()
 
 WORLD_DIR = windows_home() / setting.appdir_name / "worlds"
 
@@ -29,8 +29,7 @@ def render_world(name: str) -> Image.Image:
                     continue
                 i = item_database.get(id)
                 tex = manager.get(windows_home() / f"AppData/Local/Growtopia/game/{i.texture_file.decode()}", i.tex_coord_x * 32, i.tex_coord_y * 32, 32, 32)
-                # TODO: rewrite to use render command
-                img.paste(tex, (tile.pos.x * 32, tile.pos.y * 32))
+                img.paste(Image.fromarray(tex), (tile.pos.x * 32, tile.pos.y * 32))
                 if w.garbage_start != -1 and idx >= w.garbage_start:
                     draw = ImageDraw.Draw(img)
                     draw.rectangle((tile.pos.x * 32, tile.pos.y * 32, tile.pos.x * 32 + 32, tile.pos.y * 32 + 32), outline=(255, 0, 0, 128), width=2)

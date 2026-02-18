@@ -96,7 +96,7 @@ import cbor2
 from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
-from gtools.core.growtopia.rttex import RtTexManager
+from gtools.core.growtopia.rttex import RTTexManager
 from gtools.protogen import growtopia_pb2
 import numpy as np
 import numpy.typing as npt
@@ -1803,7 +1803,7 @@ class Tile:
 
     logger = logging.getLogger("tile")
 
-    def get_texture(self, mgr: RtTexManager, id: int, tex_index: int) -> npt.NDArray[np.uint8]:
+    def get_texture(self, mgr: RTTexManager, id: int, tex_index: int) -> npt.NDArray[np.uint8]:
         item = item_database.get(id)
 
         stride = item.get_tex_stride()
@@ -1823,10 +1823,10 @@ class Tile:
 
         return mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32, flip_x=is_flipped)
 
-    def get_fg_texture(self, mgr: RtTexManager) -> npt.NDArray[np.uint8]:
+    def get_fg_texture(self, mgr: RTTexManager) -> npt.NDArray[np.uint8]:
         return self.get_texture(mgr, self.fg_id, self.fg_tex_index)
 
-    def get_bg_texture(self, mgr: RtTexManager) -> npt.NDArray[np.uint8]:
+    def get_bg_texture(self, mgr: RTTexManager) -> npt.NDArray[np.uint8]:
         return self.get_texture(mgr, self.bg_id, self.bg_tex_index)
 
     @property

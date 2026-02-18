@@ -3,11 +3,8 @@ import click
 from pyglm.glm import ivec2, ivec4
 import numpy as np
 
-from gtools.core.growtopia.items_dat import item_database
-from gtools.core.growtopia.renderer.world_renderer import WorldRenderer
-from gtools.core.growtopia.rttex import get_image_buffer
+from gtools.core.growtopia.rttex import RTTexManager
 from gtools.core.growtopia.world import Tile, World
-from gtools.core.wsl import windows_home
 
 autotile_47 = [
     [
@@ -161,9 +158,6 @@ autotile_47 = [
 @click.command()
 @click.argument("id", type=int)
 def tileset(id: int) -> None:
-    item = item_database.get(id)
-    tex_file = windows_home() / "AppData/Local/Growtopia/game" / item.texture_file.decode()
-
     world = World()
     for c, conf in enumerate(autotile_47):
         for y, row in enumerate(conf):
@@ -177,21 +171,23 @@ def tileset(id: int) -> None:
                     world.tiles.append(Tile(id, pos=pos))
 
     world.fix()
-
-    arr = get_image_buffer(str(tex_file))
-    if arr is None:
-        return
-
     world.update_all_connection()
+    mgr = RTTexManager()
 
-    renderer = WorldRenderer()
     img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
     for tile in world.tiles:
-        for cmd in renderer.get_render_cmd(tile):
-            for dst in cmd.dst:
-                dst = ivec4(dst)
-                alpha_mask = cmd.buffer[:, :, 3] > 4
-                dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
-                dst_slice[alpha_mask] = cmd.buffer[:, :, : dst_slice.shape[2]][alpha_mask]
+        if tile.bg_id > 0:
+            tex = tile.get_bg_texture(mgr)
+            dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
+            alpha_mask = tex[:, :, 3] > 4
+            dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+            dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
+
+        if tile.fg_id > 0:
+            tex = tile.get_fg_texture(mgr)
+            dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
+            alpha_mask = tex[:, :, 3] > 4
+            dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+            dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
 
     Image.fromarray(img).show()
