@@ -65,7 +65,8 @@ s[0] = [1, 2, 3]  # replace the 0th-row's entirely with [1, 2, 3]
 # foo|bar|baz
 s["foo"] = 1  # replace all values with 1, becomes (foo|1)
 # foo|bar|baz
-s["foo"] = [1]  # replace all values including key with 1, becomes (1)
+s["foo"] = [1]  # replace all values NOT including key with 1, becomes (foo|1)
+(if you want to replace the key, use s["foo", 0:] = [1])
 
 # foo|bar|baz
 s["foo", 0] = 1  # replace key with 1, becomes (1|bar|baz)
@@ -455,19 +456,14 @@ class StrKV:
             return
 
         key_bytes = _to_bytes(key)
-        row_exists = key_bytes in self._key_map
         row_idx = self._ensure_row(key)
 
         if isinstance(value, (list, tuple)) and not isinstance(value, (str, bytes)):
-            if len(value) == 1 and row_exists:
-                self._data[row_idx] = _to_bytes_list(value)
-                self._rebuild_key_map()
-            else:
-                self._data[row_idx] = [key_bytes] + _to_bytes_list(value)
-                self._key_map[key_bytes] = row_idx
+            self._data[row_idx] = [key_bytes] + _to_bytes_list(value)
         else:
             self._data[row_idx] = [key_bytes, _to_bytes(value)]
-            self._key_map[key_bytes] = row_idx
+
+        self._key_map[key_bytes] = row_idx
 
     def append(self, row: Sequence[ValueType]) -> None:
         bs = _to_bytes_list(row)

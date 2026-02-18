@@ -829,11 +829,10 @@ def test_value_type_semantics():
     with pytest.raises(IndexError):
         _ = bytes(s["foo", 2])
 
-    # existing row: sequence replaces entire row
     s["foo"] = [1]
     verify(repr(s), key="str-replace-seq")
-    assert s[2, 0] == b"1"
-    assert "foo" not in s
+    assert s[2, 0] == b"foo"
+    assert s[2, 1] == b"1"
 
     # column setting with list
     s["foo2"] = ["bar", "baz"]
