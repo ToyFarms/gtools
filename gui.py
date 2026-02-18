@@ -84,7 +84,7 @@ def link_program(vs_src: str, fs_src: str):
 class GLTexManager:
     FIXED_SIZE = 1024
 
-    def __init__(self, max_layers: int = 256) -> None:
+    def __init__(self, max_layers: int = 64) -> None:
         self.max_layers = max_layers
         self._texture_id: int | None = None
         self._layer_map: dict[str, tuple[int, int, int]] = {}
