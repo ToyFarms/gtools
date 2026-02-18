@@ -1,9 +1,8 @@
 import ctypes
 from sys import argv
-from typing import cast
 from pathlib import Path
 import glfw
-import moderngl as mgl
+from OpenGL.GL import *  # pyright: ignore[reportWildcardImportFromLibrary]
 import numpy as np
 import numpy.typing as npt
 
@@ -20,7 +19,7 @@ from gtools.core.growtopia.world import World
 from gtools.core.wsl import windows_home
 
 VERTEX_SHADER = """
-#version 450
+#version 450 core
 
 layout (location = 0) in vec2 in_pos;
 layout (location = 1) in vec2 in_texCoord;
@@ -39,7 +38,7 @@ void main() {
 """
 
 FRAGMENT_SHADER = """
-#version 450
+#version 450 core
 
 out vec4 out_fragColor;
 in vec2 texCoord;
@@ -52,125 +51,152 @@ void main() {
 """
 
 
+def compile_shader(src: str, shader_type: int):
+    shader = glCreateShader(shader_type)
+    glShaderSource(shader, src)
+    glCompileShader(shader)
+    ok = glGetShaderiv(shader, GL_COMPILE_STATUS)
+    if not ok:
+        log = glGetShaderInfoLog(shader).decode(errors="ignore")
+        raise RuntimeError(f"shader compile failed:\n{log}")
+    return shader
+
+
+def link_program(vs_src: str, fs_src: str):
+    vs = compile_shader(vs_src, GL_VERTEX_SHADER)
+    fs = compile_shader(fs_src, GL_FRAGMENT_SHADER)
+    prog = glCreateProgram()
+    glAttachShader(prog, vs)
+    glAttachShader(prog, fs)
+    glLinkProgram(prog)
+    ok = glGetProgramiv(prog, GL_LINK_STATUS)
+    if not ok:
+        log = glGetProgramInfoLog(prog).decode(errors="ignore")
+        raise RuntimeError(f"program link failed:\n{log}")
+
+    glDetachShader(prog, vs)
+    glDetachShader(prog, fs)
+    glDeleteShader(vs)
+    glDeleteShader(fs)
+    return prog
+
+
 class GLTexManager:
     FIXED_SIZE = 1024
 
-    def __init__(self, ctx: mgl.Context, max_layers: int = 256) -> None:
-        self.ctx = ctx
+    def __init__(self, max_layers: int = 256) -> None:
         self.max_layers = max_layers
-
-        self._texture_array: mgl.TextureArray | None = None
+        self._texture_id: int | None = None
         self._layer_map: dict[str, tuple[int, int, int]] = {}
         self._next_layer: int = 0
-
-    def _ensure_array(self) -> None:
-        if self._texture_array is not None:
-            return
-
-        if hasattr(self, "_texture_buffer"):
-            return
         self._texture_buffer = np.zeros((self.max_layers, self.FIXED_SIZE, self.FIXED_SIZE, 4), dtype=np.uint8)
 
     def _upload_to_layer(self, file: str) -> tuple[int, int, int]:
         if file in self._layer_map:
             return self._layer_map[file]
 
-        self._ensure_array()
-
         rtex = RTTex.from_file(file)
         mip = rtex.get_mip(0)
-        pixels = mip.pixels
-        orig_h, orig_w = pixels.shape[:2]
+        orig_h, orig_w = mip.pixels.shape[:2]
 
         layer = self._next_layer
-        self._texture_buffer[layer, 0:orig_h, 0:orig_w] = pixels
+        if orig_h > self.FIXED_SIZE or orig_w > self.FIXED_SIZE:
+            raise RuntimeError(f"texture {file} is larger than FIXED_SIZE {self.FIXED_SIZE}")
+
+        self._texture_buffer[layer, 0:orig_h, 0:orig_w, :] = mip.pixels
         self._next_layer += 1
         self._layer_map[file] = (self.FIXED_SIZE, self.FIXED_SIZE, layer)
         return self.FIXED_SIZE, self.FIXED_SIZE, layer
 
     def flush(self) -> None:
         used = self._next_layer
-        trimmed = np.ascontiguousarray(self._texture_buffer[:used])
-        print(f"Writing {trimmed.nbytes / 1e6:.1f} MB for {used} layers")
+        if used == 0:
+            raise RuntimeError("no layers to upload")
 
-        self._texture_array = self.ctx.texture_array(
-            (self.FIXED_SIZE, self.FIXED_SIZE, used),
-            components=4,
-            dtype="u1",
-        )
-        self._texture_array.filter = (mgl.NEAREST, mgl.NEAREST)
-        self._texture_array.write(trimmed.tobytes())
+        trimmed = self._texture_buffer[:used]
+        H = self.FIXED_SIZE
+        W = self.FIXED_SIZE
+        D = used
+        print(f"writing {trimmed.nbytes / 1e6:.1f} MB for {used} layers (W={W} H={H} D={D})")
+
+        if self._texture_id is None:
+            self._texture_id = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, self._texture_id)
+
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, W, H, D, 0, GL_RGBA, GL_UNSIGNED_BYTE, trimmed)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0)
 
     def get_layer(self, file: str | Path) -> tuple[int, int, int]:
         return self._upload_to_layer(str(file))
 
     def bind(self, location: int = 0):
-        if self._texture_array is None:
+        if self._texture_id is None:
             raise RuntimeError("texture array not initialized")
-
-        self._texture_array.use(location=location)
+        glActiveTexture(int(GL_TEXTURE0) + location)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, self._texture_id)
 
 
 def build_world(mgr: GLTexManager, world: World) -> npt.NDArray[np.float32]:
-    # 6 vertices * (x,y,u,v,layer)
-    tile_comp = 30
-
-    buf = np.zeros(tile_comp * world.width * world.height, dtype=np.float32)
+    vertices: list[float] = []
 
     for tile in world.tiles:
-        b = tile.index * tile_comp
+        if tile.bg_id != 0:
+            bx = tile.pos.x * 32
+            by = tile.pos.y * 32
 
-        bx = tile.pos.x * 32
-        by = tile.pos.y * 32
+            item = item_database.get(tile.bg_id)
+            w, h, layer = mgr.get_layer(setting.asset_path / item.texture_file.decode())
 
-        item = item_database.get(tile.fg_id)
-        w, h, layer = mgr.get_layer(setting.asset_path / item.texture_file.decode())
+            tex_pos, is_flipped = tile.tex_pos(tile.bg_id, tile.bg_tex_index)
+            u0 = (tex_pos.x * 32) / w
+            v0 = (tex_pos.y * 32) / h
+            u1 = ((tex_pos.x + 1) * 32) / w
+            v1 = ((tex_pos.y + 1) * 32) / h
+            if is_flipped:
+                u0, u1 = u1, u0
 
-        u0 = (item.tex_coord_x * 32) / w
-        v0 = (item.tex_coord_y * 32) / h
-        u1 = ((item.tex_coord_x + 1) * 32) / w
-        v1 = ((item.tex_coord_y + 1) * 32) / h
+            vertices.extend([
+                bx - 16, by - 16, u0, v0, layer,
+                bx + 16, by - 16, u1, v0, layer,
+                bx + 16, by + 16, u1, v1, layer,
+                bx - 16, by - 16, u0, v0, layer,
+                bx + 16, by + 16, u1, v1, layer,
+                bx - 16, by + 16, u0, v1, layer,
+            ])
 
-        vertices = np.array(
-            [
-                # x, y, u, v, layer
-                bx - 16,
-                by - 16,
-                u0,
-                v0,
-                layer,
-                bx + 16,
-                by - 16,
-                u1,
-                v0,
-                layer,
-                bx + 16,
-                by + 16,
-                u1,
-                v1,
-                layer,
-                bx - 16,
-                by - 16,
-                u0,
-                v0,
-                layer,
-                bx + 16,
-                by + 16,
-                u1,
-                v1,
-                layer,
-                bx - 16,
-                by + 16,
-                u0,
-                v1,
-                layer,
-            ],
-            dtype=np.float32,
-        )
+        if tile.fg_id != 0:
+            bx = tile.pos.x * 32
+            by = tile.pos.y * 32
 
-        buf[b : b + tile_comp] = vertices
-    return buf
+            item = item_database.get(tile.fg_id)
+            w, h, layer = mgr.get_layer(setting.asset_path / item.texture_file.decode())
 
+            tex_pos, is_flipped = tile.tex_pos(tile.fg_id, tile.fg_tex_index)
+            u0 = (tex_pos.x * 32) / w
+            v0 = (tex_pos.y * 32) / h
+            u1 = ((tex_pos.x + 1) * 32) / w
+            v1 = ((tex_pos.y + 1) * 32) / h
+            if is_flipped:
+                u0, u1 = u1, u0
+
+            vertices.extend([
+                bx - 16, by - 16, u0, v0, layer,
+                bx + 16, by - 16, u1, v0, layer,
+                bx + 16, by + 16, u1, v1, layer,
+                bx - 16, by - 16, u0, v0, layer,
+                bx + 16, by + 16, u1, v1, layer,
+                bx - 16, by + 16, u0, v1, layer,
+            ])
+
+
+    return np.array(vertices, dtype=np.float32)
 
 class Camera2D:
     def __init__(self, width: int, height: int) -> None:
@@ -191,7 +217,7 @@ class Camera2D:
         bottom = self.pos.y - half_h
         top = self.pos.y + half_h
 
-        return glm.ortho(left, right, bottom, top, -1.0, 1.0)
+        return glm.ortho(left, right, top, bottom, -1.0, 1.0)
 
     def screen_to_world(self, sx: float, sy: float) -> vec2:
         half_w = self.width / (2.0 * self.zoom)
@@ -206,7 +232,7 @@ class Camera2D:
         ny = sy / self.height
 
         wx = left + nx * (right - left)
-        wy = top - ny * (top - bottom)
+        wy = bottom + ny * (top - bottom)
         return vec2(wx, wy)
 
     def zoom_by(self, factor: float, screen_x: float, screen_y: float) -> None:
@@ -244,10 +270,9 @@ def main():
     glfw.make_context_current(window)
     glfw.swap_interval(1)
 
-    ctx = mgl.create_context()
-    ctx.viewport = (0, 0, W, H)
-    ctx.enable(mgl.BLEND)
-    ctx.blend_func = mgl.SRC_ALPHA, mgl.ONE_MINUS_SRC_ALPHA
+    glViewport(0, 0, W, H)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
     imgui.create_context()
     impl = GlfwRenderer(window)
@@ -268,8 +293,7 @@ def main():
     def on_resize(_window, width: int, height: int) -> None:
         if prev_framebuffer_cb:
             prev_framebuffer_cb(_window, width, height)
-        if ctx:
-            ctx.viewport = (0, 0, width, height)
+        glViewport(0, 0, width, height)
         if camera:
             camera.resize(width, height)
 
@@ -312,7 +336,7 @@ def main():
             dy = ypos - dragging["start_screen"][1]
 
             camera.pos.x = dragging["start_cam"].x - dx / camera.zoom
-            camera.pos.y = dragging["start_cam"].y + dy / camera.zoom
+            camera.pos.y = dragging["start_cam"].y - dy / camera.zoom
 
     def on_key(window, key, scancode, action, mods):
         if prev_key_cb:
@@ -333,17 +357,38 @@ def main():
     pkt = NetPacket.deserialize(f.read_bytes())
     world = World.from_tank(pkt.tank)
 
-    prog = ctx.program(
-        vertex_shader=VERTEX_SHADER,
-        fragment_shader=FRAGMENT_SHADER,
-    )
+    prog = link_program(VERTEX_SHADER, FRAGMENT_SHADER)
 
-    mgr = GLTexManager(ctx)
+    u_mvp_loc = glGetUniformLocation(prog, "u_mvp")
+    tex_loc = glGetUniformLocation(prog, "texArray")
+
+    mgr = GLTexManager()
     vertices = build_world(mgr, world)
     mgr.flush()
 
-    vbo = ctx.buffer(vertices.tobytes())
-    vao = ctx.vertex_array(prog, [(vbo, "2f 2f 1f", "in_pos", "in_texCoord", "in_layer")])
+    vao = glGenVertexArrays(1)
+    glBindVertexArray(vao)
+
+    vbo = glGenBuffers(1)
+    glBindBuffer(GL_ARRAY_BUFFER, vbo)
+    vbo_bytes = vertices.tobytes()
+    glBufferData(GL_ARRAY_BUFFER, len(vbo_bytes), vbo_bytes, GL_STATIC_DRAW)
+
+    stride = 5 * ctypes.sizeof(ctypes.c_float)
+    # in_pos location 0
+    glEnableVertexAttribArray(0)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+    # in_texCoord location 1
+    glEnableVertexAttribArray(1)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(2 * ctypes.sizeof(ctypes.c_float)))
+    # in_layer location 2
+    glEnableVertexAttribArray(2)
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(4 * ctypes.sizeof(ctypes.c_float)))
+
+    glBindVertexArray(0)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    vertex_count = vertices.size // 5
 
     while not glfw.window_should_close(window):
         glfw.poll_events()
@@ -351,22 +396,25 @@ def main():
         impl.process_inputs()
         imgui.new_frame()
 
-        ctx.clear(0.1, 0.1, 0.1)
+        glClearColor(0.1, 0.1, 0.1, 1.0)
+        glClear(GL_COLOR_BUFFER_BIT)
+
+        glUseProgram(prog)
 
         m = camera.proj()
         ptr = glm.value_ptr(m)
-        raw = ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float))
-        cast(mgl.Uniform, prog["u_mvp"]).write(raw)
+
+        mat = np.frombuffer(ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)), dtype=np.float32)
+        glUniformMatrix4fv(u_mvp_loc, 1, GL_FALSE, mat)
 
         mgr.bind(0)
-        cast(mgl.Uniform, prog["texArray"]).value = 0
-        vao.render()
+        glUniform1i(tex_loc, 0)
 
-        imgui.begin("Controls", True)
-        imgui.text("Middle-click + drag to pan (world follows mouse).")
-        imgui.text("Scroll to zoom centered on mouse.")
-        imgui.text("Press R to reset camera.")
-        imgui.separator()
+        glBindVertexArray(vao)
+        glDrawArrays(GL_TRIANGLES, 0, vertex_count)
+        glBindVertexArray(0)
+
+        imgui.begin("Debug", True)
         imgui.text(f"camera.pos = ({camera.pos.x:.1f}, {camera.pos.y:.1f})")
         imgui.text(f"zoom = {camera.zoom:.3f}")
         imgui.end()
