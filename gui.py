@@ -1,6 +1,8 @@
 import ctypes
 from sys import argv
 from pathlib import Path
+from typing import cast
+
 import glfw
 from OpenGL.GL import *  # pyright: ignore[reportWildcardImportFromLibrary]
 import numpy as np
@@ -18,67 +20,101 @@ from gtools.core.growtopia.rttex import RTTex
 from gtools.core.growtopia.world import World
 from gtools.core.wsl import windows_home
 
-VERTEX_SHADER = """
-#version 450 core
 
-layout (location = 0) in vec2 in_pos;
-layout (location = 1) in vec2 in_texCoord;
-layout (location = 2) in float in_layer;
+class ShaderProgram:
+    def __init__(self, vs_src: str, fs_src: str) -> None:
+        self._id = self._link(vs_src, fs_src)
 
-out vec2 texCoord;
-flat out float layer;
+    @classmethod
+    def from_file(cls, vs_file: str | Path, fs_file: str | Path | None = None) -> "ShaderProgram":
+        if vs_file and fs_file:
+            return cls(Path(vs_file).read_text(), Path(fs_file).read_text())
+        else:
+            name = Path(vs_file).with_suffix("").name
+            base = Path(vs_file).parent
+            return cls.from_file(base / f"{name}.vert", base / f"{name}.frag")
 
-uniform mat4 u_mvp;
+    def use(self) -> None:
+        glUseProgram(self._id)
 
-void main() {
-    gl_Position = u_mvp * vec4(in_pos, 0.0, 1.0);
-    texCoord = in_texCoord;
-    layer = in_layer;
-}
-"""
+    def uniform_location(self, name: str) -> int:
+        return glGetUniformLocation(self._id, name)
 
-FRAGMENT_SHADER = """
-#version 450 core
+    def set_mat4(self, location: int, matrix: npt.NDArray[np.float32]) -> None:
+        glUniformMatrix4fv(location, 1, GL_FALSE, matrix)
 
-out vec4 out_fragColor;
-in vec2 texCoord;
-flat in float layer;
-uniform sampler2DArray texArray;
+    def set_int(self, location: int, value: int) -> None:
+        glUniform1i(location, value)
 
-void main() {
-    out_fragColor = texture(texArray, vec3(texCoord, layer));
-}
-"""
+    @staticmethod
+    def _compile(src: str, shader_type: int) -> int:
+        shader = cast(int, glCreateShader(shader_type))
+        glShaderSource(shader, src)
+        glCompileShader(shader)
+        if not glGetShaderiv(shader, GL_COMPILE_STATUS):
+            log = glGetShaderInfoLog(shader).decode(errors="ignore")
+            raise RuntimeError(f"shader compile error:\n{log}")
+
+        return shader
+
+    @classmethod
+    def _link(cls, vs_src: str, fs_src: str) -> int:
+        vs = cls._compile(vs_src, GL_VERTEX_SHADER)
+        fs = cls._compile(fs_src, GL_FRAGMENT_SHADER)
+
+        prog = cast(int, glCreateProgram())
+        glAttachShader(prog, vs)
+        glAttachShader(prog, fs)
+        glLinkProgram(prog)
+
+        if not glGetProgramiv(prog, GL_LINK_STATUS):
+            log = glGetProgramInfoLog(prog).decode(errors="ignore")
+            raise RuntimeError(f"program link error:\n{log}")
+
+        for s in (vs, fs):
+            glDetachShader(prog, s)
+            glDeleteShader(s)
+
+        return prog
 
 
-def compile_shader(src: str, shader_type: int):
-    shader = glCreateShader(shader_type)
-    glShaderSource(shader, src)
-    glCompileShader(shader)
-    ok = glGetShaderiv(shader, GL_COMPILE_STATUS)
-    if not ok:
-        log = glGetShaderInfoLog(shader).decode(errors="ignore")
-        raise RuntimeError(f"shader compile failed:\n{log}")
-    return shader
+class Mesh:
+    def __init__(self, vertices: npt.NDArray[np.float32], layout: list[int], usage: int = GL_STATIC_DRAW) -> None:
+        self._vertex_count = vertices.size // sum(layout)
+        self._vao = glGenVertexArrays(1)
+        self._vbo = glGenBuffers(1)
 
+        glBindVertexArray(self._vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
 
-def link_program(vs_src: str, fs_src: str):
-    vs = compile_shader(vs_src, GL_VERTEX_SHADER)
-    fs = compile_shader(fs_src, GL_FRAGMENT_SHADER)
-    prog = glCreateProgram()
-    glAttachShader(prog, vs)
-    glAttachShader(prog, fs)
-    glLinkProgram(prog)
-    ok = glGetProgramiv(prog, GL_LINK_STATUS)
-    if not ok:
-        log = glGetProgramInfoLog(prog).decode(errors="ignore")
-        raise RuntimeError(f"program link failed:\n{log}")
+        data = vertices.tobytes()
+        glBufferData(GL_ARRAY_BUFFER, len(data), data, usage)
 
-    glDetachShader(prog, vs)
-    glDetachShader(prog, fs)
-    glDeleteShader(vs)
-    glDeleteShader(fs)
-    return prog
+        stride = sum(layout) * ctypes.sizeof(ctypes.c_float)
+        offset = 0
+        for loc, components in enumerate(layout):
+            glEnableVertexAttribArray(loc)
+            glVertexAttribPointer(
+                loc,
+                components,
+                GL_FLOAT,
+                GL_FALSE,
+                stride,
+                ctypes.c_void_p(offset * ctypes.sizeof(ctypes.c_float)),
+            )
+            offset += components
+
+        glBindVertexArray(0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    def draw(self, mode: int = GL_TRIANGLES) -> None:
+        glBindVertexArray(self._vao)
+        glDrawArrays(mode, 0, self._vertex_count)
+        glBindVertexArray(0)
+
+    def delete(self) -> None:
+        glDeleteBuffers(1, [self._vbo])
+        glDeleteVertexArrays(1, [self._vao])
 
 
 class GLTexManager:
@@ -89,114 +125,54 @@ class GLTexManager:
         self._texture_id: int | None = None
         self._layer_map: dict[str, tuple[int, int, int]] = {}
         self._next_layer: int = 0
-        self._texture_buffer = np.zeros((self.max_layers, self.FIXED_SIZE, self.FIXED_SIZE, 4), dtype=np.uint8)
+        self._buffer = np.zeros((max_layers, self.FIXED_SIZE, self.FIXED_SIZE, 4), dtype=np.uint8)
 
-    def _upload_to_layer(self, file: str) -> tuple[int, int, int]:
-        if file in self._layer_map:
-            return self._layer_map[file]
+    def get_layer(self, file: str | Path) -> tuple[int, int, int]:
+        key = str(file)
+        if key in self._layer_map:
+            return self._layer_map[key]
 
-        rtex = RTTex.from_file(file)
-        mip = rtex.get_mip(0)
-        orig_h, orig_w = mip.pixels.shape[:2]
+        rtex = RTTex.from_file(key)
+        pixels = rtex.get_mip(0).pixels
+        orig_h, orig_w = pixels.shape[:2]
+
+        if orig_h > self.FIXED_SIZE or orig_w > self.FIXED_SIZE:
+            raise RuntimeError(f"texture {key} ({orig_w}×{orig_h}) exceeds FIXED_SIZE {self.FIXED_SIZE}")
 
         layer = self._next_layer
-        if orig_h > self.FIXED_SIZE or orig_w > self.FIXED_SIZE:
-            raise RuntimeError(f"texture {file} is larger than FIXED_SIZE {self.FIXED_SIZE}")
-
-        self._texture_buffer[layer, 0:orig_h, 0:orig_w, :] = mip.pixels
+        self._buffer[layer, :orig_h, :orig_w] = pixels
         self._next_layer += 1
-        self._layer_map[file] = (self.FIXED_SIZE, self.FIXED_SIZE, layer)
-        return self.FIXED_SIZE, self.FIXED_SIZE, layer
+        self._layer_map[key] = (self.FIXED_SIZE, self.FIXED_SIZE, layer)
+        return self._layer_map[key]
 
     def flush(self) -> None:
         used = self._next_layer
         if used == 0:
-            raise RuntimeError("no layers to upload")
+            raise RuntimeError("no layers")
 
-        trimmed = self._texture_buffer[:used]
-        H = self.FIXED_SIZE
-        W = self.FIXED_SIZE
-        D = used
-        print(f"writing {trimmed.nbytes / 1e6:.1f} MB for {used} layers (W={W} H={H} D={D})")
+        W = H = self.FIXED_SIZE
+        print(f"uploading {self._buffer[:used].nbytes / 1e6:.1f} MB " f"({used} layers, {W}×{H})")
 
         if self._texture_id is None:
             self._texture_id = glGenTextures(1)
+
         glBindTexture(GL_TEXTURE_2D_ARRAY, self._texture_id)
-
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
 
-        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, W, H, D, 0, GL_RGBA, GL_UNSIGNED_BYTE, trimmed)
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, W, H, used, 0, GL_RGBA, GL_UNSIGNED_BYTE, self._buffer[:used])
         glBindTexture(GL_TEXTURE_2D_ARRAY, 0)
 
-    def get_layer(self, file: str | Path) -> tuple[int, int, int]:
-        return self._upload_to_layer(str(file))
-
-    def bind(self, location: int = 0):
+    def bind(self, unit: int = 0) -> None:
         if self._texture_id is None:
-            raise RuntimeError("texture array not initialized")
-        glActiveTexture(int(GL_TEXTURE0) + location)
+            raise RuntimeError("no texture id, did you call flush()?")
+
+        glActiveTexture(int(GL_TEXTURE0) + unit)
         glBindTexture(GL_TEXTURE_2D_ARRAY, self._texture_id)
 
-
-def build_world(mgr: GLTexManager, world: World) -> npt.NDArray[np.float32]:
-    vertices: list[float] = []
-
-    for tile in world.tiles:
-        if tile.bg_id != 0:
-            bx = tile.pos.x * 32
-            by = tile.pos.y * 32
-
-            item = item_database.get(tile.bg_id)
-            w, h, layer = mgr.get_layer(setting.asset_path / item.texture_file.decode())
-
-            tex_pos, is_flipped = tile.tex_pos(tile.bg_id, tile.bg_tex_index)
-            u0 = (tex_pos.x * 32) / w
-            v0 = (tex_pos.y * 32) / h
-            u1 = ((tex_pos.x + 1) * 32) / w
-            v1 = ((tex_pos.y + 1) * 32) / h
-            if is_flipped:
-                u0, u1 = u1, u0
-
-            vertices.extend([
-                bx - 16, by - 16, u0, v0, layer,
-                bx + 16, by - 16, u1, v0, layer,
-                bx + 16, by + 16, u1, v1, layer,
-                bx - 16, by - 16, u0, v0, layer,
-                bx + 16, by + 16, u1, v1, layer,
-                bx - 16, by + 16, u0, v1, layer,
-            ])
-
-        if tile.fg_id != 0:
-            bx = tile.pos.x * 32
-            by = tile.pos.y * 32
-
-            item = item_database.get(tile.fg_id)
-            w, h, layer = mgr.get_layer(setting.asset_path / item.texture_file.decode())
-
-            tex_pos, is_flipped = tile.tex_pos(tile.fg_id, tile.fg_tex_index)
-            u0 = (tex_pos.x * 32) / w
-            v0 = (tex_pos.y * 32) / h
-            u1 = ((tex_pos.x + 1) * 32) / w
-            v1 = ((tex_pos.y + 1) * 32) / h
-            if is_flipped:
-                u0, u1 = u1, u0
-
-            vertices.extend([
-                bx - 16, by - 16, u0, v0, layer,
-                bx + 16, by - 16, u1, v0, layer,
-                bx + 16, by + 16, u1, v1, layer,
-                bx - 16, by - 16, u0, v0, layer,
-                bx + 16, by + 16, u1, v1, layer,
-                bx - 16, by + 16, u0, v1, layer,
-            ])
-
-
-    return np.array(vertices, dtype=np.float32)
 
 class Camera2D:
     def __init__(self, width: int, height: int) -> None:
@@ -204,228 +180,251 @@ class Camera2D:
         self.zoom = 1.0
         self.width = width
         self.height = height
-
         self.min_zoom = 0.05
         self.max_zoom = 10.0
 
     def proj(self) -> mat4x4:
-        half_w = self.width / (2.0 * self.zoom)
-        half_h = self.height / (2.0 * self.zoom)
+        hw = self.width / (2.0 * self.zoom)
+        hh = self.height / (2.0 * self.zoom)
+        return glm.ortho(
+            self.pos.x - hw,
+            self.pos.x + hw,
+            self.pos.y + hh,
+            self.pos.y - hh,
+            -1.0,
+            1.0,
+        )
 
-        left = self.pos.x - half_w
-        right = self.pos.x + half_w
-        bottom = self.pos.y - half_h
-        top = self.pos.y + half_h
-
-        return glm.ortho(left, right, top, bottom, -1.0, 1.0)
+    def proj_as_numpy(self) -> npt.NDArray[np.float32]:
+        m = self.proj()
+        ptr = glm.value_ptr(m)
+        return np.frombuffer(
+            ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)),
+            dtype=np.float32,
+        )
 
     def screen_to_world(self, sx: float, sy: float) -> vec2:
-        half_w = self.width / (2.0 * self.zoom)
-        half_h = self.height / (2.0 * self.zoom)
+        hw = self.width / (2.0 * self.zoom)
+        hh = self.height / (2.0 * self.zoom)
+        nx, ny = sx / self.width, sy / self.height
+        return vec2(
+            (self.pos.x - hw) + nx * 2 * hw,
+            (self.pos.y - hh) + ny * 2 * hh,
+        )
 
-        left = self.pos.x - half_w
-        right = self.pos.x + half_w
-        top = self.pos.y + half_h
-        bottom = self.pos.y - half_h
-
-        nx = sx / self.width
-        ny = sy / self.height
-
-        wx = left + nx * (right - left)
-        wy = bottom + ny * (top - bottom)
-        return vec2(wx, wy)
-
-    def zoom_by(self, factor: float, screen_x: float, screen_y: float) -> None:
+    def zoom_around(self, factor: float, screen_x: float, screen_y: float) -> None:
         before = self.screen_to_world(screen_x, screen_y)
-
-        self.zoom *= factor
-        self.zoom = max(self.min_zoom, min(self.zoom, self.max_zoom))
-
+        self.zoom = max(self.min_zoom, min(self.zoom * factor, self.max_zoom))
         after = self.screen_to_world(screen_x, screen_y)
-
         self.pos += before - after
 
-    def pan_by(self, delta_world: glm.vec2) -> None:
-        self.pos += delta_world
+    def pan_by_screen(self, dx: float, dy: float) -> None:
+        self.pos.x -= dx / self.zoom
+        self.pos.y -= dy / self.zoom
+
+    def reset(self) -> None:
+        self.pos = vec2(0.0, 0.0)
+        self.zoom = 1.0
 
     def resize(self, width: int, height: int) -> None:
         self.width = width
         self.height = height
 
 
-def main():
-    if not glfw.init():
-        raise RuntimeError("failed to initialize GLFW")
+class WorldRenderer:
+    LAYOUT = [2, 2, 1]
+    TILE_PX = 32
+    HALF_PX = 16
 
-    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
-    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 5)
-    glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+    def __init__(self, world: World) -> None:
+        self._tex_mgr = GLTexManager()
+        vertices = self._build_vertices(world)
+        self._tex_mgr.flush()
+        self._mesh = Mesh(vertices, self.LAYOUT)
 
-    W, H = 800, 600
-    window = glfw.create_window(W, H, "gui", None, None)
-    if not window:
-        glfw.terminate()
-        raise RuntimeError("failed to create GLFW window")
+    def bind_textures(self, unit: int = 0) -> None:
+        self._tex_mgr.bind(unit)
 
-    glfw.make_context_current(window)
-    glfw.swap_interval(1)
+    def draw(self) -> None:
+        self._mesh.draw()
 
-    glViewport(0, 0, W, H)
-    glEnable(GL_BLEND)
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    def _build_vertices(self, world: World) -> npt.NDArray[np.float32]:
+        verts: list[float] = []
+        for tile in world.tiles:
+            if tile.bg_id:
+                verts.extend(self._tile_verts(tile, tile.bg_id, tile.bg_tex_index))
+            if tile.fg_id:
+                verts.extend(self._tile_verts(tile, tile.fg_id, tile.fg_tex_index))
+        return np.array(verts, dtype=np.float32)
 
-    imgui.create_context()
-    impl = GlfwRenderer(window)
+    def _tile_verts(self, tile, item_id: int, tex_index: int) -> list[float]:
+        bx = tile.pos.x * self.TILE_PX
+        by = tile.pos.y * self.TILE_PX
 
-    camera = Camera2D(W, H)
+        item = item_database.get(item_id)
+        w, h, layer = self._tex_mgr.get_layer(setting.asset_path / item.texture_file.decode())
 
-    prev_framebuffer_cb = None
-    prev_scroll_cb = None
-    prev_mouse_btn_cb = None
-    prev_cursor_cb = None
-    prev_key_cb = None
+        tex_pos, is_flipped = tile.tex_pos(item_id, tex_index)
+        u0 = (tex_pos.x * self.TILE_PX) / w
+        v0 = (tex_pos.y * self.TILE_PX) / h
+        u1 = ((tex_pos.x + 1) * self.TILE_PX) / w
+        v1 = ((tex_pos.y + 1) * self.TILE_PX) / h
+        if is_flipped:
+            u0, u1 = u1, u0
 
-    dragging = {"active": False, "start_world": None, "start_cam": None}
+        p = self.HALF_PX
 
-    def imgui_wants_mouse():
-        return imgui.get_io().want_capture_mouse
+        # fmt: off
+        return [
+            bx - p, by - p, u0, v0, layer,
+            bx + p, by - p, u1, v0, layer,
+            bx + p, by + p, u1, v1, layer,
+            bx - p, by - p, u0, v0, layer,
+            bx + p, by + p, u1, v1, layer,
+            bx - p, by + p, u0, v1, layer,
+        ]
+        # fmt: on
 
-    def on_resize(_window, width: int, height: int) -> None:
-        if prev_framebuffer_cb:
-            prev_framebuffer_cb(_window, width, height)
-        glViewport(0, 0, width, height)
-        if camera:
-            camera.resize(width, height)
 
-    def on_scroll(window, xoffset, yoffset):
-        if prev_scroll_cb:
-            prev_scroll_cb(window, xoffset, yoffset)
+class InputRouter:
+    def __init__(self, window, camera: Camera2D) -> None:
+        self._camera = camera
+        self._drag: dict = {"active": False}
 
-        if imgui_wants_mouse():
+        self._prev_resize = glfw.set_framebuffer_size_callback(window, self._on_resize)
+        self._prev_scroll = glfw.set_scroll_callback(window, self._on_scroll)
+        self._prev_mouse_btn = glfw.set_mouse_button_callback(window, self._on_mouse_btn)
+        self._prev_cursor = glfw.set_cursor_pos_callback(window, self._on_cursor)
+        self._prev_key = glfw.set_key_callback(window, self._on_key)
+        self._window = window
+
+    def _on_resize(self, win, w: int, h: int) -> None:
+        if self._prev_resize:
+            self._prev_resize(win, w, h)
+
+        glViewport(0, 0, w, h)
+        self._camera.resize(w, h)
+
+    def _on_scroll(self, win, xoff: float, yoff: float) -> None:
+        if self._prev_scroll:
+            self._prev_scroll(win, xoff, yoff)
+
+        if imgui.get_io().want_capture_mouse:
             return
 
-        factor = 1.1**yoffset
-        sx, sy = glfw.get_cursor_pos(window)
-        camera.zoom_by(factor, sx, sy)
+        sx, sy = glfw.get_cursor_pos(win)
+        self._camera.zoom_around(1.1**yoff, sx, sy)
 
-    def on_mouse_btn(window, button, action, mods):
-        if prev_mouse_btn_cb:
-            prev_mouse_btn_cb(window, button, action, mods)
-
-        if imgui_wants_mouse():
+    def _on_mouse_btn(self, win, button: int, action: int, mods: int) -> None:
+        if self._prev_mouse_btn:
+            self._prev_mouse_btn(win, button, action, mods)
+        if imgui.get_io().want_capture_mouse:
             return
-
         if button == glfw.MOUSE_BUTTON_LEFT:
             if action == glfw.PRESS:
-                sx, sy = glfw.get_cursor_pos(window)
-                dragging["active"] = True
-                dragging["start_screen"] = (sx, sy)
-                dragging["start_cam"] = glm.vec2(camera.pos)
+                sx, sy = glfw.get_cursor_pos(win)
+                self._drag = {
+                    "active": True,
+                    "start_screen": (sx, sy),
+                    "start_cam": glm.vec2(self._camera.pos),
+                }
             elif action == glfw.RELEASE:
-                dragging["active"] = False
+                self._drag["active"] = False
 
-    def on_cursor_pos(window, xpos, ypos):
-        if prev_cursor_cb:
-            prev_cursor_cb(window, xpos, ypos)
+    def _on_cursor(self, win, xpos: float, ypos: float) -> None:
+        if self._prev_cursor:
+            self._prev_cursor(win, xpos, ypos)
 
-        if imgui_wants_mouse():
+        if imgui.get_io().want_capture_mouse or not self._drag.get("active"):
             return
 
-        if dragging["active"]:
-            dx = xpos - dragging["start_screen"][0]
-            dy = ypos - dragging["start_screen"][1]
+        dx = xpos - self._drag["start_screen"][0]
+        dy = ypos - self._drag["start_screen"][1]
+        cam = self._camera
+        cam.pos.x = self._drag["start_cam"].x - dx / cam.zoom
+        cam.pos.y = self._drag["start_cam"].y - dy / cam.zoom
 
-            camera.pos.x = dragging["start_cam"].x - dx / camera.zoom
-            camera.pos.y = dragging["start_cam"].y - dy / camera.zoom
+    def _on_key(self, win, key: int, scancode: int, action: int, mods: int) -> None:
+        if self._prev_key:
+            self._prev_key(win, key, scancode, action, mods)
+        if action == glfw.PRESS and key == glfw.KEY_R:
+            self._camera.reset()
 
-    def on_key(window, key, scancode, action, mods):
-        if prev_key_cb:
-            prev_key_cb(window, key, scancode, action, mods)
 
-        if action == glfw.PRESS:
-            if key == glfw.KEY_R:
-                camera.pos = vec2(0.0, 0.0)
-                camera.zoom = 1.0
+class App:
+    def __init__(self, world_path: Path, width: int = 800, height: int = 600) -> None:
+        self._init_glfw(width, height)
+        self._camera = Camera2D(width, height)
 
-    prev_framebuffer_cb = glfw.set_framebuffer_size_callback(window, on_resize)
-    prev_scroll_cb = glfw.set_scroll_callback(window, on_scroll)
-    prev_mouse_btn_cb = glfw.set_mouse_button_callback(window, on_mouse_btn)
-    prev_cursor_cb = glfw.set_cursor_pos_callback(window, on_cursor_pos)
-    prev_key_cb = glfw.set_key_callback(window, on_key)
+        imgui.create_context()
+        self._imgui = GlfwRenderer(self._window)
+        self._input = InputRouter(self._window, self._camera)
 
-    f = windows_home() / ".gtools/worlds" / argv[1]
-    pkt = NetPacket.deserialize(f.read_bytes())
-    world = World.from_tank(pkt.tank)
+        self._world_shader = ShaderProgram.from_file("shaders/world")
+        self._u_mvp = self._world_shader.uniform_location("u_mvp")
+        self._u_tex = self._world_shader.uniform_location("texArray")
 
-    prog = link_program(VERTEX_SHADER, FRAGMENT_SHADER)
+        pkt = NetPacket.deserialize(world_path.read_bytes())
+        self._renderer = WorldRenderer(World.from_tank(pkt.tank))
 
-    u_mvp_loc = glGetUniformLocation(prog, "u_mvp")
-    tex_loc = glGetUniformLocation(prog, "texArray")
+    def run(self) -> None:
+        while not glfw.window_should_close(self._window):
+            glfw.poll_events()
+            self._imgui.process_inputs()
+            imgui.new_frame()
 
-    mgr = GLTexManager()
-    vertices = build_world(mgr, world)
-    mgr.flush()
+            self._render_viewport()
+            self._render_gui()
 
-    vao = glGenVertexArrays(1)
-    glBindVertexArray(vao)
+            imgui.render()
+            self._imgui.render(imgui.get_draw_data())
+            glfw.swap_buffers(self._window)
 
-    vbo = glGenBuffers(1)
-    glBindBuffer(GL_ARRAY_BUFFER, vbo)
-    vbo_bytes = vertices.tobytes()
-    glBufferData(GL_ARRAY_BUFFER, len(vbo_bytes), vbo_bytes, GL_STATIC_DRAW)
+        self._shutdown()
 
-    stride = 5 * ctypes.sizeof(ctypes.c_float)
-    # in_pos location 0
-    glEnableVertexAttribArray(0)
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
-    # in_texCoord location 1
-    glEnableVertexAttribArray(1)
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(2 * ctypes.sizeof(ctypes.c_float)))
-    # in_layer location 2
-    glEnableVertexAttribArray(2)
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(4 * ctypes.sizeof(ctypes.c_float)))
-
-    glBindVertexArray(0)
-    glBindBuffer(GL_ARRAY_BUFFER, 0)
-
-    vertex_count = vertices.size // 5
-
-    while not glfw.window_should_close(window):
-        glfw.poll_events()
-
-        impl.process_inputs()
-        imgui.new_frame()
-
+    def _render_viewport(self) -> None:
         glClearColor(0.1, 0.1, 0.1, 1.0)
         glClear(GL_COLOR_BUFFER_BIT)
 
-        glUseProgram(prog)
+        self._world_shader.use()
+        self._world_shader.set_mat4(self._u_mvp, self._camera.proj_as_numpy())
+        self._renderer.bind_textures(unit=0)
+        self._world_shader.set_int(self._u_tex, 0)
+        self._renderer.draw()
 
-        m = camera.proj()
-        ptr = glm.value_ptr(m)
-
-        mat = np.frombuffer(ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)), dtype=np.float32)
-        glUniformMatrix4fv(u_mvp_loc, 1, GL_FALSE, mat)
-
-        mgr.bind(0)
-        glUniform1i(tex_loc, 0)
-
-        glBindVertexArray(vao)
-        glDrawArrays(GL_TRIANGLES, 0, vertex_count)
-        glBindVertexArray(0)
-
-        imgui.begin("Debug", True)
-        imgui.text(f"camera.pos = ({camera.pos.x:.1f}, {camera.pos.y:.1f})")
-        imgui.text(f"zoom = {camera.zoom:.3f}")
+    def _render_gui(self) -> None:
+        imgui.begin("debug", True)
+        imgui.text(f"camera.pos = ({self._camera.pos.x:.1f}, {self._camera.pos.y:.1f})")
+        imgui.text(f"zoom = {self._camera.zoom:.3f}")
         imgui.end()
 
-        imgui.render()
-        impl.render(imgui.get_draw_data())
+    def _init_glfw(self, width: int, height: int) -> None:
+        if not glfw.init():
+            raise RuntimeError("failed to initialise GLFW.")
 
-        glfw.swap_buffers(window)
+        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
+        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 5)
+        glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
 
-    impl.shutdown()
-    glfw.terminate()
+        self._window = glfw.create_window(width, height, "gui", None, None)
+        if not self._window:
+            glfw.terminate()
+            raise RuntimeError("failed to create GLFW window.")
+
+        glfw.make_context_current(self._window)
+        glfw.swap_interval(1)
+        glViewport(0, 0, width, height)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+    def _shutdown(self) -> None:
+        self._imgui.shutdown()
+        glfw.terminate()
+
+
+def main() -> None:
+    path = windows_home() / ".gtools/worlds" / argv[1]
+    App(world_path=path).run()
 
 
 if __name__ == "__main__":
