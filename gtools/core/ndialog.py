@@ -279,7 +279,7 @@ class _WindowsBackend(_Backend):
         hr = self._vtbl(
             item_ptr,
             VTBL_ISHELLITEM_GET_DISPLAY_NAME,
-            ctypes.HRESULT,
+            ctypes.c_long,
             ctypes.c_int,
             ctypes.POINTER(ctypes.c_wchar_p),
         )(SIGDN_FILESYSPATH, ctypes.byref(name_ptr))
@@ -292,7 +292,7 @@ class _WindowsBackend(_Backend):
     def _set_folder(self, dialog_ptr: ctypes.c_void_p, path: str) -> None:
         try:
             si = self._make_shell_item(path)
-            self._vtbl(dialog_ptr, VTBL_SET_FOLDER, ctypes.HRESULT, ctypes.c_void_p)(si)
+            self._vtbl(dialog_ptr, VTBL_SET_FOLDER, ctypes.c_long, ctypes.c_void_p)(si)
             self._com_release(si)
         except OSError:
             pass
@@ -313,31 +313,31 @@ class _WindowsBackend(_Backend):
         self._vtbl(
             dialog_ptr,
             VTBL_SET_FILE_TYPES,
-            ctypes.HRESULT,
+            ctypes.c_long,
             ctypes.c_uint,
             ctypes.c_void_p,
         )(len(specs), ctypes.cast(arr, ctypes.c_void_p))
 
-        self._vtbl(dialog_ptr, VTBL_SET_FILE_TYPE_INDEX, ctypes.HRESULT, ctypes.c_uint)(1)
+        self._vtbl(dialog_ptr, VTBL_SET_FILE_TYPE_INDEX, ctypes.c_long, ctypes.c_uint)(1)
 
         ext = self._first_ext(filters)
         if ext:
-            self._vtbl(dialog_ptr, VTBL_SET_DEFAULT_EXTENSION, ctypes.HRESULT, ctypes.c_wchar_p)(ext)
+            self._vtbl(dialog_ptr, VTBL_SET_DEFAULT_EXTENSION, ctypes.c_long, ctypes.c_wchar_p)(ext)
 
     def _com_open_file(self, title: str, start_dir: str, filters: list[Filter], multiple: bool, hwnd: int) -> PathResult:
         dlg = self._com_create(self._CLSID_FileOpenDialog, self._IID_IFileOpenDialog)
         try:
-            self._vtbl(dlg, VTBL_SET_TITLE, ctypes.HRESULT, ctypes.c_wchar_p)(title)
+            self._vtbl(dlg, VTBL_SET_TITLE, ctypes.c_long, ctypes.c_wchar_p)(title)
 
             fos = FOS_NOCHANGEDIR | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST
             if multiple:
                 fos |= FOS_ALLOWMULTISELECT
-            self._vtbl(dlg, VTBL_SET_OPTIONS, ctypes.HRESULT, ctypes.c_uint)(fos)
+            self._vtbl(dlg, VTBL_SET_OPTIONS, ctypes.c_long, ctypes.c_uint)(fos)
 
             self._apply_filters(dlg, filters)
             self._set_folder(dlg, start_dir)
 
-            hr = self._vtbl(dlg, VTBL_SHOW, ctypes.HRESULT, ctypes.c_void_p)(hwnd)
+            hr = self._vtbl(dlg, VTBL_SHOW, ctypes.c_long, ctypes.c_void_p)(hwnd)
             if hr == ERROR_CANCELLED_HR:
                 return None
             if hr != S_OK:
@@ -345,19 +345,19 @@ class _WindowsBackend(_Backend):
 
             if multiple:
                 arr_ptr = ctypes.c_void_p(0)
-                hr = self._vtbl(dlg, VTBL_GET_RESULTS, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(arr_ptr))
+                hr = self._vtbl(dlg, VTBL_GET_RESULTS, ctypes.c_long, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(arr_ptr))
                 if hr != S_OK:
                     return None
                 try:
                     count = ctypes.c_uint(0)
-                    self._vtbl(arr_ptr, VTBL_ISHELLITEMARRAY_GET_COUNT, ctypes.HRESULT, ctypes.POINTER(ctypes.c_uint))(ctypes.byref(count))
+                    self._vtbl(arr_ptr, VTBL_ISHELLITEMARRAY_GET_COUNT, ctypes.c_long, ctypes.POINTER(ctypes.c_uint))(ctypes.byref(count))
                     paths: list[str] = []
                     for i in range(count.value):
                         item = ctypes.c_void_p(0)
                         self._vtbl(
                             arr_ptr,
                             VTBL_ISHELLITEMARRAY_GET_ITEM_AT,
-                            ctypes.HRESULT,
+                            ctypes.c_long,
                             ctypes.c_uint,
                             ctypes.POINTER(ctypes.c_void_p),
                         )(i, ctypes.byref(item))
@@ -371,7 +371,7 @@ class _WindowsBackend(_Backend):
                     self._com_release(arr_ptr)
             else:
                 item = ctypes.c_void_p(0)
-                hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
+                hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.c_long, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
                 if hr != S_OK or not item:
                     return None
                 try:
@@ -385,27 +385,27 @@ class _WindowsBackend(_Backend):
     def _com_save_file(self, title: str, start_dir: str, filters: list[Filter], default_name: str, hwnd: int) -> str | None:
         dlg = self._com_create(self._CLSID_FileSaveDialog, self._IID_IFileSaveDialog)
         try:
-            self._vtbl(dlg, VTBL_SET_TITLE, ctypes.HRESULT, ctypes.c_wchar_p)(title)
+            self._vtbl(dlg, VTBL_SET_TITLE, ctypes.c_long, ctypes.c_wchar_p)(title)
 
             fos = FOS_OVERWRITEPROMPT | FOS_NOCHANGEDIR | FOS_FORCEFILESYSTEM
-            self._vtbl(dlg, VTBL_SET_OPTIONS, ctypes.HRESULT, ctypes.c_uint)(fos)
+            self._vtbl(dlg, VTBL_SET_OPTIONS, ctypes.c_long, ctypes.c_uint)(fos)
 
             self._apply_filters(dlg, filters)
 
             suggested = self._suggest_name(default_name, filters)
             if suggested:
-                self._vtbl(dlg, VTBL_SET_FILE_NAME, ctypes.HRESULT, ctypes.c_wchar_p)(suggested)
+                self._vtbl(dlg, VTBL_SET_FILE_NAME, ctypes.c_long, ctypes.c_wchar_p)(suggested)
 
             self._set_folder(dlg, start_dir)
 
-            hr = self._vtbl(dlg, VTBL_SHOW, ctypes.HRESULT, ctypes.c_void_p)(hwnd)
+            hr = self._vtbl(dlg, VTBL_SHOW, ctypes.c_long, ctypes.c_void_p)(hwnd)
             if hr == ERROR_CANCELLED_HR:
                 return None
             if hr != S_OK:
                 raise OSError(f"Show() failed: {hr:#010x}")
 
             item = ctypes.c_void_p(0)
-            hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
+            hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.c_long, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
             if hr != S_OK or not item:
                 return None
             try:
@@ -419,21 +419,21 @@ class _WindowsBackend(_Backend):
     def _com_open_directory(self, title: str, start_dir: str, hwnd: int) -> str | None:
         dlg = self._com_create(self._CLSID_FileOpenDialog, self._IID_IFileOpenDialog)
         try:
-            self._vtbl(dlg, VTBL_SET_TITLE, ctypes.HRESULT, ctypes.c_wchar_p)(title)
+            self._vtbl(dlg, VTBL_SET_TITLE, ctypes.c_long, ctypes.c_wchar_p)(title)
 
             fos = FOS_PICKFOLDERS | FOS_NOCHANGEDIR | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST
-            self._vtbl(dlg, VTBL_SET_OPTIONS, ctypes.HRESULT, ctypes.c_uint)(fos)
+            self._vtbl(dlg, VTBL_SET_OPTIONS, ctypes.c_long, ctypes.c_uint)(fos)
 
             self._set_folder(dlg, start_dir)
 
-            hr = self._vtbl(dlg, VTBL_SHOW, ctypes.HRESULT, ctypes.c_void_p)(hwnd)
+            hr = self._vtbl(dlg, VTBL_SHOW, ctypes.c_long, ctypes.c_void_p)(hwnd)
             if hr == ERROR_CANCELLED_HR:
                 return None
             if hr != S_OK:
                 raise OSError(f"Show() failed: {hr:#010x}")
 
             item = ctypes.c_void_p(0)
-            hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
+            hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.c_long, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
             if hr != S_OK or not item:
                 return None
             try:
