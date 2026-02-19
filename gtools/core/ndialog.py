@@ -406,7 +406,7 @@ class _WindowsBackend(_Backend):
                 raise OSError(f"Show() failed: {hr:#010x}")
 
             item = ctypes.c_void_p(0)
-            hr = self._vtbl(dlg, VTBL_GET_RESULTS, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
+            hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
             if hr != S_OK or not item:
                 return None
             try:
@@ -434,7 +434,7 @@ class _WindowsBackend(_Backend):
                 raise OSError(f"Show() failed: {hr:#010x}")
 
             item = ctypes.c_void_p(0)
-            hr = self._vtbl(dlg, VTBL_GET_RESULTS, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
+            hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
             if hr != S_OK or not item:
                 return None
             try:
@@ -531,13 +531,15 @@ class _WindowsBackend(_Backend):
                 )
             return 0
 
+
         disp = ctypes.create_unicode_buffer(260)
         bi = BROWSEINFOW()
         bi.hwndOwner = hwnd
         bi.pszDisplayName = ctypes.cast(disp, ctypes.c_wchar_p)
         bi.lpszTitle = title
         bi.ulFlags = RETURNONLYFSDIRS | NEWDIALOGSTYLE | EDITBOX
-        bi.lpfn = BFFCALLBACK(_callback)
+        _cb_ref = BFFCALLBACK(_callback)
+        bi.lpfn = ctypes.cast(_cb_ref, ctypes.c_void_p)
         bi.lParam = 0
 
         shell32 = ctypes.windll.shell32
