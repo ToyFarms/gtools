@@ -325,7 +325,6 @@ class _WindowsBackend(_Backend):
             self._vtbl(dialog_ptr, VTBL_SET_DEFAULT_EXTENSION, ctypes.HRESULT, ctypes.c_wchar_p)(ext)
 
     def _com_open_file(self, title: str, start_dir: str, filters: list[Filter], multiple: bool, hwnd: int) -> PathResult:
-
         dlg = self._com_create(self._CLSID_FileOpenDialog, self._IID_IFileOpenDialog)
         try:
             self._vtbl(dlg, VTBL_SET_TITLE, ctypes.HRESULT, ctypes.c_wchar_p)(title)
@@ -346,7 +345,7 @@ class _WindowsBackend(_Backend):
 
             if multiple:
                 arr_ptr = ctypes.c_void_p(0)
-                hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(arr_ptr))
+                hr = self._vtbl(dlg, VTBL_GET_RESULTS, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(arr_ptr))
                 if hr != S_OK:
                     return None
                 try:
@@ -381,9 +380,9 @@ class _WindowsBackend(_Backend):
                     self._com_release(item)
         finally:
             self._com_release(dlg)
+            ctypes.windll.ole32.CoUninitialize()
 
     def _com_save_file(self, title: str, start_dir: str, filters: list[Filter], default_name: str, hwnd: int) -> str | None:
-
         dlg = self._com_create(self._CLSID_FileSaveDialog, self._IID_IFileSaveDialog)
         try:
             self._vtbl(dlg, VTBL_SET_TITLE, ctypes.HRESULT, ctypes.c_wchar_p)(title)
@@ -415,9 +414,9 @@ class _WindowsBackend(_Backend):
                 self._com_release(item)
         finally:
             self._com_release(dlg)
+            ctypes.windll.ole32.CoUninitialize()
 
     def _com_open_directory(self, title: str, start_dir: str, hwnd: int) -> str | None:
-
         dlg = self._com_create(self._CLSID_FileOpenDialog, self._IID_IFileOpenDialog)
         try:
             self._vtbl(dlg, VTBL_SET_TITLE, ctypes.HRESULT, ctypes.c_wchar_p)(title)
@@ -443,6 +442,7 @@ class _WindowsBackend(_Backend):
                 self._com_release(item)
         finally:
             self._com_release(dlg)
+            ctypes.windll.ole32.CoUninitialize()
 
     def _classic_open_file(self, title: str, start_dir: str, filters: list[Filter], multiple: bool, hwnd: int) -> PathResult:
         buf_size = 65536
@@ -469,7 +469,8 @@ class _WindowsBackend(_Backend):
             return None
 
         if multiple:
-            raw = buf.raw.decode("utf-16-le").rstrip("\x00")
+            raw_bytes = (ctypes.c_char * (buf_size * 2)).from_buffer(buf).raw
+            raw = raw_bytes.decode("utf-16-le")
             parts = [p for p in raw.split("\x00") if p]
             if not parts:
                 return None
@@ -530,7 +531,6 @@ class _WindowsBackend(_Backend):
                     ctypes.addressof(ctypes.create_unicode_buffer(start_dir)),
                 )
             return 0
-
 
         disp = ctypes.create_unicode_buffer(260)
         bi = BROWSEINFOW()
