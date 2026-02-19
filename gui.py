@@ -1,4 +1,7 @@
+from collections import defaultdict
 import ctypes
+from dataclasses import dataclass
+import itertools
 from sys import argv
 from pathlib import Path
 from typing import cast
@@ -118,61 +121,87 @@ class Mesh:
         glDeleteVertexArrays(1, [self._vao])
 
 
+@dataclass(slots=True)
+class GLTex:
+    key: str
+    width: int
+    height: int
+    tex_id: int
+    layer: int
+
+
 class GLTexManager:
-    FIXED_SIZE = 1024
+    def __init__(self) -> None:
+        self._key_tex_id_map: dict[str, int] = {}
+        self._gpu_tex: dict[int, GLTex] = {}
+        self._tex_id = itertools.count()
 
-    def __init__(self, max_layers: int = 256) -> None:
-        self.max_layers = max_layers
-        self._texture_id: int | None = None
-        self._layer_map: dict[str, tuple[int, int, int]] = {}
-        self._next_layer: int = 0
-        self._buffer = np.zeros((max_layers, self.FIXED_SIZE, self.FIXED_SIZE, 4), dtype=np.uint8)
+        self._batch_process: dict[str, GLTex] = {}
+        self._batch_buf: defaultdict[int, list[GLTex]] = defaultdict(list)
 
-    def get_layer(self, file: str | Path) -> tuple[int, int, int]:
+    def push_texture(self, file: str | Path) -> GLTex:
         key = str(file)
-        if key in self._layer_map:
-            return self._layer_map[key]
+        if key in self._key_tex_id_map:
+            id = self._key_tex_id_map[key]
+            if id in self._gpu_tex:
+                return self._gpu_tex[self._key_tex_id_map[key]]
+        if key in self._batch_process:
+            return self._batch_process[key]
 
-        rtex = RTTex.from_file(key)
-        pixels = rtex.get_mip(0).pixels
-        orig_h, orig_w = pixels.shape[:2]
+        header = RTTex.header_from_file(key)
 
-        if orig_h > self.FIXED_SIZE or orig_w > self.FIXED_SIZE:
-            raise RuntimeError(f"texture {key} ({orig_w}×{orig_h}) exceeds FIXED_SIZE {self.FIXED_SIZE}")
+        if key not in self._key_tex_id_map:
+            tex_id = int(glGenTextures(1))
+            self._key_tex_id_map[key] = tex_id
+        else:
+            tex_id = self._key_tex_id_map[key]
 
-        layer = self._next_layer
-        self._buffer[layer, :orig_h, :orig_w] = pixels
-        self._next_layer += 1
-        self._layer_map[key] = (self.FIXED_SIZE, self.FIXED_SIZE, layer)
-        return self._layer_map[key]
+        layer = len(self._batch_buf[tex_id])
+        tex = GLTex(key, header.width, header.height, tex_id, layer)
+
+        self._batch_buf[tex_id].append(tex)
+        self._batch_process[key] = tex
+
+        return tex
 
     def flush(self) -> None:
-        used = self._next_layer
-        if used == 0:
-            raise RuntimeError("no layers")
+        for tex_id, textures in self._batch_buf.items():
+            glBindTexture(GL_TEXTURE_2D_ARRAY, tex_id)
 
-        W = H = self.FIXED_SIZE
-        print(f"uploading {self._buffer[:used].nbytes / 1e6:.1f} MB " f"({used} layers, {W}×{H})")
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
 
-        if self._texture_id is None:
-            self._texture_id = glGenTextures(1)
+            w, h = textures[0].width, textures[0].height
+            glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, w, h, len(textures), 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
+            for tex in textures:
+                data = RTTex.from_file(tex.key)
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, tex.layer, w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE, data.get_mip(0).pixels)
+                self._gpu_tex[tex_id] = tex
 
-        glBindTexture(GL_TEXTURE_2D_ARRAY, self._texture_id)
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            glBindTexture(GL_TEXTURE_2D_ARRAY, 0)
 
-        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, W, H, used, 0, GL_RGBA, GL_UNSIGNED_BYTE, self._buffer[:used])
-        glBindTexture(GL_TEXTURE_2D_ARRAY, 0)
+        self._batch_process.clear()
+        self._batch_buf.clear()
 
-    def bind(self, unit: int = 0) -> None:
-        if self._texture_id is None:
-            raise RuntimeError("no texture id, did you call flush()?")
+    def bind(self, id: int) -> int:
+        glActiveTexture(int(GL_TEXTURE0) + id)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, id)
 
-        glActiveTexture(int(GL_TEXTURE0) + unit)
-        glBindTexture(GL_TEXTURE_2D_ARRAY, self._texture_id)
+        return id
+
+    def delete(self, id: int | None = None) -> None:
+        if id is not None:
+            glDeleteTextures(GL_TEXTURE_2D_ARRAY, [id])
+            self._gpu_tex = {k: v for k, v in self._gpu_tex.items() if k != id}
+        else:
+            glBindTexture(GL_TEXTURE_2D_ARRAY, 0)
+            glDeleteTextures(GL_TEXTURE_2D_ARRAY, list(self._gpu_tex.items()))
+
+            self._gpu_tex.clear()
+            self._key_tex_id_map.clear()
 
 
 class Camera2D:
@@ -235,62 +264,75 @@ class Camera2D:
 class WorldRenderer:
     LAYOUT = [2, 2, 1]
     TILE_PX = 32
-    HALF_PX = 16
 
     def __init__(self) -> None:
         self._tex_mgr = GLTexManager()
-        self._mesh: Mesh | None = None
+        self._bg_meshes: dict[int, Mesh] = {}
+        self._fg_meshes: dict[int, Mesh] = {}
 
     def load(self, world: World) -> None:
-        if self._mesh:
-            self._mesh.delete()
-
-        vertices = self._build_vertices(world)
+        self._build_meshes(world)
         self._tex_mgr.flush()
-        self._mesh = Mesh(vertices, self.LAYOUT)
 
-    def bind_textures(self, unit: int = 0) -> None:
-        self._tex_mgr.bind(unit)
+    def any(self) -> bool:
+        return bool(self._bg_meshes) or bool(self._fg_meshes)
 
-    def draw(self) -> None:
-        if self._mesh:
-            self._mesh.draw()
+    def draw(self, prog: ShaderProgram, u_tex: int) -> None:
+        for key, mesh in self._bg_meshes.items():
+            id = self._tex_mgr.bind(key)
+            prog.set_int(u_tex, id)
 
-    def _build_vertices(self, world: World) -> npt.NDArray[np.float32]:
-        verts: list[float] = []
+            mesh.draw()
+
+        for key, mesh in self._fg_meshes.items():
+            id = self._tex_mgr.bind(key)
+            prog.set_int(u_tex, id)
+
+            mesh.draw()
+
+    def _build_meshes(self, world: World) -> None:
+        bg_verts_by_id: defaultdict[int, list[float]] = defaultdict(list)
+        fg_verts_by_id: defaultdict[int, list[float]] = defaultdict(list)
         for tile in world.tiles:
             if tile.bg_id:
-                verts.extend(self._tile_verts(tile, tile.bg_id, tile.bg_tex_index))
+                tex_id, verts = self._tile_verts(tile, tile.bg_id, tile.bg_tex_index)
+                bg_verts_by_id[tex_id].extend(verts)
             if tile.fg_id:
-                verts.extend(self._tile_verts(tile, tile.fg_id, tile.fg_tex_index))
-        return np.array(verts, dtype=np.float32)
+                tex_id, verts = self._tile_verts(tile, tile.fg_id, tile.fg_tex_index)
+                fg_verts_by_id[tex_id].extend(verts)
 
-    def _tile_verts(self, tile, item_id: int, tex_index: int) -> list[float]:
+        for key, verts in bg_verts_by_id.items():
+            self._bg_meshes[key] = Mesh(np.array(verts, dtype=np.float32), self.LAYOUT)
+
+        for key, verts in fg_verts_by_id.items():
+            self._fg_meshes[key] = Mesh(np.array(verts, dtype=np.float32), self.LAYOUT)
+
+    def _tile_verts(self, tile, item_id: int, tex_index: int) -> tuple[int, list[float]]:
         bx = tile.pos.x * self.TILE_PX
         by = tile.pos.y * self.TILE_PX
 
         item = item_database.get(item_id)
-        w, h, layer = self._tex_mgr.get_layer(setting.asset_path / item.texture_file.decode())
+        tex = self._tex_mgr.push_texture(setting.asset_path / item.texture_file.decode())
 
         tex_pos, is_flipped = tile.tex_pos(item_id, tex_index)
-        u0 = (tex_pos.x * self.TILE_PX) / w
-        v0 = (tex_pos.y * self.TILE_PX) / h
-        u1 = ((tex_pos.x + 1) * self.TILE_PX) / w
-        v1 = ((tex_pos.y + 1) * self.TILE_PX) / h
+        u0 = (tex_pos.x * self.TILE_PX) / tex.width
+        v0 = (tex_pos.y * self.TILE_PX) / tex.height
+        u1 = ((tex_pos.x + 1) * self.TILE_PX) / tex.width
+        v1 = ((tex_pos.y + 1) * self.TILE_PX) / tex.height
         if is_flipped:
             u0, u1 = u1, u0
 
-        p = self.HALF_PX
+        p = self.TILE_PX / 2
 
         # fmt: off
-        return [
-            bx - p, by - p, u0, v0, layer,
-            bx + p, by - p, u1, v0, layer,
-            bx + p, by + p, u1, v1, layer,
-            bx - p, by - p, u0, v0, layer,
-            bx + p, by + p, u1, v1, layer,
-            bx - p, by + p, u0, v1, layer,
-        ]
+        return (tex.tex_id, [
+            bx - p, by - p, u0, v0, tex.layer,
+            bx + p, by - p, u1, v0, tex.layer,
+            bx + p, by + p, u1, v1, tex.layer,
+            bx - p, by - p, u0, v0, tex.layer,
+            bx + p, by + p, u1, v1, tex.layer,
+            bx - p, by + p, u0, v1, tex.layer,
+        ])
         # fmt: on
 
 
@@ -396,12 +438,10 @@ class App:
         glClearColor(0.1, 0.1, 0.1, 1.0)
         glClear(GL_COLOR_BUFFER_BIT)
 
-        if self._world_renderer._mesh:
+        if self._world_renderer.any():
             self._world_shader.use()
             self._world_shader.set_mat4(self._u_mvp, self._camera.proj_as_numpy())
-            self._world_renderer.bind_textures(unit=0)
-            self._world_shader.set_int(self._u_tex, 0)
-        self._world_renderer.draw()
+            self._world_renderer.draw(self._world_shader, self._u_tex)
 
     def _render_gui(self) -> None:
         imgui.begin("debug", True)
@@ -447,3 +487,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

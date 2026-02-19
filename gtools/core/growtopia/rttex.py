@@ -2,6 +2,7 @@ from enum import IntEnum
 import io
 import logging
 from pathlib import Path
+from typing import IO
 import zlib
 from dataclasses import dataclass, field
 import numpy as np
@@ -119,7 +120,7 @@ class RTTexMip:
     data_size: int = 0
     mip_level: int = 0
     _reserved: bytes = b""  # 8
-    pixels: npt.NDArray[np.uint8] = field(default_factory=lambda: np.empty((0,), dtype=np.uint8))
+    pixels: npt.NDArray[np.uint8] = field(default_factory=lambda: np.empty((0,), dtype=np.uint8), repr=False)
 
     @classmethod
     def deserialize(cls, s: Buffer, header: RTTexHeader) -> "RTTexMip":
@@ -186,6 +187,69 @@ class RTTex:
     @property
     def format(self) -> RTFormat:
         return self.header.format
+
+    @classmethod
+    def parse_header(cls, data: bytes) -> "RTTexHeader":
+        source_buf = Buffer(data)
+        if data.startswith(C_RTFILE_PACKAGE_HEADER):
+            pack_header = RTPackHeader.deserialize(source_buf)
+
+            if pack_header.file_header.version != C_RTFILE_PACKAGE_LATEST_VERSION:
+                raise ValueError(f"unsupported package version: {pack_header.file_header.version}")
+
+            payload = source_buf.read_bytes(-1)
+            if pack_header.compression_type == RTCompression.ZLIB:
+                try:
+                    payload = zlib.decompress(payload)
+                except zlib.error as exc:
+                    raise ValueError("failed to decompress zlib payload") from exc
+        elif data.startswith(C_RTFILE_TEXTURE_HEADER):
+            payload = data
+            source_buf = Buffer(payload)
+        else:
+            raise ValueError("input does not appear to be an RTPACK or RTTXTR blob")
+
+        if not payload.startswith(C_RTFILE_TEXTURE_HEADER):
+            raise ValueError("payload does not start with RTTXTR header")
+
+        s = Buffer(payload)
+        return RTTexHeader.deserialize(s)
+
+    @staticmethod
+    def partial_decompress_zlib(stream: IO[bytes], n: int, chunk_size: int = 128) -> bytes:
+        decompressor = zlib.decompressobj()
+        result = b""
+
+        while len(result) < n:
+            compressed_chunk = stream.read(chunk_size)
+            if not compressed_chunk:
+                break
+            result += decompressor.decompress(compressed_chunk, n - len(result))
+
+        return result[:n]
+
+    @classmethod
+    def header_from_file(cls, path: str | Path) -> "RTTexHeader":
+        with open(path, "rb") as f:
+            header = f.read(C_RTFILE_PACKAGE_HEADER_BYTE_SIZE)
+            f.seek(0, io.SEEK_SET)
+            if header.startswith(C_RTFILE_PACKAGE_HEADER):
+                pack_header = RTPackHeader.deserialize(Buffer(f.read(32)))
+
+                if pack_header.file_header.version != C_RTFILE_PACKAGE_LATEST_VERSION:
+                    raise ValueError(f"unsupported package version: {pack_header.file_header.version}")
+
+                if pack_header.compression_type == RTCompression.ZLIB:
+                    try:
+                        header_bytes = RTTex.partial_decompress_zlib(f, 100)
+                    except zlib.error as exc:
+                        raise ValueError("failed to decompress zlib payload") from exc
+                else:
+                    header_bytes = f.read(100)
+            else:
+                header_bytes = f.read(100)
+
+        return RTTexHeader.deserialize(Buffer(header_bytes))
 
     @classmethod
     def from_file(cls, path: str | Path) -> "RTTex":
