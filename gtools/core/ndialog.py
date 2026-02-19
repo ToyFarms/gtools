@@ -50,11 +50,13 @@ def save_file(
 def open_directory(
     title: str = "Select Directory",
     start_dir: str | Path | None = None,
+    multiple: bool = False,
     parent: int | str | None = None,
-) -> str | None:
+) -> PathResult:
     return _get_backend().open_directory(
         title=title,
         start_dir=_resolve_dir(start_dir),
+        multiple=multiple,
         parent=parent,
     )
 
@@ -175,7 +177,7 @@ class _Backend(Protocol):
     def save_file(self, *, title: str, start_dir: str, filters: list[Filter], default_name: str, parent: int | str | None) -> str | None:
         raise NotImplementedError
 
-    def open_directory(self, *, title: str, start_dir: str, parent: int | str | None) -> str | None:
+    def open_directory(self, *, title: str, start_dir: str, multiple: bool, parent: int | str | None) -> PathResult:
         raise NotImplementedError
 
 
@@ -213,10 +215,10 @@ class _WindowsBackend(_Backend):
             return self._com_save_file(title, start_dir, filters, default_name, hwnd)
         return self._classic_save_file(title, start_dir, filters, default_name, hwnd)
 
-    def open_directory(self, *, title: str, start_dir: str, parent: int | str | None) -> str | None:
+    def open_directory(self, *, title: str, start_dir: str, multiple: bool, parent: int | str | None) -> PathResult:
         hwnd = int(parent) if isinstance(parent, int) else 0
         if self._use_com:
-            return self._com_open_directory(title, start_dir, hwnd)
+            return self._com_open_directory(title, start_dir, multiple, hwnd)
         return self._shell_browse_for_folder(title, start_dir, hwnd)
 
     @staticmethod
@@ -427,12 +429,14 @@ class _WindowsBackend(_Backend):
             self._com_release(dlg)
             ctypes.windll.ole32.CoUninitialize()
 
-    def _com_open_directory(self, title: str, start_dir: str, hwnd: int) -> str | None:
+    def _com_open_directory(self, title: str, start_dir: str, multiple: bool, hwnd: int) -> PathResult:
         dlg = self._com_create(self._CLSID_FileOpenDialog, self._IID_IFileOpenDialog)
         try:
             self._vtbl(dlg, VTBL_SET_TITLE, ctypes.c_long, ctypes.c_wchar_p)(title)
 
             fos = FOS_PICKFOLDERS | FOS_NOCHANGEDIR | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST
+            if multiple:
+                fos |= FOS_ALLOWMULTISELECT
             self._vtbl(dlg, VTBL_SET_OPTIONS, ctypes.c_long, ctypes.c_uint)(fos)
 
             self._set_folder(dlg, start_dir)
@@ -443,14 +447,41 @@ class _WindowsBackend(_Backend):
             if hr != S_OK:
                 raise OSError(f"Show() failed: {hr:#010x}")
 
-            item = ctypes.c_void_p(0)
-            hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.c_long, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
-            if hr != S_OK or not item:
-                return None
-            try:
-                return self._path_from_shell_item(item) or None
-            finally:
-                self._com_release(item)
+            if multiple:
+                arr_ptr = ctypes.c_void_p(0)
+                hr = self._vtbl(dlg, VTBL_GET_RESULTS, ctypes.c_long, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(arr_ptr))
+                if hr != S_OK:
+                    return None
+                try:
+                    count = ctypes.c_uint(0)
+                    self._vtbl(arr_ptr, VTBL_ISHELLITEMARRAY_GET_COUNT, ctypes.c_long, ctypes.POINTER(ctypes.c_uint))(ctypes.byref(count))
+                    paths: list[str] = []
+                    for i in range(count.value):
+                        item = ctypes.c_void_p(0)
+                        self._vtbl(
+                            arr_ptr,
+                            VTBL_ISHELLITEMARRAY_GET_ITEM_AT,
+                            ctypes.c_long,
+                            ctypes.c_uint,
+                            ctypes.POINTER(ctypes.c_void_p),
+                        )(i, ctypes.byref(item))
+                        if item:
+                            try:
+                                paths.append(self._path_from_shell_item(item))
+                            finally:
+                                self._com_release(item)
+                    return paths or None
+                finally:
+                    self._com_release(arr_ptr)
+            else:
+                item = ctypes.c_void_p(0)
+                hr = self._vtbl(dlg, VTBL_GET_RESULT, ctypes.c_long, ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(item))
+                if hr != S_OK or not item:
+                    return None
+                try:
+                    return self._path_from_shell_item(item) or None
+                finally:
+                    self._com_release(item)
         finally:
             self._com_release(dlg)
             ctypes.windll.ole32.CoUninitialize()
@@ -672,13 +703,29 @@ POSIX path of (choose file name with prompt {self._as_str(title)} ¬
 """
         return self._run(script)
 
-    def open_directory(self, *, title: str, start_dir: str, parent: int | str | None) -> str | None:
+    def open_directory(self, *, title: str, start_dir: str, multiple: bool, parent: int | str | None) -> PathResult:
         loc_clause = f"default location {self._posix_path(start_dir)}" if start_dir else ""
+        multi_clause = "with multiple selections allowed" if multiple else ""
         script = f"""
-POSIX path of (choose folder with prompt {self._as_str(title)} {loc_clause})
+set theResult to (choose folder with prompt {self._as_str(title)} {loc_clause} {multi_clause})
+set posixPaths to {{}}
+if class of theResult is list then
+    repeat with aFolder in theResult
+        set end of posixPaths to POSIX path of aFolder
+    end repeat
+else
+    set posixPaths to {{POSIX path of theResult}}
+end if
+set AppleScript's text item delimiters to "\\n"
+posixPaths as text
 """
         result = self._run(script)
-        return result.rstrip("/") if result else None
+        if result is None:
+            return None
+        paths = [p.rstrip("/") for p in result.splitlines() if p]
+        if not paths:
+            return None
+        return paths if multiple else paths[0]
 
     @staticmethod
     def _as_str(value: str) -> str:
@@ -780,7 +827,7 @@ class _LinuxBackend(_Backend):
             return self._kdialog_open_file(title, start_dir, filters, multiple, parent)
         return self._tk_open_file(title, start_dir, filters, multiple)
 
-    def save_file(self, *, title: str, start_dir: str, filters: list[Filter], default_name: str, parent: int | str | None) -> PathResult:
+    def save_file(self, *, title: str, start_dir: str, filters: list[Filter], default_name: str, parent: int | str | None) -> str | None:
         if self._portal_ok:
             try:
                 return self._portal_save_file(title, start_dir, filters, default_name, parent)
@@ -792,17 +839,14 @@ class _LinuxBackend(_Backend):
             return self._kdialog_save_file(title, start_dir, filters, default_name, parent)
         return self._tk_save_file(title, start_dir, filters, default_name)
 
-    def open_directory(self, *, title: str, start_dir: str, parent: int | str | None) -> PathResult:
+    def open_directory(self, *, title: str, start_dir: str, multiple: bool, parent: int | str | None) -> PathResult:
         if self._portal_ok:
-            try:
-                return self._portal_open_directory(title, start_dir, parent)
-            except Exception:
-                pass
+            return self._portal_open_directory(title, start_dir, multiple, parent)
         if self._tool == "zenity":
-            return self._zenity_open_directory(title, start_dir, parent)
+            return self._zenity_open_directory(title, start_dir, multiple, parent)
         if self._tool in ("kdialog", "qarma"):
-            return self._kdialog_open_directory(title, start_dir, parent)
-        return self._tk_open_directory(title, start_dir)
+            return self._kdialog_open_directory(title, start_dir, multiple, parent)
+        return self._tk_open_directory(title, start_dir, multiple)
 
     @staticmethod
     def _portal_window(parent: int | str | None) -> str:
@@ -824,8 +868,8 @@ class _LinuxBackend(_Backend):
             parent=parent,
         )
 
-    def _portal_save_file(self, title: str, start_dir: str, filters: list[Filter], default_name: str, parent: int | str | None) -> PathResult:
-        return self._portal_dispatch(
+    def _portal_save_file(self, title: str, start_dir: str, filters: list[Filter], default_name: str, parent: int | str | None) -> str | None:
+        result = self._portal_dispatch(
             "SaveFile",
             title=title,
             start_dir=start_dir,
@@ -835,14 +879,15 @@ class _LinuxBackend(_Backend):
             default_name=default_name,
             parent=parent,
         )
+        return result if isinstance(result, str) else None
 
-    def _portal_open_directory(self, title: str, start_dir: str, parent: int | str | None) -> PathResult:
+    def _portal_open_directory(self, title: str, start_dir: str, multiple: bool, parent: int | str | None) -> PathResult:
         return self._portal_dispatch(
             "OpenFile",
             title=title,
             start_dir=start_dir,
             filters=[],
-            multiple=False,
+            multiple=multiple,
             directory=True,
             default_name="",
             parent=parent,
@@ -976,15 +1021,22 @@ class _LinuxBackend(_Backend):
         cmd += self._zenity_attach(parent)
         return self._run(cmd)
 
-    def _zenity_open_directory(self, title: str, start_dir: str, parent: int | str | None) -> str | None:
+    def _zenity_open_directory(self, title: str, start_dir: str, multiple: bool, parent: int | str | None) -> PathResult:
         cmd = [
             "zenity",
             "--file-selection",
             "--directory",
             f"--title={title}",
             f"--filename={start_dir}/",
-        ] + self._zenity_attach(parent)
-        return self._run(cmd)
+        ]
+        if multiple:
+            cmd += ["--multiple", "--separator=\n"]
+        cmd += self._zenity_attach(parent)
+        out = self._run(cmd)
+        if out is None:
+            return None
+        paths = [p for p in out.splitlines() if p]
+        return (paths or None) if multiple else (paths[0] if paths else None)
 
     def _kdialog_attach(self, parent: int | str | None) -> list[str]:
         if isinstance(parent, int) and parent:
@@ -1022,7 +1074,8 @@ class _LinuxBackend(_Backend):
         ] + self._kdialog_attach(parent)
         return self._run(cmd)
 
-    def _kdialog_open_directory(self, title: str, start_dir: str, parent: int | str | None) -> str | None:
+    def _kdialog_open_directory(self, title: str, start_dir: str, multiple: bool, parent: int | str | None) -> str | None:
+        _ = multiple
         cmd = [
             self._tool,
             "--getexistingdirectory",
@@ -1078,8 +1131,9 @@ class _LinuxBackend(_Backend):
         root.destroy()
         return path or None
 
-    def _tk_open_directory(self, title: str, start_dir: str) -> str | None:
+    def _tk_open_directory(self, title: str, start_dir: str, multiple: bool) -> PathResult:
         from tkinter import filedialog
+        _ = multiple
 
         root = self._make_tk()
         path = filedialog.askdirectory(title=title, initialdir=start_dir, parent=root)
