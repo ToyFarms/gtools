@@ -187,26 +187,37 @@ class _WindowsBackend(_Backend):
     _IID_IShellItem = "{43826D1E-E718-42EE-BC55-A1E261C37BFE}"
     _IID_IShellItemArray = "{B63EA76D-1F85-456F-A19C-48159EFA858B}"
 
+    def __init__(self) -> None:
+        self._use_com = self._probe_com()
+
+    @staticmethod
+    def _probe_com() -> bool:
+        try:
+            hr = ctypes.windll.ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+            if hr in (S_OK, 1):
+                ctypes.windll.ole32.CoUninitialize()
+                return True
+            return False
+        except Exception:
+            return False
+
     def open_file(self, *, title: str, start_dir: str, filters: list[Filter], multiple: bool, parent: int | str | None) -> PathResult:
         hwnd = int(parent) if isinstance(parent, int) else 0
-        try:
+        if self._use_com:
             return self._com_open_file(title, start_dir, filters, multiple, hwnd)
-        except Exception:
-            return self._classic_open_file(title, start_dir, filters, multiple, hwnd)
+        return self._classic_open_file(title, start_dir, filters, multiple, hwnd)
 
     def save_file(self, *, title: str, start_dir: str, filters: list[Filter], default_name: str, parent: int | str | None) -> str | None:
         hwnd = int(parent) if isinstance(parent, int) else 0
-        try:
+        if self._use_com:
             return self._com_save_file(title, start_dir, filters, default_name, hwnd)
-        except Exception:
-            return self._classic_save_file(title, start_dir, filters, default_name, hwnd)
+        return self._classic_save_file(title, start_dir, filters, default_name, hwnd)
 
     def open_directory(self, *, title: str, start_dir: str, parent: int | str | None) -> str | None:
         hwnd = int(parent) if isinstance(parent, int) else 0
-        try:
+        if self._use_com:
             return self._com_open_directory(title, start_dir, hwnd)
-        except Exception:
-            return self._shell_browse_for_folder(title, start_dir, hwnd)
+        return self._shell_browse_for_folder(title, start_dir, hwnd)
 
     @staticmethod
     def _parse_guid(s: str) -> ctypes.Structure:
