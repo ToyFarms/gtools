@@ -14,6 +14,7 @@ from pyglm.glm import vec2, mat4x4
 from pyglm import glm
 
 from gtools import setting
+from gtools.core import ndialog
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.growtopia.rttex import RTTex
@@ -236,8 +237,14 @@ class WorldRenderer:
     TILE_PX = 32
     HALF_PX = 16
 
-    def __init__(self, world: World) -> None:
+    def __init__(self) -> None:
         self._tex_mgr = GLTexManager()
+        self._mesh: Mesh | None = None
+
+    def load(self, world: World) -> None:
+        if self._mesh:
+            self._mesh.delete()
+
         vertices = self._build_vertices(world)
         self._tex_mgr.flush()
         self._mesh = Mesh(vertices, self.LAYOUT)
@@ -246,7 +253,8 @@ class WorldRenderer:
         self._tex_mgr.bind(unit)
 
     def draw(self) -> None:
-        self._mesh.draw()
+        if self._mesh:
+            self._mesh.draw()
 
     def _build_vertices(self, world: World) -> npt.NDArray[np.float32]:
         verts: list[float] = []
@@ -352,7 +360,7 @@ class InputRouter:
 
 
 class App:
-    def __init__(self, world_path: Path, width: int = 800, height: int = 600) -> None:
+    def __init__(self, world_path: Path | None = None, width: int = 800, height: int = 600) -> None:
         self._init_glfw(width, height)
         self._camera = Camera2D(width, height)
 
@@ -364,8 +372,10 @@ class App:
         self._u_mvp = self._world_shader.uniform_location("u_mvp")
         self._u_tex = self._world_shader.uniform_location("texArray")
 
-        pkt = NetPacket.deserialize(world_path.read_bytes())
-        self._renderer = WorldRenderer(World.from_tank(pkt.tank))
+        self._world_renderer = WorldRenderer()
+        if world_path:
+            pkt = NetPacket.deserialize(world_path.read_bytes())
+            self._world_renderer.load(World.from_tank(pkt.tank))
 
     def run(self) -> None:
         while not glfw.window_should_close(self._window):
@@ -386,16 +396,22 @@ class App:
         glClearColor(0.1, 0.1, 0.1, 1.0)
         glClear(GL_COLOR_BUFFER_BIT)
 
-        self._world_shader.use()
-        self._world_shader.set_mat4(self._u_mvp, self._camera.proj_as_numpy())
-        self._renderer.bind_textures(unit=0)
-        self._world_shader.set_int(self._u_tex, 0)
-        self._renderer.draw()
+        if self._world_renderer._mesh:
+            self._world_shader.use()
+            self._world_shader.set_mat4(self._u_mvp, self._camera.proj_as_numpy())
+            self._world_renderer.bind_textures(unit=0)
+            self._world_shader.set_int(self._u_tex, 0)
+        self._world_renderer.draw()
 
     def _render_gui(self) -> None:
         imgui.begin("debug", True)
         imgui.text(f"camera.pos = ({self._camera.pos.x:.1f}, {self._camera.pos.y:.1f})")
         imgui.text(f"zoom = {self._camera.zoom:.3f}")
+        if imgui.button("Open World"):
+            world = ndialog.open_file("Open World")
+            if isinstance(world, str):
+                pkt = NetPacket.deserialize(Path(world).read_bytes())
+                self._world_renderer.load(World.from_tank(pkt.tank))
         imgui.end()
 
     def _init_glfw(self, width: int, height: int) -> None:
@@ -423,7 +439,9 @@ class App:
 
 
 def main() -> None:
-    path = windows_home() / ".gtools/worlds" / argv[1]
+    path = None
+    if len(argv) > 1:
+        path = windows_home() / ".gtools/worlds" / argv[1]
     App(world_path=path).run()
 
 
