@@ -71,16 +71,40 @@ class TextureArray:
 
         total_layers = len(self._resident) + len(self._staging)
 
-        if total_layers != self._allocated_layers:
-            logger.debug(f"reallocating TextureArray {self.width}x{self.height} to {total_layers} layers " f"(previously {self._allocated_layers})")
-            self._allocate(total_layers)
+        if total_layers > self._allocated_layers:
+            new_capacity = max(
+                16,
+                self._allocated_layers * 2 if self._allocated_layers else 16,
+                total_layers,
+            )
 
-        logger.info(f"uploading {len(self._staging)} staged textures to GPU texture array " f"{self.width}x{self.height}")
+            logger.debug(f"growing TextureArray {self.width}x{self.height} " f"from {self._allocated_layers} to {new_capacity} layers")
+
+            self._allocate(new_capacity)
+
+            glBindTexture(GL_TEXTURE_2D_ARRAY, self.tex_id)
+
+            for tex in self._resident:
+                data = RTTex.from_file(tex.key)
+                mip = data.get_mip(0)
+
+                glTexSubImage3D(
+                    GL_TEXTURE_2D_ARRAY,
+                    0,
+                    0,
+                    0,
+                    tex.layer,
+                    self.width,
+                    self.height,
+                    1,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    mip.pixels,
+                )
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, self.tex_id)
 
         for tex in self._staging:
-            logger.debug(f"uploading texture key={tex.key} to layer={tex.layer} " f"(size={self.width}x{self.height})")
             data = RTTex.from_file(tex.key)
             mip = data.get_mip(0)
 
