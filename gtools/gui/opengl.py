@@ -14,16 +14,13 @@ class Uniform:
     def __init__(self, loc: int) -> None:
         self.loc = loc
 
-    def set_float(self, x: npt.NDArray[np.float32]) -> None:
-        assert x.shape == (1,) and x.dtype == np.float32
+    def set_float(self, x: float) -> None:
         glUniform1fv(self.loc, 1, x)
 
-    def set_int(self, x: npt.NDArray[np.int32]) -> None:
-        assert x.shape == (1,) and x.dtype == np.int32
+    def set_int(self, x: int) -> None:
         glUniform1iv(self.loc, 1, x)
 
-    def set_uint(self, x: npt.NDArray[np.uint32]) -> None:
-        assert x.shape == (1,) and x.dtype == np.uint32
+    def set_uint(self, x: int) -> None:
         glUniform1uiv(self.loc, 1, x)
 
     def set_vec2(self, x: npt.NDArray[np.float32]) -> None:
