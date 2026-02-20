@@ -8,6 +8,7 @@ from sys import argv
 from pathlib import Path
 from typing import cast, Union
 import queue
+import time
 
 import glfw
 from OpenGL.GL import *  # pyright: ignore[reportWildcardImportFromLibrary]
@@ -25,6 +26,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.growtopia.rttex import RTTex
 from gtools.core.growtopia.world import Tile, World
+from gtools.core.highres_sleep import sleep_ns
 from gtools.core.wsl import windows_home
 
 
@@ -963,8 +965,12 @@ class App:
         if world_path:
             self.world_viewer.open_world(world_path)
 
+        self.fps = 60
+
     def run(self) -> None:
         while not glfw.window_should_close(self.window):
+            frame_start = time.perf_counter()
+
             glfw.poll_events()
             self.imgui_renderer.process_inputs()
             imgui.new_frame()
@@ -980,6 +986,11 @@ class App:
             imgui.render()
             self.imgui_renderer.render(imgui.get_draw_data())
             glfw.swap_buffers(self.window)
+
+            elapsed = time.perf_counter() - frame_start
+            sleep_time = 1 / self.fps - elapsed - 0.002
+            if sleep_time > 0:
+                sleep_ns(sleep_time * 1e9)
 
         self.shutdown()
 
