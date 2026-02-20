@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import platform
 import random
@@ -11,8 +12,46 @@ from pathlib import Path
 from typing import Callable, Protocol, Sequence
 import ctypes
 
+from gtools import setting
+
 PathResult = str | list[str] | None
 Filter = tuple[str, str]
+
+
+def _state_path() -> Path:
+    return setting.appdir / "ndialog.json"
+
+
+def _load_state() -> dict:
+    path = _state_path()
+    try:
+        if path.exists():
+            with path.open("r", encoding="utf-8") as fh:
+                return json.load(fh)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_state(state: dict) -> None:
+    path = _state_path()
+    try:
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(state, fh, indent=2)
+    except Exception:
+        pass
+
+
+def _get_last_dir(key: str) -> str | None:
+    return _load_state().get(key)
+
+
+def _set_last_dir(key: str, path: str | None) -> None:
+    if not path:
+        return
+    st = _load_state()
+    st[key] = path
+    _save_state(st)
 
 
 def open_file(
@@ -22,13 +61,26 @@ def open_file(
     multiple: bool = False,
     parent: int | str | None = None,
 ) -> PathResult:
-    return _get_backend().open_file(
+    if start_dir is None:
+        last = _get_last_dir("open_file")
+        start_dir = last or os.getcwd()
+
+    res = _get_backend().open_file(
         title=title,
         start_dir=_resolve_dir(start_dir),
         filters=list(filters or []),
         multiple=multiple,
         parent=parent,
     )
+
+    if res:
+        if isinstance(res, list):
+            first = res[0] if res else None
+        else:
+            first = res
+        if first:
+            _set_last_dir("open_file", os.path.dirname(first) or first)
+    return res
 
 
 def save_file(
@@ -38,13 +90,22 @@ def save_file(
     default_name: str = "",
     parent: int | str | None = None,
 ) -> str | None:
-    return _get_backend().save_file(
+    if start_dir is None:
+        last = _get_last_dir("save_file")
+        start_dir = last or os.getcwd()
+
+    res = _get_backend().save_file(
         title=title,
         start_dir=_resolve_dir(start_dir),
         filters=list(filters or []),
         default_name=default_name,
         parent=parent,
     )
+
+    if res:
+        _set_last_dir("save_file", os.path.dirname(res) or res)
+
+    return res
 
 
 def open_directory(
@@ -53,12 +114,26 @@ def open_directory(
     multiple: bool = False,
     parent: int | str | None = None,
 ) -> PathResult:
-    return _get_backend().open_directory(
+    if start_dir is None:
+        last = _get_last_dir("open_directory")
+        start_dir = last or os.getcwd()
+
+    res = _get_backend().open_directory(
         title=title,
         start_dir=_resolve_dir(start_dir),
         multiple=multiple,
         parent=parent,
     )
+
+    if res:
+        if isinstance(res, list):
+            first = res[0] if res else None
+        else:
+            first = res
+        if first:
+            _set_last_dir("open_directory", first)
+
+    return res
 
 
 OFN_READONLY = 0x00000001
@@ -1133,6 +1208,7 @@ class _LinuxBackend(_Backend):
 
     def _tk_open_directory(self, title: str, start_dir: str, multiple: bool) -> PathResult:
         from tkinter import filedialog
+
         _ = multiple
 
         root = self._make_tk()
