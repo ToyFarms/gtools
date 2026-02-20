@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 import ctypes
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import itertools
 from sys import argv
 from pathlib import Path
@@ -175,16 +175,33 @@ class ShaderProgram:
 
 
 class Mesh:
-    def __init__(self, vertices: npt.NDArray[np.float32], layout: list[int], usage: int = GL_STATIC_DRAW) -> None:
-        self._vertex_count = vertices.size // sum(layout)
-        self._vao = glGenVertexArrays(1)
-        self._vbo = glGenBuffers(1)
+    def __init__(self, vertices: npt.NDArray[np.float32], layout: list[int], indices: npt.NDArray | None = None, usage: int = GL_STATIC_DRAW) -> None:
+        self._components = sum(layout)
+        self._vertex_count = int(vertices.size // self._components)
 
+        self._vao = glGenVertexArrays(1)
         glBindVertexArray(self._vao)
+
+        self._vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
         glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices.tobytes(), usage)
 
-        stride = sum(layout) * ctypes.sizeof(ctypes.c_float)
+        self._ebo = None
+        self._index_count = 0
+        self._index_type = None
+        if indices is not None:
+            if indices.dtype == np.uint16 or indices.dtype == np.int16:
+                self._index_type = GL_UNSIGNED_SHORT
+            else:
+                indices = indices.astype(np.uint32)
+                self._index_type = GL_UNSIGNED_INT
+
+            self._ebo = glGenBuffers(1)
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self._ebo)
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices.tobytes(), usage)
+            self._index_count = int(indices.size)
+
+        stride = self._components * ctypes.sizeof(ctypes.c_float)
         offset = 0
         for loc, components in enumerate(layout):
             glEnableVertexAttribArray(loc)
@@ -196,12 +213,17 @@ class Mesh:
 
     def draw(self, mode: int = GL_TRIANGLES) -> None:
         glBindVertexArray(self._vao)
-        glDrawArrays(mode, 0, self._vertex_count)
+        if self._index_count and self._index_type:
+            glDrawElements(mode, self._index_count, self._index_type, None)
+        else:
+            glDrawArrays(mode, 0, self._vertex_count)
         glBindVertexArray(0)
 
     def delete(self) -> None:
         glDeleteBuffers(1, [self._vbo])
         glDeleteVertexArrays(1, [self._vao])
+        if self._ebo:
+            glDeleteBuffers(1, [self._ebo])
 
 
 @dataclass(slots=True)
@@ -353,10 +375,7 @@ class GLTexManager:
 
         self._arrays.pop((array.width, array.height), None)
 
-        keys_to_remove = [
-            k for k, t in self._textures.items()
-            if t.array is array
-        ]
+        keys_to_remove = [k for k, t in self._textures.items() if t.array is array]
 
         for k in keys_to_remove:
             self._textures.pop(k)
@@ -367,6 +386,7 @@ class GLTexManager:
 
         self._arrays.clear()
         self._textures.clear()
+
 
 class Camera2D:
     def __init__(self, width: int, height: int) -> None:
@@ -439,21 +459,41 @@ class WorldRenderer:
             mesh.draw()
 
     def _build_meshes(self, world: World) -> None:
-        bg_verts: defaultdict[GLTex, list[float]] = defaultdict(list)
-        fg_verts: defaultdict[GLTex, list[float]] = defaultdict(list)
+        bg_vertices: dict[GLTex, list[float]] = defaultdict(list)
+        bg_indices: dict[GLTex, list[int]] = defaultdict(list)
+
+        fg_vertices: dict[GLTex, list[float]] = defaultdict(list)
+        fg_indices: dict[GLTex, list[int]] = defaultdict(list)
+
         for tile in world.tiles:
             if tile.bg_id:
-                tid, verts = self._tile_verts(tile, tile.bg_id, tile.bg_tex_index)
-                bg_verts[tid].extend(verts)
+                tid, verts, inds = self._tile_verts(tile, tile.bg_id, tile.bg_tex_index)
+                offset = int(len(bg_vertices[tid]) // sum(self.LAYOUT))
+                bg_vertices[tid].extend(verts)
+                bg_indices[tid].extend([i + offset for i in inds])
             if tile.fg_id:
-                tid, verts = self._tile_verts(tile, tile.fg_id, tile.fg_tex_index)
-                fg_verts[tid].extend(verts)
-        for key, verts in bg_verts.items():
-            self._bg_meshes[key] = Mesh(np.array(verts, dtype=np.float32), self.LAYOUT)
-        for key, verts in fg_verts.items():
-            self._fg_meshes[key] = Mesh(np.array(verts, dtype=np.float32), self.LAYOUT)
+                tid, verts, inds = self._tile_verts(tile, tile.fg_id, tile.fg_tex_index)
+                offset = int(len(fg_vertices[tid]) // sum(self.LAYOUT))
+                fg_vertices[tid].extend(verts)
+                fg_indices[tid].extend([i + offset for i in inds])
 
-    def _tile_verts(self, tile: Tile, item_id: int, tex_index: int) -> tuple[GLTex, list[float]]:
+        for key, verts in bg_vertices.items():
+            v_arr = np.array(verts, dtype=np.float32)
+            inds = np.array(bg_indices[key], dtype=np.uint32)
+            max_index = int(v_arr.size // sum(self.LAYOUT))
+            if max_index <= 0xFFFF:
+                inds = inds.astype(np.uint16)
+            self._bg_meshes[key] = Mesh(v_arr, self.LAYOUT, inds)
+
+        for key, verts in fg_vertices.items():
+            v_arr = np.array(verts, dtype=np.float32)
+            inds = np.array(fg_indices[key], dtype=np.uint32)
+            max_index = int(v_arr.size // sum(self.LAYOUT))
+            if max_index <= 0xFFFF:
+                inds = inds.astype(np.uint16)
+            self._fg_meshes[key] = Mesh(v_arr, self.LAYOUT, inds)
+
+    def _tile_verts(self, tile: Tile, item_id: int, tex_index: int) -> tuple[GLTex, list[float], list[int]]:
         bx = tile.pos.x * self.TILE_PX
         by = tile.pos.y * self.TILE_PX
         item = item_database.get(item_id)
@@ -467,15 +507,16 @@ class WorldRenderer:
             u0, u1 = u1, u0
         p = self.TILE_PX / 2
         # fmt: off
-        return (tex, [
-            bx - p, by - p, u0, v0, tex.layer,
-            bx + p, by - p, u1, v0, tex.layer,
-            bx + p, by + p, u1, v1, tex.layer,
-            bx - p, by - p, u0, v0, tex.layer,
-            bx + p, by + p, u1, v1, tex.layer,
-            bx - p, by + p, u0, v1, tex.layer,
-        ])
+        verts = [
+            bx - p, by - p, u0, v0, float(tex.layer),
+            bx + p, by - p, u1, v0, float(tex.layer),
+            bx + p, by + p, u1, v1, float(tex.layer),
+            bx - p, by + p, u0, v1, float(tex.layer),
+        ]
         # fmt: on
+        inds = [0, 1, 2, 0, 2, 3]
+
+        return tex, verts, inds
 
     def delete(self) -> None:
         for mesh in self._bg_meshes.values():
