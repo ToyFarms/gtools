@@ -11,11 +11,12 @@ from gtools.core import ndialog
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.growtopia.world import World
 
+from gtools.gui.camera import Camera2D
 from gtools.gui.opengl import Framebuffer, ShaderProgram, Uniform
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent
 from gtools.gui.panels.panel import Panel
 from gtools.gui.texture import GLTexManager
-from gtools.gui.lib.world_renderer import Camera2D, WorldRenderer
+from gtools.gui.lib.world_renderer import WorldRenderer
 
 logger = logging.getLogger("gui-world-viewer")
 
