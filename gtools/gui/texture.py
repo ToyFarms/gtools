@@ -7,7 +7,6 @@ from gtools.core.growtopia.rttex import RTTex
 
 logger = logging.getLogger("gui-textures")
 
-_DEFAULT_TEXTURE_KEYS: set[str] = set()
 _DEFAULT_TEXTURE_KEY = "<__default_texture__>"
 _DEFAULT_PIXEL_CACHE: dict[tuple[int, int], bytes] = {}
 _DEFAULT_FALLBACK_SIZE = (1024, 1024)
@@ -241,7 +240,6 @@ class GLTexManager:
             logger.warning("failed to read header for '%s', fallback to default texture", key)
             default = self._ensure_default_texture()
             self._textures[key] = default
-            _DEFAULT_TEXTURE_KEYS.add(key)
             return default
 
         array = self._get_or_create_array(header.width, header.height)
