@@ -11,7 +11,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import Tile, World
 
 from gtools.gui.opengl import Mesh, Uniform
-from gtools.gui.texture import GLTexManager, TextureArray
+from gtools.gui.texture import TextureArray, get_tex_manager
 
 logger = logging.getLogger("gui-world-renderer")
 
@@ -26,8 +26,8 @@ class WorldRenderer:
         RENDER_FG = auto()
         RENDER_BG = auto()
 
-    def __init__(self, tex_mgr: GLTexManager | None = None) -> None:
-        self._tex_mgr = tex_mgr if tex_mgr else GLTexManager()
+    def __init__(self) -> None:
+        self._tex_mgr = get_tex_manager()
         self._bg_meshes: dict[TextureArray, Mesh] = {}
         self._fg_meshes: dict[TextureArray, Mesh] = {}
         self.flags = WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG

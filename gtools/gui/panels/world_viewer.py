@@ -16,7 +16,6 @@ from gtools.gui.camera import Camera2D
 from gtools.gui.opengl import Framebuffer, ShaderProgram, Uniform
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent
 from gtools.gui.panels.panel import Panel
-from gtools.gui.texture import GLTexManager
 from gtools.gui.lib.world_renderer import WorldRenderer
 
 logger = logging.getLogger("gui-world-viewer")
@@ -27,7 +26,6 @@ class WorldTab:
 
     def __init__(
         self,
-        tex_mgr: GLTexManager,
         shader: ShaderProgram,
         mvp: Uniform,
         tex: Uniform,
@@ -43,7 +41,7 @@ class WorldTab:
 
         self._camera = Camera2D(800, 600)
         self._fbo = Framebuffer(800, 600)
-        self._renderer = WorldRenderer(tex_mgr)
+        self._renderer = WorldRenderer()
 
         self._hovered = False
         self._drag: dict = {"active": False}
@@ -155,7 +153,6 @@ class WorldViewerPanel(Panel):
         self._shader = ShaderProgram.from_file("shaders/world")
         self._mvp = self._shader.get_uniform("u_mvp")
         self._tex = self._shader.get_uniform("texArray")
-        self._tex_mgr = GLTexManager()
         self._outer_dockspace_id = outer_dockspace_id
 
         self._inner_dockspace_id: int = 0
@@ -174,12 +171,11 @@ class WorldViewerPanel(Panel):
         for tab in self._tabs:
             tab.delete()
         self._tabs = []
-        self._tex_mgr.delete_all()
         self._shader.delete()
 
     def open_world(self, path: Path) -> None:
         logger.info(f"worldViewerPanel opening world: {path}")
-        self._tabs.append(WorldTab(self._tex_mgr, self._shader, self._mvp, self._tex, self._inner_dockspace_id, path))
+        self._tabs.append(WorldTab(self._shader, self._mvp, self._tex, self._inner_dockspace_id, path))
 
     def render_debug(self) -> None:
         if imgui.button("Open World", (-1, 0)):
