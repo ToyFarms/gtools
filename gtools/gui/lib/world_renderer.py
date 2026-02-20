@@ -37,7 +37,7 @@ class Camera2D:
     def proj_as_numpy(self) -> npt.NDArray[np.float32]:
         m = self.proj()
         ptr = glm.value_ptr(m)
-        return np.frombuffer(ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)), dtype=np.float32).reshape((4, 4), order="F")
+        return np.frombuffer(ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)), dtype=np.float32).reshape((4, 4), order="C")
 
     def screen_to_world(self, sx: float, sy: float) -> vec2:
         hw = self.width / (2.0 * self.zoom)
