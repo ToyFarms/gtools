@@ -43,6 +43,7 @@ from thirdparty.enet.bindings import ENetPacketFlag
 from gtools import setting
 from gtools.setting import Setting
 from extension.utils import UtilityExtension
+from gtools.gui.app import App
 
 
 def get_host_mgr() -> HostsFileManager:
@@ -214,6 +215,7 @@ if __name__ == "__main__":
         ("test", "run network checks"),
         ("stress", "run stress extension"),
         ("world_test", "test world parsing"),
+        ("gui", "run gui"),
     ]:
         subparsers.add_parser(name, parents=[global_parent], help=help_txt)
 
@@ -289,6 +291,8 @@ if __name__ == "__main__":
         test_server()
     elif args.cmd == "proxy":
         run_proxy()
+    elif args.cmd == "gui":
+        app = App().run()
     elif args.cmd == "acc":
         repr = lambda x: f"{x['name']}: {x['ident']}"
         if args.acc_op == "list":

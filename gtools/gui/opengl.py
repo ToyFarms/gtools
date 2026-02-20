@@ -1,0 +1,215 @@
+import ctypes
+import logging
+from pathlib import Path
+from typing import cast
+
+from OpenGL.GL import *  # pyright: ignore[reportWildcardImportFromLibrary]
+import numpy as np
+import numpy.typing as npt
+
+logger = logging.getLogger("gui-opengl")
+
+
+class Uniform:
+    def __init__(self, loc: int) -> None:
+        self.loc = loc
+
+    def set_mat4(self, x: npt.NDArray[np.float32]) -> None:
+        glUniformMatrix4fv(self.loc, 1, GL_FALSE, x)
+
+    def set_int(self, x: int) -> None:
+        glUniform1i(self.loc, x)
+
+
+class ShaderProgram:
+    def __init__(self, vs_src: str, fs_src: str) -> None:
+        self._id = self._link(vs_src, fs_src)
+
+    @classmethod
+    def from_file(cls, vs_file: str | Path, fs_file: str | Path | None = None) -> "ShaderProgram":
+        if vs_file and fs_file:
+            return cls(Path(vs_file).read_text(), Path(fs_file).read_text())
+        name = Path(vs_file).with_suffix("").name
+        base = Path(vs_file).parent
+        return cls.from_file(base / f"{name}.vert", base / f"{name}.frag")
+
+    def use(self) -> None:
+        glUseProgram(self._id)
+
+    def get_uniform(self, name: str) -> Uniform:
+        id = glGetUniformLocation(self._id, name)
+        return Uniform(loc=id)
+
+    @staticmethod
+    def _compile(src: str, shader_type: int) -> int:
+        shader = cast(int, glCreateShader(shader_type))
+        glShaderSource(shader, src)
+        glCompileShader(shader)
+        if not glGetShaderiv(shader, GL_COMPILE_STATUS):
+            raise RuntimeError(glGetShaderInfoLog(shader).decode(errors="ignore"))
+        return shader
+
+    @classmethod
+    def _link(cls, vs_src: str, fs_src: str) -> int:
+        vs = cls._compile(vs_src, GL_VERTEX_SHADER)
+        fs = cls._compile(fs_src, GL_FRAGMENT_SHADER)
+        prog = cast(int, glCreateProgram())
+        glAttachShader(prog, vs)
+        glAttachShader(prog, fs)
+        glLinkProgram(prog)
+        if not glGetProgramiv(prog, GL_LINK_STATUS):
+            raise RuntimeError(glGetProgramInfoLog(prog).decode(errors="ignore"))
+        for s in (vs, fs):
+            glDetachShader(prog, s)
+            glDeleteShader(s)
+        return prog
+
+    def delete(self) -> None:
+        glDeleteProgram(self._id)
+
+
+class Mesh:
+    def __init__(
+        self,
+        vertices: npt.NDArray[np.float32],
+        layout: list[int],
+        indices: npt.NDArray | None = None,
+        usage: int = GL_STATIC_DRAW,
+        instance_data: npt.NDArray[np.float32] | None = None,
+        instance_layout: list[int] | None = None,
+        instance_attrib_base: int = 3,
+    ) -> None:
+        self._components = sum(layout)
+        self._vertex_count = int(vertices.size // self._components)
+
+        self._vao = glGenVertexArrays(1)
+        glBindVertexArray(self._vao)
+
+        self._vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices.tobytes(), usage)
+
+        self._ebo = None
+        self._index_count = 0
+        self._index_type = None
+        if indices is not None:
+            if indices.dtype == np.uint16 or indices.dtype == np.int16:
+                self._index_type = GL_UNSIGNED_SHORT
+            else:
+                indices = indices.astype(np.uint32)
+                self._index_type = GL_UNSIGNED_INT
+
+            self._ebo = glGenBuffers(1)
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self._ebo)
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices.tobytes(), usage)
+            self._index_count = int(indices.size)
+
+        stride = self._components * ctypes.sizeof(ctypes.c_float)
+        offset = 0
+        for loc, components in enumerate(layout):
+            glEnableVertexAttribArray(loc)
+            glVertexAttribPointer(
+                loc,
+                components,
+                GL_FLOAT,
+                GL_FALSE,
+                stride,
+                ctypes.c_void_p(offset * ctypes.sizeof(ctypes.c_float)),
+            )
+            offset += components
+
+        self._instance_vbo = None
+        self._instance_count = 0
+        if instance_data is not None and instance_layout is not None:
+            self._instance_count = int(instance_data.size // sum(instance_layout))
+            self._instance_vbo = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self._instance_vbo)
+            glBufferData(GL_ARRAY_BUFFER, instance_data.nbytes, instance_data.tobytes(), usage)
+
+            instance_stride = sum(instance_layout) * ctypes.sizeof(ctypes.c_float)
+            instance_offset = 0
+            for loc_offset, components in enumerate(instance_layout):
+                loc = instance_attrib_base + loc_offset
+                glEnableVertexAttribArray(loc)
+                glVertexAttribPointer(
+                    loc,
+                    components,
+                    GL_FLOAT,
+                    GL_FALSE,
+                    instance_stride,
+                    ctypes.c_void_p(instance_offset * ctypes.sizeof(ctypes.c_float)),
+                )
+                glVertexAttribDivisor(loc, 1)
+                instance_offset += components
+
+        glBindVertexArray(0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    def draw(self, mode: int = GL_TRIANGLES) -> None:
+        glBindVertexArray(self._vao)
+        if self._index_count and self._index_type:
+            glDrawElements(mode, self._index_count, self._index_type, None)
+        else:
+            glDrawArrays(mode, 0, self._vertex_count)
+        glBindVertexArray(0)
+
+    def draw_instanced(self, mode: int = GL_TRIANGLES) -> None:
+        if self._instance_count == 0:
+            raise RuntimeError("cannot draw instanced: no instance data")
+        glBindVertexArray(self._vao)
+        if self._index_count and self._index_type:
+            glDrawElementsInstanced(mode, self._index_count, self._index_type, None, self._instance_count)
+        else:
+            glDrawArraysInstanced(mode, 0, self._vertex_count, self._instance_count)
+        glBindVertexArray(0)
+
+    def delete(self) -> None:
+        glDeleteBuffers(1, [self._vbo])
+        glDeleteVertexArrays(1, [self._vao])
+        if self._ebo:
+            glDeleteBuffers(1, [self._ebo])
+        if self._instance_vbo:
+            glDeleteBuffers(1, [self._instance_vbo])
+
+
+class Framebuffer:
+    def __init__(self, width: int, height: int) -> None:
+        self.width = width
+        self.height = height
+        self.fbo = glGenFramebuffers(1)
+        self.color_tex = glGenTextures(1)
+        self.rbo = glGenRenderbuffers(1)
+        self._create_attachments()
+
+    def _create_attachments(self) -> None:
+        glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
+        glBindTexture(GL_TEXTURE_2D, self.color_tex)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, self.width, self.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self.color_tex, 0)
+        glBindRenderbuffer(GL_RENDERBUFFER, self.rbo)
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, self.width, self.height)
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, self.rbo)
+        if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError("FBO not complete")
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+    def resize(self, width: int, height: int) -> None:
+        if width == self.width and height == self.height:
+            return
+        self.width = width
+        self.height = height
+        self._create_attachments()
+
+    def bind(self) -> None:
+        glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
+        glViewport(0, 0, self.width, self.height)
+
+    def unbind(self) -> None:
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+    def delete(self) -> None:
+        glDeleteFramebuffers(1, [self.fbo])
+        glDeleteTextures(1, [self.color_tex])
+        glDeleteRenderbuffers(1, [self.rbo])
