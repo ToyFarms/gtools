@@ -4,7 +4,17 @@ from sys import argv
 import time
 
 import glfw
-from OpenGL.GL import *  # pyright: ignore[reportWildcardImportFromLibrary]
+from OpenGL.GL import (
+    GL_BLEND,
+    GL_COLOR_BUFFER_BIT,
+    GL_ONE_MINUS_SRC_ALPHA,
+    GL_SRC_ALPHA,
+    glBlendFunc,
+    glClear,
+    glClearColor,
+    glEnable,
+    glViewport,
+)
 from imgui_bundle import imgui
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 

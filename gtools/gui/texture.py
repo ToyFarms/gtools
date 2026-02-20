@@ -1,7 +1,29 @@
 import atexit
 import logging
 from pathlib import Path
-from OpenGL.GL import *  # pyright: ignore[reportWildcardImportFromLibrary]
+from OpenGL.GL import (
+    GL_CLAMP_TO_EDGE,
+    GL_NEAREST,
+    GL_RGBA,
+    GL_RGBA8,
+    GL_TEXTURE0,
+    GL_TEXTURE_2D_ARRAY,
+    GL_TEXTURE_MAG_FILTER,
+    GL_TEXTURE_MIN_FILTER,
+    GL_TEXTURE_WRAP_S,
+    GL_TEXTURE_WRAP_T,
+    GL_UNPACK_ALIGNMENT,
+    GL_UNSIGNED_BYTE,
+    glActiveTexture,
+    glBindTexture,
+    glDeleteTextures,
+    glGenTextures,
+    glIsTexture,
+    glPixelStorei,
+    glTexImage3D,
+    glTexParameteri,
+    glTexSubImage3D,
+)
 from dataclasses import dataclass
 from gtools.core.growtopia.rttex import RTTex
 

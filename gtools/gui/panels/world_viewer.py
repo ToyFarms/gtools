@@ -1,7 +1,7 @@
 import itertools
 import logging
 from pathlib import Path
-from OpenGL.GL import *  # pyright: ignore[reportWildcardImportFromLibrary]
+from OpenGL.GL import GL_COLOR_BUFFER_BIT, glClear, glClearColor
 
 import glfw
 from imgui_bundle import imgui

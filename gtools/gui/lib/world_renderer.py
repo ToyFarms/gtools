@@ -1,8 +1,6 @@
 from collections import defaultdict
 from enum import IntFlag, auto
 import logging
-
-from OpenGL.GL import *  # pyright: ignore[reportWildcardImportFromLibrary]
 import numpy as np
 import numpy.typing as npt
 
