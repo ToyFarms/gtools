@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 import ctypes
 from dataclasses import dataclass
+from enum import IntFlag, auto
 import itertools
 from sys import argv
 from pathlib import Path
@@ -436,10 +437,16 @@ class WorldRenderer:
     LAYOUT = [2, 2, 1]
     TILE_PX = 32
 
+    class Flags(IntFlag):
+        NONE = 0
+        RENDER_FG = auto()
+        RENDER_BG = auto()
+
     def __init__(self, tex_mgr: GLTexManager | None = None) -> None:
         self._tex_mgr = tex_mgr if tex_mgr else GLTexManager()
         self._bg_meshes: dict[GLTex, Mesh] = {}
         self._fg_meshes: dict[GLTex, Mesh] = {}
+        self.flags = WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
 
     def load(self, world: World) -> None:
         self._build_meshes(world)
@@ -449,14 +456,16 @@ class WorldRenderer:
         return bool(self._bg_meshes) or bool(self._fg_meshes)
 
     def draw(self, tex: Uniform) -> None:
-        for key, mesh in self._bg_meshes.items():
-            self._tex_mgr.bind(key, unit=0)
-            tex.set_int(0)
-            mesh.draw()
-        for key, mesh in self._fg_meshes.items():
-            self._tex_mgr.bind(key, unit=0)
-            tex.set_int(0)
-            mesh.draw()
+        if self.flags & WorldRenderer.Flags.RENDER_BG:
+            for key, mesh in self._bg_meshes.items():
+                self._tex_mgr.bind(key, unit=0)
+                tex.set_int(0)
+                mesh.draw()
+        if self.flags & WorldRenderer.Flags.RENDER_FG:
+            for key, mesh in self._fg_meshes.items():
+                self._tex_mgr.bind(key, unit=0)
+                tex.set_int(0)
+                mesh.draw()
 
     def _build_meshes(self, world: World) -> None:
         bg_vertices: dict[GLTex, list[float]] = defaultdict(list)
@@ -662,9 +671,16 @@ class WorldTab:
                 return True
 
         elif isinstance(event, KeyEvent):
-            if self._hovered and event.action == glfw.PRESS and event.key == glfw.KEY_R:
-                self._camera.reset()
-                return True
+            if event.action == glfw.PRESS:
+                if self._hovered and event.key == glfw.KEY_R:
+                    self._camera.reset()
+                    return True
+                if event.key == glfw.KEY_1:
+                    self._renderer.flags |= WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
+                elif event.key == glfw.KEY_2:
+                    self._renderer.flags ^= WorldRenderer.Flags.RENDER_FG
+                elif event.key == glfw.KEY_3:
+                    self._renderer.flags ^= WorldRenderer.Flags.RENDER_BG
 
         return False
 
