@@ -56,6 +56,7 @@ class WorldTab:
         self._renderer.load(World.from_tank(pkt.tank))
 
     def delete(self) -> None:
+        logger.info(f"deleting tab {self._name}")
         self._renderer.delete()
         self._fbo.delete()
 
