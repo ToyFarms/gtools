@@ -12,19 +12,11 @@ from pathlib import Path
 from typing import Callable, Protocol, Sequence
 import ctypes
 
-from gtools import setting
-from gtools.core.wsl import is_running_wsl
-
 PathResult = str | list[str] | None
 Filter = tuple[str, str]
 
 
-def _state_path() -> Path:
-    return setting.appdir / "ndialog.json"
-
-
-def _load_state() -> dict:
-    path = _state_path()
+def _load_state(path: Path) -> dict:
     try:
         if path.exists():
             with path.open("r", encoding="utf-8") as fh:
@@ -34,8 +26,7 @@ def _load_state() -> dict:
     return {}
 
 
-def _save_state(state: dict) -> None:
-    path = _state_path()
+def _save_state(path: Path, state: dict) -> None:
     try:
         with path.open("w", encoding="utf-8") as fh:
             json.dump(state, fh, indent=2)
@@ -43,16 +34,16 @@ def _save_state(state: dict) -> None:
         pass
 
 
-def _get_last_dir(key: str) -> str | None:
-    return _load_state().get(key)
+def _get_last_dir(path: Path, key: str) -> str | None:
+    return _load_state(path).get(key)
 
 
-def _set_last_dir(key: str, path: str | None) -> None:
+def _set_last_dir(path: Path | None, key: str, last_dir: str | None) -> None:
     if not path:
         return
-    st = _load_state()
-    st[key] = path
-    _save_state(st)
+    st = _load_state(path)
+    st[key] = last_dir
+    _save_state(path, st)
 
 
 def open_file(
@@ -61,9 +52,10 @@ def open_file(
     filters: Sequence[Filter] | None = None,
     multiple: bool = False,
     parent: int | str | None = None,
+    history_path: str | Path | None = None,
 ) -> PathResult:
-    if start_dir is None:
-        last = _get_last_dir("open_file")
+    if start_dir is None and history_path:
+        last = _get_last_dir(Path(history_path), "open_file")
         start_dir = last or os.getcwd()
 
     res = _get_backend().open_file(
@@ -74,13 +66,13 @@ def open_file(
         parent=parent,
     )
 
-    if res:
+    if res and history_path:
         if isinstance(res, list):
             first = res[0] if res else None
         else:
             first = res
         if first:
-            _set_last_dir("open_file", os.path.dirname(first) or first)
+            _set_last_dir(Path(history_path), "open_file", os.path.dirname(first) or first)
     return res
 
 
@@ -90,9 +82,10 @@ def save_file(
     filters: Sequence[Filter] | None = None,
     default_name: str = "",
     parent: int | str | None = None,
+    history_path: str | Path | None = None,
 ) -> str | None:
-    if start_dir is None:
-        last = _get_last_dir("save_file")
+    if start_dir is None and history_path:
+        last = _get_last_dir(Path(history_path), "save_file")
         start_dir = last or os.getcwd()
 
     res = _get_backend().save_file(
@@ -103,8 +96,8 @@ def save_file(
         parent=parent,
     )
 
-    if res:
-        _set_last_dir("save_file", os.path.dirname(res) or res)
+    if res and history_path:
+        _set_last_dir(Path(history_path), "save_file", os.path.dirname(res) or res)
 
     return res
 
@@ -114,9 +107,10 @@ def open_directory(
     start_dir: str | Path | None = None,
     multiple: bool = False,
     parent: int | str | None = None,
+    history_path: str | Path | None = None,
 ) -> PathResult:
-    if start_dir is None:
-        last = _get_last_dir("open_directory")
+    if start_dir is None and history_path:
+        last = _get_last_dir(Path(history_path), "open_directory")
         start_dir = last or os.getcwd()
 
     res = _get_backend().open_directory(
@@ -126,13 +120,13 @@ def open_directory(
         parent=parent,
     )
 
-    if res:
+    if res and history_path:
         if isinstance(res, list):
             first = res[0] if res else None
         else:
             first = res
         if first:
-            _set_last_dir("open_directory", first)
+            _set_last_dir(Path(history_path), "open_directory", first)
 
     return res
 
@@ -233,6 +227,28 @@ def _resolve_dir(d: str | Path | None) -> str:
 _BACKEND: _Backend | None = None
 
 
+def _is_running_wsl() -> bool:
+    _check = lambda x: "microsoft" in x or "wsl1" in x or "wsl2" in x
+    try:
+        return _check(os.uname().release.lower())
+    except:
+        pass
+
+    try:
+        with open("/proc/version", "r") as f:
+            return _check(f.read().lower())
+    except:
+        pass
+
+    try:
+        with open("/proc/sys/kernel/osrelease", "r") as f:
+            return _check(f.read().lower())
+    except:
+        pass
+
+    return False
+
+
 def _get_backend() -> "_Backend":
     global _BACKEND
     if _BACKEND is None:
@@ -242,7 +258,7 @@ def _get_backend() -> "_Backend":
         elif system == "Darwin":
             _BACKEND = _MacOSBackend()
         else:
-            if is_running_wsl():
+            if _is_running_wsl():
                 _BACKEND = _WSLBackend()
             else:
                 _BACKEND = _LinuxBackend()

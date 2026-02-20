@@ -7,6 +7,7 @@ import glfw
 from imgui_bundle import imgui
 from pyglm import glm
 
+from gtools import setting
 from gtools.core import ndialog
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.growtopia.world import World
@@ -181,7 +182,7 @@ class WorldViewerPanel(Panel):
 
     def render_debug(self) -> None:
         if imgui.button("Open World", (-1, 0)):
-            world = ndialog.open_file("Open World")
+            world = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
             if isinstance(world, str):
                 self.open_world(Path(world))
 
