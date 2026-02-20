@@ -176,7 +176,16 @@ class ShaderProgram:
 
 
 class Mesh:
-    def __init__(self, vertices: npt.NDArray[np.float32], layout: list[int], indices: npt.NDArray | None = None, usage: int = GL_STATIC_DRAW) -> None:
+    def __init__(
+        self,
+        vertices: npt.NDArray[np.float32],
+        layout: list[int],
+        indices: npt.NDArray | None = None,
+        usage: int = GL_STATIC_DRAW,
+        instance_data: npt.NDArray[np.float32] | None = None,
+        instance_layout: list[int] | None = None,
+        instance_attrib_base: int = 3,
+    ) -> None:
         self._components = sum(layout)
         self._vertex_count = int(vertices.size // self._components)
 
@@ -209,6 +218,23 @@ class Mesh:
             glVertexAttribPointer(loc, components, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(offset * ctypes.sizeof(ctypes.c_float)))
             offset += components
 
+        self._instance_vbo = None
+        self._instance_count = 0
+        if instance_data is not None and instance_layout is not None:
+            self._instance_count = int(instance_data.size // sum(instance_layout))
+            self._instance_vbo = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self._instance_vbo)
+            glBufferData(GL_ARRAY_BUFFER, instance_data.nbytes, instance_data.tobytes(), usage)
+
+            instance_stride = sum(instance_layout) * ctypes.sizeof(ctypes.c_float)
+            instance_offset = 0
+            for loc_offset, components in enumerate(instance_layout):
+                loc = instance_attrib_base + loc_offset
+                glEnableVertexAttribArray(loc)
+                glVertexAttribPointer(loc, components, GL_FLOAT, GL_FALSE, instance_stride, ctypes.c_void_p(instance_offset * ctypes.sizeof(ctypes.c_float)))
+                glVertexAttribDivisor(loc, 1)
+                instance_offset += components
+
         glBindVertexArray(0)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
@@ -220,11 +246,23 @@ class Mesh:
             glDrawArrays(mode, 0, self._vertex_count)
         glBindVertexArray(0)
 
+    def draw_instanced(self, mode: int = GL_TRIANGLES) -> None:
+        if self._instance_count == 0:
+            raise RuntimeError("cannot draw instanced: no instance data")
+        glBindVertexArray(self._vao)
+        if self._index_count and self._index_type:
+            glDrawElementsInstanced(mode, self._index_count, self._index_type, None, self._instance_count)
+        else:
+            glDrawArraysInstanced(mode, 0, self._vertex_count, self._instance_count)
+        glBindVertexArray(0)
+
     def delete(self) -> None:
         glDeleteBuffers(1, [self._vbo])
         glDeleteVertexArrays(1, [self._vao])
         if self._ebo:
             glDeleteBuffers(1, [self._ebo])
+        if self._instance_vbo:
+            glDeleteBuffers(1, [self._instance_vbo])
 
 
 @dataclass(slots=True)
@@ -434,8 +472,9 @@ class Camera2D:
 
 
 class WorldRenderer:
-    LAYOUT = [2, 2, 1]
-    TILE_PX = 32
+    LAYOUT = [2, 2]
+    INSTANCE_LAYOUT = [2, 4, 1]
+    TILE_SIZE = 32
 
     class Flags(IntFlag):
         NONE = 0
@@ -444,8 +483,8 @@ class WorldRenderer:
 
     def __init__(self, tex_mgr: GLTexManager | None = None) -> None:
         self._tex_mgr = tex_mgr if tex_mgr else GLTexManager()
-        self._bg_meshes: dict[GLTex, Mesh] = {}
-        self._fg_meshes: dict[GLTex, Mesh] = {}
+        self._bg_meshes: dict[TextureArray, Mesh] = {}
+        self._fg_meshes: dict[TextureArray, Mesh] = {}
         self.flags = WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
 
     def load(self, world: World) -> None:
@@ -457,75 +496,90 @@ class WorldRenderer:
 
     def draw(self, tex: Uniform) -> None:
         if self.flags & WorldRenderer.Flags.RENDER_BG:
-            for key, mesh in self._bg_meshes.items():
-                self._tex_mgr.bind(key, unit=0)
+            for tex_array, mesh in self._bg_meshes.items():
+                tex_array.bind(unit=0)
                 tex.set_int(0)
-                mesh.draw()
+                mesh.draw_instanced()
         if self.flags & WorldRenderer.Flags.RENDER_FG:
-            for key, mesh in self._fg_meshes.items():
-                self._tex_mgr.bind(key, unit=0)
+            for tex_array, mesh in self._fg_meshes.items():
+                tex_array.bind(unit=0)
                 tex.set_int(0)
-                mesh.draw()
+                mesh.draw_instanced()
+
+    @staticmethod
+    def _get_unit_quad_data() -> tuple[npt.NDArray[np.float32], npt.NDArray[np.uint16]]:
+        # fmt: off
+        verts = np.array([
+            -0.5, -0.5, 0.0, 0.0,
+            0.5, -0.5, 1.0, 0.0,
+            0.5, 0.5, 1.0, 1.0,
+            -0.5, 0.5, 0.0, 1.0,
+        ], dtype=np.float32)
+        # fmt: on
+        inds = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint16)
+        return verts, inds
 
     def _build_meshes(self, world: World) -> None:
-        bg_vertices: dict[GLTex, list[float]] = defaultdict(list)
-        bg_indices: dict[GLTex, list[int]] = defaultdict(list)
+        unit_verts, unit_inds = self._get_unit_quad_data()
 
-        fg_vertices: dict[GLTex, list[float]] = defaultdict(list)
-        fg_indices: dict[GLTex, list[int]] = defaultdict(list)
+        bg_instances: dict[TextureArray, list[float]] = defaultdict(list)
+        fg_instances: dict[TextureArray, list[float]] = defaultdict(list)
 
         for tile in world.tiles:
             if tile.bg_id:
-                tid, verts, inds = self._tile_verts(tile, tile.bg_id, tile.bg_tex_index)
-                offset = int(len(bg_vertices[tid]) // sum(self.LAYOUT))
-                bg_vertices[tid].extend(verts)
-                bg_indices[tid].extend([i + offset for i in inds])
+                tex_array, instance_data = self._tile_instance_data(tile, tile.bg_id, tile.bg_tex_index)
+                bg_instances[tex_array].extend(instance_data)
             if tile.fg_id:
-                tid, verts, inds = self._tile_verts(tile, tile.fg_id, tile.fg_tex_index)
-                offset = int(len(fg_vertices[tid]) // sum(self.LAYOUT))
-                fg_vertices[tid].extend(verts)
-                fg_indices[tid].extend([i + offset for i in inds])
+                tex_array, instance_data = self._tile_instance_data(tile, tile.fg_id, tile.fg_tex_index)
+                fg_instances[tex_array].extend(instance_data)
 
-        for key, verts in bg_vertices.items():
-            v_arr = np.array(verts, dtype=np.float32)
-            inds = np.array(bg_indices[key], dtype=np.uint32)
-            max_index = int(v_arr.size // sum(self.LAYOUT))
-            if max_index <= 0xFFFF:
-                inds = inds.astype(np.uint16)
-            self._bg_meshes[key] = Mesh(v_arr, self.LAYOUT, inds)
+        for tex_array, instances in bg_instances.items():
+            instance_arr = np.array(instances, dtype=np.float32)
+            self._bg_meshes[tex_array] = Mesh(
+                unit_verts.copy(),
+                WorldRenderer.LAYOUT,
+                unit_inds.copy(),
+                instance_data=instance_arr,
+                instance_layout=WorldRenderer.INSTANCE_LAYOUT,
+            )
 
-        for key, verts in fg_vertices.items():
-            v_arr = np.array(verts, dtype=np.float32)
-            inds = np.array(fg_indices[key], dtype=np.uint32)
-            max_index = int(v_arr.size // sum(self.LAYOUT))
-            if max_index <= 0xFFFF:
-                inds = inds.astype(np.uint16)
-            self._fg_meshes[key] = Mesh(v_arr, self.LAYOUT, inds)
+        for tex_array, instances in fg_instances.items():
+            instance_arr = np.array(instances, dtype=np.float32)
+            self._fg_meshes[tex_array] = Mesh(
+                unit_verts.copy(),
+                WorldRenderer.LAYOUT,
+                unit_inds.copy(),
+                instance_data=instance_arr,
+                instance_layout=WorldRenderer.INSTANCE_LAYOUT,
+            )
 
-    def _tile_verts(self, tile: Tile, item_id: int, tex_index: int) -> tuple[GLTex, list[float], list[int]]:
-        bx = tile.pos.x * self.TILE_PX
-        by = tile.pos.y * self.TILE_PX
+    def _tile_instance_data(self, tile: Tile, item_id: int, tex_index: int) -> tuple[TextureArray, list[float]]:
+        tile_pos_x = tile.pos.x * self.TILE_SIZE
+        tile_pos_y = tile.pos.y * self.TILE_SIZE
+
         item = item_database.get(item_id)
         tex = self._tex_mgr.push_texture(setting.asset_path / item.texture_file.decode())
         tex_pos, is_flipped = tile.tex_pos(item_id, tex_index)
-        u0 = (tex_pos.x * self.TILE_PX) / tex.width
-        v0 = (tex_pos.y * self.TILE_PX) / tex.height
-        u1 = ((tex_pos.x + 1) * self.TILE_PX) / tex.width
-        v1 = ((tex_pos.y + 1) * self.TILE_PX) / tex.height
+
+        u0 = (tex_pos.x * self.TILE_SIZE) / tex.width
+        v0 = (tex_pos.y * self.TILE_SIZE) / tex.height
+        u1 = ((tex_pos.x + 1) * self.TILE_SIZE) / tex.width
+        v1 = ((tex_pos.y + 1) * self.TILE_SIZE) / tex.height
+
         if is_flipped:
             u0, u1 = u1, u0
-        p = self.TILE_PX / 2
-        # fmt: off
-        verts = [
-            bx - p, by - p, u0, v0, float(tex.layer),
-            bx + p, by - p, u1, v0, float(tex.layer),
-            bx + p, by + p, u1, v1, float(tex.layer),
-            bx - p, by + p, u0, v1, float(tex.layer),
-        ]
-        # fmt: on
-        inds = [0, 1, 2, 0, 2, 3]
 
-        return tex, verts, inds
+        instance_data = [
+            tile_pos_x,
+            tile_pos_y,
+            u0,
+            v0,
+            u1,
+            v1,
+            float(tex.layer),
+        ]
+
+        return tex.array, instance_data
 
     def delete(self) -> None:
         for mesh in self._bg_meshes.values():
