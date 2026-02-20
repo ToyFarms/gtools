@@ -13,6 +13,7 @@ from typing import Callable, Protocol, Sequence
 import ctypes
 
 from gtools import setting
+from gtools.core.wsl import is_running_wsl
 
 PathResult = str | list[str] | None
 Filter = tuple[str, str]
@@ -241,7 +242,10 @@ def _get_backend() -> "_Backend":
         elif system == "Darwin":
             _BACKEND = _MacOSBackend()
         else:
-            _BACKEND = _LinuxBackend()
+            if is_running_wsl():
+                _BACKEND = _WSLBackend()
+            else:
+                _BACKEND = _LinuxBackend()
     return _BACKEND
 
 
@@ -1227,3 +1231,185 @@ class _LinuxBackend(_Backend):
             return r.stdout.strip() if r.returncode == 0 else None
         except FileNotFoundError:
             return None
+
+
+class _WSLBackend(_LinuxBackend):
+    def __init__(self) -> None:
+        super().__init__()
+
+        self._ps_exec = self._detect_powershell()
+        self._have_wslpath = shutil.which("wslpath") is not None
+
+    def _detect_powershell(self) -> str | None:
+        candidates = [
+            "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+            "/mnt/c/Windows/Sysnative/WindowsPowerShell/v1.0/powershell.exe",
+        ]
+
+        program_files = [
+            "/mnt/c/Program Files/PowerShell",
+            "/mnt/c/Program Files (x86)/PowerShell",
+        ]
+
+        for base in program_files:
+            if os.path.isdir(base):
+                for entry in os.listdir(base):
+                    pwsh_path = os.path.join(base, entry, "pwsh.exe")
+                    if os.path.isfile(pwsh_path):
+                        candidates.append(pwsh_path)
+
+        for path in candidates:
+            if os.path.isfile(path):
+                return path
+
+        return None
+
+    def _wsl_to_win(self, path: str) -> str:
+        if not path:
+            return path
+        try:
+            if self._have_wslpath:
+                r = subprocess.run(["wslpath", "-w", path], capture_output=True, text=True, check=True)
+                return r.stdout.strip()
+        except Exception:
+            pass
+
+        m = re.match(r"^/mnt/([a-zA-Z])/(.*)", path)
+        if m:
+            drive = m.group(1).upper()
+            rest = m.group(2).replace("/", "\\")
+            return f"{drive}:\\{rest}"
+
+        return path.replace("/", "\\")
+
+    def _win_to_wsl(self, winpath: str) -> str:
+        if not winpath:
+            return winpath
+
+        try:
+            if self._have_wslpath:
+                r = subprocess.run(["wslpath", "-u", winpath], capture_output=True, text=True, check=True)
+                return r.stdout.strip()
+        except Exception:
+            pass
+
+        m = re.match(r"^([A-Za-z]):\\(.*)", winpath)
+        if m:
+            drive = m.group(1).lower()
+            rest = m.group(2).replace("\\", "/")
+            return f"/mnt/{drive}/{rest}"
+
+        return winpath.replace("\\", "/")
+
+    @staticmethod
+    def _ps_quote(s: str | None) -> str:
+        if s is None:
+            return "''"
+        return "'" + s.replace("'", "''") + "'"
+
+    @staticmethod
+    def _ps_join_lines(lines: Sequence[str]) -> str:
+        return " ".join(line.strip() for line in lines if line is not None)
+
+    def _build_filter(self, filters: list[Filter]) -> str:
+        if not filters:
+            return "All files (*.*)|*.*"
+
+        parts = []
+        for label, pattern in filters:
+            spec = ";".join(pattern.split())
+            parts.append(f"{label} ({spec})|{spec}")
+
+        return "|".join(parts)
+
+    def _run_powershell(self, script: str) -> str | None:
+        if not self._ps_exec:
+            return None
+
+        cmd = [self._ps_exec, "-NoProfile", "-Command", script]
+
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            return r.stdout.strip() if r.returncode == 0 else None
+        except FileNotFoundError:
+            return None
+
+    def open_file(self, *, title: str, start_dir: str, filters: list[Filter], multiple: bool, parent: int | str | None) -> PathResult:
+        if not self._ps_exec:
+            return super().open_file(title=title, start_dir=start_dir, filters=filters, multiple=multiple, parent=parent)
+
+        win_dir = self._wsl_to_win(start_dir) if start_dir else ""
+        filter_str = self._build_filter(filters)
+        ps_lines = [
+            "Add-Type -AssemblyName System.Windows.Forms;",
+            f"$ofd = New-Object System.Windows.Forms.OpenFileDialog;",
+            f"$ofd.Filter = {self._ps_quote(filter_str)};",
+            f"$ofd.Multiselect = {('$true' if multiple else '$false')};",
+        ]
+
+        if win_dir:
+            ps_lines.append(f"$ofd.InitialDirectory = {self._ps_quote(win_dir)};")
+        if title:
+            ps_lines.append(f"$ofd.Title = {self._ps_quote(title)};")
+
+        ps_lines.append("if ($ofd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {" ' if ($ofd.Multiselect) { $ofd.FileNames -join "`n" } else { $ofd.FileName }' " }")
+        script = self._ps_join_lines(ps_lines)
+        out = self._run_powershell(script)
+        if out is None:
+            return None
+
+        lines = [ln for ln in out.splitlines() if ln]
+        if multiple:
+            return [self._win_to_wsl(p) for p in lines] or None
+        return self._win_to_wsl(lines[0]) if lines else None
+
+    def save_file(self, *, title: str, start_dir: str, filters: list[Filter], default_name: str, parent: int | str | None) -> str | None:
+        if not self._ps_exec:
+            return super().save_file(title=title, start_dir=start_dir, filters=filters, default_name=default_name, parent=parent)
+
+        win_dir = self._wsl_to_win(start_dir) if start_dir else ""
+        filter_str = self._build_filter(filters)
+        suggested = default_name or ""
+        ps_lines = [
+            "Add-Type -AssemblyName System.Windows.Forms;",
+            "$sfd = New-Object System.Windows.Forms.SaveFileDialog;",
+            f"$sfd.Filter = {self._ps_quote(filter_str)};",
+        ]
+
+        if suggested:
+            ps_lines.append(f"$sfd.FileName = {self._ps_quote(suggested)};")
+        if win_dir:
+            ps_lines.append(f"$sfd.InitialDirectory = {self._ps_quote(win_dir)};")
+        if title:
+            ps_lines.append(f"$sfd.Title = {self._ps_quote(title)};")
+
+        ps_lines.append("if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $sfd.FileName }")
+        script = self._ps_join_lines(ps_lines)
+        out = self._run_powershell(script)
+        if out is None:
+            return None
+
+        return self._win_to_wsl(out)
+
+    def open_directory(self, *, title: str, start_dir: str, multiple: bool, parent: int | str | None) -> PathResult:
+        if not self._ps_exec:
+            return super().open_directory(title=title, start_dir=start_dir, multiple=multiple, parent=parent)
+
+        win_dir = self._wsl_to_win(start_dir) if start_dir else ""
+        ps_lines = [
+            "Add-Type -AssemblyName System.Windows.Forms;",
+            "$fbd = New-Object System.Windows.Forms.FolderBrowserDialog;",
+        ]
+
+        if win_dir:
+            ps_lines.append(f"$fbd.SelectedPath = {self._ps_quote(win_dir)};")
+        if title:
+            ps_lines.append(f"$fbd.Description = {self._ps_quote(title)};")
+
+        ps_lines.append("if ($fbd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $fbd.SelectedPath }")
+        script = self._ps_join_lines(ps_lines)
+        out = self._run_powershell(script)
+        if out is None:
+            return None
+
+        return self._win_to_wsl(out)
