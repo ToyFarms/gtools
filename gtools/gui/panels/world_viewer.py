@@ -140,7 +140,7 @@ class WorldTab:
         glClear(GL_COLOR_BUFFER_BIT)
         if self._renderer.any():
             self._shader.use()
-            self._mvp.set_mat4(self._camera.proj_as_numpy())
+            self._mvp.set_mat4x4(self._camera.proj_as_numpy())
             self._renderer.draw(self._tex)
         self._fbo.unbind()
 

@@ -14,11 +14,77 @@ class Uniform:
     def __init__(self, loc: int) -> None:
         self.loc = loc
 
-    def set_mat4(self, x: npt.NDArray[np.float32]) -> None:
-        glUniformMatrix4fv(self.loc, 1, GL_FALSE, x)
+    def set_float(self, x: npt.NDArray[np.float32]) -> None:
+        assert x.shape == (1,) and x.dtype == np.float32
+        glUniform1fv(self.loc, 1, x)
 
-    def set_int(self, x: int) -> None:
-        glUniform1i(self.loc, x)
+    def set_int(self, x: npt.NDArray[np.int32]) -> None:
+        assert x.shape == (1,) and x.dtype == np.int32
+        glUniform1iv(self.loc, 1, x)
+
+    def set_uint(self, x: npt.NDArray[np.uint32]) -> None:
+        assert x.shape == (1,) and x.dtype == np.uint32
+        glUniform1uiv(self.loc, 1, x)
+
+    def set_vec2(self, x: npt.NDArray[np.float32]) -> None:
+        assert x.shape == (2,) and x.dtype == np.float32
+        glUniform2fv(self.loc, 1, x)
+
+    def set_vec3(self, x: npt.NDArray[np.float32]) -> None:
+        assert x.shape == (3,) and x.dtype == np.float32
+        glUniform3fv(self.loc, 1, x)
+
+    def set_vec4(self, x: npt.NDArray[np.float32]) -> None:
+        assert x.shape == (4,) and x.dtype == np.float32
+        glUniform4fv(self.loc, 1, x)
+
+    def set_ivec2(self, x: npt.NDArray[np.int32]) -> None:
+        assert x.shape == (2,) and x.dtype == np.int32
+        glUniform2iv(self.loc, 1, x)
+
+    def set_ivec3(self, x: npt.NDArray[np.int32]) -> None:
+        assert x.shape == (3,) and x.dtype == np.int32
+        glUniform3iv(self.loc, 1, x)
+
+    def set_ivec4(self, x: npt.NDArray[np.int32]) -> None:
+        assert x.shape == (4,) and x.dtype == np.int32
+        glUniform4iv(self.loc, 1, x)
+
+    def set_uvec2(self, x: npt.NDArray[np.uint32]) -> None:
+        assert x.shape == (2,) and x.dtype == np.uint32
+        glUniform2uiv(self.loc, 1, x)
+
+    def set_uvec3(self, x: npt.NDArray[np.uint32]) -> None:
+        assert x.shape == (3,) and x.dtype == np.uint32
+        glUniform3uiv(self.loc, 1, x)
+
+    def set_uvec4(self, x: npt.NDArray[np.uint32]) -> None:
+        assert x.shape == (4,) and x.dtype == np.uint32
+        glUniform4uiv(self.loc, 1, x)
+
+    def set_float_array(self, x: npt.NDArray[np.float32]) -> None:
+        assert x.dtype == np.float32 and x.ndim == 1
+        glUniform1fv(self.loc, x.size, x)
+
+    def set_int_array(self, x: npt.NDArray[np.int32]) -> None:
+        assert x.dtype == np.int32 and x.ndim == 1
+        glUniform1iv(self.loc, x.size, x)
+
+    def set_uint_array(self, x: npt.NDArray[np.uint32]) -> None:
+        assert x.dtype == np.uint32 and x.ndim == 1
+        glUniform1uiv(self.loc, x.size, x)
+
+    def set_mat2x2(self, x: npt.NDArray[np.float32]) -> None:
+        assert x.shape == (2, 2) and x.dtype == np.float32
+        glUniformMatrix2fv(self.loc, 1, GL_FALSE, x)
+
+    def set_mat3x3(self, x: npt.NDArray[np.float32]) -> None:
+        assert x.shape == (3, 3) and x.dtype == np.float32
+        glUniformMatrix3fv(self.loc, 1, GL_FALSE, x)
+
+    def set_mat4x4(self, x: npt.NDArray[np.float32]) -> None:
+        assert x.shape == (4, 4) and x.dtype == np.float32
+        glUniformMatrix4fv(self.loc, 1, GL_FALSE, x)
 
 
 class ShaderProgram:
