@@ -117,9 +117,8 @@ class InputRouter:
 
 
 class Uniform:
-    def __init__(self, loc: int, prog: "ShaderProgram") -> None:
+    def __init__(self, loc: int) -> None:
         self.loc = loc
-        self.prog = prog
 
     def set_mat4(self, x: npt.NDArray[np.float32]) -> None:
         glUniformMatrix4fv(self.loc, 1, GL_FALSE, x)
@@ -145,7 +144,7 @@ class ShaderProgram:
 
     def get_uniform(self, name: str) -> Uniform:
         id = glGetUniformLocation(self._id, name)
-        return Uniform(loc=id, prog=self)
+        return Uniform(loc=id)
 
     @staticmethod
     def _compile(src: str, shader_type: int) -> int:
