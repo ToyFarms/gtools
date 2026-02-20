@@ -1,7 +1,7 @@
 import time
 
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankPacket
-from gtools.core.highres_sleep import sleep_ns
+from gtools.core.highres_sleep import nanosleep
 from gtools.protogen.extension_pb2 import PendingPacket
 from gtools.proxy.extension.broker import PacketScheduler
 
@@ -18,7 +18,7 @@ def test_packet_scheduler_delta_time() -> None:
         pkt_a.buf = net_pkt_a.serialize()
         scheduler.push(pkt_a)
 
-        sleep_ns(sleep)
+        nanosleep(sleep)
 
         net_pkt_b = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=2))
         pkt_b = PendingPacket()
@@ -60,7 +60,7 @@ def test_packet_scheduler_multiple_delta_times() -> None:
             pkt.buf = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=i)).serialize()
             scheduler.push(pkt)
 
-            sleep_ns(delta * 1e6)
+            nanosleep(delta * 1e6)
 
         time.sleep(0.5)
 

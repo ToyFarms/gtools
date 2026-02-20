@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from extension.utils import UtilityExtension
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
-from gtools.core.highres_sleep import sleep_ns
+from gtools.core.highres_sleep import nanosleep
 from gtools.proxy.extension.sdk_utils import s
 from tests import verify
 
@@ -2131,7 +2131,7 @@ def test_extension_packet_scheduler() -> None:
             pkt = NetPacket(type=NetType.TANK_PACKET, data=TankPacket(net_id=(i + 1)))
             ext.push(PreparedPacket(pkt, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.NONE))
 
-            sleep_ns(delta * 1e6)
+            nanosleep(delta * 1e6)
 
         time.sleep(0.5)
         assert ext.stop().wait_true(5)

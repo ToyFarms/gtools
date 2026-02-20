@@ -26,7 +26,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.growtopia.rttex import RTTex
 from gtools.core.growtopia.world import Tile, World
-from gtools.core.highres_sleep import sleep_ns
+from gtools.core.highres_sleep import nanosleep
 from gtools.core.wsl import windows_home
 
 
@@ -990,7 +990,7 @@ class App:
             elapsed = time.perf_counter() - frame_start
             sleep_time = 1 / self.fps - elapsed - 0.002
             if sleep_time > 0:
-                sleep_ns(sleep_time * 1e9)
+                nanosleep(sleep_time * 1e9)
 
         self.shutdown()
 

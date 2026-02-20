@@ -1,7 +1,7 @@
 import time
 import pytest
 
-from gtools.core.highres_sleep import sleep_ns
+from gtools.core.highres_sleep import nanosleep
 
 DURATIONS_NS = [
     1,
@@ -29,7 +29,7 @@ def test_sleep_ns_precision() -> None:
         successes = 0
         for _ in range(RUNS_PER_DURATION):
             t0 = time.perf_counter_ns()
-            sleep_ns(dur_ns)
+            nanosleep(dur_ns)
             t1 = time.perf_counter_ns()
 
             elapsed_ns = t1 - t0

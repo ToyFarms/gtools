@@ -85,7 +85,7 @@ if _is_windows():
         except Exception:
             pass
 
-    def sleep_ns(ns: float) -> None:
+    def nanosleep(ns: float) -> None:
         intervals_100ns = (ns + 99) // 100
         due_100ns = -int(intervals_100ns)
         li = ctypes.c_longlong(due_100ns)
@@ -112,7 +112,7 @@ if _is_windows():
 
 elif _is_linux():
 
-    def sleep_ns(ns: float) -> None:
+    def nanosleep(ns: float) -> None:
         CLOCK_MONOTONIC = 1
         TIMER_ABSTIME = 1
 
@@ -151,7 +151,7 @@ elif _is_linux():
 
 elif _is_darwin():
 
-    def sleep_ns(ns: float) -> None:
+    def nanosleep(ns: float) -> None:
         if _nanosleep is None:
             time.sleep(ns / 1e9)
             return
@@ -173,7 +173,7 @@ elif _is_darwin():
 
 else:
 
-    def sleep_ns(ns: float) -> None:
+    def nanosleep(ns: float) -> None:
         time.sleep(ns / 1e9)
 
 
@@ -182,6 +182,6 @@ if __name__ == "__main__":
     i = 0
     while True:
         start = time.perf_counter_ns()
-        sleep_ns(ns)
+        nanosleep(ns)
         end = time.perf_counter_ns()
         print(f"requested {ns}ns, elapsed = {end - start}ns, error={(ns-(end-start)) / 1e6}ms")
