@@ -48,6 +48,7 @@ class TouchManager(TouchRouter):
 
         self.last_vel = (0.0, 0.0, 0.0, 0.0)
         self.last_update_time = None
+        self.smoothed_prev = (0.0, 0.0, 1.0, 0.0)
 
         self._event_queue: queue.SimpleQueue[TouchEvent] = queue.SimpleQueue()
 
@@ -131,8 +132,15 @@ class TouchManager(TouchRouter):
         return events
 
     def on_touch_down(self, ev: TouchContactEvent) -> None:
+        if not self.active:
+            self.transform = (0.0, 0.0, 1.0, 0.0)
+            self.smoothed = (0.0, 0.0, 1.0, 0.0)
+            self.smoothed_prev = (0.0, 0.0, 1.0, 0.0)
+            self.last_vel = (0.0, 0.0, 0.0, 0.0)
+            self.state = GestureState.NONE
+
         self.active[ev.contact_id] = ev
-        self.start_positions[ev.contact_id] = (ev.norm_x, ev.norm_y)
+        self.start_positions[ev.contact_id] = (ev.x, ev.y)
         self.start_time = self.start_time or ev.timestamp
         self.state = GestureState.POSSIBLE
         self.last_update_time = ev.timestamp
@@ -155,7 +163,7 @@ class TouchManager(TouchRouter):
 
         active_ids = list(self.active.keys())
         start_pts = [self.start_positions[i] for i in active_ids if i in self.start_positions]
-        cur_pts = [(self.active[i].norm_x, self.active[i].norm_y) for i in active_ids]
+        cur_pts = [(self.active[i].x, self.active[i].y) for i in active_ids]
 
         if len(start_pts) == 0:
             return
@@ -196,7 +204,7 @@ class TouchManager(TouchRouter):
         self.transform = (new_tx, new_ty, new_s, new_r)
         self.last_update_time = now_ts
 
-        pd_tx, pd_ty, pd_s, pd_r = self.smoothed_prev if hasattr(self, "smoothed_prev") else (0.0, 0.0, 1.0, 0.0)
+        pd_tx, pd_ty, pd_s, pd_r = self.smoothed_prev
         delta_tx = sm_tx - pd_tx
         delta_ty = sm_ty - pd_ty
         delta_s = sm_s / pd_s if pd_s != 0 else sm_s

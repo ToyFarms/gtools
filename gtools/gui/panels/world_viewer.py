@@ -131,7 +131,6 @@ class WorldTab:
         elif isinstance(event, TouchEvent):
             if self._hovered:
                 self._last_touch_event = time.monotonic()
-                # TODO: transform normalized into screen space
                 self._camera.pos.x -= event.dx / self._camera.zoom
                 self._camera.pos.y -= event.dy / self._camera.zoom
 
