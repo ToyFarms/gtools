@@ -148,6 +148,8 @@ if sys.platform == "win32":
     TOUCHEVENTF_DOWN = 0x0002
     TOUCHEVENTF_UP = 0x0004
     GWLP_WNDPROC = -4
+    TWF_FINETOUCH = 0x00000001
+    TWF_WANTPALM = 0x00000002
 
     _user32 = ctypes.WinDLL("user32", use_last_error=True)
 
@@ -256,12 +258,46 @@ if sys.platform == "win32":
             self._hwnd: int = hwnd
             logger.debug(f"Initializing FingerRouter for HWND {hex(hwnd)}")
 
-            if not _RegisterTouchWindow(hwnd, 0):
+            # Check if touch is available
+            _GetSystemMetrics = _user32.GetSystemMetrics
+            _GetSystemMetrics.restype = ctypes.c_int
+            _GetSystemMetrics.argtypes = [ctypes.c_int]
+            SM_DIGITIZER = 94
+            SM_MAXIMUMTOUCHES = 95
+            digitizer = _GetSystemMetrics(SM_DIGITIZER)
+            max_touches = _GetSystemMetrics(SM_MAXIMUMTOUCHES)
+            
+            # Check digitizer capabilities
+            NID_INTEGRATED_TOUCH = 0x01
+            NID_EXTERNAL_TOUCH = 0x02
+            NID_MULTI_INPUT = 0x40
+            NID_READY = 0x80
+            
+            has_touch = (digitizer & (NID_INTEGRATED_TOUCH | NID_EXTERNAL_TOUCH)) != 0
+            is_ready = (digitizer & NID_READY) != 0
+            is_multi_input = (digitizer & NID_MULTI_INPUT) != 0
+            
+            logger.debug(f"Touch availability: digitizer={hex(digitizer)}, max_touches={max_touches}, has_touch={has_touch}, is_ready={is_ready}, is_multi_input={is_multi_input}")
+            
+            if not has_touch:
+                logger.warning("Touch input not available on this system - WM_TOUCH messages will not be sent")
+            if not is_ready:
+                logger.warning("Touch digitizer not ready - touch input may not work correctly")
+            
+            # Register for touch input - try with TWF_FINETOUCH flag
+            # TWF_FINETOUCH = 0x00000001 means we want fine touch (not converted to mouse)
+            if not _RegisterTouchWindow(hwnd, TWF_FINETOUCH):
                 error = ctypes.get_last_error()
-                logger.error(f"RegisterTouchWindow failed: {error}")
-                raise OSError(f"RegisterTouchWindow failed: {error}")
-
-            logger.debug("RegisterTouchWindow succeeded")
+                logger.warning(f"RegisterTouchWindow with TWF_FINETOUCH failed: {error}, trying without flags")
+                # Try without flags as fallback
+                if not _RegisterTouchWindow(hwnd, 0):
+                    error = ctypes.get_last_error()
+                    logger.error(f"RegisterTouchWindow failed: {error}")
+                    raise OSError(f"RegisterTouchWindow failed: {error}")
+                else:
+                    logger.debug("RegisterTouchWindow succeeded (without flags)")
+            else:
+                logger.debug(f"RegisterTouchWindow succeeded with TWF_FINETOUCH flag")
 
             # Try message hook approach first (intercepts before GLFW processes)
             self._hook = None
