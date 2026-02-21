@@ -117,7 +117,13 @@ class TouchManager(TouchRouter):
                 self.on_touch_up(e)
 
             self.active[e.contact_id] = (e.norm_x, e.norm_y, e.timestamp)
-            self._process_move(e.timestamp)
+
+            if e.contact_id not in self.active:
+                self._process_move(e.timestamp)
+            else:
+                prev_x, prev_y, _ = self.active[e.contact_id]
+                if abs(prev_x - e.norm_x) <= 1e-3 and abs(prev_y - e.norm_y) < 1e-3:
+                    self._process_move(e.timestamp)
 
         events: list[TouchEvent] = []
         while not self._queue.empty():

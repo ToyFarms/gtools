@@ -85,7 +85,7 @@ class WindowsTouchRouter(TouchRouterBase):
         )
 
         SetWindowLongPtrW(self._hwnd, GWLP.WNDPROC, self._old_wndproc)
-        self.logger.debug(f"uninstalled {len(devices)} from HWND {self._hwnd}")
+        self.logger.debug(f"uninstalled {len(devices)} devices from HWND {self._hwnd}")
 
     def _on_wm_input(self, lparam: int) -> None:
         handle = wt.HANDLE(lparam)

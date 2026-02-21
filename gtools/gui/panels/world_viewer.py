@@ -1,6 +1,7 @@
 import itertools
 import logging
 from pathlib import Path
+import time
 from OpenGL.GL import GL_COLOR_BUFFER_BIT, glClear, glClearColor
 
 import glfw
@@ -47,6 +48,7 @@ class WorldTab:
         self._drag: dict = {"active": False}
         self._image_origin: tuple[float, float] = (0.0, 0.0)
         self._cursor_pos: tuple[float, float] = (0.0, 0.0)
+        self._last_touch_event = 0.0
 
         self._open = True
         self._first_render = True
@@ -89,7 +91,7 @@ class WorldTab:
 
     def handle_event(self, event: Event) -> bool:
         if isinstance(event, ScrollEvent):
-            if self._hovered:
+            if self._hovered and time.monotonic() - self._last_touch_event >= 0.5:
                 lx, ly = self._to_local(event.screen_x, event.screen_y)
                 self._camera.zoom_around(1.1**event.yoff, lx, ly)
                 return True
@@ -128,6 +130,8 @@ class WorldTab:
                     self._renderer.flags ^= WorldRenderer.Flags.RENDER_BG
         elif isinstance(event, TouchEvent):
             if self._hovered:
+                self._last_touch_event = time.monotonic()
+                # TODO: transform normalized into screen space
                 self._camera.pos.x -= event.dx / self._camera.zoom
                 self._camera.pos.y -= event.dy / self._camera.zoom
 
