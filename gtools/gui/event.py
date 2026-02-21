@@ -208,6 +208,42 @@ if sys.platform == "win32":
         wt.LPARAM,
     ]
 
+    # Message hook functions
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _GetCurrentThreadId = _kernel32.GetCurrentThreadId
+    _GetCurrentThreadId.restype = wt.DWORD
+    _GetCurrentThreadId.argtypes = []
+
+    WH_GETMESSAGE = 3
+    _SetWindowsHookExW = _user32.SetWindowsHookExW
+    _SetWindowsHookExW.restype = wt.HHOOK
+    _SetWindowsHookExW.argtypes = [ctypes.c_int, ctypes.c_void_p, wt.HINSTANCE, wt.DWORD]
+
+    _UnhookWindowsHookEx = _user32.UnhookWindowsHookEx
+    _UnhookWindowsHookEx.restype = wt.BOOL
+    _UnhookWindowsHookEx.argtypes = [wt.HHOOK]
+
+    _CallNextHookEx = _user32.CallNextHookEx
+    _CallNextHookEx.restype = ctypes.c_ssize_t
+    _CallNextHookEx.argtypes = [wt.HHOOK, ctypes.c_int, wt.WPARAM, wt.LPARAM]
+
+    class _MSG(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wt.HWND),
+            ("message", wt.UINT),
+            ("wParam", wt.WPARAM),
+            ("lParam", wt.LPARAM),
+            ("time", wt.DWORD),
+            ("pt", wt.POINT),
+        ]
+
+    _HOOKPROC = ctypes.WINFUNCTYPE(
+        ctypes.c_ssize_t,
+        ctypes.c_int,
+        wt.WPARAM,
+        wt.LPARAM,
+    )
+
     _ScreenToClient = _user32.ScreenToClient
     _ScreenToClient.restype = wt.BOOL
     _ScreenToClient.argtypes = [wt.HWND, ctypes.POINTER(wt.POINT)]
@@ -227,6 +263,27 @@ if sys.platform == "win32":
 
             logger.debug("RegisterTouchWindow succeeded")
 
+            # Try message hook approach first (intercepts before GLFW processes)
+            self._hook = None
+            self._hook_proc = None
+            try:
+                thread_id = _GetCurrentThreadId()
+                self._hook_proc = _HOOKPROC(self._getmessage_hook)
+                self._hook = _SetWindowsHookExW(
+                    WH_GETMESSAGE,
+                    self._hook_proc,
+                    None,  # hMod - not needed for thread hooks
+                    thread_id,
+                )
+                if self._hook:
+                    logger.debug(f"Message hook installed for thread {thread_id}")
+                else:
+                    error = ctypes.get_last_error()
+                    logger.warning(f"SetWindowsHookExW failed: {error}, falling back to window procedure")
+            except Exception as e:
+                logger.warning(f"Failed to install message hook: {e}, falling back to window procedure")
+
+            # Also install window procedure as backup
             self._new_wndproc = _WNDPROC(self._wndproc)
             # Keep a reference to prevent garbage collection
             self._wndproc_ref = self._new_wndproc
@@ -255,6 +312,28 @@ if sys.platform == "win32":
             # Test: verify window procedure is being called by checking periodically
             self._wndproc_call_count = 0
 
+        def _getmessage_hook(self, nCode: int, wParam: int, lParam: int) -> int:
+            """Message hook to intercept WM_TOUCH before GLFW processes it.
+            
+            For WH_GETMESSAGE hook:
+            - nCode: HC_ACTION (0) means process the message
+            - wParam: PM_REMOVE (1) or PM_NOREMOVE (0) 
+            - lParam: Pointer to MSG structure
+            """
+            # HC_ACTION = 0 means we should process the message
+            if nCode == 0 and lParam:
+                try:
+                    msg = ctypes.cast(lParam, ctypes.POINTER(_MSG)).contents
+                    if msg.hwnd == self._hwnd and msg.message == WM_TOUCH:
+                        logger.debug(f"WM_TOUCH intercepted via message hook: hwnd={hex(msg.hwnd)}, wparam={msg.wParam}, lparam={msg.lParam}")
+                        print(f"WM_TOUCH intercepted via message hook: hwnd={hex(msg.hwnd)}, wparam={msg.wParam}, lparam={msg.lParam}")
+                        # Process the touch message directly
+                        self._handle_wm_touch(msg.hwnd, msg.wParam, msg.lParam)
+                except Exception as e:
+                    logger.warning(f"Error in message hook: {e}")
+            # Always call next hook
+            return _CallNextHookEx(self._hook, nCode, wParam, lParam)
+
         def verify_wndproc(self) -> bool:
             """Verify that our window procedure is still installed."""
             if not hasattr(self, '_new_wndproc'):
@@ -267,6 +346,10 @@ if sys.platform == "win32":
             return True
         
         def uninstall(self) -> None:
+            if self._hook:
+                _UnhookWindowsHookEx(self._hook)
+                self._hook = None
+                logger.debug("Message hook uninstalled")
             _SetWindowLongPtrW(self._hwnd, GWLP_WNDPROC, self._old_wndproc)
             logger.debug("FingerRouter uninstalled from HWND %s", hex(self._hwnd))
 
