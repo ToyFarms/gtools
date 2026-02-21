@@ -126,7 +126,7 @@ class TouchManager(TouchRouter):
                     self._process_move(e.timestamp)
 
         events: list[TouchEvent] = []
-        while not self._queue.empty():
+        while not self._event_queue.empty():
             try:
                 events.append(self._event_queue.get_nowait())
             except queue.Empty:
