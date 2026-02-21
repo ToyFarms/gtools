@@ -317,6 +317,10 @@ class TouchDevice(HIDDevice):
 
             lx = _signed(raw_x.value, x_min, x_max)
             ly = _signed(raw_y.value, y_min, y_max)
+            norm_x = (lx - x_min) / x_span if x_span else 0.0
+            norm_y = (ly - y_min) / y_span if y_span else 0.0
+            norm_x = max(0.0, min(1.0, norm_x))
+            norm_y = max(0.0, min(1.0, norm_y))
 
             if hwnd:
                 if self.is_touchpad:
@@ -333,10 +337,6 @@ class TouchDevice(HIDDevice):
                     ScreenToClient(hwnd, ctypes.byref(pt))
                     cx, cy = float(pt.x), float(pt.y)
             else:
-                norm_x = (lx - x_min) / x_span if x_span else 0.0
-                norm_y = (ly - y_min) / y_span if y_span else 0.0
-                norm_x = max(0.0, min(1.0, norm_x))
-                norm_y = max(0.0, min(1.0, norm_y))
                 cx = norm_x * self.scr_w
                 cy = norm_y * self.scr_h
 
