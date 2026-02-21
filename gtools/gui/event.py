@@ -31,7 +31,9 @@ Point = tuple[float, float]
 
 
 class TouchManager(TouchRouter):
-    def __init__(self, touch_slop: float = 0.01, smoothing_alpha: float = 0.15, inertia_friction: float = 3.0) -> None:
+    def __init__(self, window, touch_slop: float = 0.01, smoothing_alpha: float = 0.15, inertia_friction: float = 3.0) -> None:
+        super().__init__(window)
+        self.install()
         self.active: dict[int, tuple[float, float, float]] = {}
         self.start_positions: dict[int, Point] = {}
         self.start_centroid = (0.5, 0.5)
@@ -236,77 +238,6 @@ class TouchManager(TouchRouter):
             self.state = GestureState.NONE
 
 
-# class TouchManager(TouchRouter):
-#     def __init__(self, dead_zone_px: float = 0.5, dead_zone_scale: float = 0.2, dead_zone_angle: float = 0.002) -> None:
-#         self._dz_px = dead_zone_px
-#         self._dz_scale = dead_zone_scale
-#         self._dz_angle = dead_zone_angle
-
-#         self._points: dict[int, TouchContactEvent] = {}
-
-#         self._prev_cx: float | None = None
-#         self._prev_cy: float | None = None
-#         self._prev_angle: float | None = None
-
-#         self._init_dist: float | None = None
-#         self._prev_dist: float | None = None
-#         self._event_queue: queue.SimpleQueue[TouchEvent] = queue.SimpleQueue()
-
-#     def _reset_two_touch_state(self) -> None:
-#         self._prev_cx = None
-#         self._prev_cy = None
-#         self._prev_angle = None
-#         self._init_dist = None
-#         self._prev_dist = None
-
-#     def _emit_gestures(self) -> None:
-#         if len(self._points) != 2:
-#             self._reset_two_touch_state()
-#             return
-
-#         a, b = tuple(self._points.values())
-
-#         cx, cy = _centroid(a, b)
-#         dist = _distance(a, b)
-#         angle = _angle(a, b)
-
-#         if self._prev_cx is None:
-#             self._prev_cx = cx
-#             self._prev_cy = cy
-#             self._prev_angle = angle
-#             self._init_dist = dist if dist > 0.0 else 0.0
-#             self._prev_dist = dist
-#             return
-
-#         assert self._prev_cy is not None
-#         assert self._prev_angle is not None
-
-#         dx = cx - self._prev_cx
-#         dy = cy - self._prev_cy
-#         if math.hypot(dx, dy) >= self._dz_px:
-#             self._event_queue.put(TouchDragEvent(dx=dx, dy=dy, x=cx, y=cy))
-
-#         if self._prev_dist and self._prev_dist > 1e-12:
-#             scale_incremental = dist / self._prev_dist
-
-#             if not self._init_dist:
-#                 self._init_dist = 0.0
-
-#             scale_relative = dist / self._init_dist
-#             if abs(scale_relative - 1.0) >= self._dz_scale:
-#                 self._event_queue.put(TouchPinchEvent(scale=scale_incremental, x=cx, y=cy))
-
-#         delta = angle - self._prev_angle
-#         delta = (delta + math.pi) % (2 * math.pi) - math.pi
-#         if abs(delta) >= self._dz_angle:
-#             self._event_queue.put(TouchRotateEvent(delta=delta, x=cx, y=cy))
-
-#         self._prev_cx = cx
-#         self._prev_cy = cy
-#         self._prev_angle = angle
-#         self._prev_dist = dist
-
-
 @dataclass(slots=True)
 class ScrollEvent:
     xoff: float
@@ -395,3 +326,6 @@ class EventRouter:
         if self._prev_key:
             self._prev_key(win, key, scancode, action, mods)
         self._queue.put(KeyEvent(key, scancode, action, mods))
+
+    def delete(self) -> None:
+        self._touch.uninstall()
