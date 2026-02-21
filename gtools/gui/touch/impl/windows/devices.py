@@ -35,8 +35,8 @@ class HIDDevice(ABC):
         self.ppd_ptr = ppd_ptr
         self.caps = caps
 
-    @abstractmethod
     @classmethod
+    @abstractmethod
     def deserialize(
         cls,
         h_device: int,
