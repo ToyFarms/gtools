@@ -36,9 +36,10 @@ class TouchManager(TouchRouter):
         window,
         touch_slop: float = 0.01,
         smoothing_alpha: float = 0.15,
+        scale_rot_alpha: float = 0.05,
         inertia_friction: float = 3.0,
-        scale_slop: float = 0.005,
-        rotation_slop_deg: float = 0.5,
+        scale_dead_zone: float = 0.004,
+        rot_dead_zone: float = 0.003,
     ) -> None:
         super().__init__(window)
         self.install()
@@ -52,14 +53,14 @@ class TouchManager(TouchRouter):
         self.smoothed = (0.0, 0.0, 1.0, 0.0)
         self.touch_slop = touch_slop
         self.alpha = smoothing_alpha
+        self.scale_rot_alpha = scale_rot_alpha
+        self.scale_dead_zone = scale_dead_zone
+        self.rot_dead_zone = rot_dead_zone
         self.inertia_friction = inertia_friction
 
         self.last_vel = (0.0, 0.0, 0.0, 0.0)
         self.last_update_time = None
         self.smoothed_prev = (0.0, 0.0, 1.0, 0.0)
-
-        self.scale_slop = scale_slop
-        self.rotation_slop = rotation_slop_deg * math.pi / 180.0
 
         self._event_queue: queue.SimpleQueue[TouchEvent] = queue.SimpleQueue()
 
@@ -102,21 +103,24 @@ class TouchManager(TouchRouter):
             sx += u1 * u1 + u2 * u2
 
         if sx == 0:
-            tx = cur_cent[0] - start_cent[0]
-            ty = cur_cent[1] - start_cent[1]
-            return (tx, ty, 1.0, 0.0)
+            return (cur_cent[0] - start_cent[0], cur_cent[1] - start_cent[1], 1.0, 0.0)
 
         a = (sxx + syy) / sx
         b = (syx - sxy) / sx
         angle = math.atan2(b, a)
-        s = math.hypot(a, b)
+        num = sxx + syy
+        denom = sx
+        s = num / denom
 
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        tx = cur_cent[0] - (s * (cos_a * start_cent[0] - sin_a * start_cent[1]))
-        ty = cur_cent[1] - (s * (sin_a * start_cent[0] + cos_a * start_cent[1]))
+        tx = cur_cent[0] - (s * (math.cos(angle) * start_cent[0] - math.sin(angle) * start_cent[1]))
+        ty = cur_cent[1] - (s * (math.sin(angle) * start_cent[0] + math.cos(angle) * start_cent[1]))
+        tx = cur_cent[0] - (s * (math.cos(angle) * start_cent[0] - math.sin(angle) * start_cent[1]))
+        ty = cur_cent[1] - (s * (math.sin(angle) * start_cent[0] + math.cos(angle) * start_cent[1]))
 
-        return (tx, ty, s, angle)
+        dx = cur_cent[0] - start_cent[0]
+        dy = cur_cent[1] - start_cent[1]
+
+        return (dx, dy, s, angle)
 
     def poll(self) -> list[TouchEvent]:
         for e in super().poll():
@@ -176,10 +180,10 @@ class TouchManager(TouchRouter):
         if len(start_pts) == 0:
             return
 
-        tx, ty, s, angle = self._similarity_transform(start_pts, cur_pts)
+        dx, dy, s, angle = self._similarity_transform(start_pts, cur_pts)
 
         if self.state == GestureState.POSSIBLE:
-            trans_mag = math.hypot(tx, ty)
+            trans_mag = math.hypot(dx, dy)
             scale_dev = abs(s - 1.0)
             rot_dev = abs(angle)
             if trans_mag > self.touch_slop or scale_dev > 0.02 or rot_dev > (3.0 * math.pi / 180.0):
@@ -189,18 +193,11 @@ class TouchManager(TouchRouter):
             else:
                 return
 
-        new_tx = tx
-        new_ty = ty
+        prev_tx, prev_ty, prev_s, prev_r = self.transform
+        new_tx = dx
+        new_ty = dy
         new_s = s
         new_r = angle
-
-        if abs(new_s - 1.0) < self.scale_slop:
-            new_s = 1.0
-
-        if abs(new_r) < self.rotation_slop:
-            new_r = 0.0
-
-        prev_tx, prev_ty, prev_s, prev_r = self.transform
 
         dt = max(1e-6, now_ts - (self.last_update_time or now_ts))
         vx = (new_tx - prev_tx) / dt
@@ -210,10 +207,13 @@ class TouchManager(TouchRouter):
 
         self.last_vel = (vx, vy, vs, vr)
 
-        sm_tx = self.alpha * new_tx + (1.0 - self.alpha) * self.smoothed[0]
-        sm_ty = self.alpha * new_ty + (1.0 - self.alpha) * self.smoothed[1]
-        sm_s = self.alpha * new_s + (1.0 - self.alpha) * self.smoothed[2]
-        sm_r = self.alpha * new_r + (1.0 - self.alpha) * self.smoothed[3]
+        a_tr = self.alpha
+        a_sr = self.scale_rot_alpha
+
+        sm_tx = a_tr * new_tx + (1.0 - a_tr) * self.smoothed[0]
+        sm_ty = a_tr * new_ty + (1.0 - a_tr) * self.smoothed[1]
+        sm_s = a_sr * new_s + (1.0 - a_sr) * self.smoothed[2]
+        sm_r = a_sr * new_r + (1.0 - a_sr) * self.smoothed[3]
         self.smoothed = (sm_tx, sm_ty, sm_s, sm_r)
 
         self.transform = (new_tx, new_ty, new_s, new_r)
@@ -222,9 +222,12 @@ class TouchManager(TouchRouter):
         pd_tx, pd_ty, pd_s, pd_r = self.smoothed_prev
         delta_tx = sm_tx - pd_tx
         delta_ty = sm_ty - pd_ty
-        delta_s = sm_s / pd_s if pd_s != 0 else sm_s
-        delta_r = sm_r - pd_r
+        raw_delta_s = sm_s / pd_s if pd_s != 0 else sm_s
+        raw_delta_r = sm_r - pd_r
         self.smoothed_prev = self.smoothed
+
+        delta_s = raw_delta_s if abs(raw_delta_s - 1.0) > self.scale_dead_zone else 1.0
+        delta_r = raw_delta_r if abs(raw_delta_r) > self.rot_dead_zone else 0.0
 
         self._emit_transform(delta_tx, delta_ty, delta_s, delta_r)
 
