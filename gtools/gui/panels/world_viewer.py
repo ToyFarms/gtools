@@ -14,7 +14,7 @@ from gtools.core.growtopia.world import World
 
 from gtools.gui.camera import Camera2D
 from gtools.gui.opengl import Framebuffer, ShaderProgram, Uniform
-from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent
+from gtools.gui.event import Event, FingerDragEvent, FingerPinchEvent, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
 
@@ -92,7 +92,6 @@ class WorldTab:
                 lx, ly = self._to_local(event.screen_x, event.screen_y)
                 self._camera.zoom_around(1.1**event.yoff, lx, ly)
                 return True
-
         elif isinstance(event, MouseButtonEvent):
             if event.button == glfw.MOUSE_BUTTON_LEFT:
                 if event.action == glfw.PRESS and self._hovered:
@@ -106,7 +105,6 @@ class WorldTab:
                 elif event.action == glfw.RELEASE and self._drag.get("active"):
                     self._drag["active"] = False
                     return True
-
         elif isinstance(event, CursorMoveEvent):
             if self._drag.get("active"):
                 lx, ly = self._to_local(event.xpos, event.ypos)
@@ -115,7 +113,6 @@ class WorldTab:
                 self._camera.pos.x = self._drag["start_cam"].x - dx / self._camera.zoom
                 self._camera.pos.y = self._drag["start_cam"].y - dy / self._camera.zoom
                 return True
-
         elif isinstance(event, KeyEvent):
             if event.action == glfw.PRESS:
                 if self._hovered and event.key == glfw.KEY_R:
@@ -127,6 +124,16 @@ class WorldTab:
                     self._renderer.flags ^= WorldRenderer.Flags.RENDER_FG
                 elif event.key == glfw.KEY_3:
                     self._renderer.flags ^= WorldRenderer.Flags.RENDER_BG
+        elif isinstance(event, FingerDragEvent):
+            if self._hovered:
+                self._camera.pos.x -= event.dx / self._camera.zoom
+                self._camera.pos.y -= event.dy / self._camera.zoom
+                return True
+        elif isinstance(event, FingerPinchEvent):
+            if self._hovered:
+                lx, ly = self._to_local(event.x, event.y)
+                self._camera.zoom_around(event.scale, lx, ly)
+                return True
 
         return False
 
