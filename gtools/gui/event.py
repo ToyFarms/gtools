@@ -31,7 +31,15 @@ Point = tuple[float, float]
 
 
 class TouchManager(TouchRouter):
-    def __init__(self, window, touch_slop: float = 0.01, smoothing_alpha: float = 0.15, inertia_friction: float = 3.0) -> None:
+    def __init__(
+        self,
+        window,
+        touch_slop: float = 0.01,
+        smoothing_alpha: float = 0.15,
+        inertia_friction: float = 3.0,
+        scale_slop: float = 0.005,
+        rotation_slop_deg: float = 0.5,
+    ) -> None:
         super().__init__(window)
         self.install()
         self.active: dict[int, TouchContactEvent] = {}
@@ -49,6 +57,9 @@ class TouchManager(TouchRouter):
         self.last_vel = (0.0, 0.0, 0.0, 0.0)
         self.last_update_time = None
         self.smoothed_prev = (0.0, 0.0, 1.0, 0.0)
+
+        self.scale_slop = scale_slop
+        self.rotation_slop = rotation_slop_deg * math.pi / 180.0
 
         self._event_queue: queue.SimpleQueue[TouchEvent] = queue.SimpleQueue()
 
@@ -91,24 +102,21 @@ class TouchManager(TouchRouter):
             sx += u1 * u1 + u2 * u2
 
         if sx == 0:
-            return (cur_cent[0] - start_cent[0], cur_cent[1] - start_cent[1], 1.0, 0.0)
+            tx = cur_cent[0] - start_cent[0]
+            ty = cur_cent[1] - start_cent[1]
+            return (tx, ty, 1.0, 0.0)
 
         a = (sxx + syy) / sx
         b = (syx - sxy) / sx
         angle = math.atan2(b, a)
-        num = sxx + syy
-        denom = sx
-        s = num / denom
+        s = math.hypot(a, b)
 
-        tx = cur_cent[0] - (s * (math.cos(angle) * start_cent[0] - math.sin(angle) * start_cent[1]))
-        ty = cur_cent[1] - (s * (math.sin(angle) * start_cent[0] + math.cos(angle) * start_cent[1]))
-        tx = cur_cent[0] - (s * (math.cos(angle) * start_cent[0] - math.sin(angle) * start_cent[1]))
-        ty = cur_cent[1] - (s * (math.sin(angle) * start_cent[0] + math.cos(angle) * start_cent[1]))
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        tx = cur_cent[0] - (s * (cos_a * start_cent[0] - sin_a * start_cent[1]))
+        ty = cur_cent[1] - (s * (sin_a * start_cent[0] + cos_a * start_cent[1]))
 
-        dx = cur_cent[0] - start_cent[0]
-        dy = cur_cent[1] - start_cent[1]
-
-        return (dx, dy, s, angle)
+        return (tx, ty, s, angle)
 
     def poll(self) -> list[TouchEvent]:
         for e in super().poll():
@@ -168,10 +176,10 @@ class TouchManager(TouchRouter):
         if len(start_pts) == 0:
             return
 
-        dx, dy, s, angle = self._similarity_transform(start_pts, cur_pts)
+        tx, ty, s, angle = self._similarity_transform(start_pts, cur_pts)
 
         if self.state == GestureState.POSSIBLE:
-            trans_mag = math.hypot(dx, dy)
+            trans_mag = math.hypot(tx, ty)
             scale_dev = abs(s - 1.0)
             rot_dev = abs(angle)
             if trans_mag > self.touch_slop or scale_dev > 0.02 or rot_dev > (3.0 * math.pi / 180.0):
@@ -181,11 +189,18 @@ class TouchManager(TouchRouter):
             else:
                 return
 
-        prev_tx, prev_ty, prev_s, prev_r = self.transform
-        new_tx = dx
-        new_ty = dy
+        new_tx = tx
+        new_ty = ty
         new_s = s
         new_r = angle
+
+        if abs(new_s - 1.0) < self.scale_slop:
+            new_s = 1.0
+
+        if abs(new_r) < self.rotation_slop:
+            new_r = 0.0
+
+        prev_tx, prev_ty, prev_s, prev_r = self.transform
 
         dt = max(1e-6, now_ts - (self.last_update_time or now_ts))
         vx = (new_tx - prev_tx) / dt
