@@ -190,6 +190,10 @@ if sys.platform == "win32":
     _SetWindowLongPtrW.restype = ctypes.c_ssize_t
     _SetWindowLongPtrW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_ssize_t]
 
+    _GetWindowLongPtrW = _user32.GetWindowLongPtrW
+    _GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    _GetWindowLongPtrW.argtypes = [wt.HWND, ctypes.c_int]
+
     _CallWindowProcW = _user32.CallWindowProcW
     _CallWindowProcW.restype = ctypes.c_ssize_t
     _CallWindowProcW.argtypes = [
@@ -210,33 +214,61 @@ if sys.platform == "win32":
 
             hwnd = glfw.get_win32_window(window)
             self._hwnd: int = hwnd
+            logger.debug(f"Initializing FingerRouter for HWND {hex(hwnd)}")
 
             if not _RegisterTouchWindow(hwnd, 0):
-                raise OSError(f"RegisterTouchWindow failed: {ctypes.get_last_error()}")
+                error = ctypes.get_last_error()
+                logger.error(f"RegisterTouchWindow failed: {error}")
+                raise OSError(f"RegisterTouchWindow failed: {error}")
+
+            logger.debug("RegisterTouchWindow succeeded")
 
             self._new_wndproc = _WNDPROC(self._wndproc)
-            self._old_wndproc: int = _SetWindowLongPtrW(
+            # Keep a reference to prevent garbage collection
+            self._wndproc_ref = self._new_wndproc
+            
+            old_wndproc_value = _SetWindowLongPtrW(
                 hwnd,
                 GWLP_WNDPROC,
                 ctypes.cast(self._new_wndproc, ctypes.c_void_p).value,
             )
-            if self._old_wndproc == 0:
-                raise OSError(f"SetWindowLongPtrW failed: {ctypes.get_last_error()}")
+            if old_wndproc_value == 0:
+                error = ctypes.get_last_error()
+                logger.error(f"SetWindowLongPtrW failed: {error}")
+                raise OSError(f"SetWindowLongPtrW failed: {error}")
 
-            logger.debug("FingerRouter installed on HWND %s", hex(hwnd))
+            self._old_wndproc: int = old_wndproc_value
+            logger.debug(f"FingerRouter installed on HWND {hex(hwnd)}, old_wndproc={hex(old_wndproc_value)}")
+            
+            # Verify the window procedure was set correctly
+            current_wndproc = _GetWindowLongPtrW(hwnd, GWLP_WNDPROC)
+            expected_wndproc = ctypes.cast(self._new_wndproc, ctypes.c_void_p).value
+            if current_wndproc != expected_wndproc:
+                logger.warning(f"Window procedure verification failed! Current={hex(current_wndproc)}, Expected={hex(expected_wndproc)}")
+            else:
+                logger.debug(f"Window procedure verified: {hex(current_wndproc)}")
 
         def uninstall(self) -> None:
             _SetWindowLongPtrW(self._hwnd, GWLP_WNDPROC, self._old_wndproc)
             logger.debug("FingerRouter uninstalled from HWND %s", hex(self._hwnd))
 
         def _wndproc(self, hwnd: int, msg: int, wparam: int, lparam: int) -> int:
+            # Debug: log WM_TOUCH messages (0x0240)
             if msg == WM_TOUCH:
+                logger.debug(f"WM_TOUCH received in _wndproc: hwnd={hex(hwnd)}, wparam={wparam}, lparam={lparam}")
+                print(f"WM_TOUCH received in _wndproc: hwnd={hex(hwnd)}, wparam={wparam}, lparam={lparam}")
                 self._handle_wm_touch(hwnd, wparam, lparam)
                 return 0
-            return _CallWindowProcW(self._old_wndproc, hwnd, msg, wparam, lparam)
+            # Forward all other messages to the original window procedure
+            # Note: We return the result from CallWindowProcW, which is what the original wndproc would return
+            result = _CallWindowProcW(self._old_wndproc, hwnd, msg, wparam, lparam)
+            return result
 
         def _handle_wm_touch(self, hwnd: int, wparam: int, lparam: int) -> None:
+            logger.debug("_handle_wm_touch called")
+            print("_handle_wm_touch called")  # User's debug print
             count = wparam & 0xFFFF
+            logger.debug(f"Touch count: {count}")
             inputs = (_TOUCHINPUT * count)()
             htouchinput = wt.HANDLE(lparam)
 
