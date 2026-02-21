@@ -127,7 +127,7 @@ class WindowsTouchRouter(TouchRouterBase):
 
         for r in range(report_count):
             offset = ctypes.sizeof(RAWINPUTHEADER) + 8 + r * report_size
-            for touch in dev.parse_report(bytes(buf[offset : offset + report_size])):
+            for touch in dev.parse_report(bytes(buf[offset : offset + report_size]), self._hwnd):
                 self._queue.put(touch)
 
     def _get_device[T: HIDDevice](self, h_device: int, expected: type[T]) -> T | None:

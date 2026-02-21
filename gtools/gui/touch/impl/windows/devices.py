@@ -15,6 +15,7 @@ from gtools.gui.touch.impl.windows.windows_def import (
     HIDP_VALUE_CAPS,
     RIDI,
     SM,
+    GetClientRect,
     GetRawInputDeviceInfoW,
     GetSystemMetrics,
     HidP_GetButtonCaps,
@@ -23,6 +24,7 @@ from gtools.gui.touch.impl.windows.windows_def import (
     HidP_GetUsages,
     HidP_GetValueCaps,
     HidP_Input,
+    ScreenToClient,
 )
 
 
@@ -132,7 +134,7 @@ class GenericHIDDevice(HIDDevice):
 
 @register_device_class(HID_USAGE_PAGE.DIGITIZER, None)
 class TouchDevice(HIDDevice):
-    __slots__ = ["is_touchpad", "usage", "contact_lcs", "x_range", "y_range", "has_tip_lc", "count_lc", "scr_w", "scr_h"]
+    __slots__ = ["is_touchpad", "usage", "contact_lcs", "x_lc", "y_lc", "has_tip_lc", "count_lc", "scr_w", "scr_h"]
     logger = logging.getLogger("touch-device")
 
     def __init__(self, ppd_buf: ctypes.Array[ctypes.c_ubyte], ppd_ptr: ctypes.c_void_p, caps: HIDP_CAPS) -> None:
@@ -141,8 +143,8 @@ class TouchDevice(HIDDevice):
         self.is_touchpad: bool = False
         self.usage = 0
         self.contact_lcs: list[int] = []
-        self.x_range = (0, 0)
-        self.y_range = (0, 0)
+        self.x_lc: dict[int, tuple[int, int]] = {}
+        self.y_lc: dict[int, tuple[int, int]] = {}
         self.has_tip_lc: set[int] = set()
         self.count_lc = -1
         self.scr_w = 0
@@ -212,10 +214,6 @@ class TouchDevice(HIDDevice):
             cls.logger.warning(f"device is a digitizer but it doesn't support contant touch")
             return
 
-        first = contact_lcs[0]
-        x_range = x_lc[first]
-        y_range = y_lc[first]
-
         scr_w = GetSystemMetrics(SM.CXVIRTUALSCREEN or GetSystemMetrics(0))
         scr_h = GetSystemMetrics(SM.CYVIRTUALSCREEN or GetSystemMetrics(1))
 
@@ -223,8 +221,8 @@ class TouchDevice(HIDDevice):
         inst.is_touchpad = is_touchpad
         inst.usage = int(caps.Usage)
         inst.contact_lcs = contact_lcs
-        inst.x_range = x_range
-        inst.y_range = y_range
+        inst.x_lc = x_lc
+        inst.y_lc = y_lc
         inst.has_tip_lc = has_tip_lc
         inst.count_lc = count_lc
         inst.scr_w = scr_w
@@ -232,7 +230,7 @@ class TouchDevice(HIDDevice):
 
         return inst
 
-    def parse_report(self, report: bytes) -> list[TouchContactEvent]:
+    def parse_report(self, report: bytes, hwnd: int | None = None) -> list[TouchContactEvent]:
         contacts: list[TouchContactEvent] = []
         report_len = ctypes.c_ulong(len(report))
 
@@ -303,8 +301,10 @@ class TouchDevice(HIDDevice):
                     self.logger.warning(f"HidP_GetUsages buffer too small for lc={lc}")
                     tip_active = True
 
-            x_min, x_max = self.x_range
-            y_min, y_max = self.y_range
+            x_min, x_max = self.x_lc[lc]
+            y_min, y_max = self.y_lc[lc]
+            x_span = x_max - x_min
+            y_span = y_max - y_min
 
             def _signed(raw: int, lo: int, hi: int) -> int:
                 if lo < 0:
@@ -318,25 +318,35 @@ class TouchDevice(HIDDevice):
             lx = _signed(raw_x.value, x_min, x_max)
             ly = _signed(raw_y.value, y_min, y_max)
 
-            x_span = x_max - x_min
-            y_span = y_max - y_min
-
-            norm_x = (lx - x_min) / x_span if x_span else 0.0
-            norm_y = (ly - y_min) / y_span if y_span else 0.0
-
-            norm_x = max(0.0, min(1.0, norm_x))
-            norm_y = max(0.0, min(1.0, norm_y))
-
-            x_px = int(norm_x * self.scr_w)
-            y_px = int(norm_y * self.scr_h)
+            if hwnd:
+                if self.is_touchpad:
+                    rect = wt.RECT()
+                    GetClientRect(hwnd, ctypes.byref(rect))
+                    win_w = max(rect.right - rect.left, 1)
+                    win_h = max(rect.bottom - rect.top, 1)
+                    cx = (lx - x_min) / x_span * win_w
+                    cy = (ly - y_min) / y_span * win_h
+                else:
+                    scr_x = (lx - x_min) / x_span * self.scr_w
+                    scr_y = (ly - y_min) / y_span * self.scr_h
+                    pt = wt.POINT(int(scr_x), int(scr_y))
+                    ScreenToClient(hwnd, ctypes.byref(pt))
+                    cx, cy = float(pt.x), float(pt.y)
+            else:
+                norm_x = (lx - x_min) / x_span if x_span else 0.0
+                norm_y = (ly - y_min) / y_span if y_span else 0.0
+                norm_x = max(0.0, min(1.0, norm_x))
+                norm_y = max(0.0, min(1.0, norm_y))
+                cx = norm_x * self.scr_w
+                cy = norm_y * self.scr_h
 
             contacts.append(
                 TouchContactEvent(
                     contact_id=raw_cid.value,
                     norm_x=norm_x,
                     norm_y=norm_y,
-                    x=x_px,
-                    y=y_px,
+                    x=cx,
+                    y=cy,
                     tip_active=tip_active,
                     timestamp=time.monotonic(),
                 )

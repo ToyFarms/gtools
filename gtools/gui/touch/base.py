@@ -8,8 +8,8 @@ class TouchContactEvent:
     contact_id: int
     norm_x: float  # normalized [0.0, 1.0] relative to logical range
     norm_y: float  # normalized [0.0, 1.0] relative to logical range
-    x: int  # mapped to virtual screen pixels
-    y: int  # mapped to virtual screen pixels
+    x: float  # mapped to virtual screen pixels
+    y: float  # mapped to virtual screen pixels
     tip_active: bool
     timestamp: float
 

@@ -34,7 +34,7 @@ class TouchManager(TouchRouter):
     def __init__(self, window, touch_slop: float = 0.01, smoothing_alpha: float = 0.15, inertia_friction: float = 3.0) -> None:
         super().__init__(window)
         self.install()
-        self.active: dict[int, tuple[float, float, float]] = {}
+        self.active: dict[int, TouchContactEvent] = {}
         self.start_positions: dict[int, Point] = {}
         self.start_centroid = (0.5, 0.5)
         self.start_time = None
@@ -112,18 +112,14 @@ class TouchManager(TouchRouter):
     def poll(self) -> list[TouchEvent]:
         for e in super().poll():
             if e.tip_active:
-                self.on_touch_down(e)
-            else:
-                self.on_touch_up(e)
-
-            self.active[e.contact_id] = (e.norm_x, e.norm_y, e.timestamp)
-
-            if e.contact_id not in self.active:
-                self._process_move(e.timestamp)
-            else:
-                prev_x, prev_y, _ = self.active[e.contact_id]
-                if abs(prev_x - e.norm_x) <= 1e-3 and abs(prev_y - e.norm_y) < 1e-3:
+                if e.contact_id not in self.active:
+                    self.on_touch_down(e)
+                else:
+                    self.active[e.contact_id] = e
                     self._process_move(e.timestamp)
+            else:
+                if e.contact_id in self.active:
+                    self.on_touch_up(e)
 
         events: list[TouchEvent] = []
         while not self._event_queue.empty():
@@ -135,7 +131,7 @@ class TouchManager(TouchRouter):
         return events
 
     def on_touch_down(self, ev: TouchContactEvent) -> None:
-        self.active[ev.contact_id] = (ev.norm_x, ev.norm_y, ev.timestamp)
+        self.active[ev.contact_id] = ev
         self.start_positions[ev.contact_id] = (ev.norm_x, ev.norm_y)
         self.start_time = self.start_time or ev.timestamp
         self.state = GestureState.POSSIBLE
@@ -154,9 +150,12 @@ class TouchManager(TouchRouter):
                 self.state = GestureState.NONE
 
     def _process_move(self, now_ts: float) -> None:
+        if len(self.active) != 2:
+            return
+
         active_ids = list(self.active.keys())
         start_pts = [self.start_positions[i] for i in active_ids if i in self.start_positions]
-        cur_pts = [(self.active[i][0], self.active[i][1]) for i in active_ids]
+        cur_pts = [(self.active[i].norm_x, self.active[i].norm_y) for i in active_ids]
 
         if len(start_pts) == 0:
             return
