@@ -234,7 +234,25 @@ class TouchDevice(HIDDevice):
         contacts: list[TouchContactEvent] = []
         report_len = ctypes.c_ulong(len(report))
 
-        for lc in self.contact_lcs:
+        active_slots = len(self.contact_lcs)
+        if self.count_lc >= 0:
+            cnt_val = ctypes.c_ulong(0)
+            if (
+                HidP_GetUsageValue(
+                    HidP_Input,
+                    HID_USAGE_PAGE.DIGITIZER,
+                    self.count_lc,
+                    HID_USAGE.DIGITIZER_CONTACT_COUNT,
+                    ctypes.byref(cnt_val),
+                    self.ppd_ptr,
+                    report,
+                    report_len,
+                )
+                == HIDP_STATUS.SUCCESS
+            ):
+                active_slots = min(int(cnt_val.value), len(self.contact_lcs))
+
+        for lc in self.contact_lcs[:active_slots]:
             raw_cid = ctypes.c_ulong(0)
             status = HidP_GetUsageValue(
                 HidP_Input,
@@ -294,12 +312,8 @@ class TouchDevice(HIDDevice):
                     report,
                     report_len,
                 )
-                if status == HIDP_STATUS.SUCCESS:
-                    pressed = set(usage_list[: n_usages.value])
-                    tip_active = int(HID_USAGE.DIGITIZER_TIP_SWITCH) in pressed
-                elif status == HIDP_STATUS.BUFFER_TOO_SMALL:
-                    self.logger.warning(f"HidP_GetUsages buffer too small for lc={lc}")
-                    tip_active = True
+                if status in (HIDP_STATUS.SUCCESS, HIDP_STATUS.BUFFER_TOO_SMALL):
+                    tip_active = any(usage_list[k] == HID_USAGE.DIGITIZER_TIP_SWITCH for k in range(int(n_usages.value)))
 
             x_min, x_max = self.x_lc[lc]
             y_min, y_max = self.y_lc[lc]
