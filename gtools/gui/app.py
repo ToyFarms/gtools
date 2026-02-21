@@ -53,10 +53,19 @@ class App:
 
     def run(self) -> None:
         logger.info("starting App.run main loop")
+        frame_count = 0
         while not glfw.window_should_close(self.window):
             frame_start = time.perf_counter()
 
             glfw.poll_events()
+            
+            # Periodically verify window procedure is still installed
+            frame_count += 1
+            if frame_count % 300 == 0:  # Every 5 seconds at 60fps
+                if not self.event_router._finger.verify_wndproc():
+                    logger.warning("Window procedure was overwritten! Attempting to reinstall...")
+                    # Note: Reinstallation would require recreating the FingerRouter
+            
             self.imgui_renderer.process_inputs()
             imgui.new_frame()
 

@@ -84,6 +84,10 @@ class _FingerRouterBase:
             except queue.Empty:
                 break
         return events
+    
+    def verify_wndproc(self) -> bool:
+        """Verify that our window procedure is still installed. Returns True if still installed."""
+        return True  # Base implementation - override in platform-specific classes
 
     def uninstall(self) -> None:
         pass
@@ -247,12 +251,32 @@ if sys.platform == "win32":
                 logger.warning(f"Window procedure verification failed! Current={hex(current_wndproc)}, Expected={hex(expected_wndproc)}")
             else:
                 logger.debug(f"Window procedure verified: {hex(current_wndproc)}")
+            
+            # Test: verify window procedure is being called by checking periodically
+            self._wndproc_call_count = 0
 
+        def verify_wndproc(self) -> bool:
+            """Verify that our window procedure is still installed."""
+            if not hasattr(self, '_new_wndproc'):
+                return False
+            current_wndproc = _GetWindowLongPtrW(self._hwnd, GWLP_WNDPROC)
+            expected_wndproc = ctypes.cast(self._new_wndproc, ctypes.c_void_p).value
+            if current_wndproc != expected_wndproc:
+                logger.warning(f"Window procedure was overwritten! Current={hex(current_wndproc)}, Expected={hex(expected_wndproc)}")
+                return False
+            return True
+        
         def uninstall(self) -> None:
             _SetWindowLongPtrW(self._hwnd, GWLP_WNDPROC, self._old_wndproc)
             logger.debug("FingerRouter uninstalled from HWND %s", hex(self._hwnd))
 
         def _wndproc(self, hwnd: int, msg: int, wparam: int, lparam: int) -> int:
+            # Track that window procedure is being called
+            self._wndproc_call_count += 1
+            if self._wndproc_call_count == 1:
+                logger.debug(f"Window procedure called for the first time! msg={hex(msg)}")
+                print(f"Window procedure called for the first time! msg={hex(msg)}")
+            
             # Debug: log WM_TOUCH messages (0x0240)
             if msg == WM_TOUCH:
                 logger.debug(f"WM_TOUCH received in _wndproc: hwnd={hex(hwnd)}, wparam={wparam}, lparam={lparam}")
