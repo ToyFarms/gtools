@@ -1,475 +1,310 @@
 from dataclasses import dataclass
 import math
-import sys
 from typing import Union
 import queue
 import logging
 
 import glfw
 
+from gtools.gui.touch.base import TouchContactEvent
+from gtools.gui.touch.touch import TouchRouter
+
 logger = logging.getLogger("gui-input")
 
 
 @dataclass(slots=True)
-class FingerDragEvent:
+class TouchEvent:
     dx: float
     dy: float
-    x: float  # centroid X
-    y: float  # centroid Y
+    scale_factor: float
+    d_angle: float
 
 
-@dataclass(slots=True)
-class FingerPinchEvent:
-    scale: float
-    x: float  # centroid X
-    y: float  # centroid Y
+class GestureState:
+    NONE = 0
+    POSSIBLE = 1
+    ACTIVE = 2
+    INERTIA = 3
 
 
-@dataclass(slots=True)
-class FingerRotateEvent:
-    delta: float
-    x: float  # centroid X
-    y: float  # centroid Y
+Point = tuple[float, float]
 
 
-FingerEvent = Union[FingerDragEvent, FingerPinchEvent, FingerRotateEvent]
+class TouchManager(TouchRouter):
+    def __init__(self, touch_slop: float = 0.01, smoothing_alpha: float = 0.15, inertia_friction: float = 3.0) -> None:
+        self.active: dict[int, tuple[float, float, float]] = {}
+        self.start_positions: dict[int, Point] = {}
+        self.start_centroid = (0.5, 0.5)
+        self.start_time = None
+        self.state = GestureState.NONE
 
-_MIN_DRAG_PX = 0.5
-_MIN_SCALE_DIFF = 0.002
-_MIN_ANGLE_RAD = 0.002
+        self.transform = (0.0, 0.0, 1.0, 0.0)
+        self.smoothed = (0.0, 0.0, 1.0, 0.0)
+        self.touch_slop = touch_slop
+        self.alpha = smoothing_alpha
+        self.inertia_friction = inertia_friction
 
+        self.last_vel = (0.0, 0.0, 0.0, 0.0)
+        self.last_update_time = None
 
-class _TouchPoint:
-    __slots__ = ("id", "x", "y")
+        self._event_queue: queue.SimpleQueue[TouchEvent] = queue.SimpleQueue()
 
-    def __init__(self, tid: int, x: float, y: float) -> None:
-        self.id = tid
-        self.x = x
-        self.y = y
+    def _centroid(self, pts: list[Point]) -> Point:
+        n = len(pts)
+        if n == 0:
+            return (0.5, 0.5)
 
+        sx = sum(p[0] for p in pts)
+        sy = sum(p[1] for p in pts)
 
-def _centroid(a: _TouchPoint, b: _TouchPoint) -> tuple[float, float]:
-    return (a.x + b.x) * 0.5, (a.y + b.y) * 0.5
+        return (sx / n, sy / n)
 
+    def _vecs_from_centroid(self, pts: list[Point], centroid: Point) -> list[Point]:
+        return [(p[0] - centroid[0], p[1] - centroid[1]) for p in pts]
 
-def _distance(a: _TouchPoint, b: _TouchPoint) -> float:
-    return math.hypot(a.x - b.x, a.y - b.y)
+    def _similarity_transform(self, start_pts: list[Point], cur_pts: list[Point]) -> tuple[float, float, float, float]:
+        n = len(start_pts)
+        if n == 0:
+            return (0.0, 0.0, 1.0, 0.0)
 
+        start_cent = self._centroid(start_pts)
+        cur_cent = self._centroid(cur_pts)
 
-def _angle(a: _TouchPoint, b: _TouchPoint) -> float:
-    return math.atan2(b.y - a.y, b.x - a.x)
+        if n == 1:
+            tx = cur_cent[0] - start_cent[0]
+            ty = cur_cent[1] - start_cent[1]
+            return (tx, ty, 1.0, 0.0)
 
+        sx = sxx = syy = sxy = syx = 0.0
+        for (sx0, sy0), (cx0, cy0) in zip(start_pts, cur_pts):
+            u1 = sx0 - start_cent[0]
+            u2 = sy0 - start_cent[1]
+            v1 = cx0 - cur_cent[0]
+            v2 = cy0 - cur_cent[1]
+            sxx += u1 * v1
+            sxy += u1 * v2
+            syx += u2 * v1
+            syy += u2 * v2
+            sx += u1 * u1 + u2 * u2
 
-class _FingerRouterBase:
-    def __init__(self, window, *, dead_zone_px: float = _MIN_DRAG_PX, dead_zone_scale: float = _MIN_SCALE_DIFF, dead_zone_angle: float = _MIN_ANGLE_RAD) -> None:
-        self._window = window
-        self._dz_px = dead_zone_px
-        self._dz_scale = dead_zone_scale
-        self._dz_angle = dead_zone_angle
+        if sx == 0:
+            return (cur_cent[0] - start_cent[0], cur_cent[1] - start_cent[1], 1.0, 0.0)
 
-        self._queue: queue.SimpleQueue[FingerEvent] = queue.SimpleQueue()
+        a = (sxx + syy) / sx
+        b = (syx - sxy) / sx
+        angle = math.atan2(b, a)
+        num = sxx + syy
+        denom = sx
+        s = num / denom
 
-        self._points: dict[int, _TouchPoint] = {}
+        tx = cur_cent[0] - (s * (math.cos(angle) * start_cent[0] - math.sin(angle) * start_cent[1]))
+        ty = cur_cent[1] - (s * (math.sin(angle) * start_cent[0] + math.cos(angle) * start_cent[1]))
+        tx = cur_cent[0] - (s * (math.cos(angle) * start_cent[0] - math.sin(angle) * start_cent[1]))
+        ty = cur_cent[1] - (s * (math.sin(angle) * start_cent[0] + math.cos(angle) * start_cent[1]))
 
-        self._prev_cx: float | None = None
-        self._prev_cy: float | None = None
-        self._prev_dist: float | None = None
-        self._prev_angle: float | None = None
+        dx = cur_cent[0] - start_cent[0]
+        dy = cur_cent[1] - start_cent[1]
 
-    def poll(self) -> list[FingerEvent]:
-        events: list[FingerEvent] = []
+        return (dx, dy, s, angle)
+
+    def poll(self) -> list[TouchEvent]:
+        for e in super().poll():
+            if e.tip_active:
+                self.on_touch_down(e)
+            else:
+                self.on_touch_up(e)
+
+            self.active[e.contact_id] = (e.norm_x, e.norm_y, e.timestamp)
+            self._process_move(e.timestamp)
+
+        events: list[TouchEvent] = []
         while not self._queue.empty():
             try:
-                events.append(self._queue.get_nowait())
+                events.append(self._event_queue.get_nowait())
             except queue.Empty:
                 break
+
         return events
-    
-    def verify_wndproc(self) -> bool:
-        """Verify that our window procedure is still installed. Returns True if still installed."""
-        return True  # Base implementation - override in platform-specific classes
 
-    def uninstall(self) -> None:
-        pass
+    def on_touch_down(self, ev: TouchContactEvent) -> None:
+        self.active[ev.contact_id] = (ev.norm_x, ev.norm_y, ev.timestamp)
+        self.start_positions[ev.contact_id] = (ev.norm_x, ev.norm_y)
+        self.start_time = self.start_time or ev.timestamp
+        self.state = GestureState.POSSIBLE
+        self.last_update_time = ev.timestamp
 
-    def _reset_two_finger_state(self) -> None:
-        self._prev_cx = None
-        self._prev_cy = None
-        self._prev_dist = None
-        self._prev_angle = None
+    def on_touch_up(self, ev: TouchContactEvent) -> None:
+        if ev.contact_id in self.active:
+            del self.active[ev.contact_id]
+        if ev.contact_id in self.start_positions:
+            del self.start_positions[ev.contact_id]
 
-    def _emit_gestures(self) -> None:
-        if len(self._points) != 2:
+        if not self.active:
+            if self.state == GestureState.ACTIVE:
+                self._start_inertia(ev.timestamp)
+            else:
+                self.state = GestureState.NONE
+
+    def _process_move(self, now_ts: float) -> None:
+        active_ids = list(self.active.keys())
+        start_pts = [self.start_positions[i] for i in active_ids if i in self.start_positions]
+        cur_pts = [(self.active[i][0], self.active[i][1]) for i in active_ids]
+
+        if len(start_pts) == 0:
             return
 
-        a, b = tuple(self._points.values())
+        dx, dy, s, angle = self._similarity_transform(start_pts, cur_pts)
 
-        cx, cy = _centroid(a, b)
-        dist = _distance(a, b)
-        angle = _angle(a, b)
-
-        if self._prev_cx is None:
-            self._prev_cx = cx
-            self._prev_cy = cy
-            self._prev_dist = dist
-            self._prev_angle = angle
-
-            return
-
-        assert self._prev_cy and self._prev_angle
-
-        dx = cx - self._prev_cx
-        dy = cy - self._prev_cy
-        if math.hypot(dx, dy) >= self._dz_px:
-            self._queue.put(FingerDragEvent(dx=dx, dy=dy, x=cx, y=cy))
-
-        if self._prev_dist and self._prev_dist > 1e-6:
-            scale = dist / self._prev_dist
-            if abs(scale - 1.0) >= self._dz_scale:
-                self._queue.put(FingerPinchEvent(scale=scale, x=cx, y=cy))
-
-        delta = angle - self._prev_angle
-        delta = (delta + math.pi) % (2 * math.pi) - math.pi
-        if abs(delta) >= self._dz_angle:
-            self._queue.put(FingerRotateEvent(delta=delta, x=cx, y=cy))
-
-        self._prev_cx = cx
-        self._prev_cy = cy
-        self._prev_dist = dist
-        self._prev_angle = angle
-
-
-if sys.platform == "win32":
-    import ctypes
-    import ctypes.wintypes as wt
-
-    WM_TOUCH = 0x0240
-    TOUCHEVENTF_MOVE = 0x0001
-    TOUCHEVENTF_DOWN = 0x0002
-    TOUCHEVENTF_UP = 0x0004
-    GWLP_WNDPROC = -4
-    TWF_FINETOUCH = 0x00000001
-    TWF_WANTPALM = 0x00000002
-
-    _user32 = ctypes.WinDLL("user32", use_last_error=True)
-
-    class _TOUCHINPUT(ctypes.Structure):
-        _fields_ = [
-            ("x", wt.LONG),
-            ("y", wt.LONG),
-            ("hSource", wt.HANDLE),
-            ("dwID", wt.DWORD),
-            ("dwFlags", wt.DWORD),
-            ("dwMask", wt.DWORD),
-            ("dwTime", wt.DWORD),
-            ("dwExtraInfo", ctypes.c_size_t),
-            ("cxContact", wt.DWORD),
-            ("cyContact", wt.DWORD),
-        ]
-
-    _WNDPROC = ctypes.WINFUNCTYPE(
-        ctypes.c_ssize_t,
-        wt.HWND,
-        wt.UINT,
-        wt.WPARAM,
-        wt.LPARAM,
-    )
-
-    _GetTouchInputInfo = _user32.GetTouchInputInfo
-    _GetTouchInputInfo.restype = wt.BOOL
-    _GetTouchInputInfo.argtypes = [
-        wt.HANDLE,
-        wt.UINT,
-        ctypes.POINTER(_TOUCHINPUT),
-        ctypes.c_int,
-    ]
-
-    _CloseTouchInputHandle = _user32.CloseTouchInputHandle
-    _CloseTouchInputHandle.restype = wt.BOOL
-    _CloseTouchInputHandle.argtypes = [wt.HANDLE]
-
-    _RegisterTouchWindow = _user32.RegisterTouchWindow
-    _RegisterTouchWindow.restype = wt.BOOL
-    _RegisterTouchWindow.argtypes = [wt.HWND, wt.ULONG]
-
-    _SetWindowLongPtrW = _user32.SetWindowLongPtrW
-    _SetWindowLongPtrW.restype = ctypes.c_ssize_t
-    _SetWindowLongPtrW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_ssize_t]
-
-    _GetWindowLongPtrW = _user32.GetWindowLongPtrW
-    _GetWindowLongPtrW.restype = ctypes.c_ssize_t
-    _GetWindowLongPtrW.argtypes = [wt.HWND, ctypes.c_int]
-
-    _CallWindowProcW = _user32.CallWindowProcW
-    _CallWindowProcW.restype = ctypes.c_ssize_t
-    _CallWindowProcW.argtypes = [
-        ctypes.c_ssize_t,
-        wt.HWND,
-        wt.UINT,
-        wt.WPARAM,
-        wt.LPARAM,
-    ]
-
-    # Message hook functions
-    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    _GetCurrentThreadId = _kernel32.GetCurrentThreadId
-    _GetCurrentThreadId.restype = wt.DWORD
-    _GetCurrentThreadId.argtypes = []
-
-    WH_GETMESSAGE = 3
-    _SetWindowsHookExW = _user32.SetWindowsHookExW
-    _SetWindowsHookExW.restype = wt.HHOOK
-    _SetWindowsHookExW.argtypes = [ctypes.c_int, ctypes.c_void_p, wt.HINSTANCE, wt.DWORD]
-
-    _UnhookWindowsHookEx = _user32.UnhookWindowsHookEx
-    _UnhookWindowsHookEx.restype = wt.BOOL
-    _UnhookWindowsHookEx.argtypes = [wt.HHOOK]
-
-    _CallNextHookEx = _user32.CallNextHookEx
-    _CallNextHookEx.restype = ctypes.c_ssize_t
-    _CallNextHookEx.argtypes = [wt.HHOOK, ctypes.c_int, wt.WPARAM, wt.LPARAM]
-
-    class _MSG(ctypes.Structure):
-        _fields_ = [
-            ("hwnd", wt.HWND),
-            ("message", wt.UINT),
-            ("wParam", wt.WPARAM),
-            ("lParam", wt.LPARAM),
-            ("time", wt.DWORD),
-            ("pt", wt.POINT),
-        ]
-
-    _HOOKPROC = ctypes.WINFUNCTYPE(
-        ctypes.c_ssize_t,
-        ctypes.c_int,
-        wt.WPARAM,
-        wt.LPARAM,
-    )
-
-    _ScreenToClient = _user32.ScreenToClient
-    _ScreenToClient.restype = wt.BOOL
-    _ScreenToClient.argtypes = [wt.HWND, ctypes.POINTER(wt.POINT)]
-
-    class _WindowsFingerRouter(_FingerRouterBase):
-        def __init__(self, window, **kwargs) -> None:
-            super().__init__(window, **kwargs)
-
-            hwnd = glfw.get_win32_window(window)
-            self._hwnd: int = hwnd
-            logger.debug(f"Initializing FingerRouter for HWND {hex(hwnd)}")
-
-            # Check if touch is available
-            _GetSystemMetrics = _user32.GetSystemMetrics
-            _GetSystemMetrics.restype = ctypes.c_int
-            _GetSystemMetrics.argtypes = [ctypes.c_int]
-            SM_DIGITIZER = 94
-            SM_MAXIMUMTOUCHES = 95
-            digitizer = _GetSystemMetrics(SM_DIGITIZER)
-            max_touches = _GetSystemMetrics(SM_MAXIMUMTOUCHES)
-            
-            # Check digitizer capabilities
-            NID_INTEGRATED_TOUCH = 0x01
-            NID_EXTERNAL_TOUCH = 0x02
-            NID_MULTI_INPUT = 0x40
-            NID_READY = 0x80
-            
-            has_touch = (digitizer & (NID_INTEGRATED_TOUCH | NID_EXTERNAL_TOUCH)) != 0
-            is_ready = (digitizer & NID_READY) != 0
-            is_multi_input = (digitizer & NID_MULTI_INPUT) != 0
-            
-            logger.debug(f"Touch availability: digitizer={hex(digitizer)}, max_touches={max_touches}, has_touch={has_touch}, is_ready={is_ready}, is_multi_input={is_multi_input}")
-            
-            if not has_touch:
-                logger.warning("Touch input not available on this system - WM_TOUCH messages will not be sent")
-            if not is_ready:
-                logger.warning("Touch digitizer not ready - touch input may not work correctly")
-            
-            # Register for touch input - try with TWF_FINETOUCH flag
-            # TWF_FINETOUCH = 0x00000001 means we want fine touch (not converted to mouse)
-            if not _RegisterTouchWindow(hwnd, TWF_FINETOUCH):
-                error = ctypes.get_last_error()
-                logger.warning(f"RegisterTouchWindow with TWF_FINETOUCH failed: {error}, trying without flags")
-                # Try without flags as fallback
-                if not _RegisterTouchWindow(hwnd, 0):
-                    error = ctypes.get_last_error()
-                    logger.error(f"RegisterTouchWindow failed: {error}")
-                    raise OSError(f"RegisterTouchWindow failed: {error}")
-                else:
-                    logger.debug("RegisterTouchWindow succeeded (without flags)")
+        if self.state == GestureState.POSSIBLE:
+            trans_mag = math.hypot(dx, dy)
+            scale_dev = abs(s - 1.0)
+            rot_dev = abs(angle)
+            if trans_mag > self.touch_slop or scale_dev > 0.02 or rot_dev > (3.0 * math.pi / 180.0):
+                self.state = GestureState.ACTIVE
+                self.smoothed = (0.0, 0.0, 1.0, 0.0)
+                self.last_update_time = now_ts
             else:
-                logger.debug(f"RegisterTouchWindow succeeded with TWF_FINETOUCH flag")
-
-            # Try message hook approach first (intercepts before GLFW processes)
-            self._hook = None
-            self._hook_proc = None
-            try:
-                thread_id = _GetCurrentThreadId()
-                self._hook_proc = _HOOKPROC(self._getmessage_hook)
-                self._hook = _SetWindowsHookExW(
-                    WH_GETMESSAGE,
-                    self._hook_proc,
-                    None,  # hMod - not needed for thread hooks
-                    thread_id,
-                )
-                if self._hook:
-                    logger.debug(f"Message hook installed for thread {thread_id}")
-                else:
-                    error = ctypes.get_last_error()
-                    logger.warning(f"SetWindowsHookExW failed: {error}, falling back to window procedure")
-            except Exception as e:
-                logger.warning(f"Failed to install message hook: {e}, falling back to window procedure")
-
-            # Also install window procedure as backup
-            self._new_wndproc = _WNDPROC(self._wndproc)
-            # Keep a reference to prevent garbage collection
-            self._wndproc_ref = self._new_wndproc
-            
-            old_wndproc_value = _SetWindowLongPtrW(
-                hwnd,
-                GWLP_WNDPROC,
-                ctypes.cast(self._new_wndproc, ctypes.c_void_p).value,
-            )
-            if old_wndproc_value == 0:
-                error = ctypes.get_last_error()
-                logger.error(f"SetWindowLongPtrW failed: {error}")
-                raise OSError(f"SetWindowLongPtrW failed: {error}")
-
-            self._old_wndproc: int = old_wndproc_value
-            logger.debug(f"FingerRouter installed on HWND {hex(hwnd)}, old_wndproc={hex(old_wndproc_value)}")
-            
-            # Verify the window procedure was set correctly
-            current_wndproc = _GetWindowLongPtrW(hwnd, GWLP_WNDPROC)
-            expected_wndproc = ctypes.cast(self._new_wndproc, ctypes.c_void_p).value
-            if current_wndproc != expected_wndproc:
-                logger.warning(f"Window procedure verification failed! Current={hex(current_wndproc)}, Expected={hex(expected_wndproc)}")
-            else:
-                logger.debug(f"Window procedure verified: {hex(current_wndproc)}")
-            
-            # Test: verify window procedure is being called by checking periodically
-            self._wndproc_call_count = 0
-
-        def _getmessage_hook(self, nCode: int, wParam: int, lParam: int) -> int:
-            """Message hook to intercept WM_TOUCH before GLFW processes it.
-            
-            For WH_GETMESSAGE hook:
-            - nCode: HC_ACTION (0) means process the message
-            - wParam: PM_REMOVE (1) or PM_NOREMOVE (0) 
-            - lParam: Pointer to MSG structure
-            """
-            # HC_ACTION = 0 means we should process the message
-            if nCode == 0 and lParam:
-                try:
-                    msg = ctypes.cast(lParam, ctypes.POINTER(_MSG)).contents
-                    if msg.hwnd == self._hwnd and msg.message == WM_TOUCH:
-                        logger.debug(f"WM_TOUCH intercepted via message hook: hwnd={hex(msg.hwnd)}, wparam={msg.wParam}, lparam={msg.lParam}")
-                        print(f"WM_TOUCH intercepted via message hook: hwnd={hex(msg.hwnd)}, wparam={msg.wParam}, lparam={msg.lParam}")
-                        # Process the touch message directly
-                        self._handle_wm_touch(msg.hwnd, msg.wParam, msg.lParam)
-                except Exception as e:
-                    logger.warning(f"Error in message hook: {e}")
-            # Always call next hook
-            return _CallNextHookEx(self._hook, nCode, wParam, lParam)
-
-        def verify_wndproc(self) -> bool:
-            """Verify that our window procedure is still installed."""
-            if not hasattr(self, '_new_wndproc'):
-                return False
-            current_wndproc = _GetWindowLongPtrW(self._hwnd, GWLP_WNDPROC)
-            expected_wndproc = ctypes.cast(self._new_wndproc, ctypes.c_void_p).value
-            if current_wndproc != expected_wndproc:
-                logger.warning(f"Window procedure was overwritten! Current={hex(current_wndproc)}, Expected={hex(expected_wndproc)}")
-                return False
-            return True
-        
-        def uninstall(self) -> None:
-            if self._hook:
-                _UnhookWindowsHookEx(self._hook)
-                self._hook = None
-                logger.debug("Message hook uninstalled")
-            _SetWindowLongPtrW(self._hwnd, GWLP_WNDPROC, self._old_wndproc)
-            logger.debug("FingerRouter uninstalled from HWND %s", hex(self._hwnd))
-
-        def _wndproc(self, hwnd: int, msg: int, wparam: int, lparam: int) -> int:
-            # Track that window procedure is being called
-            self._wndproc_call_count += 1
-            if self._wndproc_call_count == 1:
-                logger.debug(f"Window procedure called for the first time! msg={hex(msg)}")
-                print(f"Window procedure called for the first time! msg={hex(msg)}")
-            
-            # Debug: log WM_TOUCH messages (0x0240)
-            if msg == WM_TOUCH:
-                logger.debug(f"WM_TOUCH received in _wndproc: hwnd={hex(hwnd)}, wparam={wparam}, lparam={lparam}")
-                print(f"WM_TOUCH received in _wndproc: hwnd={hex(hwnd)}, wparam={wparam}, lparam={lparam}")
-                self._handle_wm_touch(hwnd, wparam, lparam)
-                return 0
-            # Forward all other messages to the original window procedure
-            # Note: We return the result from CallWindowProcW, which is what the original wndproc would return
-            result = _CallWindowProcW(self._old_wndproc, hwnd, msg, wparam, lparam)
-            return result
-
-        def _handle_wm_touch(self, hwnd: int, wparam: int, lparam: int) -> None:
-            logger.debug("_handle_wm_touch called")
-            print("_handle_wm_touch called")  # User's debug print
-            count = wparam & 0xFFFF
-            logger.debug(f"Touch count: {count}")
-            inputs = (_TOUCHINPUT * count)()
-            htouchinput = wt.HANDLE(lparam)
-
-            if not _GetTouchInputInfo(
-                htouchinput,
-                count,
-                inputs,
-                ctypes.sizeof(_TOUCHINPUT),
-            ):
-                logger.warning("GetTouchInputInfo failed: %s", ctypes.get_last_error())
                 return
 
-            for i in range(count):
-                ti = inputs[i]
-                flags = ti.dwFlags
-                tid = ti.dwID
+        prev_tx, prev_ty, prev_s, prev_r = self.transform
+        new_tx = dx
+        new_ty = dy
+        new_s = s
+        new_r = angle
 
-                pt = wt.POINT(ti.x // 100, ti.y // 100)
-                _ScreenToClient(hwnd, ctypes.byref(pt))
-                cx, cy = float(pt.x), float(pt.y)
+        dt = max(1e-6, now_ts - (self.last_update_time or now_ts))
+        vx = (new_tx - prev_tx) / dt
+        vy = (new_ty - prev_ty) / dt
+        vs = (new_s - prev_s) / dt
+        vr = (new_r - prev_r) / dt
 
-                if flags & TOUCHEVENTF_DOWN:
-                    self._points[tid] = _TouchPoint(tid, cx, cy)
-                    self._reset_two_finger_state()
+        self.last_vel = (vx, vy, vs, vr)
 
-                elif flags & TOUCHEVENTF_UP:
-                    self._points.pop(tid, None)
-                    self._reset_two_finger_state()
+        sm_tx = self.alpha * new_tx + (1.0 - self.alpha) * self.smoothed[0]
+        sm_ty = self.alpha * new_ty + (1.0 - self.alpha) * self.smoothed[1]
+        sm_s = self.alpha * new_s + (1.0 - self.alpha) * self.smoothed[2]
+        sm_r = self.alpha * new_r + (1.0 - self.alpha) * self.smoothed[3]
+        self.smoothed = (sm_tx, sm_ty, sm_s, sm_r)
 
-                elif flags & TOUCHEVENTF_MOVE:
-                    if tid in self._points:
-                        self._points[tid].x = cx
-                        self._points[tid].y = cy
+        self.transform = (new_tx, new_ty, new_s, new_r)
+        self.last_update_time = now_ts
 
-            if len(self._points) == 2:
-                self._emit_gestures()
+        pd_tx, pd_ty, pd_s, pd_r = self.smoothed_prev if hasattr(self, "smoothed_prev") else (0.0, 0.0, 1.0, 0.0)
+        delta_tx = sm_tx - pd_tx
+        delta_ty = sm_ty - pd_ty
+        delta_s = sm_s / pd_s if pd_s != 0 else sm_s
+        delta_r = sm_r - pd_r
+        self.smoothed_prev = self.smoothed
 
-            _CloseTouchInputHandle(htouchinput)
+        self._emit_transform(delta_tx, delta_ty, delta_s, delta_r)
 
-    FingerRouter = _WindowsFingerRouter
+    def _emit_transform(self, dx: float, dy: float, scale_factor: float, d_angle: float) -> None:
+        self._event_queue.put(TouchEvent(dx=dx, dy=dy, scale_factor=scale_factor, d_angle=d_angle))
 
-elif sys.platform == "darwin":
+    def _start_inertia(self, now_ts: float) -> None:
+        self.state = GestureState.INERTIA
+        self.inertia_start_ts = now_ts
+        self.inertia_v = self.last_vel
 
-    class _MacFingerRouter(_FingerRouterBase):
-        def __init__(self, window, **kwargs) -> None:
-            super().__init__(window, **kwargs)
-            raise NotImplementedError("FingerRouter is not yet implemented on macOS")
+    def update_inertia(self, now_ts: float) -> None:
+        if self.state != GestureState.INERTIA:
+            return
 
-    FingerRouter = _MacFingerRouter
+        dt = now_ts - self.inertia_start_ts
+        k = self.inertia_friction
+        vx0, vy0, vs0, vr0 = self.inertia_v
+        if k <= 0:
+            return
 
-else:
+        decay = lambda v0, t: v0 * (2.718281828 ** (-k * t))
+        vxt = decay(vx0, dt)
+        vyt = decay(vy0, dt)
+        vst = decay(vs0, dt)
+        vrt = decay(vr0, dt)
 
-    class _LinuxFingerRouter(_FingerRouterBase):
-        def __init__(self, window, **kwargs) -> None:
-            super().__init__(window, **kwargs)
-            raise NotImplementedError("FingerRouter is not yet implemented on linux")
+        def integrated_disp(v0, t):
+            return (v0 / k) * (1.0 - 2.718281828 ** (-k * t))
 
-    FingerRouter = _LinuxFingerRouter
+        dx = integrated_disp(vx0, dt)
+        dy = integrated_disp(vy0, dt)
+        ds = 1.0 + integrated_disp(vs0, dt)
+        dr = integrated_disp(vr0, dt)
+
+        self._emit_transform(dx, dy, ds, dr)
+
+        if abs(vxt) < 1e-3 and abs(vyt) < 1e-3 and abs(vst) < 1e-4 and abs(vrt) < (0.2 * math.pi / 180):
+            self.state = GestureState.NONE
+
+
+# class TouchManager(TouchRouter):
+#     def __init__(self, dead_zone_px: float = 0.5, dead_zone_scale: float = 0.2, dead_zone_angle: float = 0.002) -> None:
+#         self._dz_px = dead_zone_px
+#         self._dz_scale = dead_zone_scale
+#         self._dz_angle = dead_zone_angle
+
+#         self._points: dict[int, TouchContactEvent] = {}
+
+#         self._prev_cx: float | None = None
+#         self._prev_cy: float | None = None
+#         self._prev_angle: float | None = None
+
+#         self._init_dist: float | None = None
+#         self._prev_dist: float | None = None
+#         self._event_queue: queue.SimpleQueue[TouchEvent] = queue.SimpleQueue()
+
+#     def _reset_two_touch_state(self) -> None:
+#         self._prev_cx = None
+#         self._prev_cy = None
+#         self._prev_angle = None
+#         self._init_dist = None
+#         self._prev_dist = None
+
+#     def _emit_gestures(self) -> None:
+#         if len(self._points) != 2:
+#             self._reset_two_touch_state()
+#             return
+
+#         a, b = tuple(self._points.values())
+
+#         cx, cy = _centroid(a, b)
+#         dist = _distance(a, b)
+#         angle = _angle(a, b)
+
+#         if self._prev_cx is None:
+#             self._prev_cx = cx
+#             self._prev_cy = cy
+#             self._prev_angle = angle
+#             self._init_dist = dist if dist > 0.0 else 0.0
+#             self._prev_dist = dist
+#             return
+
+#         assert self._prev_cy is not None
+#         assert self._prev_angle is not None
+
+#         dx = cx - self._prev_cx
+#         dy = cy - self._prev_cy
+#         if math.hypot(dx, dy) >= self._dz_px:
+#             self._event_queue.put(TouchDragEvent(dx=dx, dy=dy, x=cx, y=cy))
+
+#         if self._prev_dist and self._prev_dist > 1e-12:
+#             scale_incremental = dist / self._prev_dist
+
+#             if not self._init_dist:
+#                 self._init_dist = 0.0
+
+#             scale_relative = dist / self._init_dist
+#             if abs(scale_relative - 1.0) >= self._dz_scale:
+#                 self._event_queue.put(TouchPinchEvent(scale=scale_incremental, x=cx, y=cy))
+
+#         delta = angle - self._prev_angle
+#         delta = (delta + math.pi) % (2 * math.pi) - math.pi
+#         if abs(delta) >= self._dz_angle:
+#             self._event_queue.put(TouchRotateEvent(delta=delta, x=cx, y=cy))
+
+#         self._prev_cx = cx
+#         self._prev_cy = cy
+#         self._prev_angle = angle
+#         self._prev_dist = dist
 
 
 @dataclass(slots=True)
@@ -509,14 +344,14 @@ class ResizeEvent:
     height: int
 
 
-Event = Union[ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, ResizeEvent, FingerDragEvent, FingerPinchEvent, FingerRotateEvent]
+Event = Union[ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, ResizeEvent, TouchEvent]
 
 
 class EventRouter:
     def __init__(self, window) -> None:
         self._queue: queue.SimpleQueue[Event] = queue.SimpleQueue()
         self._window = window
-        self._finger = FingerRouter(window)
+        self._touch = TouchManager(window)
 
         self._prev_resize = glfw.set_framebuffer_size_callback(window, self._on_resize)
         self._prev_scroll = glfw.set_scroll_callback(window, self._on_scroll)
@@ -526,7 +361,7 @@ class EventRouter:
 
     def poll(self) -> list[Event]:
         events: list[Event] = []
-        events.extend(self._finger.poll())
+        events.extend(self._touch.poll())
         while not self._queue.empty():
             try:
                 events.append(self._queue.get_nowait())
