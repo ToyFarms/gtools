@@ -20,13 +20,6 @@ class TouchEvent:
     d_angle: float
 
 
-class GestureState:
-    NONE = 0
-    POSSIBLE = 1
-    ACTIVE = 2
-    INERTIA = 3
-
-
 Point = tuple[float, float]
 
 
@@ -34,33 +27,26 @@ class TouchManager(TouchRouter):
     def __init__(
         self,
         window,
-        touch_slop: float = 0.01,
-        smoothing_alpha: float = 0.15,
-        scale_rot_alpha: float = 0.05,
-        inertia_friction: float = 3.0,
-        scale_dead_zone: float = 0.004,
+        scale_dead_zone: float = 0.03,
         rot_dead_zone: float = 0.003,
+        spring_stiffness: float = 600.0,
+        damping: float = 25.0,
     ) -> None:
         super().__init__(window)
         self.install()
         self.active: dict[int, TouchContactEvent] = {}
         self.start_positions: dict[int, Point] = {}
-        self.start_centroid = (0.5, 0.5)
-        self.start_time = None
-        self.state = GestureState.NONE
 
         self.transform = (0.0, 0.0, 1.0, 0.0)
-        self.smoothed = (0.0, 0.0, 1.0, 0.0)
-        self.touch_slop = touch_slop
-        self.alpha = smoothing_alpha
-        self.scale_rot_alpha = scale_rot_alpha
+        self.spring_stiffness = spring_stiffness
+        self.damping = damping
         self.scale_dead_zone = scale_dead_zone
         self.rot_dead_zone = rot_dead_zone
-        self.inertia_friction = inertia_friction
 
-        self.last_vel = (0.0, 0.0, 0.0, 0.0)
-        self.last_update_time = None
-        self.smoothed_prev = (0.0, 0.0, 1.0, 0.0)
+        self.phys: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0)
+        self.phys_vel: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+        self.phys_prev: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0)
+        self.last_update_time: float | None = None
 
         self._event_queue: queue.SimpleQueue[TouchEvent] = queue.SimpleQueue()
 
@@ -146,28 +132,18 @@ class TouchManager(TouchRouter):
     def on_touch_down(self, ev: TouchContactEvent) -> None:
         if not self.active:
             self.transform = (0.0, 0.0, 1.0, 0.0)
-            self.smoothed = (0.0, 0.0, 1.0, 0.0)
-            self.smoothed_prev = (0.0, 0.0, 1.0, 0.0)
-            self.last_vel = (0.0, 0.0, 0.0, 0.0)
-            self.state = GestureState.NONE
+            self.phys = (0.0, 0.0, 1.0, 0.0)
+            self.phys_vel = (0.0, 0.0, 0.0, 0.0)
+            self.phys_prev = (0.0, 0.0, 1.0, 0.0)
 
         self.active[ev.contact_id] = ev
         self.start_positions[ev.contact_id] = (ev.x, ev.y)
-        self.start_time = self.start_time or ev.timestamp
-        self.state = GestureState.POSSIBLE
-        self.last_update_time = ev.timestamp
 
     def on_touch_up(self, ev: TouchContactEvent) -> None:
         if ev.contact_id in self.active:
             del self.active[ev.contact_id]
         if ev.contact_id in self.start_positions:
             del self.start_positions[ev.contact_id]
-
-        if not self.active:
-            if self.state == GestureState.ACTIVE:
-                self._start_inertia(ev.timestamp)
-            else:
-                self.state = GestureState.NONE
 
     def _process_move(self, now_ts: float) -> None:
         if len(self.active) != 2:
@@ -182,49 +158,43 @@ class TouchManager(TouchRouter):
 
         dx, dy, s, angle = self._similarity_transform(start_pts, cur_pts)
 
-        if self.state == GestureState.POSSIBLE:
-            trans_mag = math.hypot(dx, dy)
-            scale_dev = abs(s - 1.0)
-            rot_dev = abs(angle)
-            if trans_mag > self.touch_slop or scale_dev > 0.02 or rot_dev > (3.0 * math.pi / 180.0):
-                self.state = GestureState.ACTIVE
-                self.smoothed = (0.0, 0.0, 1.0, 0.0)
-                self.last_update_time = now_ts
-            else:
-                return
-
-        prev_tx, prev_ty, prev_s, prev_r = self.transform
-        new_tx = dx
-        new_ty = dy
-        new_s = s
-        new_r = angle
+        self.transform = (dx, dy, s, angle)
 
         dt = max(1e-6, now_ts - (self.last_update_time or now_ts))
-        vx = (new_tx - prev_tx) / dt
-        vy = (new_ty - prev_ty) / dt
-        vs = (new_s - prev_s) / dt
-        vr = (new_r - prev_r) / dt
-
-        self.last_vel = (vx, vy, vs, vr)
-
-        a_tr = self.alpha
-        a_sr = self.scale_rot_alpha
-
-        sm_tx = a_tr * new_tx + (1.0 - a_tr) * self.smoothed[0]
-        sm_ty = a_tr * new_ty + (1.0 - a_tr) * self.smoothed[1]
-        sm_s = a_sr * new_s + (1.0 - a_sr) * self.smoothed[2]
-        sm_r = a_sr * new_r + (1.0 - a_sr) * self.smoothed[3]
-        self.smoothed = (sm_tx, sm_ty, sm_s, sm_r)
-
-        self.transform = (new_tx, new_ty, new_s, new_r)
         self.last_update_time = now_ts
 
-        pd_tx, pd_ty, pd_s, pd_r = self.smoothed_prev
-        delta_tx = sm_tx - pd_tx
-        delta_ty = sm_ty - pd_ty
-        raw_delta_s = sm_s / pd_s if pd_s != 0 else sm_s
-        raw_delta_r = sm_r - pd_r
-        self.smoothed_prev = self.smoothed
+        tx, ty, ps, pr = self.phys
+        vx, vy, vs, vr = self.phys_vel
+        tgt_tx, tgt_ty, tgt_s, tgt_r = self.transform
+
+        k = self.spring_stiffness
+        c = self.damping
+
+        ax = k * (tgt_tx - tx) - c * vx
+        ay = k * (tgt_ty - ty) - c * vy
+        as_ = k * (tgt_s - ps) - c * vs
+        ar = k * (tgt_r - pr) - c * vr
+
+        vx += ax * dt
+        vy += ay * dt
+        vs += as_ * dt
+        vr += ar * dt
+
+        tx += vx * dt
+        ty += vy * dt
+        ps += vs * dt
+        pr += vr * dt
+
+        self.phys = (tx, ty, ps, pr)
+        self.phys_vel = (vx, vy, vs, vr)
+
+        prev_tx, prev_ty, prev_ps, prev_pr = self.phys_prev
+        self.phys_prev = self.phys
+
+        delta_tx = tx - prev_tx
+        delta_ty = ty - prev_ty
+        raw_delta_s = ps / prev_ps if prev_ps != 0 else 1.0
+        raw_delta_r = pr - prev_pr
 
         delta_s = raw_delta_s if abs(raw_delta_s - 1.0) > self.scale_dead_zone else 1.0
         delta_r = raw_delta_r if abs(raw_delta_r) > self.rot_dead_zone else 0.0
@@ -233,40 +203,6 @@ class TouchManager(TouchRouter):
 
     def _emit_transform(self, dx: float, dy: float, scale_factor: float, d_angle: float) -> None:
         self._event_queue.put(TouchEvent(dx=dx, dy=dy, scale_factor=scale_factor, d_angle=d_angle))
-
-    def _start_inertia(self, now_ts: float) -> None:
-        self.state = GestureState.INERTIA
-        self.inertia_start_ts = now_ts
-        self.inertia_v = self.last_vel
-
-    def update_inertia(self, now_ts: float) -> None:
-        if self.state != GestureState.INERTIA:
-            return
-
-        dt = now_ts - self.inertia_start_ts
-        k = self.inertia_friction
-        vx0, vy0, vs0, vr0 = self.inertia_v
-        if k <= 0:
-            return
-
-        decay = lambda v0, t: v0 * (2.718281828 ** (-k * t))
-        vxt = decay(vx0, dt)
-        vyt = decay(vy0, dt)
-        vst = decay(vs0, dt)
-        vrt = decay(vr0, dt)
-
-        def integrated_disp(v0, t):
-            return (v0 / k) * (1.0 - 2.718281828 ** (-k * t))
-
-        dx = integrated_disp(vx0, dt)
-        dy = integrated_disp(vy0, dt)
-        ds = 1.0 + integrated_disp(vs0, dt)
-        dr = integrated_disp(vr0, dt)
-
-        self._emit_transform(dx, dy, ds, dr)
-
-        if abs(vxt) < 1e-3 and abs(vyt) < 1e-3 and abs(vst) < 1e-4 and abs(vrt) < (0.2 * math.pi / 180):
-            self.state = GestureState.NONE
 
 
 @dataclass(slots=True)
