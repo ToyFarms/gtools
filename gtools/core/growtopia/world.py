@@ -1905,7 +1905,6 @@ class Tile:
             PARTY_PROJECTOR,
             AUCTION_BLOCK,
             BATTLE_PET_CAGE,
-            OFFERING_TABLE,
             OPERATING_TABLE,
             AUTO_SURGEON_STATION,
             BOUNTIFUL_FLOWERING_LATTICE_ROOTS,
