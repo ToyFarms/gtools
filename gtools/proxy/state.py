@@ -593,6 +593,7 @@ class State:
                     return
 
                 pos = ivec2(upd.modify_world.tile.x, upd.modify_world.tile.y)
+                # TODO: we should use place_fg and place_bg here (re incoming)
                 match upd.modify_world.op:
                     case ModifyWorld.OP_PLACE:
                         # place_tile doesn't care whether its fg or bg, we just use fg_id arbitrarily
@@ -722,6 +723,7 @@ class State:
                     case NpcUpdate.OP_UPDATE_TARGET:
                         tgt = upd.npc_update.update_pos
                         if npc := self.world.get_npc(tgt.id):
+                            # TODO: don't treat 0 as "no change", use a bitmask
                             if tgt.param1 != 0:
                                 npc.param1 = tgt.param1
                             if tgt.param2 != 0:
