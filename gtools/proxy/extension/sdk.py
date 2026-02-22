@@ -360,13 +360,18 @@ class Extension(ExtensionUtility):
                             except:
                                 traceback.print_exc()
 
+                        if PERF:
+                            self.logger.debug(f"extension processing time: {(time.monotonic_ns() - start) / 1e6}us")
+
+                        # oneshot packet
+                        if not pkt.pending_packet._packet_id:
+                            continue
+
                         if not response:
                             response = self.pass_to_next()
 
                         self._copy_meta_fields(response, pkt.pending_packet)
                         response._hit_count += 1
-                        if PERF:
-                            self.logger.debug(f"extension processing time: {(time.monotonic_ns() - start) / 1e6}us")
                         self._send(Packet(type=Packet.TYPE_PENDING_PACKET, pending_packet=response))
                     case Packet.TYPE_CONNECTED:
                         self.logger.info("connected to broker")

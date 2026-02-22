@@ -18,6 +18,9 @@ from tests import verify
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
+    BLOCKING_MODE_ONESHOT,
+    BLOCKING_MODE_ONESHOT_AND_CANCEL,
+    BLOCKING_MODE_SEND_AND_CANCEL,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
@@ -33,7 +36,7 @@ from gtools.protogen.extension_pb2 import (
     PendingPacket,
 )
 from gtools.proxy.extension.broker import Broker, PacketCallback
-from gtools.proxy.extension.sdk import Extension, dispatch_fallback, register_thread
+from gtools.proxy.extension.sdk import Extension, dispatch, dispatch_fallback, register_thread
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -2168,5 +2171,133 @@ def test_extension_packet_scheduler() -> None:
             pytest.fail(f"packet success rate ({success / total * 100:.1f}%) is less than 80% ({result}) with tolerance of {tolerance_ns / 1e6}ms")
 
     finally:
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+class ExtensionOneShot(Extension):
+    def __init__(self) -> None:
+        super().__init__(name="block_gazette", interest=[])
+
+    @dispatch(Interest(interest=INTEREST_STATE, direction=DIRECTION_CLIENT_TO_SERVER, blocking_mode=BLOCKING_MODE_ONESHOT, id=0))
+    def process1(self, _event: PendingPacket) -> PendingPacket | None:
+        return self.forward(
+            PendingPacket(
+                buf=NetPacket(
+                    type=NetType.GENERIC_TEXT,
+                    data=StrKV(
+                        [
+                            [b"action", b"dialog_return"],
+                            [b"dialog_name", b"gazette"],
+                            [b"buttonClicked", b"banner"],
+                        ]
+                    )
+                    .append_nl()
+                    .append_nl(),
+                ).serialize(),
+                direction=DIRECTION_CLIENT_TO_SERVER,
+                packet_flags=ENetPacketFlag.RELIABLE,
+            )
+        )
+
+    @dispatch(Interest(interest=INTEREST_CALL_FUNCTION, direction=DIRECTION_CLIENT_TO_SERVER, blocking_mode=BLOCKING_MODE_ONESHOT_AND_CANCEL, id=1))
+    def process(self, _event: PendingPacket) -> PendingPacket | None:
+        return self.forward(
+            PendingPacket(
+                buf=NetPacket(
+                    type=NetType.GENERIC_TEXT,
+                    data=StrKV(
+                        [
+                            [b"action", b"dialog_return"],
+                            [b"dialog_name", b"gazette"],
+                            [b"buttonClicked", b"banner"],
+                        ]
+                    )
+                    .append_nl()
+                    .append_nl(),
+                ).serialize(),
+                direction=DIRECTION_CLIENT_TO_SERVER,
+                packet_flags=ENetPacketFlag.RELIABLE,
+            )
+        )
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_blocking_mode_oneshot() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionOneShot()
+        assert ext.start().wait_true(5)
+
+        req = NetPacket(NetType.TANK_PACKET, TankPacket(type=TankType.STATE))
+        res = b.process_event(PreparedPacket(req, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.RELIABLE))
+        assert not res
+
+        req = NetPacket(NetType.TANK_PACKET, TankPacket(type=TankType.CALL_FUNCTION))
+        res = b.process_event(PreparedPacket(req, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.RELIABLE))
+        assert res
+        _, cancelled = res
+        assert cancelled
+
+    except:
+        raise
+    finally:
+        assert ext.stop().wait_true(5)
+        b.stop()
+        assert not is_port_in_use(6712)
+
+
+
+class ExtensionSendAndCancel(Extension):
+    def __init__(self) -> None:
+        super().__init__(name="block_gazette", interest=[])
+
+    @dispatch(Interest(interest=INTEREST_STATE, direction=DIRECTION_CLIENT_TO_SERVER, blocking_mode=BLOCKING_MODE_SEND_AND_CANCEL))
+    def process1(self, _event: PendingPacket) -> PendingPacket | None:
+        return self.forward(
+            PendingPacket(
+                buf=NetPacket(
+                    type=NetType.GENERIC_TEXT,
+                    data=StrKV(
+                        [
+                            [b"action", b"dialog_return"],
+                            [b"dialog_name", b"gazette"],
+                            [b"buttonClicked", b"banner"],
+                        ]
+                    )
+                    .append_nl()
+                    .append_nl(),
+                ).serialize(),
+                direction=DIRECTION_CLIENT_TO_SERVER,
+                packet_flags=ENetPacketFlag.RELIABLE,
+            )
+        )
+
+    def destroy(self) -> None:
+        pass
+
+
+def test_blocking_mode_send_and_cancel() -> None:
+    b = Broker()
+    b.start()
+
+    try:
+        ext = ExtensionSendAndCancel()
+        assert ext.start().wait_true(5)
+
+        req = NetPacket(NetType.TANK_PACKET, TankPacket(type=TankType.STATE))
+        res = b.process_event(PreparedPacket(req, DIRECTION_CLIENT_TO_SERVER, ENetPacketFlag.RELIABLE))
+        assert res
+        _, cancelled = res
+        assert cancelled
+
+    except:
+        raise
+    finally:
+        assert ext.stop().wait_true(5)
         b.stop()
         assert not is_port_in_use(6712)

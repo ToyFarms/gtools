@@ -194,6 +194,9 @@ class Variant:
 
     @classmethod
     def deserialize(cls, data: bytes) -> "Variant":
+        if not data:
+            return cls()
+
         s = Buffer(data, endian="<")
         count = s.read_u8()
         out: list[Variant.Type] = []

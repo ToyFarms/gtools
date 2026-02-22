@@ -159,10 +159,18 @@ enum Direction {
 // TODO: rename this to packet mode
 enum BlockingMode {
   BLOCKING_MODE_UNSPECIFIED = 0;
+
+  /* will block until the extension chain is completed and returned to the broker */
   BLOCKING_MODE_BLOCK = 1;
+
+  /* doesn't block */
   BLOCKING_MODE_SEND_AND_FORGET = 2;
-  BLOCKING_MODE_SEND_AND_CANCEL =
-      4; // like send and forget, but cancel the original packet
+
+  /* like SEND_AND_FORGET, but cancel the original packet */
+  BLOCKING_MODE_SEND_AND_CANCEL = 4;
+
+  /* oneshot means the sdk cannot forward, reply, or send anything back to broker.
+   * its to disable packet chaining, and a small optimization */
   BLOCKING_MODE_ONESHOT = 3;
   BLOCKING_MODE_ONESHOT_AND_CANCEL = 5;
 }

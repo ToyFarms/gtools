@@ -1865,6 +1865,8 @@ class Tile:
             _extra_raw=proto.extra,
             index=proto.index,
             pos=ivec2(proto.x, proto.y),
+            fg_tex_index=proto.fg_tex_index,
+            bg_tex_index=proto.bg_tex_index,
             json_data=cbor2.loads(proto.json_data),
         )
 
@@ -1879,6 +1881,8 @@ class Tile:
             index=self.index,
             x=self.pos.x,
             y=self.pos.y,
+            fg_tex_index=self.fg_tex_index,
+            bg_tex_index=self.bg_tex_index,
             json_data=cbor2.dumps(self.json_data),
         )
 

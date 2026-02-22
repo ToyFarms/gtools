@@ -106,6 +106,8 @@ message Tile {
   uint32 index = 10;
   uint32 x = 6;
   uint32 y = 7;
+  uint32 fg_tex_index = 12;
+  uint32 bg_tex_index = 13;
   bytes json_data = 9;
 }
 

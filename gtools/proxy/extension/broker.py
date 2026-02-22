@@ -264,11 +264,17 @@ def match_strkv_clause(kv: StrKV, where: RepeatedCompositeFieldContainer[BinOp])
 
             for find in lvalue.where:
                 if find.HasField("col"):
-                    col = _GET_COL[find.row.method, find.col.method](kv, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
+                    try:
+                        col = _GET_COL[find.row.method, find.col.method](kv, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
+                    except KeyError:
+                        return False
                     if not _OP_EVALUATE[clause.op](col, getattr(clause, clause.WhichOneof("rvalue"))):
                         return False
                 else:
-                    row = _GET_ROW[find.row.method](kv, getattr(find.row, find.row.WhichOneof("m")))
+                    try:
+                        row = _GET_ROW[find.row.method](kv, getattr(find.row, find.row.WhichOneof("m")))
+                    except KeyError:
+                        return False
                     if not _OP_EVALUATE[clause.op](row, getattr(clause, clause.WhichOneof("rvalue"))):
                         return False
     except Exception as e:
@@ -823,6 +829,10 @@ class Broker:
 
     # if it returns none, then either there is no extension, or no extension matched
     def process_event(self, pkt: PreparedPacket, callback: PacketCallback | None = None) -> tuple[PendingPacket, bool] | None:
+        """returns the (processed packet, cancelled) or None
+        None can mean there is no extension, no extension matched,
+        or the blocking mode is non-blocking or expects no reply
+        """
         start = time.monotonic_ns()
         chain: deque[Client] = deque()
         for client in self._get_interested_extension(pkt):
@@ -880,6 +890,7 @@ class Broker:
                 case BlockingMode.BLOCKING_MODE_ONESHOT:
                     pending_pkt = PendingPacket(
                         _op=PendingPacket.OP_FORWARD,
+                        _packet_id=None,
                         buf=pkt.as_raw,
                         direction=pkt.direction,
                         packet_flags=pkt.flags,
@@ -892,6 +903,7 @@ class Broker:
                 case BlockingMode.BLOCKING_MODE_ONESHOT_AND_CANCEL:
                     pending_pkt = PendingPacket(
                         _op=PendingPacket.OP_FORWARD,
+                        _packet_id=None,
                         buf=pkt.as_raw,
                         direction=pkt.direction,
                         packet_flags=pkt.flags,

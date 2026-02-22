@@ -483,8 +483,9 @@ def test_deserialize_invalid_kind() -> None:
 
 
 def test_deserialize_empty_data() -> None:
-    with pytest.raises(Exception):
-        Variant.deserialize(b"")
+    v = Variant.deserialize(b"")
+    assert len(v) == 0
+    verify(v.serialize())
 
 
 def test_deserialize_partial_string() -> None:
