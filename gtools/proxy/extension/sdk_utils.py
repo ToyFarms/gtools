@@ -5,7 +5,7 @@ from pyglm import glm
 from google.protobuf.any_pb2 import Any
 from typing import Any as TAny
 from gtools.core.convertible import ConvertibleToBytes, ConvertibleToFloat, ConvertibleToInt, ConvertibleToStr, SupportsLenAndGet, Vec2Like, Vec3Like
-from gtools.core.growtopia.create import console_message, particle, play_positioned, play_sfx
+from gtools.core.growtopia.create import console_message, particle, play_sfx
 from gtools.core.growtopia.packet import NetPacket, PreparedPacket, TankFlags
 from gtools.core.limits import INT32_MAX
 from gtools.protogen.extension_pb2 import (
@@ -326,14 +326,14 @@ class ExtensionUtility(ABC):
         elif tile:
             target = vec2(tile) * 32
         else:
-            return self.state.me.state & TankFlags.FACING_LEFT
+            return self.state.me.flags & TankFlags.FACING_LEFT
 
         if int(self.state.me.pos.x // 32) == int(target.x // 32):
-            return self.state.me.state & TankFlags.FACING_LEFT
+            return self.state.me.flags & TankFlags.FACING_LEFT
 
         return TankFlags.FACING_LEFT if self.state.me.pos.x > target.x else TankFlags.NONE
 
     def in_range(self, p2: ivec2, punch: bool) -> bool:
-        range = self.state.me.character.punch_range if punch else self.state.me.character.build_range
+        range = self.state.me.punch_range if punch else self.state.me.build_range
         d = abs(ivec2(self.state.me.pos // 32) - p2)
         return d.x <= range and d.y <= range

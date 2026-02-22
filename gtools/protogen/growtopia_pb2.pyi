@@ -1,208 +1,87 @@
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
-class CharacterState(_message.Message):
-    __slots__ = ["acceleration", "build_range", "flags", "gravity", "jump_strength", "net_id", "punch_range", "velocity", "velocity_in_water"]
-    ACCELERATION_FIELD_NUMBER: _ClassVar[int]
-    BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
-    FLAGS_FIELD_NUMBER: _ClassVar[int]
-    GRAVITY_FIELD_NUMBER: _ClassVar[int]
-    JUMP_STRENGTH_FIELD_NUMBER: _ClassVar[int]
-    NET_ID_FIELD_NUMBER: _ClassVar[int]
-    PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
-    VELOCITY_FIELD_NUMBER: _ClassVar[int]
-    VELOCITY_IN_WATER_FIELD_NUMBER: _ClassVar[int]
-    acceleration: float
-    build_range: int
-    flags: int
-    gravity: float
-    jump_strength: float
-    net_id: int
-    punch_range: int
-    velocity: float
-    velocity_in_water: float
-    def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., flags: _Optional[int] = ..., gravity: _Optional[float] = ..., velocity: _Optional[float] = ..., acceleration: _Optional[float] = ..., velocity_in_water: _Optional[float] = ..., jump_strength: _Optional[float] = ...) -> None: ...
-
-class Dropped(_message.Message):
-    __slots__ = ["items", "last_uid", "nb_items"]
-    ITEMS_FIELD_NUMBER: _ClassVar[int]
-    LAST_UID_FIELD_NUMBER: _ClassVar[int]
-    NB_ITEMS_FIELD_NUMBER: _ClassVar[int]
-    items: _containers.RepeatedCompositeFieldContainer[DroppedItem]
-    last_uid: int
-    nb_items: int
-    def __init__(self, nb_items: _Optional[int] = ..., last_uid: _Optional[int] = ..., items: _Optional[_Iterable[_Union[DroppedItem, _Mapping]]] = ...) -> None: ...
-
-class DroppedItem(_message.Message):
-    __slots__ = ["amount", "flags", "id", "uid", "x", "y"]
-    AMOUNT_FIELD_NUMBER: _ClassVar[int]
-    FLAGS_FIELD_NUMBER: _ClassVar[int]
-    ID_FIELD_NUMBER: _ClassVar[int]
-    UID_FIELD_NUMBER: _ClassVar[int]
-    X_FIELD_NUMBER: _ClassVar[int]
-    Y_FIELD_NUMBER: _ClassVar[int]
-    amount: int
-    flags: int
-    id: int
-    uid: int
-    x: float
-    y: float
-    def __init__(self, id: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., amount: _Optional[int] = ..., flags: _Optional[int] = ..., uid: _Optional[int] = ...) -> None: ...
+class State(_message.Message):
+    __slots__ = ("world", "me", "status", "inventory")
+    WORLD_FIELD_NUMBER: _ClassVar[int]
+    ME_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    INVENTORY_FIELD_NUMBER: _ClassVar[int]
+    world: World
+    me: Me
+    status: int
+    inventory: Inventory
+    def __init__(self, world: _Optional[_Union[World, _Mapping]] = ..., me: _Optional[_Union[Me, _Mapping]] = ..., status: _Optional[int] = ..., inventory: _Optional[_Union[Inventory, _Mapping]] = ...) -> None: ...
 
 class Inventory(_message.Message):
-    __slots__ = ["items"]
+    __slots__ = ("items",)
     ITEMS_FIELD_NUMBER: _ClassVar[int]
     items: _containers.RepeatedCompositeFieldContainer[Item]
     def __init__(self, items: _Optional[_Iterable[_Union[Item, _Mapping]]] = ...) -> None: ...
 
-class Item(_message.Message):
-    __slots__ = ["amount", "flags", "id"]
-    AMOUNT_FIELD_NUMBER: _ClassVar[int]
+class CharacterState(_message.Message):
+    __slots__ = ("net_id", "build_range", "punch_range", "flags", "gravity", "velocity", "acceleration", "velocity_in_water", "jump_strength")
+    NET_ID_FIELD_NUMBER: _ClassVar[int]
+    BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
+    PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
     FLAGS_FIELD_NUMBER: _ClassVar[int]
-    ID_FIELD_NUMBER: _ClassVar[int]
-    amount: int
+    GRAVITY_FIELD_NUMBER: _ClassVar[int]
+    VELOCITY_FIELD_NUMBER: _ClassVar[int]
+    ACCELERATION_FIELD_NUMBER: _ClassVar[int]
+    VELOCITY_IN_WATER_FIELD_NUMBER: _ClassVar[int]
+    JUMP_STRENGTH_FIELD_NUMBER: _ClassVar[int]
+    net_id: int
+    build_range: int
+    punch_range: int
     flags: int
-    id: int
-    def __init__(self, id: _Optional[int] = ..., amount: _Optional[int] = ..., flags: _Optional[int] = ...) -> None: ...
+    gravity: float
+    velocity: float
+    acceleration: float
+    velocity_in_water: float
+    jump_strength: float
+    def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., flags: _Optional[int] = ..., gravity: _Optional[float] = ..., velocity: _Optional[float] = ..., acceleration: _Optional[float] = ..., velocity_in_water: _Optional[float] = ..., jump_strength: _Optional[float] = ...) -> None: ...
 
 class Me(_message.Message):
-    __slots__ = ["build_range", "client_ping", "flags", "net_id", "pos", "punch_range", "server_ping", "state", "time_in_world", "time_since_login"]
-    BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
-    CLIENT_PING_FIELD_NUMBER: _ClassVar[int]
-    FLAGS_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("net_id", "build_range", "punch_range", "pos", "flags", "state", "server_ping", "client_ping", "time_since_login", "time_in_world")
     NET_ID_FIELD_NUMBER: _ClassVar[int]
-    POS_FIELD_NUMBER: _ClassVar[int]
+    BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
     PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
-    SERVER_PING_FIELD_NUMBER: _ClassVar[int]
+    POS_FIELD_NUMBER: _ClassVar[int]
+    FLAGS_FIELD_NUMBER: _ClassVar[int]
     STATE_FIELD_NUMBER: _ClassVar[int]
-    TIME_IN_WORLD_FIELD_NUMBER: _ClassVar[int]
+    SERVER_PING_FIELD_NUMBER: _ClassVar[int]
+    CLIENT_PING_FIELD_NUMBER: _ClassVar[int]
     TIME_SINCE_LOGIN_FIELD_NUMBER: _ClassVar[int]
-    build_range: int
-    client_ping: int
-    flags: int
+    TIME_IN_WORLD_FIELD_NUMBER: _ClassVar[int]
     net_id: int
-    pos: Vec2F
+    build_range: int
     punch_range: int
-    server_ping: int
+    pos: Vec2F
+    flags: int
     state: CharacterState
-    time_in_world: float
+    server_ping: int
+    client_ping: int
     time_since_login: float
+    time_in_world: float
     def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., pos: _Optional[_Union[Vec2F, _Mapping]] = ..., flags: _Optional[int] = ..., state: _Optional[_Union[CharacterState, _Mapping]] = ..., server_ping: _Optional[int] = ..., client_ping: _Optional[int] = ..., time_since_login: _Optional[float] = ..., time_in_world: _Optional[float] = ...) -> None: ...
 
-class Npc(_message.Message):
-    __slots__ = ["facing_left", "id", "param1", "param2", "param3", "target_x", "target_y", "type", "x", "y"]
-    FACING_LEFT_FIELD_NUMBER: _ClassVar[int]
+class Item(_message.Message):
+    __slots__ = ("id", "amount", "flags")
     ID_FIELD_NUMBER: _ClassVar[int]
-    PARAM1_FIELD_NUMBER: _ClassVar[int]
-    PARAM2_FIELD_NUMBER: _ClassVar[int]
-    PARAM3_FIELD_NUMBER: _ClassVar[int]
-    TARGET_X_FIELD_NUMBER: _ClassVar[int]
-    TARGET_Y_FIELD_NUMBER: _ClassVar[int]
-    TYPE_FIELD_NUMBER: _ClassVar[int]
-    X_FIELD_NUMBER: _ClassVar[int]
-    Y_FIELD_NUMBER: _ClassVar[int]
-    facing_left: bool
+    AMOUNT_FIELD_NUMBER: _ClassVar[int]
+    FLAGS_FIELD_NUMBER: _ClassVar[int]
     id: int
-    param1: int
-    param2: int
-    param3: float
-    target_x: float
-    target_y: float
-    type: int
-    x: float
-    y: float
-    def __init__(self, id: _Optional[int] = ..., type: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., target_x: _Optional[float] = ..., target_y: _Optional[float] = ..., param1: _Optional[int] = ..., param2: _Optional[int] = ..., param3: _Optional[float] = ..., facing_left: bool = ...) -> None: ...
-
-class Player(_message.Message):
-    __slots__ = ["colrect", "country", "eid", "flags", "invis", "ip", "mstate", "name", "netID", "onlineID", "posXY", "smstate", "spawn", "state", "titleIcon", "userID"]
-    COLRECT_FIELD_NUMBER: _ClassVar[int]
-    COUNTRY_FIELD_NUMBER: _ClassVar[int]
-    EID_FIELD_NUMBER: _ClassVar[int]
-    FLAGS_FIELD_NUMBER: _ClassVar[int]
-    INVIS_FIELD_NUMBER: _ClassVar[int]
-    IP_FIELD_NUMBER: _ClassVar[int]
-    MSTATE_FIELD_NUMBER: _ClassVar[int]
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    NETID_FIELD_NUMBER: _ClassVar[int]
-    ONLINEID_FIELD_NUMBER: _ClassVar[int]
-    POSXY_FIELD_NUMBER: _ClassVar[int]
-    SMSTATE_FIELD_NUMBER: _ClassVar[int]
-    SPAWN_FIELD_NUMBER: _ClassVar[int]
-    STATE_FIELD_NUMBER: _ClassVar[int]
-    TITLEICON_FIELD_NUMBER: _ClassVar[int]
-    USERID_FIELD_NUMBER: _ClassVar[int]
-    colrect: Vec4I
-    country: bytes
-    eid: bytes
+    amount: int
     flags: int
-    invis: int
-    ip: bytes
-    mstate: int
-    name: bytes
-    netID: int
-    onlineID: bytes
-    posXY: Vec2F
-    smstate: int
-    spawn: bytes
-    state: CharacterState
-    titleIcon: bytes
-    userID: int
-    def __init__(self, spawn: _Optional[bytes] = ..., netID: _Optional[int] = ..., userID: _Optional[int] = ..., eid: _Optional[bytes] = ..., ip: _Optional[bytes] = ..., colrect: _Optional[_Union[Vec4I, _Mapping]] = ..., posXY: _Optional[_Union[Vec2F, _Mapping]] = ..., name: _Optional[bytes] = ..., titleIcon: _Optional[bytes] = ..., country: _Optional[bytes] = ..., invis: _Optional[int] = ..., mstate: _Optional[int] = ..., smstate: _Optional[int] = ..., onlineID: _Optional[bytes] = ..., flags: _Optional[int] = ..., state: _Optional[_Union[CharacterState, _Mapping]] = ...) -> None: ...
-
-class State(_message.Message):
-    __slots__ = ["inventory", "me", "status", "world"]
-    INVENTORY_FIELD_NUMBER: _ClassVar[int]
-    ME_FIELD_NUMBER: _ClassVar[int]
-    STATUS_FIELD_NUMBER: _ClassVar[int]
-    WORLD_FIELD_NUMBER: _ClassVar[int]
-    inventory: Inventory
-    me: Me
-    status: int
-    world: World
-    def __init__(self, world: _Optional[_Union[World, _Mapping]] = ..., me: _Optional[_Union[Me, _Mapping]] = ..., status: _Optional[int] = ..., inventory: _Optional[_Union[Inventory, _Mapping]] = ...) -> None: ...
-
-class Tile(_message.Message):
-    __slots__ = ["bg_id", "bg_tex_index", "extra", "fg_id", "fg_tex_index", "flags", "index", "json_data", "lock_index", "parent_index", "x", "y"]
-    BG_ID_FIELD_NUMBER: _ClassVar[int]
-    BG_TEX_INDEX_FIELD_NUMBER: _ClassVar[int]
-    EXTRA_FIELD_NUMBER: _ClassVar[int]
-    FG_ID_FIELD_NUMBER: _ClassVar[int]
-    FG_TEX_INDEX_FIELD_NUMBER: _ClassVar[int]
-    FLAGS_FIELD_NUMBER: _ClassVar[int]
-    INDEX_FIELD_NUMBER: _ClassVar[int]
-    JSON_DATA_FIELD_NUMBER: _ClassVar[int]
-    LOCK_INDEX_FIELD_NUMBER: _ClassVar[int]
-    PARENT_INDEX_FIELD_NUMBER: _ClassVar[int]
-    X_FIELD_NUMBER: _ClassVar[int]
-    Y_FIELD_NUMBER: _ClassVar[int]
-    bg_id: int
-    bg_tex_index: int
-    extra: bytes
-    fg_id: int
-    fg_tex_index: int
-    flags: int
-    index: int
-    json_data: bytes
-    lock_index: int
-    parent_index: int
-    x: int
-    y: int
-    def __init__(self, fg_id: _Optional[int] = ..., bg_id: _Optional[int] = ..., lock_index: _Optional[int] = ..., parent_index: _Optional[int] = ..., flags: _Optional[int] = ..., extra: _Optional[bytes] = ..., index: _Optional[int] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., fg_tex_index: _Optional[int] = ..., bg_tex_index: _Optional[int] = ..., json_data: _Optional[bytes] = ...) -> None: ...
-
-class Vec2F(_message.Message):
-    __slots__ = ["x", "y"]
-    X_FIELD_NUMBER: _ClassVar[int]
-    Y_FIELD_NUMBER: _ClassVar[int]
-    x: float
-    y: float
-    def __init__(self, x: _Optional[float] = ..., y: _Optional[float] = ...) -> None: ...
+    def __init__(self, id: _Optional[int] = ..., amount: _Optional[int] = ..., flags: _Optional[int] = ...) -> None: ...
 
 class Vec2I(_message.Message):
-    __slots__ = ["x", "y"]
+    __slots__ = ("x", "y")
     X_FIELD_NUMBER: _ClassVar[int]
     Y_FIELD_NUMBER: _ClassVar[int]
     x: int
@@ -210,41 +89,163 @@ class Vec2I(_message.Message):
     def __init__(self, x: _Optional[int] = ..., y: _Optional[int] = ...) -> None: ...
 
 class Vec4I(_message.Message):
-    __slots__ = ["h", "w", "x", "y"]
-    H_FIELD_NUMBER: _ClassVar[int]
-    W_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("x", "y", "w", "h")
     X_FIELD_NUMBER: _ClassVar[int]
     Y_FIELD_NUMBER: _ClassVar[int]
-    h: int
-    w: int
+    W_FIELD_NUMBER: _ClassVar[int]
+    H_FIELD_NUMBER: _ClassVar[int]
     x: int
     y: int
+    w: int
+    h: int
     def __init__(self, x: _Optional[int] = ..., y: _Optional[int] = ..., w: _Optional[int] = ..., h: _Optional[int] = ...) -> None: ...
 
-class World(_message.Message):
-    __slots__ = ["inner", "npcs", "player"]
-    INNER_FIELD_NUMBER: _ClassVar[int]
-    NPCS_FIELD_NUMBER: _ClassVar[int]
-    PLAYER_FIELD_NUMBER: _ClassVar[int]
-    inner: WorldInner
-    npcs: _containers.RepeatedCompositeFieldContainer[Npc]
-    player: _containers.RepeatedCompositeFieldContainer[Player]
-    def __init__(self, inner: _Optional[_Union[WorldInner, _Mapping]] = ..., player: _Optional[_Iterable[_Union[Player, _Mapping]]] = ..., npcs: _Optional[_Iterable[_Union[Npc, _Mapping]]] = ...) -> None: ...
+class Vec2F(_message.Message):
+    __slots__ = ("x", "y")
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    x: float
+    y: float
+    def __init__(self, x: _Optional[float] = ..., y: _Optional[float] = ...) -> None: ...
+
+class Player(_message.Message):
+    __slots__ = ("spawn", "netID", "userID", "eid", "ip", "colrect", "posXY", "name", "titleIcon", "country", "invis", "mstate", "smstate", "onlineID", "flags", "state")
+    SPAWN_FIELD_NUMBER: _ClassVar[int]
+    NETID_FIELD_NUMBER: _ClassVar[int]
+    USERID_FIELD_NUMBER: _ClassVar[int]
+    EID_FIELD_NUMBER: _ClassVar[int]
+    IP_FIELD_NUMBER: _ClassVar[int]
+    COLRECT_FIELD_NUMBER: _ClassVar[int]
+    POSXY_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    TITLEICON_FIELD_NUMBER: _ClassVar[int]
+    COUNTRY_FIELD_NUMBER: _ClassVar[int]
+    INVIS_FIELD_NUMBER: _ClassVar[int]
+    MSTATE_FIELD_NUMBER: _ClassVar[int]
+    SMSTATE_FIELD_NUMBER: _ClassVar[int]
+    ONLINEID_FIELD_NUMBER: _ClassVar[int]
+    FLAGS_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    spawn: bytes
+    netID: int
+    userID: int
+    eid: bytes
+    ip: bytes
+    colrect: Vec4I
+    posXY: Vec2F
+    name: bytes
+    titleIcon: bytes
+    country: bytes
+    invis: int
+    mstate: int
+    smstate: int
+    onlineID: bytes
+    flags: int
+    state: CharacterState
+    def __init__(self, spawn: _Optional[bytes] = ..., netID: _Optional[int] = ..., userID: _Optional[int] = ..., eid: _Optional[bytes] = ..., ip: _Optional[bytes] = ..., colrect: _Optional[_Union[Vec4I, _Mapping]] = ..., posXY: _Optional[_Union[Vec2F, _Mapping]] = ..., name: _Optional[bytes] = ..., titleIcon: _Optional[bytes] = ..., country: _Optional[bytes] = ..., invis: _Optional[int] = ..., mstate: _Optional[int] = ..., smstate: _Optional[int] = ..., onlineID: _Optional[bytes] = ..., flags: _Optional[int] = ..., state: _Optional[_Union[CharacterState, _Mapping]] = ...) -> None: ...
+
+class DroppedItem(_message.Message):
+    __slots__ = ("id", "x", "y", "amount", "flags", "uid")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    AMOUNT_FIELD_NUMBER: _ClassVar[int]
+    FLAGS_FIELD_NUMBER: _ClassVar[int]
+    UID_FIELD_NUMBER: _ClassVar[int]
+    id: int
+    x: float
+    y: float
+    amount: int
+    flags: int
+    uid: int
+    def __init__(self, id: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., amount: _Optional[int] = ..., flags: _Optional[int] = ..., uid: _Optional[int] = ...) -> None: ...
+
+class Dropped(_message.Message):
+    __slots__ = ("nb_items", "last_uid", "items")
+    NB_ITEMS_FIELD_NUMBER: _ClassVar[int]
+    LAST_UID_FIELD_NUMBER: _ClassVar[int]
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    nb_items: int
+    last_uid: int
+    items: _containers.RepeatedCompositeFieldContainer[DroppedItem]
+    def __init__(self, nb_items: _Optional[int] = ..., last_uid: _Optional[int] = ..., items: _Optional[_Iterable[_Union[DroppedItem, _Mapping]]] = ...) -> None: ...
+
+class Tile(_message.Message):
+    __slots__ = ("fg_id", "bg_id", "lock_index", "parent_index", "flags", "extra", "index", "x", "y", "fg_tex_index", "bg_tex_index", "json_data")
+    FG_ID_FIELD_NUMBER: _ClassVar[int]
+    BG_ID_FIELD_NUMBER: _ClassVar[int]
+    LOCK_INDEX_FIELD_NUMBER: _ClassVar[int]
+    PARENT_INDEX_FIELD_NUMBER: _ClassVar[int]
+    FLAGS_FIELD_NUMBER: _ClassVar[int]
+    EXTRA_FIELD_NUMBER: _ClassVar[int]
+    INDEX_FIELD_NUMBER: _ClassVar[int]
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    FG_TEX_INDEX_FIELD_NUMBER: _ClassVar[int]
+    BG_TEX_INDEX_FIELD_NUMBER: _ClassVar[int]
+    JSON_DATA_FIELD_NUMBER: _ClassVar[int]
+    fg_id: int
+    bg_id: int
+    lock_index: int
+    parent_index: int
+    flags: int
+    extra: bytes
+    index: int
+    x: int
+    y: int
+    fg_tex_index: int
+    bg_tex_index: int
+    json_data: bytes
+    def __init__(self, fg_id: _Optional[int] = ..., bg_id: _Optional[int] = ..., lock_index: _Optional[int] = ..., parent_index: _Optional[int] = ..., flags: _Optional[int] = ..., extra: _Optional[bytes] = ..., index: _Optional[int] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., fg_tex_index: _Optional[int] = ..., bg_tex_index: _Optional[int] = ..., json_data: _Optional[bytes] = ...) -> None: ...
 
 class WorldInner(_message.Message):
-    __slots__ = ["dropped", "garbage_start", "height", "name", "nb_tiles", "tiles", "width"]
-    DROPPED_FIELD_NUMBER: _ClassVar[int]
-    GARBAGE_START_FIELD_NUMBER: _ClassVar[int]
-    HEIGHT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("name", "width", "height", "nb_tiles", "tiles", "dropped", "garbage_start")
     NAME_FIELD_NUMBER: _ClassVar[int]
+    WIDTH_FIELD_NUMBER: _ClassVar[int]
+    HEIGHT_FIELD_NUMBER: _ClassVar[int]
     NB_TILES_FIELD_NUMBER: _ClassVar[int]
     TILES_FIELD_NUMBER: _ClassVar[int]
-    WIDTH_FIELD_NUMBER: _ClassVar[int]
-    dropped: Dropped
-    garbage_start: int
-    height: int
+    DROPPED_FIELD_NUMBER: _ClassVar[int]
+    GARBAGE_START_FIELD_NUMBER: _ClassVar[int]
     name: bytes
+    width: int
+    height: int
     nb_tiles: int
     tiles: _containers.RepeatedCompositeFieldContainer[Tile]
-    width: int
+    dropped: Dropped
+    garbage_start: int
     def __init__(self, name: _Optional[bytes] = ..., width: _Optional[int] = ..., height: _Optional[int] = ..., nb_tiles: _Optional[int] = ..., tiles: _Optional[_Iterable[_Union[Tile, _Mapping]]] = ..., dropped: _Optional[_Union[Dropped, _Mapping]] = ..., garbage_start: _Optional[int] = ...) -> None: ...
+
+class World(_message.Message):
+    __slots__ = ("inner", "player", "npcs")
+    INNER_FIELD_NUMBER: _ClassVar[int]
+    PLAYER_FIELD_NUMBER: _ClassVar[int]
+    NPCS_FIELD_NUMBER: _ClassVar[int]
+    inner: WorldInner
+    player: _containers.RepeatedCompositeFieldContainer[Player]
+    npcs: _containers.RepeatedCompositeFieldContainer[Npc]
+    def __init__(self, inner: _Optional[_Union[WorldInner, _Mapping]] = ..., player: _Optional[_Iterable[_Union[Player, _Mapping]]] = ..., npcs: _Optional[_Iterable[_Union[Npc, _Mapping]]] = ...) -> None: ...
+
+class Npc(_message.Message):
+    __slots__ = ("id", "type", "x", "y", "target_x", "target_y", "param1", "param2", "param3", "facing_left")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    TARGET_X_FIELD_NUMBER: _ClassVar[int]
+    TARGET_Y_FIELD_NUMBER: _ClassVar[int]
+    PARAM1_FIELD_NUMBER: _ClassVar[int]
+    PARAM2_FIELD_NUMBER: _ClassVar[int]
+    PARAM3_FIELD_NUMBER: _ClassVar[int]
+    FACING_LEFT_FIELD_NUMBER: _ClassVar[int]
+    id: int
+    type: int
+    x: float
+    y: float
+    target_x: float
+    target_y: float
+    param1: int
+    param2: int
+    param3: float
+    facing_left: bool
+    def __init__(self, id: _Optional[int] = ..., type: _Optional[int] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., target_x: _Optional[float] = ..., target_y: _Optional[float] = ..., param1: _Optional[int] = ..., param2: _Optional[int] = ..., param3: _Optional[float] = ..., facing_left: _Optional[bool] = ...) -> None: ...
