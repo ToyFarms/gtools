@@ -3,10 +3,11 @@ import itertools
 import logging
 from pyglm import glm
 from google.protobuf.any_pb2 import Any
-from typing import Any as TAny
+from typing import Any as TAny, Callable, overload
 from gtools.core.convertible import ConvertibleToBytes, ConvertibleToFloat, ConvertibleToInt, ConvertibleToStr, SupportsLenAndGet, Vec2Like, Vec3Like
 from gtools.core.growtopia.create import console_message, particle, play_sfx
 from gtools.core.growtopia.packet import NetPacket, PreparedPacket, TankFlags
+from gtools.core.growtopia.strkv import KeyType
 from gtools.core.limits import INT32_MAX
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
@@ -28,8 +29,9 @@ from thirdparty.enet.bindings import ENetPacketFlag
 
 
 class BinOpSelector:
-    def __init__(self, lvalue: Any) -> None:
+    def __init__(self, lvalue: Any, hint: Callable[["helper.Type | TAny"], "helper.Type"] | None = None) -> None:
         self.lvalue = lvalue
+        self.hint = hint
 
     def _guess_type(self, other: TAny) -> "helper.Type":
         if isinstance(other, helper.Type):
@@ -62,8 +64,11 @@ class BinOpSelector:
             raise ValueError(f"value not handled {other}")
 
     def _binop(self, other: "helper.Type | TAny", op: Op) -> BinOp:
-        if not isinstance(other, helper.Type):
-            other = self._guess_type(other)
+        if self.hint:
+            other = self.hint(other)
+        else:
+            if not isinstance(other, helper.Type):
+                other = self._guess_type(other)
 
         return BinOp(
             lvalue=self.lvalue,
@@ -120,6 +125,57 @@ class VariantProxy:
         return BinOpSelector(any(VariantClause(v=index)))
 
 
+class StrKVProxy:
+    def __init__(self) -> None:
+        self.row_method = FindRow.KEY
+        self.col_method = FindCol.ABSOLUTE
+
+    @property
+    def relative(self) -> "StrKVProxy":
+        self.col_method = FindCol.RELATIVE
+        return self
+
+    @property
+    def find(self) -> "StrKVProxy":
+        self.row_method = FindRow.KEY_ANY
+        return self
+
+    @overload
+    def __getitem__(self, key: KeyType) -> BinOpSelector: ...
+    @overload
+    def __getitem__(self, key: tuple[KeyType, int]) -> BinOpSelector: ...
+    def __getitem__(self, key: KeyType | tuple[KeyType, int]) -> BinOpSelector:
+        if isinstance(key, tuple):
+            r, c = key
+        else:
+            r, c = key, None
+
+        if isinstance(r, bytes):
+            row = FindRow(method=self.row_method, key=r)
+        elif isinstance(r, str):
+            row = FindRow(method=self.row_method, key=r.encode())
+        else:  # int
+            row = FindRow(method=FindRow.INDEX, index=r)
+
+        col = None
+        if c:
+            col = FindCol(method=self.col_method, index=c)
+
+        def to_bytes(other: "helper.Type | TAny") -> "helper.bytes":
+            if not isinstance(other, helper.Type):
+                if isinstance(other, bytes):
+                    return helper.bytes(other)
+                else:
+                    return helper.bytes(str(other).encode())
+
+            if isinstance(other, helper.bytes):
+                return other
+            else:
+                return helper.bytes(str(other.x).encode())
+
+        return BinOpSelector(any(Query(where=[Clause(row=row, col=col)])), hint=to_bytes)
+
+
 class helper:
     logger = logging.getLogger("ext_dispatch_helper")
 
@@ -129,6 +185,10 @@ class helper:
     @property
     def variant(self) -> VariantProxy:
         return VariantProxy()
+
+    @property
+    def strkv(self) -> StrKVProxy:
+        return StrKVProxy()
 
     @property
     def tank_type(self) -> BinOpSelector:

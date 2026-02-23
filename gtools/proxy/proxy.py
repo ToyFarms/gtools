@@ -16,7 +16,7 @@ from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_
 from gtools.proxy.accountmgr import AccountManager
 from gtools.proxy.enet import PyENetEvent
 from gtools.proxy.event import UpdateServerData
-from gtools.proxy.extension.broker import Broker, BrokerFunction, PacketCallback
+from gtools.proxy.extension.server.broker import Broker, BrokerFunction, PacketCallback
 from gtools.proxy.proxy_client import ProxyClient
 from gtools.proxy.proxy_server import ProxyServer
 from gtools import setting

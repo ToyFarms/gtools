@@ -49,7 +49,7 @@ from gtools.protogen.state_pb2 import (
     TileChangeRequest,
     UpdateTreeState,
 )
-from gtools.proxy.extension.broker import Broker
+from gtools.proxy.extension.server.broker import Broker
 
 
 @dataclass(slots=True)

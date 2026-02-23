@@ -442,10 +442,10 @@ class InterestGenericText(_message.Message):
     def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestGameMessage(_message.Message):
-    __slots__ = ("action",)
-    ACTION_FIELD_NUMBER: _ClassVar[int]
-    action: bytes
-    def __init__(self, action: _Optional[bytes] = ...) -> None: ...
+    __slots__ = ("where",)
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestTankPacket(_message.Message):
     __slots__ = ("where",)
@@ -458,8 +458,10 @@ class InterestError(_message.Message):
     def __init__(self) -> None: ...
 
 class InterestTrack(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("where",)
+    WHERE_FIELD_NUMBER: _ClassVar[int]
+    where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestClientLogRequest(_message.Message):
     __slots__ = ()
@@ -476,10 +478,12 @@ class InterestState(_message.Message):
     def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestCallFunction(_message.Message):
-    __slots__ = ("where",)
+    __slots__ = ("where", "variant")
     WHERE_FIELD_NUMBER: _ClassVar[int]
+    VARIANT_FIELD_NUMBER: _ClassVar[int]
     where: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
-    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
+    variant: _containers.RepeatedCompositeFieldContainer[_op_pb2.BinOp]
+    def __init__(self, where: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ..., variant: _Optional[_Iterable[_Union[_op_pb2.BinOp, _Mapping]]] = ...) -> None: ...
 
 class InterestUpdateStatus(_message.Message):
     __slots__ = ("where",)

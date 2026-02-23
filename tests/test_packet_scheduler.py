@@ -3,7 +3,7 @@ import time
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankPacket
 from gtools.core.highres_sleep import nanosleep
 from gtools.protogen.extension_pb2 import PendingPacket
-from gtools.proxy.extension.broker import PacketScheduler
+from gtools.proxy.extension.server.broker import PacketScheduler
 
 
 def test_packet_scheduler_delta_time() -> None:

@@ -250,15 +250,18 @@ message InterestPeerDisconnect {}
 
 message InterestServerHello {}
 message InterestGenericText { repeated gtools.op.BinOp where = 1; }
-message InterestGameMessage { optional bytes action = 1; }
+message InterestGameMessage { repeated gtools.op.BinOp where = 1; }
 message InterestTankPacket { repeated gtools.op.BinOp where = 1; }
 message InterestError {}
-message InterestTrack {}
+message InterestTrack { repeated gtools.op.BinOp where = 1; }
 message InterestClientLogRequest {}
 message InterestClientLogResponse {}
 
 message InterestState { repeated gtools.op.BinOp where = 1; }
-message InterestCallFunction { repeated gtools.op.BinOp where = 1; }
+message InterestCallFunction {
+  repeated gtools.op.BinOp where = 1;
+  repeated gtools.op.BinOp variant = 2;
+}
 message InterestUpdateStatus { repeated gtools.op.BinOp where = 1; }
 message InterestTileChangeRequest { repeated gtools.op.BinOp where = 1; }
 message InterestSendMapData { repeated gtools.op.BinOp where = 1; }

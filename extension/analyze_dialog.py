@@ -5,8 +5,8 @@ from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.protogen.extension_pb2 import BLOCKING_MODE_BLOCK, DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT, INTEREST_SET_ICON_STATE, INTEREST_STATE_UPDATE, Interest, PendingPacket
-from gtools.proxy.extension.sdk import Extension, dispatch
-from gtools.proxy.extension.sdk_utils import helper
+from gtools.proxy.extension.client.sdk import Extension, dispatch
+from gtools.proxy.extension.client.sdk_utils import helper
 from thirdparty.enet.bindings import ENetPacketFlag
 
 

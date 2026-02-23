@@ -13,8 +13,8 @@ from gtools.protogen.extension_pb2 import (
     InterestCallFunction,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension, dispatch, register_thread
-from gtools.proxy.extension.sdk_utils import helper
+from gtools.proxy.extension.client.sdk import Extension, dispatch, register_thread
+from gtools.proxy.extension.client.sdk_utils import helper
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -32,7 +32,7 @@ class Buyer(Extension):
         Interest(
             id=s.auto,
             interest=INTEREST_CALL_FUNCTION,
-            call_function=InterestCallFunction(where=[s.variant[0] == b"OnStorePurchaseResult"]),
+            call_function=InterestCallFunction(variant=[s.variant[0] == b"OnStorePurchaseResult"]),
             direction=DIRECTION_SERVER_TO_CLIENT,
             blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
         )

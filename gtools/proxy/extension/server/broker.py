@@ -7,27 +7,20 @@ import itertools
 import logging
 from queue import Queue
 import random
-import re
 import threading
 import time
 from traceback import print_exc
-from typing import Any, Callable, Iterator, cast
-from google.protobuf.internal.containers import RepeatedCompositeFieldContainer
-from google.protobuf.message import Message
+from typing import Any, Callable, Iterator
 import zmq
-import xxhash
 
 from gtools.core.auto_call import auto_call
-from gtools.core.growtopia.packet import NetType, PreparedPacket, TankPacket, TankType
-from gtools.core.growtopia.strkv import StrKV
-from gtools.core.growtopia.variant import Variant
+from gtools.core.growtopia.packet import NetType, PreparedPacket
 from gtools.core.network import increment_port
 from gtools.core.signal import Signal
 from gtools.core.transport.zmq_transport import Pull, Router
 from gtools.flags import BENCHMARK, PERF, TRACE
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
-    DIRECTION_UNSPECIFIED,
     BlockingMode,
     CapabilityRequest,
     Packet,
@@ -37,283 +30,8 @@ from gtools.protogen.extension_pb2 import (
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
 )
-from gtools.protogen.op_pb2 import BinOp, Op
-from gtools.protogen.strkv_pb2 import FindCol, FindRow, Query
-from gtools.protogen.tank_pb2 import Field, FieldValue
-from gtools.protogen.variant_pb2 import VariantClause
 from gtools import setting
-
-
-def hash_interest(interest: Interest) -> int:
-    h = xxhash.xxh3_64()
-    h.update(interest.interest.to_bytes())
-    if interest.priority:
-        h.update(interest.priority.to_bytes(signed=True))
-    h.update(interest.blocking_mode.to_bytes())
-    if interest.direction:
-        h.update(interest.direction.to_bytes())
-    if interest.id:
-        h.update(interest.id.to_bytes())
-    if payload := interest.WhichOneof("payload"):
-        h.update(getattr(interest, payload).SerializeToString())
-
-    return h.intdigest()
-
-
-# TODO: rename blocking_mode to packet_mode
-
-
-# extension represent the extension as a whole
-# client represent the extension as a function/endpoint (a single interest)
-class Extension:
-    def __init__(self, id: bytes, interest: list[Interest]) -> None:
-        self.id = id
-        self.interest = interest
-        self.last_heartbeat = 0.0
-
-    def __repr__(self) -> str:
-        return f"Extension(id={self.id}, interest({len(self.interest)})={list(map(hash_interest, self.interest))})"
-
-
-class Client:
-    def __init__(self, ext: Extension, interest: Interest) -> None:
-        self.ext = ext
-        self.interest = interest
-
-    def __repr__(self) -> str:
-        return f"Client(priority={self.interest.priority}, ext={self.ext!r}, interest={hash_interest(self.interest)})"
-
-    def __eq__(self, value: object, /) -> bool:
-        if not isinstance(value, Client):
-            return False
-
-        return self.ext == value.ext and self.interest == value.interest
-
-
-_TANK_INTEREST = {
-    InterestType.INTEREST_STATE,
-    InterestType.INTEREST_CALL_FUNCTION,
-    InterestType.INTEREST_UPDATE_STATUS,
-    InterestType.INTEREST_TILE_CHANGE_REQUEST,
-    InterestType.INTEREST_SEND_MAP_DATA,
-    InterestType.INTEREST_SEND_TILE_UPDATE_DATA,
-    InterestType.INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE,
-    InterestType.INTEREST_TILE_ACTIVATE_REQUEST,
-    InterestType.INTEREST_TILE_APPLY_DAMAGE,
-    InterestType.INTEREST_SEND_INVENTORY_STATE,
-    InterestType.INTEREST_ITEM_ACTIVATE_REQUEST,
-    InterestType.INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST,
-    InterestType.INTEREST_SEND_TILE_TREE_STATE,
-    InterestType.INTEREST_MODIFY_ITEM_INVENTORY,
-    InterestType.INTEREST_ITEM_CHANGE_OBJECT,
-    InterestType.INTEREST_SEND_LOCK,
-    InterestType.INTEREST_SEND_ITEM_DATABASE_DATA,
-    InterestType.INTEREST_SEND_PARTICLE_EFFECT,
-    InterestType.INTEREST_SET_ICON_STATE,
-    InterestType.INTEREST_ITEM_EFFECT,
-    InterestType.INTEREST_SET_CHARACTER_STATE,
-    InterestType.INTEREST_PING_REPLY,
-    InterestType.INTEREST_PING_REQUEST,
-    InterestType.INTEREST_GOT_PUNCHED,
-    InterestType.INTEREST_APP_CHECK_RESPONSE,
-    InterestType.INTEREST_APP_INTEGRITY_FAIL,
-    InterestType.INTEREST_DISCONNECT,
-    InterestType.INTEREST_BATTLE_JOIN,
-    InterestType.INTEREST_BATTLE_EVENT,
-    InterestType.INTEREST_USE_DOOR,
-    InterestType.INTEREST_SEND_PARENTAL,
-    InterestType.INTEREST_GONE_FISHIN,
-    InterestType.INTEREST_STEAM,
-    InterestType.INTEREST_PET_BATTLE,
-    InterestType.INTEREST_NPC,
-    InterestType.INTEREST_SPECIAL,
-    InterestType.INTEREST_SEND_PARTICLE_EFFECT_V2,
-    InterestType.INTEREST_ACTIVATE_ARROW_TO_ITEM,
-    InterestType.INTEREST_SELECT_TILE_INDEX,
-    InterestType.INTEREST_SEND_PLAYER_TRIBUTE_DATA,
-    InterestType.INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY,
-    InterestType.INTEREST_PVE_NPC,
-    InterestType.INTEREST_PVP_CARD_BATTLE,
-    InterestType.INTEREST_PVE_APPLY_PLAYER_DAMAGE,
-    InterestType.INTEREST_PVE_NPC_POSITION_UPDATE,
-    InterestType.INTEREST_SET_EXTRA_MODS,
-    InterestType.INTEREST_ON_STEP_TILE_MOD,
-}
-
-
-_GET_ROW: dict[FindRow.Method, Callable[[StrKV, Any], list[bytes]]] = {
-    FindRow.KEY: lambda strkv, k: list(strkv[k]),
-    FindRow.KEY_ANY: lambda strkv, k: list(strkv.find[k]),
-    FindRow.INDEX: lambda strkv, k: list(strkv[k]),
-}
-_GET_COL: dict[tuple[FindRow.Method, FindCol.Method], Callable[[StrKV, Any, Any], bytes]] = {
-    (FindRow.KEY, FindCol.ABSOLUTE): lambda strkv, k1, k2: bytes(strkv[k1, k2]),
-    (FindRow.KEY, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
-    (FindRow.KEY_ANY, FindCol.ABSOLUTE): lambda strkv, k1, k2: cast(bytes, strkv.find[k1, k2]),
-    (FindRow.KEY_ANY, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
-    (FindRow.INDEX, FindCol.ABSOLUTE): lambda strkv, k1, k2: bytes(strkv[k1, k2]),
-    (FindRow.INDEX, FindCol.RELATIVE): lambda strkv, k1, k2: bytes(strkv.relative[k1, k2]),
-}
-
-_TANK_FIELD_ACCESSOR: dict[Field, Callable[[TankPacket], object]] = {
-    Field.TANK_FIELD_TYPE: lambda pkt: pkt.type,
-    Field.TANK_FIELD_OBJECT_TYPE: lambda pkt: pkt.object_type,
-    Field.TANK_FIELD_JUMP_COUNT: lambda pkt: pkt.jump_count,
-    Field.TANK_FIELD_ANIMATION_TYPE: lambda pkt: pkt.animation_type,
-    Field.TANK_FIELD_NET_ID: lambda pkt: pkt.net_id,
-    Field.TANK_FIELD_TARGET_NET_ID: lambda pkt: pkt.target_net_id,
-    Field.TANK_FIELD_FLAGS: lambda pkt: pkt.flags,
-    Field.TANK_FIELD_FLOAT_VAR: lambda pkt: pkt.float_var,
-    Field.TANK_FIELD_VALUE: lambda pkt: pkt.value,
-    Field.TANK_FIELD_VECTOR_X: lambda pkt: pkt.vector_x,
-    Field.TANK_FIELD_VECTOR_Y: lambda pkt: pkt.vector_y,
-    Field.TANK_FIELD_VECTOR_X2: lambda pkt: pkt.vector_x2,
-    Field.TANK_FIELD_VECTOR_Y2: lambda pkt: pkt.vector_y2,
-    Field.TANK_FIELD_PARTICLE_ROTATION: lambda pkt: pkt.particle_rotation,
-    Field.TANK_FIELD_INT_X: lambda pkt: pkt.int_x,
-    Field.TANK_FIELD_INT_Y: lambda pkt: pkt.int_y,
-    Field.TANK_FIELD_EXTENDED_LEN: lambda pkt: pkt.extended_len,
-}
-
-_OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
-    Op.OP_EQ: lambda lval, rval: lval == rval,
-    Op.OP_EQ_EPS: lambda lval, rval: abs(lval - rval) < 0.01,
-    Op.OP_NEQ: lambda lval, rval: lval != rval,
-    Op.OP_GT: lambda lval, rval: lval > rval,
-    Op.OP_GTE: lambda lval, rval: lval >= rval,
-    Op.OP_LT: lambda lval, rval: lval < rval,
-    Op.OP_LTE: lambda lval, rval: lval <= rval,
-    Op.OP_BIT_TEST: lambda lval, rval: (lval & rval) == rval,
-    Op.OP_LIKE: lambda lval, rval: bool(re.match(rval, lval)),
-    Op.OP_STARTSWITH: lambda lval, rval: lval.startswith(rval),
-    Op.OP_ENDSWITH: lambda lval, rval: lval.endswith(rval),
-    Op.OP_CONTAINS: lambda lval, rval: rval in lval,
-}
-
-_PACKET_TO_INTEREST_TYPE: dict[NetType | TankType, InterestType] = {
-    NetType.SERVER_HELLO: InterestType.INTEREST_SERVER_HELLO,
-    NetType.GENERIC_TEXT: InterestType.INTEREST_GENERIC_TEXT,
-    NetType.GAME_MESSAGE: InterestType.INTEREST_GAME_MESSAGE,
-    NetType.TANK_PACKET: InterestType.INTEREST_TANK_PACKET,
-    NetType.ERROR: InterestType.INTEREST_ERROR,
-    NetType.TRACK: InterestType.INTEREST_TRACK,
-    NetType.CLIENT_LOG_REQUEST: InterestType.INTEREST_CLIENT_LOG_REQUEST,
-    NetType.CLIENT_LOG_RESPONSE: InterestType.INTEREST_CLIENT_LOG_RESPONSE,
-}
-_PACKET_TO_INTEREST_TYPE2: dict[NetType | TankType, InterestType] = {
-    TankType.STATE: InterestType.INTEREST_STATE,
-    TankType.CALL_FUNCTION: InterestType.INTEREST_CALL_FUNCTION,
-    TankType.UPDATE_STATUS: InterestType.INTEREST_UPDATE_STATUS,
-    TankType.TILE_CHANGE_REQUEST: InterestType.INTEREST_TILE_CHANGE_REQUEST,
-    TankType.SEND_MAP_DATA: InterestType.INTEREST_SEND_MAP_DATA,
-    TankType.SEND_TILE_UPDATE_DATA: InterestType.INTEREST_SEND_TILE_UPDATE_DATA,
-    TankType.SEND_TILE_UPDATE_DATA_MULTIPLE: InterestType.INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE,
-    TankType.TILE_ACTIVATE_REQUEST: InterestType.INTEREST_TILE_ACTIVATE_REQUEST,
-    TankType.TILE_APPLY_DAMAGE: InterestType.INTEREST_TILE_APPLY_DAMAGE,
-    TankType.SEND_INVENTORY_STATE: InterestType.INTEREST_SEND_INVENTORY_STATE,
-    TankType.ITEM_ACTIVATE_REQUEST: InterestType.INTEREST_ITEM_ACTIVATE_REQUEST,
-    TankType.ITEM_ACTIVATE_OBJECT_REQUEST: InterestType.INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST,
-    TankType.SEND_TILE_TREE_STATE: InterestType.INTEREST_SEND_TILE_TREE_STATE,
-    TankType.MODIFY_ITEM_INVENTORY: InterestType.INTEREST_MODIFY_ITEM_INVENTORY,
-    TankType.ITEM_CHANGE_OBJECT: InterestType.INTEREST_ITEM_CHANGE_OBJECT,
-    TankType.SEND_LOCK: InterestType.INTEREST_SEND_LOCK,
-    TankType.SEND_ITEM_DATABASE_DATA: InterestType.INTEREST_SEND_ITEM_DATABASE_DATA,
-    TankType.SEND_PARTICLE_EFFECT: InterestType.INTEREST_SEND_PARTICLE_EFFECT,
-    TankType.SET_ICON_STATE: InterestType.INTEREST_SET_ICON_STATE,
-    TankType.ITEM_EFFECT: InterestType.INTEREST_ITEM_EFFECT,
-    TankType.SET_CHARACTER_STATE: InterestType.INTEREST_SET_CHARACTER_STATE,
-    TankType.PING_REPLY: InterestType.INTEREST_PING_REPLY,
-    TankType.PING_REQUEST: InterestType.INTEREST_PING_REQUEST,
-    TankType.GOT_PUNCHED: InterestType.INTEREST_GOT_PUNCHED,
-    TankType.APP_CHECK_RESPONSE: InterestType.INTEREST_APP_CHECK_RESPONSE,
-    TankType.APP_INTEGRITY_FAIL: InterestType.INTEREST_APP_INTEGRITY_FAIL,
-    TankType.DISCONNECT: InterestType.INTEREST_DISCONNECT,
-    TankType.BATTLE_JOIN: InterestType.INTEREST_BATTLE_JOIN,
-    TankType.BATTLE_EVENT: InterestType.INTEREST_BATTLE_EVENT,
-    TankType.USE_DOOR: InterestType.INTEREST_USE_DOOR,
-    TankType.SEND_PARENTAL: InterestType.INTEREST_SEND_PARENTAL,
-    TankType.GONE_FISHIN: InterestType.INTEREST_GONE_FISHIN,
-    TankType.STEAM: InterestType.INTEREST_STEAM,
-    TankType.PET_BATTLE: InterestType.INTEREST_PET_BATTLE,
-    TankType.NPC: InterestType.INTEREST_NPC,
-    TankType.SPECIAL: InterestType.INTEREST_SPECIAL,
-    TankType.SEND_PARTICLE_EFFECT_V2: InterestType.INTEREST_SEND_PARTICLE_EFFECT_V2,
-    TankType.ACTIVATE_ARROW_TO_ITEM: InterestType.INTEREST_ACTIVATE_ARROW_TO_ITEM,
-    TankType.SELECT_TILE_INDEX: InterestType.INTEREST_SELECT_TILE_INDEX,
-    TankType.SEND_PLAYER_TRIBUTE_DATA: InterestType.INTEREST_SEND_PLAYER_TRIBUTE_DATA,
-    TankType.FTUE_SET_ITEM_TO_QUICK_INVENTORY: InterestType.INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY,
-    TankType.PVE_NPC: InterestType.INTEREST_PVE_NPC,
-    TankType.PVP_CARD_BATTLE: InterestType.INTEREST_PVP_CARD_BATTLE,
-    TankType.PVE_APPLY_PLAYER_DAMAGE: InterestType.INTEREST_PVE_APPLY_PLAYER_DAMAGE,
-    TankType.PVE_NPC_POSITION_UPDATE: InterestType.INTEREST_PVE_NPC_POSITION_UPDATE,
-    TankType.SET_EXTRA_MODS: InterestType.INTEREST_SET_EXTRA_MODS,
-    TankType.ON_STEP_TILE_MOD: InterestType.INTEREST_ON_STEP_TILE_MOD,
-}
-
-
-logger = logging.getLogger("matcher")
-
-
-# TODO: create a common class
-def match_strkv_clause(kv: StrKV, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
-    try:
-        for clause in where:
-            lvalue = Query()
-            if not clause.lvalue.Unpack(lvalue):
-                raise TypeError("strkv lvalue expects a query type")
-
-            for find in lvalue.where:
-                if find.HasField("col"):
-                    try:
-                        col = _GET_COL[find.row.method, find.col.method](kv, getattr(find.row, find.row.WhichOneof("m")), find.col.index)
-                    except KeyError:
-                        return False
-                    if not _OP_EVALUATE[clause.op](col, getattr(clause, clause.WhichOneof("rvalue"))):
-                        return False
-                else:
-                    try:
-                        row = _GET_ROW[find.row.method](kv, getattr(find.row, find.row.WhichOneof("m")))
-                    except KeyError:
-                        return False
-                    if not _OP_EVALUATE[clause.op](row, getattr(clause, clause.WhichOneof("rvalue"))):
-                        return False
-    except Exception as e:
-        logger.warning(f"failed matching clause with exception: {e}")
-        return False
-
-    return True
-
-
-def match_tank_clause(tank: TankPacket, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
-    try:
-        for clause in where:
-            lvalue = FieldValue()
-            if not clause.lvalue.Unpack(lvalue):
-                raise TypeError("tank lvalue expects a field type")
-
-            if not _OP_EVALUATE[clause.op](_TANK_FIELD_ACCESSOR[lvalue.v](tank), getattr(clause, clause.WhichOneof("rvalue"))):
-                return False
-    except Exception as e:
-        logger.warning(f"failed matching clause with exception: {e}")
-        return False
-
-    return True
-
-
-def match_variant_clause(variant: Variant, where: RepeatedCompositeFieldContainer[BinOp]) -> bool:
-    try:
-        for clause in where:
-            lvalue = VariantClause()
-            if not clause.lvalue.Unpack(lvalue):
-                raise TypeError("variant lvalue expects a field type")
-
-            if not _OP_EVALUATE[clause.op](variant[lvalue.v].value, getattr(clause, clause.WhichOneof("rvalue"))):
-                return False
-    except Exception as e:
-        logger.warning(f"failed matching clause with exception: {e}")
-        return False
-
-    return True
+from gtools.proxy.extension.server.handler import NETPACKET_TO_INTEREST_TYPE, TANKPACKET_TO_INTEREST_TYPE, ExtensionHandler, Extension, hash_interest
 
 
 class ExtensionManager:
@@ -322,7 +40,7 @@ class ExtensionManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._extensions: dict[bytes, Extension] = {}
-        self._interest_map: defaultdict[InterestType, list[Client]] = defaultdict(list)
+        self._interest_map: defaultdict[InterestType, list[ExtensionHandler]] = defaultdict(list)
 
     def beat(self, id: bytes) -> None:
         if id not in self._extensions:
@@ -348,7 +66,7 @@ class ExtensionManager:
             self._extensions[ext.id] = ext
             for interest in ext.interest:
                 ent = self._interest_map[interest.interest]
-                insort(ent, Client(ext, interest), key=lambda x: -x.interest.priority)
+                insort(ent, ExtensionHandler(ext, interest), key=lambda x: -x.interest.priority)
 
     def remove_extension(self, id: bytes) -> None:
         self.logger.info(f"extension {id} disconnected")
@@ -360,185 +78,18 @@ class ExtensionManager:
             extension = self._extensions[id]
             for interest in extension.interest:
                 ent = self._interest_map[interest.interest]
-                ent.remove(Client(extension, interest))
+                ent.remove(ExtensionHandler(extension, interest))
 
             del self._extensions[id]
 
-    def get_interested_extension_any(self, interest_type: InterestType) -> Iterator[Client]:
+    def get_interested_extension_any(self, interest_type: InterestType) -> Iterator[ExtensionHandler]:
         for client in self._interest_map[interest_type]:
             yield client
 
-    def get_interested_extension(self, interest_type: InterestType, pkt: PreparedPacket) -> Iterator[Client]:
+    def get_interested_extension(self, interest_type: InterestType, pkt: PreparedPacket) -> Iterator[ExtensionHandler]:
         for client in self._interest_map[interest_type]:
-            interest = client.interest
-
-            # if the interest direction is unspecified, means it doesn't care about direction (match all)
-            # if the prepared packet direction is unspecified, we only match extension with unspecified direction
-            if interest.direction != DIRECTION_UNSPECIFIED:
-                if interest.direction != pkt.direction:
-                    continue
-
-                if TRACE:
-                    print("\t\t[matcher] direction matched, continuing")
-
-            match interest.interest:
-                case InterestType.INTEREST_PEER_CONNECT:
-                    raise NotImplementedError("INTEREST_PEER_CONNECT")
-                case InterestType.INTEREST_PEER_DISCONNECT:
-                    raise NotImplementedError("INTEREST_PEER_DISCONNECT")
-                case InterestType.INTEREST_SERVER_HELLO:
-                    raise NotImplementedError("INTEREST_SERVER_HELLO")
-                case InterestType.INTEREST_GENERIC_TEXT:
-                    if not match_strkv_clause(pkt.as_net.generic_text, interest.generic_text.where):
-                        continue
-
-                    if TRACE:
-                        print("\t\t[matcher] generic text matched, continuing")
-                case InterestType.INTEREST_GAME_MESSAGE:
-                    if interest.game_message.action:
-                        if interest.game_message.action != pkt.as_net.game_message["action", 1]:
-                            continue
-
-                    if TRACE:
-                        print("\t\t[matcher] game message matched, continuing")
-                case InterestType.INTEREST_TANK_PACKET:
-                    if not match_tank_clause(pkt.as_net.tank, interest.tank_packet.where):
-                        continue
-
-                    if TRACE:
-                        print("\t\t[matcher] tank packet matched, continuing")
-                case InterestType.INTEREST_ERROR:
-                    raise NotImplementedError("INTEREST_ERROR")
-                case InterestType.INTEREST_TRACK:
-                    raise NotImplementedError("INTEREST_TRACK")
-                case InterestType.INTEREST_CLIENT_LOG_REQUEST:
-                    raise NotImplementedError("INTEREST_CLIENT_LOG_REQUEST")
-                case InterestType.INTEREST_CLIENT_LOG_RESPONSE:
-                    raise NotImplementedError("INTEREST_CLIENT_LOG_RESPONSE")
-
-            if interest.interest in _TANK_INTEREST:
-                matched = True
-                handled_further = {InterestType.INTEREST_CALL_FUNCTION}
-                if interest.interest not in handled_further and (which := interest.WhichOneof("payload")):
-                    # TODO: fix this, where contains and clauses, should be handled inside
-                    i: Message = getattr(interest, which)
-                    if (clauses := getattr(i, "where")) is not None:
-                        if not match_tank_clause(pkt.as_net.tank, clauses):
-                            continue
-
-                        if TRACE:
-                            print(f"\t\t[matcher] top-level tank clause for {InterestType.Name(interest.interest)} matched, continuing")
-
-                        matched = bool(clauses)
-
-                match interest.interest:
-                    case InterestType.INTEREST_STATE:
-                        pass
-                    case InterestType.INTEREST_CALL_FUNCTION:
-                        if not match_variant_clause(Variant.deserialize(pkt.as_net.tank.extended_data), interest.call_function.where):
-                            matched = False
-                    case InterestType.INTEREST_UPDATE_STATUS:
-                        pass
-                    case InterestType.INTEREST_TILE_CHANGE_REQUEST:
-                        pass
-                    case InterestType.INTEREST_SEND_MAP_DATA:
-                        pass
-                    case InterestType.INTEREST_SEND_TILE_UPDATE_DATA:
-                        pass
-                    case InterestType.INTEREST_SEND_TILE_UPDATE_DATA_MULTIPLE:
-                        pass
-                    case InterestType.INTEREST_TILE_ACTIVATE_REQUEST:
-                        pass
-                    case InterestType.INTEREST_TILE_APPLY_DAMAGE:
-                        pass
-                    case InterestType.INTEREST_SEND_INVENTORY_STATE:
-                        pass
-                    case InterestType.INTEREST_ITEM_ACTIVATE_REQUEST:
-                        pass
-                    case InterestType.INTEREST_ITEM_ACTIVATE_OBJECT_REQUEST:
-                        pass
-                    case InterestType.INTEREST_SEND_TILE_TREE_STATE:
-                        pass
-                    case InterestType.INTEREST_MODIFY_ITEM_INVENTORY:
-                        pass
-                    case InterestType.INTEREST_ITEM_CHANGE_OBJECT:
-                        pass
-                    case InterestType.INTEREST_SEND_LOCK:
-                        pass
-                    case InterestType.INTEREST_SEND_ITEM_DATABASE_DATA:
-                        pass
-                    case InterestType.INTEREST_SEND_PARTICLE_EFFECT:
-                        pass
-                    case InterestType.INTEREST_SET_ICON_STATE:
-                        pass
-                    case InterestType.INTEREST_ITEM_EFFECT:
-                        pass
-                    case InterestType.INTEREST_SET_CHARACTER_STATE:
-                        pass
-                    case InterestType.INTEREST_PING_REPLY:
-                        pass
-                    case InterestType.INTEREST_PING_REQUEST:
-                        pass
-                    case InterestType.INTEREST_GOT_PUNCHED:
-                        pass
-                    case InterestType.INTEREST_APP_CHECK_RESPONSE:
-                        pass
-                    case InterestType.INTEREST_APP_INTEGRITY_FAIL:
-                        pass
-                    case InterestType.INTEREST_DISCONNECT:
-                        pass
-                    case InterestType.INTEREST_BATTLE_JOIN:
-                        pass
-                    case InterestType.INTEREST_BATTLE_EVENT:
-                        pass
-                    case InterestType.INTEREST_USE_DOOR:
-                        pass
-                    case InterestType.INTEREST_SEND_PARENTAL:
-                        pass
-                    case InterestType.INTEREST_GONE_FISHIN:
-                        pass
-                    case InterestType.INTEREST_STEAM:
-                        pass
-                    case InterestType.INTEREST_PET_BATTLE:
-                        pass
-                    case InterestType.INTEREST_NPC:
-                        pass
-                    case InterestType.INTEREST_SPECIAL:
-                        pass
-                    case InterestType.INTEREST_SEND_PARTICLE_EFFECT_V2:
-                        pass
-                    case InterestType.INTEREST_ACTIVATE_ARROW_TO_ITEM:
-                        pass
-                    case InterestType.INTEREST_SELECT_TILE_INDEX:
-                        pass
-                    case InterestType.INTEREST_SEND_PLAYER_TRIBUTE_DATA:
-                        pass
-                    case InterestType.INTEREST_FTUE_SET_ITEM_TO_QUICK_INVENTORY:
-                        pass
-                    case InterestType.INTEREST_PVE_NPC:
-                        pass
-                    case InterestType.INTEREST_PVP_CARD_BATTLE:
-                        pass
-                    case InterestType.INTEREST_PVE_APPLY_PLAYER_DAMAGE:
-                        pass
-                    case InterestType.INTEREST_PVE_NPC_POSITION_UPDATE:
-                        pass
-                    case InterestType.INTEREST_SET_EXTRA_MODS:
-                        pass
-                    case InterestType.INTEREST_ON_STEP_TILE_MOD:
-                        pass
-                    case InterestType.INTEREST_UNSPECIFIED:
-                        pass
-
-                if not matched:
-                    continue
-
-                if TRACE:
-                    print("\t\t[matcher] tank matched, continuing")
-
-            if TRACE:
-                print(f"\t\t[matcher] all matched for extension {interest}")
-            yield client
+            if client.interested(pkt):
+                yield client
 
     def get_extension(self, id: bytes) -> Extension:
         return self._extensions[id]
@@ -560,7 +111,7 @@ class PacketCallback:
 
 
 class PendingChain:
-    def __init__(self, id: bytes, chain: deque[Client], current: PendingPacket) -> None:
+    def __init__(self, id: bytes, chain: deque[ExtensionHandler], current: PendingPacket) -> None:
         self.id = id
         self.chain = chain
         self.processed_chain: dict[bytes, int] = {}  # ext_id: interest hash
@@ -794,27 +345,29 @@ class Broker:
                 self.logger.error(f"failed to send packet to {ext.id}: {e}")
                 continue
 
-    def _get_interested_extension(self, pkt: PreparedPacket) -> Iterator[Client]:
-        interest_type = _PACKET_TO_INTEREST_TYPE[pkt.as_net.type]
-        interest_type2: list[Client] = []
+    def _get_interested_extension(self, pkt: PreparedPacket) -> Iterator[ExtensionHandler]:
+        interest_type = NETPACKET_TO_INTEREST_TYPE[pkt.as_net.type]
+
+        # match any subpacket of INTEREST_TANK_PACKET such as INTEREST_STATE
+        tank_specific: list[ExtensionHandler] = []
         if pkt.as_net.type == NetType.TANK_PACKET:
-            interest_type2.extend(
+            tank_specific.extend(
                 self._extension_mgr.get_interested_extension(
-                    _PACKET_TO_INTEREST_TYPE2[pkt.as_net.tank.type],
+                    TANKPACKET_TO_INTEREST_TYPE[pkt.as_net.tank.type],
                     pkt,
                 )
             )
 
         for client in itertools.chain(
             self._extension_mgr.get_interested_extension(interest_type, pkt),
-            interest_type2,
+            tank_specific,
         ):
             yield client
 
     def _build_chain(
         self,
         pkt: PreparedPacket,
-        out: deque[Client],
+        out: deque[ExtensionHandler],
         pred: Callable[[Extension, Interest], bool] | None = None,
     ) -> None:
         for client in self._get_interested_extension(pkt):
@@ -824,17 +377,13 @@ class Broker:
                         print(f"\t\tinterested for {pkt}:\n\t{client.ext.id}\n\t{repr(client.interest).replace('\n', '\n\t')}")
                     out.append(client)
 
-    def _utob(self, i: int) -> bytes:
-        return i.to_bytes((i.bit_length() + 7) // 8)
-
-    # if it returns none, then either there is no extension, or no extension matched
     def process_event(self, pkt: PreparedPacket, callback: PacketCallback | None = None) -> tuple[PendingPacket, bool] | None:
         """returns the (processed packet, cancelled) or None
         None can mean there is no extension, no extension matched,
         or the blocking mode is non-blocking or expects no reply
         """
         start = time.monotonic_ns()
-        chain: deque[Client] = deque()
+        chain: deque[ExtensionHandler] = deque()
         for client in self._get_interested_extension(pkt):
             if TRACE:
                 print(f"\t\tMATCHING CLIENT (MODE={BlockingMode.Name(client.interest.blocking_mode)}) FOR {pkt}: {client}")

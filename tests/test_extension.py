@@ -12,7 +12,7 @@ from extension.utils import UtilityExtension
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.highres_sleep import nanosleep
-from gtools.proxy.extension.sdk_utils import s
+from gtools.proxy.extension.client.sdk_utils import s
 from tests import verify
 
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
@@ -35,8 +35,8 @@ from gtools.protogen.extension_pb2 import (
     InterestState,
     PendingPacket,
 )
-from gtools.proxy.extension.broker import Broker, PacketCallback
-from gtools.proxy.extension.sdk import Extension, dispatch, dispatch_fallback, register_thread
+from gtools.proxy.extension.server.broker import Broker, PacketCallback
+from gtools.proxy.extension.client.sdk import Extension, dispatch, dispatch_fallback, register_thread
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -1612,7 +1612,7 @@ class ExtensionBlockGazette(Extension):
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
-                        where=[
+                        variant=[
                             s.variant[0] == b"OnDialogRequest",
                             s.variant[1].contains(b"The Growtopia Gazette"),
                         ]
@@ -1901,7 +1901,7 @@ class MatchVariant(Extension):
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
-                        where=[
+                        variant=[
                             s.variant[0] == b"Test",
                             s.variant[1] == b"Test2",
                         ]
@@ -1928,7 +1928,7 @@ class MatchVariantContains(Extension):
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
-                        where=[
+                        variant=[
                             s.variant[0] == b"Test",
                             s.variant[1].contains(b"Hello World"),
                         ]

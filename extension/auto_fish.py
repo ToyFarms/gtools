@@ -14,9 +14,9 @@ from gtools.protogen.extension_pb2 import (
     Interest,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension, dispatch
+from gtools.proxy.extension.client.sdk import Extension, dispatch
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
-from gtools.proxy.extension.sdk_utils import helper
+from gtools.proxy.extension.client.sdk_utils import helper
 from gtools.proxy.state import Status
 from thirdparty.enet.bindings import ENetPacketFlag
 

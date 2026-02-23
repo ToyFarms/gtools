@@ -36,8 +36,8 @@ from gtools.protogen.extension_pb2 import (
 )
 from gtools.proxy.accountmgr import AccountManager
 from gtools.proxy.http_proxy import setup_server
-from gtools.proxy.extension.broker import Broker
-from gtools.proxy.extension.sdk import Extension, register_thread
+from gtools.proxy.extension.server.broker import Broker
+from gtools.proxy.extension.client.sdk import Extension, register_thread
 from gtools.proxy.proxy import Proxy
 from thirdparty.enet.bindings import ENetPacketFlag
 from gtools import setting

@@ -25,8 +25,8 @@ from gtools.protogen.extension_pb2 import (
     InterestState,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension, dispatch, register_thread
-from gtools.proxy.extension.sdk_utils import helper
+from gtools.proxy.extension.client.sdk import Extension, dispatch, register_thread
+from gtools.proxy.extension.client.sdk_utils import helper
 from gtools.proxy.state import Status
 from thirdparty.enet.bindings import ENetPacketFlag
 
@@ -287,7 +287,7 @@ class AutoBreakExtension(Extension):
     @dispatch(
         Interest(
             interest=INTEREST_CALL_FUNCTION,
-            call_function=InterestCallFunction(where=[s.variant[0] == b"OnTalkBubble", s.variant[2] == b"The `2MAGPLANT 5000`` is empty!"]),
+            call_function=InterestCallFunction(variant=[s.variant[0] == b"OnTalkBubble", s.variant[2] == b"The `2MAGPLANT 5000`` is empty!"]),
             direction=DIRECTION_SERVER_TO_CLIENT,
             blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
             id=s.auto,

@@ -24,9 +24,9 @@ from gtools.protogen.extension_pb2 import (
     InterestType,
     PendingPacket,
 )
-from gtools.proxy.extension.sdk import Extension, dispatch, dispatch_fallback
+from gtools.proxy.extension.client.sdk import Extension, dispatch, dispatch_fallback
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
-from gtools.proxy.extension.sdk_utils import helper
+from gtools.proxy.extension.client.sdk_utils import helper
 from thirdparty.enet.bindings import ENetPacketFlag
 
 
@@ -83,7 +83,7 @@ class UtilityExtension(Extension):
                 s.command_toggle("/exit", Action.EXIT),
                 Interest(
                     interest=InterestType.INTEREST_GAME_MESSAGE,
-                    game_message=InterestGameMessage(action=b"quit_to_exit"),
+                    game_message=InterestGameMessage(where=[s.strkv[b"action", 1] == b"quit_to_exit"]),
                     direction=DIRECTION_CLIENT_TO_SERVER,
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     id=Action.BLOCK_EXTRA_QUIT_TO_EXIT,
@@ -91,7 +91,7 @@ class UtilityExtension(Extension):
                 s.command("/warp", Action.WARP),
                 Interest(
                     interest=InterestType.INTEREST_CALL_FUNCTION,
-                    call_function=InterestCallFunction(where=[s.variant[0] == b"OnRequestWorldSelectMenu"]),
+                    call_function=InterestCallFunction(variant=[s.variant[0] == b"OnRequestWorldSelectMenu"]),
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
                     id=Action.EXITED,
@@ -102,7 +102,7 @@ class UtilityExtension(Extension):
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
-                        where=[
+                        variant=[
                             s.variant[0] == b"OnDialogRequest",
                             s.variant[1].contains(b"How many to drop"),
                         ]
@@ -114,7 +114,7 @@ class UtilityExtension(Extension):
                     blocking_mode=BLOCKING_MODE_BLOCK,
                     direction=DIRECTION_SERVER_TO_CLIENT,
                     call_function=InterestCallFunction(
-                        where=[
+                        variant=[
                             s.variant[0] == b"OnDialogRequest",
                             s.variant[1].contains(b"The Growtopia Gazette"),
                         ]
@@ -315,7 +315,6 @@ class UtilityExtension(Extension):
         self.fast_drop_amt = amt
 
         return self.cancel()
-
 
     def destroy(self) -> None:
         pass
