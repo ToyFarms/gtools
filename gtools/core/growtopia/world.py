@@ -89,11 +89,13 @@ from gtools.baked.items import (
     WEEPING_WILLOW,
     WEEPING_WILLOW_BRANCH,
     WEEPING_WILLOW_FOLIAGE,
+    WELL_OF_LOVE,
+    WINTERFEST_CALENDAR_2017,
 )
 from gtools.core.buffer import Buffer
 import cbor2
 
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoCollisionType, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RTTexManager
@@ -102,7 +104,6 @@ import numpy as np
 import numpy.typing as npt
 
 from gtools import setting
-
 
 # shoutout https://github.com/CLOEI/gtworld-r/tree/284a2bb9f501e740401c4f0aa025d11adbed2b02
 # and https://github.com/badewen/Growtopia-Things/tree/187a6b312b5e0acec24ccf6749bda113a0279e02
@@ -549,8 +550,7 @@ class ProviderTile(TileExtra):
         t = cls()
         t.time_passed = s.read_u32()
 
-        # well of love, winter calendar 2017
-        if (fg_id == 10656 and format_version > 16) or fg_id == 5318:
+        if (fg_id == WELL_OF_LOVE and format_version > 16) or fg_id == WINTERFEST_CALENDAR_2017:
             t.time_ms = s.read_u32()
 
         return t
@@ -2395,6 +2395,8 @@ class World:
                     tile.fg_tex_index = handle_smart_edge_horiz_connection(self, tile, 0)
             case ItemInfoTextureType.SMART_CLING2:
                 tile.fg_tex_index = handle_smart_cling2_connection(self, tile, 0)
+            case ItemInfoTextureType.SMART_CLING:
+                tile.fg_tex_index = handle_smart_cling_connection(self, tile, 0)
             case ItemInfoTextureType.RANDOM:
                 if item.is_seed():
                     tile.fg_tex_index = handle_random_seed_connection(self, tile, 0)
@@ -2418,6 +2420,8 @@ class World:
                     tile.bg_tex_index = handle_smart_edge_horiz_connection(self, tile, 1)
             case ItemInfoTextureType.SMART_CLING2:
                 tile.bg_tex_index = handle_smart_cling2_connection(self, tile, 1)
+            case ItemInfoTextureType.SMART_CLING:
+                tile.bg_tex_index = handle_smart_cling_connection(self, tile, 1)
             case ItemInfoTextureType.RANDOM:
                 tile.bg_tex_index = handle_random_connection(self, tile, 1)
             case ItemInfoTextureType.SMART_EDGE_VERT:
@@ -3776,3 +3780,29 @@ def handle_smart_edge_vert_connection(world: World, tile: Tile, mode: int, /) ->
             if v29:
                 return 3 * (not should_connect) + 4
     return result
+
+
+def handle_smart_cling_connection(world: World, tile: Tile, _a3: int) -> int:
+    # idk why this texture is not handled with the other types
+    def should_connect(x: int, y: int) -> bool:
+        if not (0 <= x < world.width and 0 <= y < world.height):
+            return False
+        neighbor = world.get_tile(ivec2(x, y))
+        if not neighbor or neighbor.fg_id == 0:
+            return False
+        return item_database.get(neighbor.fg_id).collision_type == ItemInfoCollisionType.FULL
+
+    x, y = tile.pos.x, tile.pos.y
+
+    checks = [
+        (3, x, y + 1),  # bottom
+        (1, x, y - 1),  # top
+        (0, x - 1, y),  # left
+        (2, x + 1, y),  # right
+    ]
+
+    for texture, nx, ny in checks:
+        if should_connect(nx, ny):
+            return texture
+
+    return 4
