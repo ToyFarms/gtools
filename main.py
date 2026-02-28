@@ -16,7 +16,7 @@ from pyglm.glm import ivec4
 
 from gtools import flags
 from gtools.core.block_sigint import block_sigint
-from gtools.core.growtopia.items_dat import item_database
+from gtools.core.growtopia.items_dat import ItemFlag, item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.rttex import RTTexManager
 from gtools.core.growtopia.strkv import StrKV
@@ -449,7 +449,47 @@ if __name__ == "__main__":
     elif args.cmd == "render":
         world = World.from_tank(Path(args.world).read_bytes())
 
-        img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
+        def composite(top: np.ndarray, bottom: np.ndarray, dx: int = 0, dy: int = 0) -> np.ndarray:
+            H, W, _ = top.shape
+
+            shifted = np.zeros_like(bottom)
+
+            dest_x0 = max(0, dx)
+            dest_y0 = max(0, dy)
+            src_x0 = max(0, -dx)
+            src_y0 = max(0, -dy)
+
+            copy_w = min(W - src_x0, W - dest_x0)
+            copy_h = min(H - src_y0, H - dest_y0)
+
+            if copy_w > 0 and copy_h > 0:
+                dest_x1 = dest_x0 + copy_w
+                dest_y1 = dest_y0 + copy_h
+                src_x1 = src_x0 + copy_w
+                src_y1 = src_y0 + copy_h
+
+                shifted[dest_y0:dest_y1, dest_x0:dest_x1, :] = bottom[src_y0:src_y1, src_x0:src_x1, :]
+
+            t = top.astype(np.float32) / 255.0
+            b = shifted.astype(np.float32) / 255.0
+
+            ta = t[..., 3:4]
+            ba = b[..., 3:4]
+            out_a = ta + ba * (1.0 - ta)
+            out_rgb_num = t[..., :3] * ta + b[..., :3] * ba * (1.0 - ta)
+
+            out_rgb = np.zeros_like(out_rgb_num)
+            mask = out_a[..., 0] > 0
+            if np.any(mask):
+                out_rgb[mask] = out_rgb_num[mask] / out_a[mask]
+
+            out = np.concatenate((out_rgb, out_a), axis=-1)
+            out_uint8 = np.clip((out * 255.0).round(), 0, 255).astype(np.uint8)
+            return out_uint8
+
+        base_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
+        shadow_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
+
         start = time.perf_counter()
         try:
             world.update_all_connection()
@@ -465,17 +505,38 @@ if __name__ == "__main__":
                     tex = tile.get_bg_texture(mgr)
                     dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
                     alpha_mask = tex[:, :, 3] > 4
-                    dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                    dst_slice = base_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
                     dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
+
+                    item = item_database.get(tile.bg_id)
+                    if item.flags & ItemFlag.NO_SHADOW == 0:
+                        tex = tile.get_bg_texture(mgr)
+                        dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
+                        alpha_mask = tex[:, :, 3] > 4
+                        dst_slice = shadow_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                        dst_slice[..., :3][alpha_mask] = 0
+                        dst_slice[..., 3][alpha_mask] = tex[..., 3][alpha_mask]
 
                 if tile.fg_id > 0:
                     tex = tile.get_fg_texture(mgr)
                     dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
                     alpha_mask = tex[:, :, 3] > 4
-                    dst_slice = img[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                    dst_slice = base_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
                     dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
+
+                    item = item_database.get(tile.fg_id)
+                    if item.flags & ItemFlag.NO_SHADOW == 0:
+                        tex = tile.get_fg_texture(mgr)
+                        dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
+                        alpha_mask = tex[:, :, 3] > 4
+                        dst_slice = shadow_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                        dst_slice[..., :3][alpha_mask] = 0
+                        dst_slice[..., 3][alpha_mask] = tex[..., 3][alpha_mask]
             except:
                 break
+
+        img = composite(base_layer, shadow_layer, dx=-2, dy=2)
+
         print(f"rendering took {time.perf_counter() - start:.3f}s")
 
         Image.fromarray(img).show()
