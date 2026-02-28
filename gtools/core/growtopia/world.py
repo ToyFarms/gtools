@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import IntFlag, IntEnum
+from functools import cache
 import logging
 from typing import Iterator, Type, overload
 
@@ -68,7 +69,6 @@ from gtools.baked.items import (
     MASTER_PENG_STONEWORK,
     MONOCHROMATIC_BEDROCK,
     MYSTERY_DOOR,
-    OFFERING_TABLE,
     OPERATING_TABLE,
     PARTY_PROJECTOR,
     PURE_MAGIC_ORE,
@@ -95,6 +95,7 @@ from gtools.baked.items import (
 from gtools.core.buffer import Buffer
 import cbor2
 
+from gtools.core.color import color_matrix_filter
 from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoCollisionType, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
@@ -1783,6 +1784,38 @@ class TileFlags(IntFlag):
     PAINTED_GREEN = 1 << 14
     PAINTED_BLUE = 1 << 15
 
+    def is_painted(self) -> bool:
+        return self.value & (TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE) != 0
+
+
+def _make_matrix(r: float, g: float, b: float) -> npt.NDArray[np.float64]:
+    M = np.zeros((4, 5), dtype=np.float64)
+    M[0, 0] = r
+    M[1, 1] = g
+    M[2, 2] = b
+    M[3, 3] = 1.0
+    return M
+
+
+_COLOR_MATRICES = {
+    0b000: _make_matrix(1.0, 1.0, 1.0),  # 000 none
+    0b001: _make_matrix(1.0, 0.235, 0.235),  # 001 red
+    0b010: _make_matrix(0.235, 1.0, 0.235),  # 010 green
+    0b011: _make_matrix(1.0, 1.0, 0.235),  # 011 yellow
+    0b100: _make_matrix(0.235, 0.235, 1.0),  # 100 blue
+    0b101: _make_matrix(0.235, 1.0, 1.0),  # 101 aqua
+    0b110: _make_matrix(1.0, 0.235, 1.0),  # 110 purple
+    0b111: _make_matrix(0.235, 0.235, 0.235),  # 111 charcoal
+}
+
+COLOR_MASK = TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE
+COLOR_SHIFT = TileFlags.PAINTED_RED.bit_length() - 1
+
+
+def _get_color_matrix(flags: TileFlags) -> npt.NDArray[np.float64]:
+    key = (int(flags) & COLOR_MASK) >> COLOR_SHIFT
+    return _COLOR_MATRICES[key].copy()
+
 
 @dataclass(slots=True)
 class Tile:
@@ -1841,7 +1874,12 @@ class Tile:
         off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
         tex = (ivec2(item.tex_coord_x, item.tex_coord_y) + off) * 32
 
-        return mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32, flip_x=is_flipped)
+        tex = mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32, flip_x=is_flipped)
+        # in the website, they uses css feColorMatrix which uses linear space, but in the game they don't,
+        # causing a more saturated color as opposed to a "pastel" look in the website
+        tex = color_matrix_filter(tex, _get_color_matrix(self.flags), linear=False)
+
+        return tex
 
     def get_fg_texture(self, mgr: RTTexManager) -> npt.NDArray[np.uint8]:
         return self.get_texture(mgr, self.fg_id, self.fg_tex_index)
