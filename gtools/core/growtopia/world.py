@@ -1794,6 +1794,7 @@ def _make_matrix(r: float, g: float, b: float) -> npt.NDArray[np.float64]:
     M[1, 1] = g
     M[2, 2] = b
     M[3, 3] = 1.0
+    M.flags.writeable = False
     return M
 
 
@@ -1814,7 +1815,7 @@ COLOR_SHIFT = TileFlags.PAINTED_RED.bit_length() - 1
 
 def _get_color_matrix(flags: TileFlags) -> npt.NDArray[np.float64]:
     key = (int(flags) & COLOR_MASK) >> COLOR_SHIFT
-    return _COLOR_MATRICES[key].copy()
+    return _COLOR_MATRICES[key]
 
 
 @dataclass(slots=True)
