@@ -12,7 +12,7 @@ import traceback
 
 from PIL import Image
 import numpy as np
-from pyglm.glm import ivec4
+from pyglm.glm import ivec4, ivec2
 
 from gtools import flags
 from gtools.core.block_sigint import block_sigint
@@ -487,8 +487,10 @@ if __name__ == "__main__":
             out_uint8 = np.clip((out * 255.0).round(), 0, 255).astype(np.uint8)
             return out_uint8
 
-        base_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
-        shadow_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
+        bg_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
+        fg_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
+        bg_shadow_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
+        fg_shadow_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
 
         start = time.perf_counter()
         try:
@@ -496,15 +498,21 @@ if __name__ == "__main__":
         except Exception as e:
             print_exc()
 
-        def place(tex: np.ndarray) -> None:
-            dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
+        def place(tex: np.ndarray, id: int, pos: ivec2, is_bg: bool) -> None:
+            if id <= 0:
+                return
+
+            base_layer = bg_layer if is_bg else fg_layer
+            shadow_layer = bg_shadow_layer if is_bg else fg_shadow_layer
+
+            dst = ivec4(pos.x * 32, pos.y * 32, 32, 32)
             alpha_mask = tex[:, :, 3] > 4
             dst_slice = base_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
             dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
 
-            item = item_database.get(tile.bg_id)
+            item = item_database.get(id)
             if item.flags & ItemFlag.NO_SHADOW == 0:
-                dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
+                dst = ivec4(pos.x * 32, pos.y * 32, 32, 32)
                 alpha_mask = tex[:, :, 3] > 4
                 dst_slice = shadow_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
                 dst_slice[..., :3][alpha_mask] = 0
@@ -514,16 +522,13 @@ if __name__ == "__main__":
         for i, tile in enumerate(world.tiles):
             if i == world.garbage_start:
                 break
-            try:
-                if tile.bg_id > 0:
-                    place(tile.get_bg_texture(mgr))
 
-                if tile.fg_id > 0:
-                    place(tile.get_fg_texture(mgr))
-            except:
-                break
+            place(tile.get_bg_texture(mgr), tile.bg_id, tile.pos, is_bg=True)
+            place(tile.get_fg_texture(mgr), tile.fg_id, tile.pos, is_bg=False)
 
-        img = composite(base_layer, shadow_layer, dx=-2, dy=2)
+        bg = composite(bg_layer, bg_shadow_layer, dx=-2, dy=2)
+        fg = composite(fg_layer, fg_shadow_layer, dx=-2, dy=2)
+        img = composite(fg, bg)
 
         print(f"rendering took {time.perf_counter() - start:.3f}s")
 
