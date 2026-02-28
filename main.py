@@ -497,19 +497,18 @@ if __name__ == "__main__":
             print_exc()
 
         def place(tex: np.ndarray) -> None:
-            if id:
+            dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
+            alpha_mask = tex[:, :, 3] > 4
+            dst_slice = base_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+            dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
+
+            item = item_database.get(tile.bg_id)
+            if item.flags & ItemFlag.NO_SHADOW == 0:
                 dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
                 alpha_mask = tex[:, :, 3] > 4
-                dst_slice = base_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
-                dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
-
-                item = item_database.get(tile.bg_id)
-                if item.flags & ItemFlag.NO_SHADOW == 0:
-                    dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)
-                    alpha_mask = tex[:, :, 3] > 4
-                    dst_slice = shadow_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
-                    dst_slice[..., :3][alpha_mask] = 0
-                    dst_slice[..., 3][alpha_mask] = tex[..., 3][alpha_mask]
+                dst_slice = shadow_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
+                dst_slice[..., :3][alpha_mask] = 0
+                dst_slice[..., 3][alpha_mask] = tex[..., 3][alpha_mask]
 
         mgr = RTTexManager()
         for i, tile in enumerate(world.tiles):
