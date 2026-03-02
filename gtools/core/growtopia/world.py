@@ -1798,16 +1798,15 @@ def _make_matrix(r: float, g: float, b: float) -> npt.NDArray[np.float32]:
 
 
 _COLOR_MATRICES = {
-    0b000: _make_matrix(1.0, 1.0, 1.0),  # 000 none
-    0b001: _make_matrix(1.0, 0.235, 0.235),  # 001 red
-    0b010: _make_matrix(0.235, 1.0, 0.235),  # 010 green
-    0b011: _make_matrix(1.0, 1.0, 0.235),  # 011 yellow
-    0b100: _make_matrix(0.235, 0.235, 1.0),  # 100 blue
-    0b101: _make_matrix(0.235, 1.0, 1.0),  # 101 aqua
-    0b110: _make_matrix(1.0, 0.235, 1.0),  # 110 purple
-    0b111: _make_matrix(0.235, 0.235, 0.235),  # 111 charcoal
+    0b000: _make_matrix(1.0, 1.0, 1.0),  # none
+    0b001: _make_matrix(1.0, 0.235, 0.235),  # red
+    0b010: _make_matrix(0.235, 1.0, 0.235),  # green
+    0b011: _make_matrix(1.0, 1.0, 0.235),  # yellow
+    0b100: _make_matrix(0.235, 0.235, 1.0),  # blue
+    0b101: _make_matrix(1.0, 0.235, 1.0),  # purple
+    0b110: _make_matrix(0.235, 1.0, 1.0),  # aqua
+    0b111: _make_matrix(0.235, 0.235, 0.235),  # charcoal
 }
-
 COLOR_MASK = TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE
 COLOR_SHIFT = TileFlags.PAINTED_RED.bit_length() - 1
 
