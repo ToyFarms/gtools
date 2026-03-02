@@ -1787,8 +1787,8 @@ class TileFlags(IntFlag):
         return self.value & (TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE) != 0
 
 
-def _make_matrix(r: float, g: float, b: float) -> npt.NDArray[np.float64]:
-    M = np.zeros((4, 5), dtype=np.float64)
+def _make_matrix(r: float, g: float, b: float) -> npt.NDArray[np.float32]:
+    M = np.zeros((4, 5), dtype=np.float32)
     M[0, 0] = r
     M[1, 1] = g
     M[2, 2] = b
@@ -1812,7 +1812,7 @@ COLOR_MASK = TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED
 COLOR_SHIFT = TileFlags.PAINTED_RED.bit_length() - 1
 
 
-def _get_color_matrix(flags: TileFlags) -> npt.NDArray[np.float64]:
+def _get_color_matrix(flags: TileFlags) -> npt.NDArray[np.float32]:
     key = (int(flags) & COLOR_MASK) >> COLOR_SHIFT
     return _COLOR_MATRICES[key]
 
