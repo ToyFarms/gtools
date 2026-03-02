@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 from enum import IntFlag, IntEnum
-from functools import cache
 import logging
 from typing import Iterator, Type, overload
 
@@ -2204,22 +2203,11 @@ class World:
         self.tiles.sort(key=lambda tile: (tile.pos.y, tile.pos.x))
 
     def tile_exists(self, pos: ivec2 | int) -> bool:
-        if isinstance(pos, int):
-            pos = ivec2(pos % self.width, pos // self.width)
-
-        for tile in self.tiles:
-            if tile.pos == pos:
-                return True
-
-        return False
+        return self.get_tile(pos) is not None
 
     def get_front(self, pos: ivec2 | int) -> int:
-        if isinstance(pos, int):
-            pos = ivec2(pos % self.width, pos // self.width)
-
-        for tile in self.tiles:
-            if tile.pos == pos:
-                return tile.front
+        if (tile := self.get_tile(pos)) is not None:
+            return tile.front
 
         return 0
 
@@ -2237,19 +2225,19 @@ class World:
             else:
                 x = ivec2(x, y)
 
-        for tile in self.tiles:
-            if tile.pos == x:
-                return tile
+        idx = x.y * self.width + x.x
+        if idx > len(self.tiles) - 1:
+            self.logger.warning(f"tile {x} in {self.name} does not exist")
+            return
 
-        self.logger.warning(f"tile {x} in {self.name} does not exist")
-        return None
+        tile = self.tiles[idx]
+        if tile.index != idx:
+            self.logger.error(f"world tiles is unsorted, indexing logic will be flawed")
+
+        return tile
 
     def index_tile(self, pos: ivec2) -> int | None:
-        for i, tile in enumerate(self.tiles):
-            if tile.pos == pos:
-                return i
-
-        self.logger.warning(f"tile {pos} in {self.name} does not exists")
+        return pos.y * self.width + pos.x
 
     def index_to_pos(self, index: int) -> ivec2:
         return ivec2(index % self.width, index // self.width)
@@ -2472,17 +2460,17 @@ class World:
         for tile in self.tiles:
             self.update_tile_connection(tile)
 
-    def update_3x3_connection(self, tile: Tile | ivec2 | int) -> None:
-        if isinstance(tile, Tile):
-            pos = tile.pos
-        elif isinstance(tile, int):
-            pos = self.index_to_pos(tile)
+    def update_3x3_connection(self, tile_or_pos: Tile | ivec2 | int) -> None:
+        if isinstance(tile_or_pos, Tile):
+            tile = tile_or_pos
         else:
-            pos = ivec2(tile)
+            tile = self.get_tile(tile_or_pos)
+            if not tile:
+                return
 
         for y in range(-1, 2):
             for x in range(-1, 2):
-                if n := self.get_tile(pos + ivec2(x, y)):
+                if n := self.get_tile(tile.pos + ivec2(x, y)):
                     self.update_tile_connection(n)
 
     def update_tree(self, tile: Tile, item_id: int, harvest: bool, spawn_seed_flag: bool, seedling_flag: bool) -> None:

@@ -50,12 +50,8 @@ def compiler_supported_targets(canon: str) -> list[str]:
     return [platform.system()]
 
 
-def make_output_name(src_dir: Path, system: str | None = None) -> str:
-    c_files = list(src_dir.glob("*.c"))
-    if len(c_files) == 1:
-        base = c_files[0].stem
-    else:
-        base = src_dir.name or "lib"
+def make_output_name_for_source(src_path: Path, system: str | None = None) -> str:
+    base = src_path.stem
     system = system or platform.system()
     if system == "Windows":
         return f"{base}.dll"
@@ -166,38 +162,48 @@ def compile_in_directory(compiler_id: str, src_dir: Path, target_system: str | N
     if not srcs:
         return False, "no C source files found"
 
-    src_paths = [src_dir / s for s in srcs]
-    extra_flags = collect_compiler_flags(src_paths, compiler_id)
-
-    if extra_flags:
-        click.echo(f"  found custom flags for {compiler_id}: {shlex.join(extra_flags)}")
-
-    out_name = make_output_name(src_dir, system=target_system)
-    out_path = src_dir / out_name
-    cc_exe = guess_compiler_executable(compiler_id)
-
-    if compiler_id == "msvc":
-        if (target_system or platform.system()) != "Windows":
-            return False, f"msvc cannot target {target_system}"
-        cmd = build_command_for_msvc(srcs, out_name, extra_flags=extra_flags)
-    else:
-        cmd = build_command_for_gcc_clang(cc_exe, srcs, out_name, target_canon=compiler_id, target_system=target_system, extra_flags=extra_flags)
-
     old_cwd = Path.cwd()
     try:
         os.chdir(src_dir)
-        click.echo(f"compiling for target={target_system or platform.system()} in {src_dir} with {cc_exe!s}: {shlex.join(cmd)}")
-        try:
-            call(cmd)
-        except Exception as exc:
-            return False, f"compiler failed: {exc}"
+
+        for src_name in srcs:
+            src_path = src_dir / src_name
+            extra_flags = collect_compiler_flags([src_path], compiler_id)
+
+            if extra_flags:
+                click.echo(f"  found custom flags for {compiler_id} in {src_name}: {shlex.join(extra_flags)}")
+
+            out_name = make_output_name_for_source(src_path, system=target_system)
+            out_path = src_dir / out_name
+            cc_exe = guess_compiler_executable(compiler_id)
+
+            if compiler_id == "msvc":
+                if (target_system or platform.system()) != "Windows":
+                    return False, f"msvc cannot target {target_system}"
+                cmd = build_command_for_msvc([src_name], out_name, extra_flags=extra_flags)
+            else:
+                cmd = build_command_for_gcc_clang(
+                    cc_exe,
+                    [src_name],
+                    out_name,
+                    target_canon=compiler_id,
+                    target_system=target_system,
+                    extra_flags=extra_flags,
+                )
+
+            click.echo(f"compiling {src_name} for target={target_system or platform.system()} in {src_dir} with {cc_exe!s}: {shlex.join(cmd)}")
+            try:
+                call(cmd)
+            except Exception as exc:
+                return False, f"compiler failed for {src_name}: {exc}"
+
+            if not out_path.exists():
+                return False, f"compiler did not produce expected output {out_path} for source {src_name}"
+
     finally:
         os.chdir(old_cwd)
 
-    if out_path.exists():
-        return True, f"created {out_path}"
-    else:
-        return False, f"compiler did not produce expected output {out_path}"
+    return True, f"created {len(srcs)} artifact(s) in {src_dir}"
 
 
 @click.command()

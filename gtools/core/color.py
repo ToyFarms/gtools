@@ -1,47 +1,55 @@
 import numpy as np
 
 
-def srgb_to_linear(c: np.ndarray) -> np.ndarray:
-    c = c.astype(np.float64) / 255.0
-    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+def _srgb_to_linear_01(c: np.ndarray) -> np.ndarray:
+    a = 0.055
+    low_mask = c <= 0.04045
+    out = np.empty_like(c)
+    out[low_mask] = c[low_mask] / 12.92
+    out[~low_mask] = ((c[~low_mask] + a) / (1.0 + a)) ** 2.4
+    return out
 
 
-def linear_to_srgb(c: np.ndarray) -> np.ndarray:
-    return np.where(c <= 0.0031308, c * 12.92, 1.055 * (c ** (1.0 / 2.4)) - 0.055)
+def _linear_to_srgb_01(c: np.ndarray) -> np.ndarray:
+    a = 0.055
+    low_mask = c <= 0.0031308
+    out = np.empty_like(c)
+    out[low_mask] = c[low_mask] * 12.92
+    out[~low_mask] = (1.0 + a) * (c[~low_mask] ** (1.0 / 2.4)) - a
+    return out
 
 
 def color_matrix_filter(image: np.ndarray, matrix: np.ndarray, linear: bool = False) -> np.ndarray:
+    image = np.asarray(image)
     if image.ndim != 3 or image.shape[2] != 4:
         raise ValueError(f"image must be shape (H, W, 4), got {image.shape}")
 
-    matrix = np.asarray(matrix, dtype=np.float64)
+    matrix = np.asarray(matrix, dtype=np.float32)
     if matrix.shape != (4, 5):
         raise ValueError(f"matrix must be shape (4, 5), got {matrix.shape}")
 
     h, w, _ = image.shape
-    flat = image.reshape(-1, 4)
+    n = h * w
 
-    working = np.empty((h * w, 4), dtype=np.float64)
+    flat = image.reshape(n, 4)
+
+    working = np.empty((n, 4), dtype=np.float32)
+    rgb = flat[:, :3].astype(np.float32) / 255.0
+    if linear:
+        rgb = _srgb_to_linear_01(rgb)
+    working[:, :3] = rgb
+    working[:, 3] = flat[:, 3].astype(np.float32) / 255.0
+
+    weights = matrix[:, :4]
+    bias = matrix[:, 4]
+
+    result = working.dot(weights.T)
+    result += bias
+
+    np.clip(result, 0.0, 1.0, out=result)
 
     if linear:
-        working[:, :3] = srgb_to_linear(flat[:, :3])
-    else:
-        working[:, :3] = flat[:, :3].astype(np.float64) / 255.0
+        result[:, :3] = _linear_to_srgb_01(result[:, :3])
 
-    working[:, 3] = flat[:, 3].astype(np.float64) / 255.0
-
-    ones = np.ones((working.shape[0], 1), dtype=np.float64)
-    augmented = np.concatenate([working, ones], axis=1)
-    result = augmented @ matrix.T
-    result = np.clip(result, 0.0, 1.0)
-
-    out = np.empty_like(result)
-
-    if linear:
-        out[:, :3] = linear_to_srgb(result[:, :3])
-    else:
-        out[:, :3] = result[:, :3]
-
-    out[:, 3] = result[:, 3]
-
-    return (out * 255.0).round().astype(np.uint8).reshape(h, w, 4)
+    out = np.rint(result * 255.0).astype(np.uint8)
+    return out.reshape(h, w, 4)

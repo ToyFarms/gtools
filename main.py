@@ -7,7 +7,6 @@ from queue import Queue
 import sys
 import threading
 import time
-from traceback import print_exc
 import traceback
 
 from PIL import Image
@@ -447,43 +446,15 @@ if __name__ == "__main__":
                 traceback.print_exc()
                 break
     elif args.cmd == "render":
-        def composite(top: np.ndarray, bottom: np.ndarray, dx: int = 0, dy: int = 0) -> np.ndarray:
-            H, W, _ = top.shape
 
-            shifted = np.zeros_like(bottom)
+        def composite(top: np.ndarray, bottom: np.ndarray, dx=0, dy=0) -> np.ndarray:
+            top_im = Image.fromarray(top, mode="RGBA")
+            bot_im = Image.fromarray(bottom, mode="RGBA")
 
-            dest_x0 = max(0, dx)
-            dest_y0 = max(0, dy)
-            src_x0 = max(0, -dx)
-            src_y0 = max(0, -dy)
-
-            copy_w = min(W - src_x0, W - dest_x0)
-            copy_h = min(H - src_y0, H - dest_y0)
-
-            if copy_w > 0 and copy_h > 0:
-                dest_x1 = dest_x0 + copy_w
-                dest_y1 = dest_y0 + copy_h
-                src_x1 = src_x0 + copy_w
-                src_y1 = src_y0 + copy_h
-
-                shifted[dest_y0:dest_y1, dest_x0:dest_x1, :] = bottom[src_y0:src_y1, src_x0:src_x1, :]
-
-            t = top.astype(np.float32) / 255.0
-            b = shifted.astype(np.float32) / 255.0
-
-            ta = t[..., 3:4]
-            ba = b[..., 3:4]
-            out_a = ta + ba * (1.0 - ta)
-            out_rgb_num = t[..., :3] * ta + b[..., :3] * ba * (1.0 - ta)
-
-            out_rgb = np.zeros_like(out_rgb_num)
-            mask = out_a[..., 0] > 0
-            if np.any(mask):
-                out_rgb[mask] = out_rgb_num[mask] / out_a[mask]
-
-            out = np.concatenate((out_rgb, out_a), axis=-1)
-            out_uint8 = np.clip((out * 255.0).round(), 0, 255).astype(np.uint8)
-            return out_uint8
+            canvas = Image.new("RGBA", top_im.size, (0, 0, 0, 0))
+            canvas.paste(bot_im, (dx, dy), bot_im)
+            result = Image.alpha_composite(canvas, top_im)
+            return np.array(result)
 
         world = World.from_tank(Path(args.world).read_bytes())
 
