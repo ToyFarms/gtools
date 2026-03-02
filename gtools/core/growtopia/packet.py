@@ -151,7 +151,7 @@ class TankPacket(Serializable):
         self.int_y = int_y
         # do not check if extended_data is None, otherwise check for mismatch
         if extended_data is not None and extended_len != 0 and extended_len != len(extended_data):
-            self.logger.warning(f"extended_len ({extended_len}) supplied does not match extended_data actual length ({len(extended_data)}, {extended_data})")
+            self.logger.warning(f"extended_len ({extended_len}) supplied does not match extended_data actual length ({len(extended_data)}, {extended_data[:100]})")
         elif extended_data is None:
             extended_data = b""
         self._extended_data = extended_data
@@ -217,7 +217,7 @@ class TankPacket(Serializable):
 
         # sometimes the length advertised is outright wrong
         if tank.extended_len != len(extended_data):
-            msg = f"extended data size does not match (advertised: {tank.extended_len}, actual: {len(extended_data)}): {tank}, extended={extended_data}"
+            msg = f"extended data size does not match (advertised: {tank.extended_len}, actual: {len(extended_data)}): {tank}, extended={extended_data[:100]}"
 
             if mode == "strict":
                 raise ValueError(msg)
@@ -225,7 +225,7 @@ class TankPacket(Serializable):
 
         # sometimes the extended flag is not set even when there is extended data
         if extended_data and tank.flags & TankFlags.EXTENDED == 0:
-            msg = f"packet has extended data but the flag is not set: {tank}, extended={extended_data}"
+            msg = f"packet has extended data but the flag is not set: {tank}, extended={extended_data[:100]}"
             if mode == "strict":
                 raise ValueError(msg)
             cls.logger.warning(msg)
