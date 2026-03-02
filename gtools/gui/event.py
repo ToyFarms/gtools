@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum, auto
 import math
 from typing import Union
 import queue
@@ -23,90 +24,24 @@ class TouchEvent:
 Point = tuple[float, float]
 
 
+class GestureLock(Enum):
+    NONE = auto()
+    PAN = auto()
+    PINCH = auto()
+
+
 class TouchManager(TouchRouter):
-    def __init__(
-        self,
-        window,
-        scale_dead_zone: float = 0.03,
-        rot_dead_zone: float = 0.003,
-        spring_stiffness: float = 600.0,
-        damping: float = 25.0,
-    ) -> None:
+    def __init__(self, window, coherence_threshold: float = 0.015) -> None:
         super().__init__(window)
         self.install()
         self.active: dict[int, TouchContactEvent] = {}
-        self.start_positions: dict[int, Point] = {}
+        self.prev_positions: dict[int, Point] = {}
 
-        self.transform = (0.0, 0.0, 1.0, 0.0)
-        self.spring_stiffness = spring_stiffness
-        self.damping = damping
-        self.scale_dead_zone = scale_dead_zone
-        self.rot_dead_zone = rot_dead_zone
+        self.coherence_threshold = coherence_threshold
 
-        self.phys: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0)
-        self.phys_vel: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
-        self.phys_prev: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0)
-        self.last_update_time: float | None = None
-
+        self._gesture_lock = GestureLock.NONE
+        self._coherence = 0.0
         self._event_queue: queue.SimpleQueue[TouchEvent] = queue.SimpleQueue()
-
-    def _centroid(self, pts: list[Point]) -> Point:
-        n = len(pts)
-        if n == 0:
-            return (0.5, 0.5)
-
-        sx = sum(p[0] for p in pts)
-        sy = sum(p[1] for p in pts)
-
-        return (sx / n, sy / n)
-
-    def _vecs_from_centroid(self, pts: list[Point], centroid: Point) -> list[Point]:
-        return [(p[0] - centroid[0], p[1] - centroid[1]) for p in pts]
-
-    def _similarity_transform(self, start_pts: list[Point], cur_pts: list[Point]) -> tuple[float, float, float, float]:
-        n = len(start_pts)
-        if n == 0:
-            return (0.0, 0.0, 1.0, 0.0)
-
-        start_cent = self._centroid(start_pts)
-        cur_cent = self._centroid(cur_pts)
-
-        if n == 1:
-            tx = cur_cent[0] - start_cent[0]
-            ty = cur_cent[1] - start_cent[1]
-            return (tx, ty, 1.0, 0.0)
-
-        sx = sxx = syy = sxy = syx = 0.0
-        for (sx0, sy0), (cx0, cy0) in zip(start_pts, cur_pts):
-            u1 = sx0 - start_cent[0]
-            u2 = sy0 - start_cent[1]
-            v1 = cx0 - cur_cent[0]
-            v2 = cy0 - cur_cent[1]
-            sxx += u1 * v1
-            sxy += u1 * v2
-            syx += u2 * v1
-            syy += u2 * v2
-            sx += u1 * u1 + u2 * u2
-
-        if sx == 0:
-            return (cur_cent[0] - start_cent[0], cur_cent[1] - start_cent[1], 1.0, 0.0)
-
-        a = (sxx + syy) / sx
-        b = (syx - sxy) / sx
-        angle = math.atan2(b, a)
-        num = sxx + syy
-        denom = sx
-        s = num / denom
-
-        tx = cur_cent[0] - (s * (math.cos(angle) * start_cent[0] - math.sin(angle) * start_cent[1]))
-        ty = cur_cent[1] - (s * (math.sin(angle) * start_cent[0] + math.cos(angle) * start_cent[1]))
-        tx = cur_cent[0] - (s * (math.cos(angle) * start_cent[0] - math.sin(angle) * start_cent[1]))
-        ty = cur_cent[1] - (s * (math.sin(angle) * start_cent[0] + math.cos(angle) * start_cent[1]))
-
-        dx = cur_cent[0] - start_cent[0]
-        dy = cur_cent[1] - start_cent[1]
-
-        return (dx, dy, s, angle)
 
     def poll(self) -> list[TouchEvent]:
         for e in super().poll():
@@ -115,10 +50,11 @@ class TouchManager(TouchRouter):
                     self.on_touch_down(e)
                 else:
                     self.active[e.contact_id] = e
-                    self._process_move(e.timestamp)
             else:
                 if e.contact_id in self.active:
                     self.on_touch_up(e)
+
+        self._process_move()
 
         events: list[TouchEvent] = []
         while not self._event_queue.empty():
@@ -126,83 +62,69 @@ class TouchManager(TouchRouter):
                 events.append(self._event_queue.get_nowait())
             except queue.Empty:
                 break
-
         return events
 
     def on_touch_down(self, ev: TouchContactEvent) -> None:
-        if not self.active:
-            self.transform = (0.0, 0.0, 1.0, 0.0)
-            self.phys = (0.0, 0.0, 1.0, 0.0)
-            self.phys_vel = (0.0, 0.0, 0.0, 0.0)
-            self.phys_prev = (0.0, 0.0, 1.0, 0.0)
-
         self.active[ev.contact_id] = ev
-        self.start_positions[ev.contact_id] = (ev.x, ev.y)
+        self.prev_positions[ev.contact_id] = (ev.x, ev.y)
+        if len(self.active) == 2:
+            self._coherence = 0.0
+            self._gesture_lock = GestureLock.NONE
 
     def on_touch_up(self, ev: TouchContactEvent) -> None:
-        if ev.contact_id in self.active:
-            del self.active[ev.contact_id]
-        if ev.contact_id in self.start_positions:
-            del self.start_positions[ev.contact_id]
+        self.active.pop(ev.contact_id, None)
+        self.prev_positions.pop(ev.contact_id, None)
+        if not self.active:
+            self._gesture_lock = GestureLock.NONE
+            self._coherence = 0.0
 
-    def _process_move(self, now_ts: float) -> None:
+    def _process_move(self) -> None:
         if len(self.active) != 2:
             return
 
-        active_ids = list(self.active.keys())
-        start_pts = [self.start_positions[i] for i in active_ids if i in self.start_positions]
-        cur_pts = [(self.active[i].x, self.active[i].y) for i in active_ids]
-
-        if len(start_pts) == 0:
+        ids = list(self.active.keys())
+        if not all(i in self.prev_positions for i in ids):
+            for i in ids:
+                self.prev_positions[i] = (self.active[i].x, self.active[i].y)
             return
 
-        dx, dy, s, angle = self._similarity_transform(start_pts, cur_pts)
+        (ax0, ay0), (bx0, by0) = (self.prev_positions[i] for i in ids)
+        (ax1, ay1), (bx1, by1) = ((self.active[i].x, self.active[i].y) for i in ids)
 
-        self.transform = (dx, dy, s, angle)
+        for i in ids:
+            self.prev_positions[i] = (self.active[i].x, self.active[i].y)
 
-        dt = max(1e-6, now_ts - (self.last_update_time or now_ts))
-        self.last_update_time = now_ts
+        if self._gesture_lock is GestureLock.NONE:
+            va = (ax1 - ax0, ay1 - ay0)
+            vb = (bx1 - bx0, by1 - by0)
+            mag_a = math.hypot(*va)
+            mag_b = math.hypot(*vb)
 
-        tx, ty, ps, pr = self.phys
-        vx, vy, vs, vr = self.phys_vel
-        tgt_tx, tgt_ty, tgt_s, tgt_r = self.transform
+            if mag_a > 1e-6 and mag_b > 1e-6:
+                cos_angle = (va[0] * vb[0] + va[1] * vb[1]) / (mag_a * mag_b)
+                self._coherence += cos_angle * (mag_a + mag_b)
 
-        k = self.spring_stiffness
-        c = self.damping
+            if self._coherence > self.coherence_threshold:
+                self._gesture_lock = GestureLock.PAN
+            elif self._coherence < -self.coherence_threshold:
+                self._gesture_lock = GestureLock.PINCH
+            else:
+                return  # need more data
 
-        ax = k * (tgt_tx - tx) - c * vx
-        ay = k * (tgt_ty - ty) - c * vy
-        as_ = k * (tgt_s - ps) - c * vs
-        ar = k * (tgt_r - pr) - c * vr
+        if self._gesture_lock is GestureLock.PAN:
+            dx = ((ax1 + bx1) - (ax0 + bx0)) * 0.5
+            dy = ((ay1 + by1) - (ay0 + by0)) * 0.5
 
-        vx += ax * dt
-        vy += ay * dt
-        vs += as_ * dt
-        vr += ar * dt
+            self._event_queue.put(TouchEvent(dx=dx, dy=dy, scale_factor=1.0, d_angle=0.0))
 
-        tx += vx * dt
-        ty += vy * dt
-        ps += vs * dt
-        pr += vr * dt
+        elif self._gesture_lock is GestureLock.PINCH:
+            d0 = math.hypot(bx0 - ax0, by0 - ay0)
+            d1 = math.hypot(bx1 - ax1, by1 - ay1)
+            scale = d1 / d0 if d0 > 1e-6 else 1.0
+            angle = math.atan2(by1 - ay1, bx1 - ax1) - math.atan2(by0 - ay0, bx0 - ax0)
+            angle = (angle + math.pi) % (2 * math.pi) - math.pi
 
-        self.phys = (tx, ty, ps, pr)
-        self.phys_vel = (vx, vy, vs, vr)
-
-        prev_tx, prev_ty, prev_ps, prev_pr = self.phys_prev
-        self.phys_prev = self.phys
-
-        delta_tx = tx - prev_tx
-        delta_ty = ty - prev_ty
-        raw_delta_s = ps / prev_ps if prev_ps != 0 else 1.0
-        raw_delta_r = pr - prev_pr
-
-        delta_s = raw_delta_s if abs(raw_delta_s - 1.0) > self.scale_dead_zone else 1.0
-        delta_r = raw_delta_r if abs(raw_delta_r) > self.rot_dead_zone else 0.0
-
-        self._emit_transform(delta_tx, delta_ty, delta_s, delta_r)
-
-    def _emit_transform(self, dx: float, dy: float, scale_factor: float, d_angle: float) -> None:
-        self._event_queue.put(TouchEvent(dx=dx, dy=dy, scale_factor=scale_factor, d_angle=d_angle))
+            self._event_queue.put(TouchEvent(dx=0.0, dy=0.0, scale_factor=scale, d_angle=angle))
 
 
 @dataclass(slots=True)
