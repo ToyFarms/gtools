@@ -447,8 +447,6 @@ if __name__ == "__main__":
                 traceback.print_exc()
                 break
     elif args.cmd == "render":
-        world = World.from_tank(Path(args.world).read_bytes())
-
         def composite(top: np.ndarray, bottom: np.ndarray, dx: int = 0, dy: int = 0) -> np.ndarray:
             H, W, _ = top.shape
 
@@ -487,16 +485,14 @@ if __name__ == "__main__":
             out_uint8 = np.clip((out * 255.0).round(), 0, 255).astype(np.uint8)
             return out_uint8
 
+        world = World.from_tank(Path(args.world).read_bytes())
+
         bg_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
         fg_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
         bg_shadow_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
         fg_shadow_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
 
         start = time.perf_counter()
-        try:
-            world.update_all_connection()
-        except Exception as e:
-            print_exc()
 
         def place(tex: np.ndarray, id: int, pos: ivec2, is_bg: bool) -> None:
             if id <= 0:
