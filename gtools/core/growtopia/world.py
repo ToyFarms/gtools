@@ -47,6 +47,7 @@ from gtools.baked.items import (
     DWARVEN_BACKGROUND,
     EPOCH_MACHINE,
     FISSURE,
+    GOLEM_S_GIFT,
     GREAT_TURRET_OF_GROWTOPIA,
     GREAT_WALL_OF_GROWTOPIA,
     GROWMOJI_TURKEY_SEED,
@@ -56,6 +57,7 @@ from gtools.baked.items import (
     GUILD_FLAG_TATTERS,
     GUILD_LOCK,
     HAUNTED_HOUSE,
+    INFINITY_CROWN,
     INFINITY_WEATHER_MACHINE,
     KRANKEN_S_GALACTIC_BLOCK,
     LOVEWILLOW,
@@ -89,6 +91,7 @@ from gtools.baked.items import (
     WEEPING_WILLOW_BRANCH,
     WEEPING_WILLOW_FOLIAGE,
     WELL_OF_LOVE,
+    WILL_OF_THE_WILD,
     WINTERFEST_CALENDAR_2017,
 )
 from gtools.core.buffer import Buffer
@@ -223,6 +226,7 @@ class TileExtraType(IntEnum):
     SIGN_TILE = 0x2
     LOCK_TILE = 0x3
     SEED_TILE = 0x4
+    UNK_SCROLL_BULETTIN = 0x5
     MAILBOX_TILE = 0x6
     BULLETIN_TILE = 0x7
     DICE_TILE = 0x8
@@ -401,7 +405,7 @@ class TileExtra:
         type = s.read_u8()
         handler = _TILE_EXTRA_REGISTRY.get(type)
         if not handler:
-            raise NotImplementedError(f"no tile extra for id {type}")
+            raise NotImplementedError(f"no tile extra for id {type}, {fg=}, {bg=}")
 
         extra = handler.deserialize(s, fg, bg, format_version)
         extra.type = TileExtraType(type)
@@ -488,6 +492,17 @@ class SeedTile(TileExtra):
         t = cls()
         t.time_passed = s.read_u32()
         t.item_on_tree = s.read_u8()
+
+        return t
+
+
+# id 5, never seen it, no mention in the source (world: START)
+@dataclass(slots=True)
+class ScrollBulletinTile(TileExtra):
+
+    @classmethod
+    def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "ScrollBulletinTile":
+        t = cls()
 
         return t
 
@@ -1116,27 +1131,39 @@ class PortraitTile(TileExtra):
     unk2: int = 0
     unk3: int = 0
     unk4: int = 0
-    unk5: int = 0
-    unk6: int = 0
     face: int = 0
     hat: int = 0
     hair: int = 0
+    unk8: int = 0
+    unk9: int = 0
     unk10: int = 0
+    unk11: int = 0
+    unk12: bytes = b""
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "PortraitTile":
         t = cls()
+
         t.label = s.read_pascal_bytes("H")
-        t.unk1 = s.read_u32()
-        t.unk2 = s.read_u32()
-        t.unk3 = s.read_u32()
-        t.unk4 = s.read_u32()
-        t.unk5 = s.read_u8()
-        t.unk6 = s.read_u8()
-        t.face = s.read_u16()
-        t.hat = s.read_u16()
-        t.hair = s.read_u16()
-        t.unk10 = s.read_u16()
+        t.unk1 = s.read_u32()  # 4
+        t.unk2 = s.read_u32()  # 8
+        t.unk3 = s.read_u32()  # 12
+        t.unk4 = s.read_u32()  # 16
+
+        t.face = s.read_u16()  # 18
+        t.hat = s.read_u16()  # 20
+        t.hair = s.read_u16()  # 22
+        t.unk8 = s.read_u16()  # 24
+
+        if format_version >= 4 and any(x in (WILL_OF_THE_WILD, GOLEM_S_GIFT) for x in (t.face, t.hat, t.hair)):
+            t.unk9 = s.read_u32()  # 4
+            t.unk10 = s.read_u32()  # 4
+
+        if format_version >= 9:
+            t.unk11 = s.read_u32()  # 28
+
+        if format_version >= 23 and t.face == INFINITY_CROWN:
+            t.unk12 = s.read_pascal_bytes("H")
 
         return t
 
@@ -1688,6 +1715,7 @@ _TILE_EXTRA_REGISTRY: dict[int, type[TileExtra]] = {
     TileExtraType.SIGN_TILE: SignTile,
     TileExtraType.LOCK_TILE: LockTile,
     TileExtraType.SEED_TILE: SeedTile,
+    TileExtraType.UNK_SCROLL_BULETTIN: ScrollBulletinTile,
     TileExtraType.MAILBOX_TILE: MailboxTile,
     TileExtraType.BULLETIN_TILE: BulletinTile,
     TileExtraType.DICE_TILE: DiceTile,
@@ -1923,11 +1951,41 @@ class Tile:
             json_data=cbor2.dumps(self.json_data),
         )
 
+    CBOR_IDs = [
+        PARTY_PROJECTOR,
+        AUCTION_BLOCK,
+        BATTLE_PET_CAGE,
+        OPERATING_TABLE,
+        AUTO_SURGEON_STATION,
+        BOUNTIFUL_FLOWERING_LATTICE_ROOTS,
+        BOUNTIFUL_CLIMBING_HYDRANGEA_LATTICE_ROOTS,
+        BOUNTIFUL_FLOWERING_GARLAND_ROOTS,
+        BOUNTIFUL_LATTICE_FENCE_ROOTS,
+        BOUNTIFUL_JUNGLE_TEMPLE_ROOTS,
+        BOUNTIFUL_JUNGLE_TEMPLE_BACKGROUND_ROOTS,
+        BOUNTIFUL_JUNGLE_TEMPLE_DOOR_ROOTS,
+        BOUNTIFUL_JUNGLE_TEMPLE_PILLAR_ROOTS,
+        BOUNTIFUL_BAMBOO_BACKGROUND_ROOTS,
+        BOUNTIFUL_BAMBOO_PLATFORM_ROOTS,
+        BOUNTIFUL_BAMBOO_LADDER_ROOTS,
+        BOUNTIFUL_BAMBOO_SPIKES_ROOTS,
+        BOUNTIFUL_WHITE_DOLL_S_EYES_ROOTS,
+        BOUNTIFUL_MONKSHOOD_ROOTS,
+        BOUNTIFUL_CORPSE_FLOWER_ROOTS,
+        BOUNTIFUL_GROWTOPIAN_EATING_LOOMING_PLANT_ROOTS,
+    ]
+
     @classmethod
-    def deserialize(cls, s: Buffer, format_version: int = 999999999999) -> "Tile":
+    def deserialize(cls, s: Buffer, format_version: int = 999999999999, strict: bool = True) -> "Tile":
         tile = cls()
         tile.fg_id = s.read_u16()
         tile.bg_id = s.read_u16()
+        if strict:
+            if tile.fg_id > item_database.db().item_count:
+                raise ValueError(f"illegal foreground item: {tile.fg_id}")
+            if tile.bg_id > item_database.db().item_count:
+                raise ValueError(f"illegal background item: {tile.bg_id}")
+
         tile.parent_index = s.read_u16()
         tile.flags = TileFlags(s.read_u16())
 
@@ -1942,31 +2000,7 @@ class Tile:
             s.rpos = start
             tile._extra_raw = s.read_bytes(extra_size)
 
-        cbor_ids = [
-            PARTY_PROJECTOR,
-            AUCTION_BLOCK,
-            BATTLE_PET_CAGE,
-            OPERATING_TABLE,
-            AUTO_SURGEON_STATION,
-            BOUNTIFUL_FLOWERING_LATTICE_ROOTS,
-            BOUNTIFUL_CLIMBING_HYDRANGEA_LATTICE_ROOTS,
-            BOUNTIFUL_FLOWERING_GARLAND_ROOTS,
-            BOUNTIFUL_LATTICE_FENCE_ROOTS,
-            BOUNTIFUL_JUNGLE_TEMPLE_ROOTS,
-            BOUNTIFUL_JUNGLE_TEMPLE_BACKGROUND_ROOTS,
-            BOUNTIFUL_JUNGLE_TEMPLE_DOOR_ROOTS,
-            BOUNTIFUL_JUNGLE_TEMPLE_PILLAR_ROOTS,
-            BOUNTIFUL_BAMBOO_BACKGROUND_ROOTS,
-            BOUNTIFUL_BAMBOO_PLATFORM_ROOTS,
-            BOUNTIFUL_BAMBOO_LADDER_ROOTS,
-            BOUNTIFUL_BAMBOO_SPIKES_ROOTS,
-            BOUNTIFUL_WHITE_DOLL_S_EYES_ROOTS,
-            BOUNTIFUL_MONKSHOOD_ROOTS,
-            BOUNTIFUL_CORPSE_FLOWER_ROOTS,
-            BOUNTIFUL_GROWTOPIAN_EATING_LOOMING_PLANT_ROOTS,
-        ]
-
-        if tile.front in cbor_ids:
+        if tile.front in Tile.CBOR_IDs:
             tile.json_data = cbor2.loads(s.read_pascal_bytes("I"))
 
         return tile
