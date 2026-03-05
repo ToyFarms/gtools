@@ -12,6 +12,8 @@ from typing import Any, Hashable, Literal, Sequence, overload
 import xxhash
 from zmq import IntFlag
 
+from gtools.core.wsl import windows_home
+
 if not os.environ.get("NO_BAKED", None):
     from gtools.baked import items
 from gtools.core.buffer import Buffer
@@ -830,7 +832,7 @@ class item_database:
     def db(cls) -> ItemDatabase:
         if not cls._db:
             candidate: list[Path] = [
-                Path.home() / "AppData" / "Local" / "Growtopia" / "cache" / "items.dat",
+                windows_home() / "AppData" / "Local" / "Growtopia" / "cache" / "items.dat",
                 Path(os.getenv("ITEMS", "items.dat")),
                 setting.appdir / "resources" / "items.dat",
             ]
