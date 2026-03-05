@@ -550,7 +550,7 @@ class State:
                         )
                     case TankType.SEND_MAP_DATA:
                         world = World.deserialize(pkt.tank.extended_data, pkt.tank.int_x).to_proto()
-                        write_async(pkt.serialize(), setting.appdir / "worlds" / world.inner.name.decode(), "wb")
+                        write_async(pkt.serialize(), setting.appdir / "worlds" / world.inner.name.decode(), "wb", force_reopen=True)
 
                         self.send_state_update(
                             broker,
