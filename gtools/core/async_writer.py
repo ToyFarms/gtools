@@ -12,7 +12,7 @@ class AsyncFileWriter:
         inactive_ttl: float = 60.0,
         sweep_interval: float = 10.0,
     ) -> None:
-        self._q: Queue[tuple[Any, str, str]] = Queue(-1)
+        self._q: Queue[tuple[Any, str, str, bool]] = Queue()
         self._stop = threading.Event()
         self._inactive_ttl = inactive_ttl
         self._sweep_interval = sweep_interval
@@ -23,9 +23,9 @@ class AsyncFileWriter:
         )
         self._thread.start()
 
-    def submit(self, data: Any, filename: str, mode: str = "a") -> bool:
+    def submit(self, data: Any, filename: str, mode: str, force_reopen: bool = True) -> bool:
         try:
-            self._q.put_nowait((data, filename, mode))
+            self._q.put_nowait((data, filename, mode, force_reopen))
             return True
         except Full:
             return False
@@ -37,7 +37,7 @@ class AsyncFileWriter:
         try:
             while not (self._stop.is_set() and self._q.empty()):
                 try:
-                    data, filename, mode = self._q.get(timeout=0.2)
+                    data, filename, mode, force_reopen = self._q.get(timeout=0.2)
                 except Empty:
                     data = None
 
@@ -47,6 +47,14 @@ class AsyncFileWriter:
                     key = (filename, mode)
                     try:
                         handle, _ = files.get(key, (None, None))
+
+                        if force_reopen and handle is not None:
+                            try:
+                                handle.close()
+                            except Exception:
+                                pass
+                            handle = None
+
                         if handle is None:
                             handle = open(filename, mode)
 
@@ -91,6 +99,6 @@ class AsyncFileWriter:
 GLOBAL_ASYNC_FILE_WRITER = AsyncFileWriter()
 
 
-def write_async(data: Any, filename: str | Path, mode: str = "w") -> bool:
+def write_async(data: Any, filename: str | Path, mode: str = "w", force_reopen: bool = True) -> bool:
     Path(filename).parent.mkdir(parents=True, exist_ok=True)
-    return GLOBAL_ASYNC_FILE_WRITER.submit(data, str(filename), mode)
+    return GLOBAL_ASYNC_FILE_WRITER.submit(data, str(filename), mode, force_reopen)
