@@ -12,7 +12,7 @@ $ uv venv --python 3.13
 $ source .venv/bin/activate
 (or `.\.venv\Scripts\activate` on windows)
 $ uv sync
-(use `uv sync --extra gui` if you want to use pygame gui)
+(use `uv sync --extra gui` if you want to use the gui)
 
 usage:
 
