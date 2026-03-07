@@ -160,6 +160,11 @@ class Sheet:
     def advance_playhead(self, n: int = 1) -> None:
         self._can_go.wait()
 
+        if self.playhead > self.end:
+            self.playhead = self.start
+            self._activated_repeats.clear()
+            self._pending_backtrack = None
+
         if self._pending_backtrack is not None:
             self.playhead = self._pending_backtrack
             self._pending_backtrack = None
@@ -192,10 +197,6 @@ class Sheet:
             self.mixer.play(_SOUNDS[path])
 
         self.playhead += n
-        if self.playhead > self.end:
-            self.playhead = self.start
-            self._activated_repeats.clear()
-            self._pending_backtrack = None
 
     def seek(self, direction: int, play: bool = False) -> None:
         if play:
