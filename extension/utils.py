@@ -268,7 +268,7 @@ class UtilityExtension(Extension):
         found: list[Tile] = []
         self.console_log(f"searching for {item.name.decode()}")
 
-        for tile in self.state.world.tiles:
+        for tile in self.state.world.tiles.values():
             if tile.fg_id in (VENDING_MACHINE, DIGIVEND_MACHINE):
                 if not isinstance(tile.extra, VendingMachineTile):
                     continue
