@@ -111,6 +111,7 @@ class Sheet:
 
     def __init__(self, bpm: int, notes: list[Note], mixer: AudioMixer) -> None:
         self.notes: defaultdict[int, list[Note]] = defaultdict(list)
+        self.any = bool(notes)
         for note in notes:
             self.notes[note.timestamp].append(note)
 
@@ -135,7 +136,7 @@ class Sheet:
         self._can_go = threading.Event()
         self._preload_thread = threading.Thread(target=self._preload, daemon=True)
         self._preload_thread.start()
-        # TODO: configurable volume
+        # TODO: configurable volume, make this dynamic (so it can react to world changes)
 
     def _preload(self) -> None:
         for col in range(self.start, self.end):
@@ -158,6 +159,9 @@ class Sheet:
         return self.start
 
     def advance_playhead(self, n: int = 1) -> None:
+        if not self.any:
+            return
+
         self._can_go.wait()
 
         if self.playhead > self.end:
@@ -199,6 +203,9 @@ class Sheet:
         self.playhead += n
 
     def seek(self, direction: int, play: bool = False) -> None:
+        if not self.any:
+            return
+
         if play:
             self.advance_playhead(direction)
         else:
@@ -209,6 +216,9 @@ class Sheet:
             self._pending_backtrack = None
 
     def update(self, dt: float) -> None:
+        if not self.any:
+            return
+
         self._can_go.wait()
         tick_duration = 1.0 / self.bps
         self._accum += min(dt, tick_duration)

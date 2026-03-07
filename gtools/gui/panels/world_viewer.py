@@ -199,28 +199,29 @@ class WorldTab:
             self._mvp.set_mat4x4(self._camera.proj_as_numpy())
             self._renderer.draw(self._tex)
 
-        self._solid_shader.use()
-        self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())
+        if self._sheet.any:
+            self._solid_shader.use()
+            self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())
 
-        model = mat4x4(1.0)
-        playhead = self._sheet.playhead - 1
-        width = 32.0
-        height = 14.0 * 32.0
-        model = glm.translate(
-            model,
-            vec3(
-                (playhead % self._world.width) * 32 - 16 + width / 2,
-                (playhead // self._world.width) * 14 * 32 - 16 + height / 2,
-                0.0,
-            ),
-        )
-        model = glm.scale(model, vec3(width, height, 1.0))
+            model = mat4x4(1.0)
+            playhead = self._sheet.playhead - 1
+            width = 32.0
+            height = 14.0 * 32.0
+            model = glm.translate(
+                model,
+                vec3(
+                    (playhead % self._world.width) * 32 - 16 + width / 2,
+                    (playhead // self._world.width) * 14 * 32 - 16 + height / 2,
+                    0.0,
+                ),
+            )
+            model = glm.scale(model, vec3(width, height, 1.0))
 
-        ptr = glm.value_ptr(model)
-        model_ptr = np.frombuffer(ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)), dtype=np.float32).reshape((4, 4), order="C")
+            ptr = glm.value_ptr(model)
+            model_ptr = np.frombuffer(ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)), dtype=np.float32).reshape((4, 4), order="C")
 
-        self._solid_model.set_mat4x4(model_ptr)
-        self._playhead.draw()
+            self._solid_model.set_mat4x4(model_ptr)
+            self._playhead.draw()
 
         self._fbo.unbind()
 
