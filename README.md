@@ -1,3 +1,6 @@
+![gui](screenshots/gui.png)
+
+```
 prerequisites:
 
 - uv (https://docs.astral.sh/uv)
@@ -58,3 +61,4 @@ simply ctrl+c, it will automatically unregister
 
 broker/extension is restart-resistant, meaning it will automatically recover if any of them goes down
 so you can safely interrupt to make some change
+```
