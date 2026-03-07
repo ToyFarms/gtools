@@ -158,24 +158,23 @@ autotile_47 = [
 @click.command()
 @click.argument("id", type=int)
 def tileset(id: int) -> None:
-    world = World()
+    tiles: list[Tile] = []
     for c, conf in enumerate(autotile_47):
         for y, row in enumerate(conf):
             for x, col in enumerate(row):
                 pos = ivec2(x + c * 4, y)
-                world.width = max(world.width, pos.x)
-                world.height = max(world.height, pos.y)
                 if not col:
-                    world.tiles.append(Tile(0, pos=pos))
+                    tiles.append(Tile(0, pos=pos))
                 else:
-                    world.tiles.append(Tile(id, pos=pos))
+                    tiles.append(Tile(id, pos=pos))
 
-    world.fix()
+    world = World.from_tiles(tiles)
     world.update_all_connection()
+
     mgr = RTTexManager()
 
     img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
-    for tile in world.tiles:
+    for tile in world.tiles.values():
         if tile.bg_id > 0:
             tex = tile.get_bg_texture(mgr)
             dst = ivec4(tile.pos.x * 32, tile.pos.y * 32, 32, 32)

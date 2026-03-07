@@ -2295,6 +2295,20 @@ class World:
     def remove_player_by_id(self, net_id: int) -> None:
         self.player = [p for p in self.player if p.net_id != net_id]
 
+    @classmethod
+    def from_tiles(cls, tiles: list[Tile]) -> "World":
+        world = cls()
+        xs = [t.pos.x for t in tiles]
+        width = max(xs) + 1
+
+        for tile in tiles:
+            idx = tile.pos.y * width + tile.pos.x
+            world.tiles[idx] = tile
+
+        world.fix()
+
+        return world
+
     def fix(self) -> None:
         """adjust width, height, nb_tiles based on the tiles dict. also fills in any gap."""
         xs = [t.pos.x for t in self.tiles.values()]
