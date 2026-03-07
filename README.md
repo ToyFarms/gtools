@@ -1,4 +1,5 @@
-![gui](screenshots/gui.png)
+![gui](images/gui.png)
+![render](images/render.png)
 
 ```
 prerequisites:
