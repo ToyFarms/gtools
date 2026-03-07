@@ -114,8 +114,12 @@ class Sheet:
         for note in notes:
             self.notes[note.timestamp].append(note)
 
-        self.start = min(notes, key=lambda x: x.timestamp).timestamp
-        self.end = max(notes, key=lambda x: x.timestamp).timestamp
+        if notes:
+            self.start = min(notes, key=lambda x: x.timestamp).timestamp
+            self.end = max(notes, key=lambda x: x.timestamp).timestamp
+        else:
+            self.start = 0
+            self.end = 0
 
         self.bpm = bpm
         self.bps = (bpm * 4) / 60
