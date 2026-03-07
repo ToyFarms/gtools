@@ -7,6 +7,9 @@ from OpenGL.GL import GL_COLOR_BUFFER_BIT, glClear, glClearColor
 import glfw
 from imgui_bundle import imgui
 from pyglm import glm
+from pyglm.glm import mat4x4, vec3
+import numpy as np
+import ctypes
 
 from gtools import setting
 from gtools.core import ndialog
@@ -14,7 +17,7 @@ from gtools.core.growtopia.packet import NetPacket
 from gtools.core.growtopia.world import World
 
 from gtools.gui.camera import Camera2D
-from gtools.gui.opengl import Framebuffer, ShaderProgram, Uniform
+from gtools.gui.opengl import Framebuffer, Mesh, ShaderProgram
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
@@ -25,19 +28,13 @@ logger = logging.getLogger("gui-world-viewer")
 class WorldTab:
     _WORLD_TAB_COUNTER = itertools.count(1)
 
-    def __init__(
-        self,
-        shader: ShaderProgram,
-        mvp: Uniform,
-        tex: Uniform,
-        dockspace_id: int,
-        path: Path,
-    ) -> None:
+    def __init__(self, dockspace_id: int, path: Path) -> None:
         logger.info(f"creating WorldTab for {path}")
         self._name = f"{path.stem}##{next(self._WORLD_TAB_COUNTER)}"
-        self._shader = shader
-        self._mvp = mvp
-        self._tex = tex
+        # TODO: need to cleanup shader globally
+        self._shader = ShaderProgram.get("shaders/world")
+        self._mvp = self._shader.get_uniform("u_mvp")
+        self._tex = self._shader.get_uniform("texArray")
         self._dockspace_id = dockspace_id
 
         self._camera = Camera2D(800, 600)
@@ -54,7 +51,14 @@ class WorldTab:
         self._first_render = True
 
         pkt = NetPacket.deserialize(path.read_bytes())
-        self._renderer.load(World.from_tank(pkt.tank))
+        self._world = World.from_tank(pkt.tank)
+        self._renderer.load(self._world)
+        self._sheet = self._world.get_sheet()
+
+        self._solid_shader = ShaderProgram.get("shaders/solid")
+        self._solid_proj = self._shader.get_uniform("u_proj")
+        self._solid_model = self._shader.get_uniform("u_model")
+        self._playhead = Mesh(Mesh.RECT, [2, 3], Mesh.RECT_INDICES)
 
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
@@ -153,6 +157,20 @@ class WorldTab:
             self._shader.use()
             self._mvp.set_mat4x4(self._camera.proj_as_numpy())
             self._renderer.draw(self._tex)
+
+        self._solid_shader.use()
+        self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())
+
+        model = mat4x4(1.0)
+        model = glm.translate(model, vec3(self._sheet.playhead * 32, self._sheet.get_staff(), 0.0))
+        model = glm.scale(model, vec3(8.0, 14.0 * 32.0, 0.0))
+
+        ptr = glm.value_ptr(model)
+        model_ptr = np.frombuffer(ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)), dtype=np.float32).reshape((4, 4), order="C")
+
+        self._solid_model.set_mat4x4(model_ptr)
+        self._playhead.draw()
+
         self._fbo.unbind()
 
 
@@ -160,9 +178,6 @@ class WorldViewerPanel(Panel):
     def __init__(self, outer_dockspace_id: int) -> None:
         super().__init__()
         logger.debug(f"initializing WorldViewerPanel with outer_dockspace_id={outer_dockspace_id}")
-        self._shader = ShaderProgram.from_file("shaders/world")
-        self._mvp = self._shader.get_uniform("u_mvp")
-        self._tex = self._shader.get_uniform("texArray")
         self._outer_dockspace_id = outer_dockspace_id
 
         self._inner_dockspace_id: int = 0
@@ -181,11 +196,10 @@ class WorldViewerPanel(Panel):
         for tab in self._tabs:
             tab.delete()
         self._tabs = []
-        self._shader.delete()
 
     def open_world(self, path: Path) -> None:
         logger.info(f"worldViewerPanel opening world: {path}")
-        self._tabs.append(WorldTab(self._shader, self._mvp, self._tex, self._inner_dockspace_id, path))
+        self._tabs.append(WorldTab(self._inner_dockspace_id, path))
 
     def render_debug(self) -> None:
         if imgui.button("Open World", (-1, 0)):

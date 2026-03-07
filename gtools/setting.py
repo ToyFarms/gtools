@@ -27,7 +27,7 @@ class Setting(JsonMixin):
     proxy_server: str = field(default="127.0.0.1")
     proxy_port: int = field(default=16999)
     appdir: Path = field(default=Path(APPDIR))
-    asset_path: Path = field(default=windows_home() / "AppData/Local/Growtopia/game")
+    asset_path: Path = field(default=windows_home() / "AppData/Local/Growtopia")
     broker_addr: str = field(default="tcp://127.0.0.1:6712")
     spoof_hwident: bool = field(default=True)
     heartbeat_interval: float = field(default=1.0)
