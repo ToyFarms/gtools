@@ -68,7 +68,7 @@ class WorldRenderer:
         bg_instances: dict[TextureArray, list[float]] = defaultdict(list)
         fg_instances: dict[TextureArray, list[float]] = defaultdict(list)
 
-        for tile in world.tiles:
+        for tile in world.tiles.values():
             if tile.bg_id:
                 tex_array, instance_data = self._tile_instance_data(tile, tile.bg_id, tile.bg_tex_index)
                 bg_instances[tex_array].extend(instance_data)
@@ -101,7 +101,7 @@ class WorldRenderer:
         tile_pos_y = tile.pos.y * self.TILE_SIZE
 
         item = item_database.get(item_id)
-        tex = self._tex_mgr.push_texture(setting.asset_path / item.texture_file.decode())
+        tex = self._tex_mgr.push_texture(setting.asset_path / "game" / item.texture_file.decode())
         tex_pos, is_flipped = tile.tex_pos(item_id, tex_index)
 
         u0 = (tex_pos.x * self.TILE_SIZE) / tex.width

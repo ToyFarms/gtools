@@ -76,6 +76,39 @@ from gtools.baked.items import (
     PURPLE_CAVE_CRYSTAL,
     REGAL_BANNISTER,
     REGAL_STAIRS,
+    SHEET_MUSIC_COLON_BASS_NOTE,
+    SHEET_MUSIC_COLON_BLANK,
+    SHEET_MUSIC_COLON_DRUMS,
+    SHEET_MUSIC_COLON_ELECTRIC_GUITAR,
+    SHEET_MUSIC_COLON_FLAT_BASS,
+    SHEET_MUSIC_COLON_FLAT_ELECTRIC_GUITAR,
+    SHEET_MUSIC_COLON_FLAT_FLUTE,
+    SHEET_MUSIC_COLON_FLAT_LYRE,
+    SHEET_MUSIC_COLON_FLAT_MEXICAN_TRUMPET,
+    SHEET_MUSIC_COLON_FLAT_PIANO,
+    SHEET_MUSIC_COLON_FLAT_SAX,
+    SHEET_MUSIC_COLON_FLAT_SPANISH_GUITAR,
+    SHEET_MUSIC_COLON_FLAT_VIOLIN,
+    SHEET_MUSIC_COLON_FLUTE_NOTE,
+    SHEET_MUSIC_COLON_LYRE_NOTE,
+    SHEET_MUSIC_COLON_MEXICAN_TRUMPET,
+    SHEET_MUSIC_COLON_PIANO_NOTE,
+    SHEET_MUSIC_COLON_REPEAT_BEGIN,
+    SHEET_MUSIC_COLON_REPEAT_END,
+    SHEET_MUSIC_COLON_SAX_NOTE,
+    SHEET_MUSIC_COLON_SHARP_BASS,
+    SHEET_MUSIC_COLON_SHARP_ELECTRIC_GUITAR,
+    SHEET_MUSIC_COLON_SHARP_FLUTE,
+    SHEET_MUSIC_COLON_SHARP_LYRE,
+    SHEET_MUSIC_COLON_SHARP_MEXICAN_TRUMPET,
+    SHEET_MUSIC_COLON_SHARP_PIANO,
+    SHEET_MUSIC_COLON_SHARP_SAX,
+    SHEET_MUSIC_COLON_SHARP_SPANISH_GUITAR,
+    SHEET_MUSIC_COLON_SHARP_VIOLIN,
+    SHEET_MUSIC_COLON_SPANISH_GUITAR_NOTE,
+    SHEET_MUSIC_COLON_SPOOKY,
+    SHEET_MUSIC_COLON_VIOLIN_NOTE,
+    SHEET_MUSIC_COLON_WINTERFEST,
     STALACTITE,
     STALAGMITE,
     STEAM_LAUNCHER,
@@ -99,9 +132,11 @@ import cbor2
 
 from gtools.core.color import color_matrix_filter
 from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoCollisionType, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
+from gtools.core.growtopia.music.note import InstrumentSet, Note, Sheet
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RTTexManager
+from gtools.core.mixer import AudioMixer
 from gtools.protogen import growtopia_pb2
 import numpy as np
 import numpy.typing as npt
@@ -446,13 +481,13 @@ class DoorTile(TileExtra):
 @dataclass(slots=True)
 class SignTile(TileExtra):
     text: bytes = b""
-    unk1: int = 0  # u32
+    unk1: int = 0  # i32
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "SignTile":
         t = cls()
         t.text = s.read_pascal_bytes("H")
-        t.unk1 = s.read_u32()
+        t.unk1 = s.read_i32()
 
         return t
 
@@ -462,9 +497,11 @@ class LockTile(TileExtra):
     flags: int = 0  # u8
     owner_uid: int = 0  # u32
     access_count: int = 0  # u32
-    access_uids: list[int] = field(default_factory=list)  # Vec<u32>
+    access_uids: list[int] = field(default_factory=list)  # Vec<i32>
     minimum_level: int = 0  # u32
     unk1: int = 0  # u32
+
+    bpm: int = 100
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "LockTile":
@@ -473,7 +510,13 @@ class LockTile(TileExtra):
         t.owner_uid = s.read_u32()
         t.access_count = s.read_u32()
         for _ in range(t.access_count):
-            t.access_uids.append(s.read_u32())
+            v = s.read_i32()
+
+            if v & (1 << 31):
+                t.bpm = abs(v)
+
+            t.access_uids.append(v)
+
         if format_version >= 12:
             t.minimum_level = s.read_u32()
         if format_version >= 13:
@@ -839,7 +882,7 @@ class DataBedrockTile(TileExtra):
     unk2: int = 0  # u32
     unk3: int = 0  # u32
     unk4: int = 0  # u32
-    unk5: int = 0  # u32
+    unk5: int = 0  # i32
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "DataBedrockTile":
@@ -851,7 +894,7 @@ class DataBedrockTile(TileExtra):
             t.unk3 = s.read_u32()
         if format_version > 19:
             t.unk4 = s.read_u32()
-            t.unk5 = s.read_u32()
+            t.unk5 = s.read_i32()
 
         return t
 
@@ -1137,8 +1180,7 @@ class PortraitTile(TileExtra):
     unk8: int = 0
     unk9: int = 0
     unk10: int = 0
-    unk11: int = 0
-    unk12: bytes = b""
+    unk11: bytes = b""
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "PortraitTile":
@@ -1153,17 +1195,16 @@ class PortraitTile(TileExtra):
         t.face = s.read_u16()  # 18
         t.hat = s.read_u16()  # 20
         t.hair = s.read_u16()  # 22
-        t.unk8 = s.read_u16()  # 24
 
         if format_version >= 4 and any(x in (WILL_OF_THE_WILD, GOLEM_S_GIFT) for x in (t.face, t.hat, t.hair)):
+            t.unk8 = s.read_u32()  # 4
             t.unk9 = s.read_u32()  # 4
-            t.unk10 = s.read_u32()  # 4
 
         if format_version >= 9:
-            t.unk11 = s.read_u32()  # 28
+            t.unk10 = s.read_u32()  # 28
 
-        if format_version >= 23 and t.face == INFINITY_CROWN:
-            t.unk12 = s.read_pascal_bytes("H")
+        if format_version >= 23 and t.hat == INFINITY_CROWN:
+            t.unk11 = s.read_pascal_bytes("H")
 
         return t
 
@@ -1901,7 +1942,7 @@ class Tile:
         off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
         tex = (ivec2(item.tex_coord_x, item.tex_coord_y) + off) * 32
 
-        tex = mgr.get(setting.asset_path / item.texture_file.decode(), tex.x, tex.y, 32, 32, flip_x=is_flipped)
+        tex = mgr.get(setting.asset_path / "game" / item.texture_file.decode(), tex.x, tex.y, 32, 32, flip_x=is_flipped)
         # in the website, they uses css feColorMatrix which uses linear space, but in the game they don't,
         # causing a more saturated color as opposed to a "pastel" look in the website
         tex = color_matrix_filter(tex, _get_color_matrix(self.flags), linear=False)
@@ -2167,13 +2208,13 @@ class Npc:
 class World:
     id: int = 0  # u32, from int_x in tank packet
     version: int = 0  # u32
-    unk1: int = 0  # u16
+    f: int = 0  # u16
     name: bytes = b""
     width: int = 0  # u32
     height: int = 0  # u32
     nb_tiles: int = 0  # u32
     unk2: bytes = b"\x00" * 5
-    tiles: list[Tile] = field(default_factory=list, repr=False)
+    tiles: dict[int, Tile] = field(default_factory=dict, repr=False)
     unk4: bytes = b"\x00" * 12
     dropped: Dropped = field(default_factory=Dropped, repr=False)
     default_weather: WeatherType = WeatherType.DEFAULT  # u16
@@ -2187,6 +2228,183 @@ class World:
     garbage_start: int = -1
     logger = logging.getLogger("world")
     npcs: list[Npc] = field(default_factory=list)
+    sheet: Sheet | None = None
+
+    def get_notes(self) -> list[Note]:
+        ret: list[Note] = []
+
+        for tile in self.tiles.values():
+            # 7 staff in one world, the topmost is 0, each staff height is 14 note
+            staff_baseline = int(tile.pos.y // 14) * 14
+
+            if tile.extra and isinstance(tile.extra, AudioRackTile):
+                rack = tile.extra.expect(AudioRackTile)
+                notes = rack.note.split(b" ")
+                CODE_TO_INSTRUMENT_SET = {
+                    "B": InstrumentSet.BASS,
+                    "D": InstrumentSet.DRUM,
+                    "E": InstrumentSet.ELECTRIC_GUITAR,
+                    "F": InstrumentSet.FLUTE,
+                    "G": InstrumentSet.SPANISH_GUITAR,
+                    "L": InstrumentSet.LYRE,
+                    "P": InstrumentSet.PIANO,
+                    "S": InstrumentSet.SAX,
+                    "T": InstrumentSet.MEXICAN_TRUMPET,
+                    "V": InstrumentSet.VIOLIN,
+                }
+                ACCIDENT_MAP = {
+                    "#": Note.SHARP,
+                    "-": Note.NATURAL,
+                    "b": Note.FLAT,
+                }
+                PITCH_MAP = {
+                    "c": (Note.C, 0),
+                    "d": (Note.D, 0),
+                    "e": (Note.E, 0),
+                    "f": (Note.F, 0),
+                    "g": (Note.G, 0),
+                    "a": (Note.A, 0),
+                    "b": (Note.B, 0),
+                    "C": (Note.C, 1),
+                    "D": (Note.D, 1),
+                    "E": (Note.E, 1),
+                    "F": (Note.F, 1),
+                    "G": (Note.G, 1),
+                    "A": (Note.A, 1),
+                    "B": (Note.B, 1),
+                }
+
+                for note in notes:
+                    if not note:
+                        continue
+
+                    code, pitch_str, accidental = list(note.decode())
+                    pitch, octave = PITCH_MAP[pitch_str]
+
+                    ret.append(
+                        Note(
+                            base=pitch,
+                            octave=octave,
+                            accident=ACCIDENT_MAP[accidental],
+                            instrument=CODE_TO_INSTRUMENT_SET[code],
+                            timestamp=int(staff_baseline // 14) * self.width + tile.pos.x,
+                            volume=rack.volume / 100 if rack.volume != 0 else 0,
+                        )
+                    )
+                    continue
+
+            if tile.bg_id == 0:
+                continue
+
+            item = item_database.get(tile.bg_id)
+            if item.item_type == ItemInfoType.MUSICNOTE:
+                sharp = {
+                    SHEET_MUSIC_COLON_SHARP_BASS,
+                    SHEET_MUSIC_COLON_SHARP_PIANO,
+                    SHEET_MUSIC_COLON_SHARP_SAX,
+                    SHEET_MUSIC_COLON_SHARP_FLUTE,
+                    SHEET_MUSIC_COLON_SHARP_SPANISH_GUITAR,
+                    SHEET_MUSIC_COLON_SHARP_VIOLIN,
+                    SHEET_MUSIC_COLON_SHARP_LYRE,
+                    SHEET_MUSIC_COLON_SHARP_ELECTRIC_GUITAR,
+                    SHEET_MUSIC_COLON_SHARP_MEXICAN_TRUMPET,
+                }
+                flat = {
+                    SHEET_MUSIC_COLON_FLAT_BASS,
+                    SHEET_MUSIC_COLON_FLAT_PIANO,
+                    SHEET_MUSIC_COLON_FLAT_SAX,
+                    SHEET_MUSIC_COLON_FLAT_FLUTE,
+                    SHEET_MUSIC_COLON_FLAT_SPANISH_GUITAR,
+                    SHEET_MUSIC_COLON_FLAT_VIOLIN,
+                    SHEET_MUSIC_COLON_FLAT_LYRE,
+                    SHEET_MUSIC_COLON_FLAT_ELECTRIC_GUITAR,
+                    SHEET_MUSIC_COLON_FLAT_MEXICAN_TRUMPET,
+                }
+
+                accident = Note.SHARP if tile.bg_id in sharp else Note.FLAT if tile.bg_id in flat else Note.NATURAL
+
+                ID_TO_INSTRUMENT_SET = {
+                    SHEET_MUSIC_COLON_BLANK: InstrumentSet.BLANK,
+                    SHEET_MUSIC_COLON_BASS_NOTE: InstrumentSet.BASS,
+                    SHEET_MUSIC_COLON_SHARP_BASS: InstrumentSet.BASS,
+                    SHEET_MUSIC_COLON_FLAT_BASS: InstrumentSet.BASS,
+                    SHEET_MUSIC_COLON_PIANO_NOTE: InstrumentSet.PIANO,
+                    SHEET_MUSIC_COLON_SHARP_PIANO: InstrumentSet.PIANO,
+                    SHEET_MUSIC_COLON_FLAT_PIANO: InstrumentSet.PIANO,
+                    SHEET_MUSIC_COLON_DRUMS: InstrumentSet.DRUM,
+                    SHEET_MUSIC_COLON_SPOOKY: InstrumentSet.SPOOKY,
+                    SHEET_MUSIC_COLON_SAX_NOTE: InstrumentSet.SAX,
+                    SHEET_MUSIC_COLON_SHARP_SAX: InstrumentSet.SAX,
+                    SHEET_MUSIC_COLON_FLAT_SAX: InstrumentSet.SAX,
+                    SHEET_MUSIC_COLON_REPEAT_BEGIN: InstrumentSet.REPEAT_BEGIN,
+                    SHEET_MUSIC_COLON_REPEAT_END: InstrumentSet.REPEAT_END,
+                    SHEET_MUSIC_COLON_WINTERFEST: InstrumentSet.FESTIVE,
+                    SHEET_MUSIC_COLON_FLUTE_NOTE: InstrumentSet.FLUTE,
+                    SHEET_MUSIC_COLON_SHARP_FLUTE: InstrumentSet.FLUTE,
+                    SHEET_MUSIC_COLON_FLAT_FLUTE: InstrumentSet.FLUTE,
+                    SHEET_MUSIC_COLON_SPANISH_GUITAR_NOTE: InstrumentSet.SPANISH_GUITAR,
+                    SHEET_MUSIC_COLON_SHARP_SPANISH_GUITAR: InstrumentSet.SPANISH_GUITAR,
+                    SHEET_MUSIC_COLON_FLAT_SPANISH_GUITAR: InstrumentSet.SPANISH_GUITAR,
+                    SHEET_MUSIC_COLON_VIOLIN_NOTE: InstrumentSet.VIOLIN,
+                    SHEET_MUSIC_COLON_SHARP_VIOLIN: InstrumentSet.VIOLIN,
+                    SHEET_MUSIC_COLON_FLAT_VIOLIN: InstrumentSet.VIOLIN,
+                    SHEET_MUSIC_COLON_LYRE_NOTE: InstrumentSet.LYRE,
+                    SHEET_MUSIC_COLON_SHARP_LYRE: InstrumentSet.LYRE,
+                    SHEET_MUSIC_COLON_FLAT_LYRE: InstrumentSet.LYRE,
+                    SHEET_MUSIC_COLON_ELECTRIC_GUITAR: InstrumentSet.ELECTRIC_GUITAR,
+                    SHEET_MUSIC_COLON_SHARP_ELECTRIC_GUITAR: InstrumentSet.ELECTRIC_GUITAR,
+                    SHEET_MUSIC_COLON_FLAT_ELECTRIC_GUITAR: InstrumentSet.ELECTRIC_GUITAR,
+                    SHEET_MUSIC_COLON_MEXICAN_TRUMPET: InstrumentSet.MEXICAN_TRUMPET,
+                    SHEET_MUSIC_COLON_SHARP_MEXICAN_TRUMPET: InstrumentSet.MEXICAN_TRUMPET,
+                    SHEET_MUSIC_COLON_FLAT_MEXICAN_TRUMPET: InstrumentSet.MEXICAN_TRUMPET,
+                }
+
+                PITCH_MAP = [
+                    (Note.B, 1),
+                    (Note.A, 1),
+                    (Note.G, 1),
+                    (Note.F, 1),
+                    (Note.E, 1),
+                    (Note.D, 1),
+                    (Note.C, 1),
+                    (Note.B, 0),
+                    (Note.A, 0),
+                    (Note.G, 0),
+                    (Note.F, 0),
+                    (Note.E, 0),
+                    (Note.D, 0),
+                    (Note.C, 0),
+                ]
+
+                pitch, octave = PITCH_MAP[tile.pos.y - staff_baseline]
+
+                ret.append(
+                    Note(
+                        base=pitch,
+                        octave=octave,
+                        accident=accident,
+                        instrument=ID_TO_INSTRUMENT_SET[tile.bg_id],
+                        timestamp=int(tile.pos.y // 14) * self.width + tile.pos.x,
+                    )
+                )
+
+        return ret
+
+    def get_sheet(self, mixer: AudioMixer) -> Sheet:
+        lock = self.get_world_lock()
+        if lock is None or lock.extra is None:
+            bpm = 100
+        else:
+            bpm = lock.extra.expect(LockTile).bpm
+
+        if not self.sheet:
+            self.sheet = Sheet(
+                bpm=bpm,
+                notes=self.get_notes(),
+                mixer=mixer,
+            )
+
+        return self.sheet
 
     def get_npc(self, id: int) -> Npc | None:
         for npc in self.npcs:
@@ -2220,20 +2438,29 @@ class World:
         self.player = [p for p in self.player if p.net_id != net_id]
 
     def fix(self) -> None:
-        """adjust width, height, nb_tiles based on the tiles list. also fills in any gap, and sort it"""
-        xs = [t.pos.x for t in self.tiles]
-        ys = [t.pos.y for t in self.tiles]
+        """adjust width, height, nb_tiles based on the tiles dict. also fills in any gap."""
+        xs = [t.pos.x for t in self.tiles.values()]
+        ys = [t.pos.y for t in self.tiles.values()]
         self.width = max(xs) + 1
         self.height = max(ys) + 1
 
         for y in range(self.height):
             for x in range(self.width):
-                pos = ivec2(x, y)
-                if not self.tile_exists(pos):
-                    self.tiles.append(Tile(pos=pos))
+                idx = y * self.width + x
+                if idx not in self.tiles:
+                    tile = Tile(pos=ivec2(x, y))
+                    tile.index = idx
+                    self.tiles[idx] = tile
 
         self.nb_tiles = len(self.tiles)
-        self.tiles.sort(key=lambda tile: (tile.pos.y, tile.pos.x))
+
+    def get_world_lock(self) -> Tile | None:
+        for tile in self.tiles.values():
+            if not tile.extra:
+                continue
+
+            if isinstance(tile.extra, LockTile):
+                return tile
 
     def tile_exists(self, pos: ivec2 | int) -> bool:
         return self.get_tile(pos) is not None
@@ -2252,20 +2479,16 @@ class World:
     def get_tile(self, x: int, y: int) -> Tile | None: ...
 
     def get_tile(self, x: ivec2 | int, y: int | None = None) -> Tile | None:
-        if isinstance(x, int):
-            if y is None:
-                x = ivec2(x % self.width, x // self.width)
-            else:
-                x = ivec2(x, y)
+        if isinstance(x, ivec2):
+            idx = x.y * self.width + x.x
+        elif y is None:
+            idx = x
+        else:
+            idx = y * self.width + x
 
-        idx = x.y * self.width + x.x
-        if idx > len(self.tiles) - 1:
-            self.logger.warning(f"tile {x} in {self.name} does not exist")
-            return
-
-        tile = self.tiles[idx]
-        if tile.index != idx:
-            self.logger.error(f"world tiles is unsorted, indexing logic will be flawed")
+        tile = self.tiles.get(idx)
+        if tile is None:
+            self.logger.warning(f"tile idx={idx} in {self.name} does not exist")
 
         return tile
 
@@ -2296,7 +2519,9 @@ class World:
                 tile.extra = SeedTile()
 
     def replace_whole_tile(self, tile: Tile) -> None:
-        if idx := self.index_tile(tile.pos):
+        idx = self.index_tile(tile.pos)
+        if idx is not None:
+            tile.index = idx
             self.tiles[idx] = tile
 
     def place_fg(self, tile: Tile, fg: int, connection: int = 0, a5: bool = False) -> None:
@@ -2490,7 +2715,7 @@ class World:
                 tile.bg_tex_index = handle_smart_edge_horiz_seed_connection(self, tile, 1)
 
     def update_all_connection(self) -> None:
-        for tile in self.tiles:
+        for tile in self.tiles.values():
             self.update_tile_connection(tile)
 
     def update_3x3_connection(self, tile_or_pos: Tile | ivec2 | int) -> None:
@@ -2534,7 +2759,7 @@ class World:
         if not locked.extra or locked.extra.type != TileExtraType.LOCK_TILE:
             return
 
-        for tile in self.tiles:
+        for tile in self.tiles.values():
             if tile.lock_index == locked.index:
                 tile.flags &= ~TileFlags.LOCKED
                 tile.lock_index = 0
@@ -2636,7 +2861,7 @@ class World:
 
         world.id = int_x_id
         world.version = s.read_u16()
-        world.unk1 = s.read_u32()
+        world.f = s.read_u32()
         world.name = s.read_pascal_bytes("H")
         world.width = s.read_u32()
         world.height = s.read_u32()
@@ -2658,7 +2883,7 @@ class World:
 
             tile.index = p
             tile.pos = ivec2(p % world.width, p // world.width)
-            world.tiles.append(tile)
+            world.tiles[p] = tile
 
         world.update_all_connection()
 
@@ -2730,12 +2955,19 @@ class World:
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.World) -> "World":
+        tiles: dict[int, Tile] = {}
+        for proto_tile in proto.inner.tiles:
+            tile = Tile.from_proto(proto_tile)
+            idx = tile.pos.y * proto.inner.width + tile.pos.x
+            tile.index = idx
+            tiles[idx] = tile
+
         return cls(
             name=proto.inner.name,
             width=proto.inner.width,
             height=proto.inner.height,
             nb_tiles=proto.inner.nb_tiles,
-            tiles=list(map(lambda x: Tile.from_proto(x), proto.inner.tiles)),
+            tiles=tiles,
             dropped=Dropped.from_proto(proto.inner.dropped),
             garbage_start=proto.inner.garbage_start,
             player=[Player.from_proto(x) for x in proto.player],
@@ -2749,7 +2981,7 @@ class World:
                 width=self.width,
                 height=self.height,
                 nb_tiles=self.nb_tiles,
-                tiles=list(map(lambda x: x.to_proto(), self.tiles)),
+                tiles=[tile.to_proto() for tile in self.tiles.values()],
                 dropped=self.dropped.to_proto(),
                 garbage_start=self.garbage_start,
             ),

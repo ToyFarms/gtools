@@ -22,6 +22,7 @@ from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.world import World
 from gtools.core.hosts import HostsFileManager
 from gtools.core.log import setup_logger
+from gtools.core.mixer import AudioMixer
 from gtools.core.network import is_up, resolve_doh
 from gtools.core.privilege import elevate, is_elevated, is_elevated_child
 from gtools.core.wsl import is_running_wsl, windows_home
@@ -220,6 +221,9 @@ if __name__ == "__main__":
 
     render = subparsers.add_parser("render", parents=[global_parent], help="render a world file")
     render.add_argument("world", help="path to world packet file")
+
+    music = subparsers.add_parser("music", parents=[global_parent], help="simulate world music")
+    music.add_argument("world", help="path to world packet file")
 
     sett = subparsers.add_parser("setting", parents=[global_parent], help="manipulate settings")
     sett_sub = sett.add_subparsers(dest="setting_op", help="setting operation")
@@ -486,7 +490,7 @@ if __name__ == "__main__":
                 dst_slice[..., 3][alpha_mask] = tex[..., 3][alpha_mask]
 
         mgr = RTTexManager()
-        for i, tile in enumerate(world.tiles):
+        for i, tile in world.tiles.items():
             if i == world.garbage_start:
                 break
 
@@ -500,6 +504,24 @@ if __name__ == "__main__":
         print(f"rendering took {time.perf_counter() - start:.3f}s")
 
         Image.fromarray(img).show()
+    elif args.cmd == "music":
+        world = World.from_tank(Path(args.world).read_bytes())
+        mixer = AudioMixer()
+        sheet = world.get_sheet(mixer)
+
+        prev = time.time()
+        try:
+            while True:
+                now = time.time()
+                dt = now - prev
+                prev = now
+
+                sheet.update(dt)
+                time.sleep(1 / 60)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            mixer.stop()
 
 # TODO: camera implement fit_to_rect and use it in world viewer
 # TODO: properly render tree, display block, vending

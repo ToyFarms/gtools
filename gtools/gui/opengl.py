@@ -171,8 +171,20 @@ class Uniform:
 
 
 class ShaderProgram:
+    _SHADER: dict[str, "ShaderProgram"] ={}
+
     def __init__(self, vs_src: str, fs_src: str) -> None:
         self._id = self._link(vs_src, fs_src)
+
+    @staticmethod
+    def get(id: str) -> "ShaderProgram":
+        if id in ShaderProgram._SHADER:
+            return ShaderProgram._SHADER[id]
+
+        shader = ShaderProgram.from_file(id)
+        ShaderProgram._SHADER[id] = shader
+
+        return shader
 
     @classmethod
     def from_file(cls, vs_file: str | Path, fs_file: str | Path | None = None) -> "ShaderProgram":
@@ -218,6 +230,16 @@ class ShaderProgram:
 
 
 class Mesh:
+    # fmt: off
+    RECT = np.array([
+        -0.5, -0.5, 0.0, 0.0,
+        0.5, -0.5, 1.0, 0.0,
+        0.5,  0.5, 1.0, 1.0,
+        -0.5,  0.5, 0.0, 1.0,
+    ], dtype=np.float32)
+    RECT_INDICES = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint16)
+    # fmt: on
+
     def __init__(
         self,
         vertices: npt.NDArray[np.float32],
