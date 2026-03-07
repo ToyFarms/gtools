@@ -34,9 +34,9 @@ class Sound:
         self.data = resampled
 
     @classmethod
-    def from_file(cls, path: str) -> "Sound":
+    def from_file(cls, path: str, volume: float = 1.0) -> "Sound":
         data, sample_rate = sf.read(path, dtype="float32", always_2d=True)
-        return cls(data, sample_rate=sample_rate)
+        return cls(data * volume, sample_rate=sample_rate)
 
     def get_handle(self) -> "_PlaybackHandle":
         return _PlaybackHandle(self)

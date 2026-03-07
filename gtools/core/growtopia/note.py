@@ -128,9 +128,10 @@ class Sheet:
         self._activated_repeats: set[tuple[int, int]] = set()
         self._pending_backtrack: int | None = None
 
+        self._can_go = threading.Event()
         self._preload_thread = threading.Thread(target=self._preload, daemon=True)
         self._preload_thread.start()
-        self._can_go = threading.Event()
+        # TODO: configurable volume
 
     def _preload(self) -> None:
         for col in range(self.start, self.end):
@@ -141,7 +142,7 @@ class Sheet:
                     continue
                 path = note.to_path()
                 if path not in _SOUNDS:
-                    _SOUNDS[path] = Sound.from_file(str(path))
+                    _SOUNDS[path] = Sound.from_file(str(path), volume=0.5)
         self._can_go.set()
 
     def _find_repeat_begin(self, end_note: Note) -> int:
@@ -183,7 +184,7 @@ class Sheet:
                 continue
             path = note.to_path()
             if path not in _SOUNDS:
-                _SOUNDS[path] = Sound.from_file(str(path))
+                _SOUNDS[path] = Sound.from_file(str(path), volume=0.5)
             self.mixer.play(_SOUNDS[path])
 
         self.playhead += n

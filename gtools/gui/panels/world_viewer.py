@@ -99,7 +99,7 @@ class WorldTab:
             imgui.set_next_window_dock_id(self._dockspace_id)
             self._first_render = False
 
-        opened, _ = imgui.begin(self._name, self._open)
+        opened, self._open = imgui.begin(self._name, self._open)
         self._is_active = imgui.is_window_focused(imgui.FocusedFlags_.child_windows)
         if opened:
             cw, ch = imgui.get_content_region_avail()
