@@ -60,14 +60,14 @@ class _PlaybackHandle:
 
 
 class AudioMixer:
-    def __init__(self, *, blocksize: int = 0, latency: str = "low", device: Optional[int | str] = None) -> None:
+    def __init__(self, *, blocksize: int = 512, latency: str = "low", device: Optional[int | str] = None) -> None:
         self._pending: deque[_PlaybackHandle] = deque()
         self._streams: list[_PlaybackHandle] = []
         self.stream = sd.OutputStream(
             samplerate=TARGET_SR,
             channels=CHANNELS,
             dtype="float32",
-            blocksize=512,
+            blocksize=blocksize,
             latency=latency,
             device=device,
             callback=self._callback,
@@ -80,12 +80,6 @@ class AudioMixer:
     def stop(self) -> None:
         self.stream.stop()
         self.stream.close()
-
-    def __enter__(self) -> "AudioMixer":
-        return self
-
-    def __exit__(self, *_) -> None:
-        self.stop()
 
     def _callback(
         self,

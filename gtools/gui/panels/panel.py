@@ -18,6 +18,9 @@ class Panel(ABC):
     def is_open(self) -> bool:
         return True
 
+    def update(self, dt: float) -> None:
+        pass
+
     def render(self) -> None:
         opened, should_stay = self._imgui_begin()
         if opened:

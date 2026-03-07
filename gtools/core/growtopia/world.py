@@ -76,39 +76,6 @@ from gtools.baked.items import (
     PURPLE_CAVE_CRYSTAL,
     REGAL_BANNISTER,
     REGAL_STAIRS,
-    SHEET_MUSIC_COLON_BASS_NOTE,
-    SHEET_MUSIC_COLON_BLANK,
-    SHEET_MUSIC_COLON_DRUMS,
-    SHEET_MUSIC_COLON_ELECTRIC_GUITAR,
-    SHEET_MUSIC_COLON_FLAT_BASS,
-    SHEET_MUSIC_COLON_FLAT_ELECTRIC_GUITAR,
-    SHEET_MUSIC_COLON_FLAT_FLUTE,
-    SHEET_MUSIC_COLON_FLAT_LYRE,
-    SHEET_MUSIC_COLON_FLAT_MEXICAN_TRUMPET,
-    SHEET_MUSIC_COLON_FLAT_PIANO,
-    SHEET_MUSIC_COLON_FLAT_SAX,
-    SHEET_MUSIC_COLON_FLAT_SPANISH_GUITAR,
-    SHEET_MUSIC_COLON_FLAT_VIOLIN,
-    SHEET_MUSIC_COLON_FLUTE_NOTE,
-    SHEET_MUSIC_COLON_LYRE_NOTE,
-    SHEET_MUSIC_COLON_MEXICAN_TRUMPET,
-    SHEET_MUSIC_COLON_PIANO_NOTE,
-    SHEET_MUSIC_COLON_REPEAT_BEGIN,
-    SHEET_MUSIC_COLON_REPEAT_END,
-    SHEET_MUSIC_COLON_SAX_NOTE,
-    SHEET_MUSIC_COLON_SHARP_BASS,
-    SHEET_MUSIC_COLON_SHARP_ELECTRIC_GUITAR,
-    SHEET_MUSIC_COLON_SHARP_FLUTE,
-    SHEET_MUSIC_COLON_SHARP_LYRE,
-    SHEET_MUSIC_COLON_SHARP_MEXICAN_TRUMPET,
-    SHEET_MUSIC_COLON_SHARP_PIANO,
-    SHEET_MUSIC_COLON_SHARP_SAX,
-    SHEET_MUSIC_COLON_SHARP_SPANISH_GUITAR,
-    SHEET_MUSIC_COLON_SHARP_VIOLIN,
-    SHEET_MUSIC_COLON_SPANISH_GUITAR_NOTE,
-    SHEET_MUSIC_COLON_SPOOKY,
-    SHEET_MUSIC_COLON_VIOLIN_NOTE,
-    SHEET_MUSIC_COLON_WINTERFEST,
     STALACTITE,
     STALAGMITE,
     STEAM_LAUNCHER,
@@ -132,7 +99,7 @@ import cbor2
 
 from gtools.core.color import color_matrix_filter
 from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoCollisionType, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
-from gtools.core.growtopia.music.note import InstrumentSet, Note, Sheet
+from gtools.core.growtopia.note import ACCIDENT_MAP, CODE_TO_INSTRUMENT_SET, CODE_TO_PITCH_MAP, ID_TO_INSTRUMENT_SET, SHEET_FLAT_ID, SHEET_SHARP_ID, Y_TO_PITCH_MAP, Note, Sheet
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RTTexManager
@@ -2240,46 +2207,13 @@ class World:
             if tile.extra and isinstance(tile.extra, AudioRackTile):
                 rack = tile.extra.expect(AudioRackTile)
                 notes = rack.note.split(b" ")
-                CODE_TO_INSTRUMENT_SET = {
-                    "B": InstrumentSet.BASS,
-                    "D": InstrumentSet.DRUM,
-                    "E": InstrumentSet.ELECTRIC_GUITAR,
-                    "F": InstrumentSet.FLUTE,
-                    "G": InstrumentSet.SPANISH_GUITAR,
-                    "L": InstrumentSet.LYRE,
-                    "P": InstrumentSet.PIANO,
-                    "S": InstrumentSet.SAX,
-                    "T": InstrumentSet.MEXICAN_TRUMPET,
-                    "V": InstrumentSet.VIOLIN,
-                }
-                ACCIDENT_MAP = {
-                    "#": Note.SHARP,
-                    "-": Note.NATURAL,
-                    "b": Note.FLAT,
-                }
-                PITCH_MAP = {
-                    "c": (Note.C, 0),
-                    "d": (Note.D, 0),
-                    "e": (Note.E, 0),
-                    "f": (Note.F, 0),
-                    "g": (Note.G, 0),
-                    "a": (Note.A, 0),
-                    "b": (Note.B, 0),
-                    "C": (Note.C, 1),
-                    "D": (Note.D, 1),
-                    "E": (Note.E, 1),
-                    "F": (Note.F, 1),
-                    "G": (Note.G, 1),
-                    "A": (Note.A, 1),
-                    "B": (Note.B, 1),
-                }
 
                 for note in notes:
                     if not note:
                         continue
 
                     code, pitch_str, accidental = list(note.decode())
-                    pitch, octave = PITCH_MAP[pitch_str]
+                    pitch, octave = CODE_TO_PITCH_MAP[pitch_str]
 
                     ret.append(
                         Note(
@@ -2298,85 +2232,9 @@ class World:
 
             item = item_database.get(tile.bg_id)
             if item.item_type == ItemInfoType.MUSICNOTE:
-                sharp = {
-                    SHEET_MUSIC_COLON_SHARP_BASS,
-                    SHEET_MUSIC_COLON_SHARP_PIANO,
-                    SHEET_MUSIC_COLON_SHARP_SAX,
-                    SHEET_MUSIC_COLON_SHARP_FLUTE,
-                    SHEET_MUSIC_COLON_SHARP_SPANISH_GUITAR,
-                    SHEET_MUSIC_COLON_SHARP_VIOLIN,
-                    SHEET_MUSIC_COLON_SHARP_LYRE,
-                    SHEET_MUSIC_COLON_SHARP_ELECTRIC_GUITAR,
-                    SHEET_MUSIC_COLON_SHARP_MEXICAN_TRUMPET,
-                }
-                flat = {
-                    SHEET_MUSIC_COLON_FLAT_BASS,
-                    SHEET_MUSIC_COLON_FLAT_PIANO,
-                    SHEET_MUSIC_COLON_FLAT_SAX,
-                    SHEET_MUSIC_COLON_FLAT_FLUTE,
-                    SHEET_MUSIC_COLON_FLAT_SPANISH_GUITAR,
-                    SHEET_MUSIC_COLON_FLAT_VIOLIN,
-                    SHEET_MUSIC_COLON_FLAT_LYRE,
-                    SHEET_MUSIC_COLON_FLAT_ELECTRIC_GUITAR,
-                    SHEET_MUSIC_COLON_FLAT_MEXICAN_TRUMPET,
-                }
+                accident = Note.SHARP if tile.bg_id in SHEET_SHARP_ID else Note.FLAT if tile.bg_id in SHEET_FLAT_ID else Note.NATURAL
 
-                accident = Note.SHARP if tile.bg_id in sharp else Note.FLAT if tile.bg_id in flat else Note.NATURAL
-
-                ID_TO_INSTRUMENT_SET = {
-                    SHEET_MUSIC_COLON_BLANK: InstrumentSet.BLANK,
-                    SHEET_MUSIC_COLON_BASS_NOTE: InstrumentSet.BASS,
-                    SHEET_MUSIC_COLON_SHARP_BASS: InstrumentSet.BASS,
-                    SHEET_MUSIC_COLON_FLAT_BASS: InstrumentSet.BASS,
-                    SHEET_MUSIC_COLON_PIANO_NOTE: InstrumentSet.PIANO,
-                    SHEET_MUSIC_COLON_SHARP_PIANO: InstrumentSet.PIANO,
-                    SHEET_MUSIC_COLON_FLAT_PIANO: InstrumentSet.PIANO,
-                    SHEET_MUSIC_COLON_DRUMS: InstrumentSet.DRUM,
-                    SHEET_MUSIC_COLON_SPOOKY: InstrumentSet.SPOOKY,
-                    SHEET_MUSIC_COLON_SAX_NOTE: InstrumentSet.SAX,
-                    SHEET_MUSIC_COLON_SHARP_SAX: InstrumentSet.SAX,
-                    SHEET_MUSIC_COLON_FLAT_SAX: InstrumentSet.SAX,
-                    SHEET_MUSIC_COLON_REPEAT_BEGIN: InstrumentSet.REPEAT_BEGIN,
-                    SHEET_MUSIC_COLON_REPEAT_END: InstrumentSet.REPEAT_END,
-                    SHEET_MUSIC_COLON_WINTERFEST: InstrumentSet.FESTIVE,
-                    SHEET_MUSIC_COLON_FLUTE_NOTE: InstrumentSet.FLUTE,
-                    SHEET_MUSIC_COLON_SHARP_FLUTE: InstrumentSet.FLUTE,
-                    SHEET_MUSIC_COLON_FLAT_FLUTE: InstrumentSet.FLUTE,
-                    SHEET_MUSIC_COLON_SPANISH_GUITAR_NOTE: InstrumentSet.SPANISH_GUITAR,
-                    SHEET_MUSIC_COLON_SHARP_SPANISH_GUITAR: InstrumentSet.SPANISH_GUITAR,
-                    SHEET_MUSIC_COLON_FLAT_SPANISH_GUITAR: InstrumentSet.SPANISH_GUITAR,
-                    SHEET_MUSIC_COLON_VIOLIN_NOTE: InstrumentSet.VIOLIN,
-                    SHEET_MUSIC_COLON_SHARP_VIOLIN: InstrumentSet.VIOLIN,
-                    SHEET_MUSIC_COLON_FLAT_VIOLIN: InstrumentSet.VIOLIN,
-                    SHEET_MUSIC_COLON_LYRE_NOTE: InstrumentSet.LYRE,
-                    SHEET_MUSIC_COLON_SHARP_LYRE: InstrumentSet.LYRE,
-                    SHEET_MUSIC_COLON_FLAT_LYRE: InstrumentSet.LYRE,
-                    SHEET_MUSIC_COLON_ELECTRIC_GUITAR: InstrumentSet.ELECTRIC_GUITAR,
-                    SHEET_MUSIC_COLON_SHARP_ELECTRIC_GUITAR: InstrumentSet.ELECTRIC_GUITAR,
-                    SHEET_MUSIC_COLON_FLAT_ELECTRIC_GUITAR: InstrumentSet.ELECTRIC_GUITAR,
-                    SHEET_MUSIC_COLON_MEXICAN_TRUMPET: InstrumentSet.MEXICAN_TRUMPET,
-                    SHEET_MUSIC_COLON_SHARP_MEXICAN_TRUMPET: InstrumentSet.MEXICAN_TRUMPET,
-                    SHEET_MUSIC_COLON_FLAT_MEXICAN_TRUMPET: InstrumentSet.MEXICAN_TRUMPET,
-                }
-
-                PITCH_MAP = [
-                    (Note.B, 1),
-                    (Note.A, 1),
-                    (Note.G, 1),
-                    (Note.F, 1),
-                    (Note.E, 1),
-                    (Note.D, 1),
-                    (Note.C, 1),
-                    (Note.B, 0),
-                    (Note.A, 0),
-                    (Note.G, 0),
-                    (Note.F, 0),
-                    (Note.E, 0),
-                    (Note.D, 0),
-                    (Note.C, 0),
-                ]
-
-                pitch, octave = PITCH_MAP[tile.pos.y - staff_baseline]
+                pitch, octave = Y_TO_PITCH_MAP[tile.pos.y - staff_baseline]
 
                 ret.append(
                     Note(

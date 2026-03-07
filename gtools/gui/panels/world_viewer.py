@@ -16,6 +16,7 @@ from gtools.core import ndialog
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.growtopia.world import World
 
+from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
 from gtools.gui.opengl import Framebuffer, Mesh, ShaderProgram
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
@@ -49,32 +50,57 @@ class WorldTab:
 
         self._open = True
         self._first_render = True
+        self._is_active = False
 
         pkt = NetPacket.deserialize(path.read_bytes())
         self._world = World.from_tank(pkt.tank)
         self._renderer.load(self._world)
-        self._sheet = self._world.get_sheet()
+        self._mixer = AudioMixer()
+        self._sheet = self._world.get_sheet(self._mixer)
 
         self._solid_shader = ShaderProgram.get("shaders/solid")
-        self._solid_proj = self._shader.get_uniform("u_proj")
-        self._solid_model = self._shader.get_uniform("u_model")
-        self._playhead = Mesh(Mesh.RECT, [2, 3], Mesh.RECT_INDICES)
+        self._solid_proj = self._solid_shader.get_uniform("u_proj")
+        self._solid_model = self._solid_shader.get_uniform("u_model")
+        # fmt: off
+        playhead_vertices = np.array([
+            -0.5, -0.5, 1.0, 1.0, 1.0, 0.4,
+            0.5,  -0.5, 1.0, 1.0, 1.0, 0.4,
+            0.5,  0.5,  1.0, 1.0, 1.0, 0.4,
+            -0.5, 0.5,  1.0, 1.0, 1.0, 0.4,
+        ], dtype=np.float32)
+        # fmt: on
+        self._playhead = Mesh(playhead_vertices, [2, 4], Mesh.RECT_INDICES)
+        self._playing = True
+        self._seek = 0
 
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
         self._renderer.delete()
         self._fbo.delete()
+        self._mixer.stop()
 
     @property
     def is_open(self) -> bool:
         return bool(self._open)
+
+    @property
+    def is_active(self) -> bool:
+        return self._is_active
+
+    def update(self, dt: float) -> None:
+        if self._playing:
+            self._sheet.update(dt)
+
+        if self._seek != 0:
+            self._sheet.seek(self._seek)
 
     def render(self) -> None:
         if self._first_render and self._dockspace_id:
             imgui.set_next_window_dock_id(self._dockspace_id)
             self._first_render = False
 
-        opened, self._open = imgui.begin(self._name, self._open)
+        opened, _ = imgui.begin(self._name, self._open)
+        self._is_active = imgui.is_window_focused(imgui.FocusedFlags_.child_windows)
         if opened:
             cw, ch = imgui.get_content_region_avail()
             cw, ch = int(cw), int(ch)
@@ -132,6 +158,21 @@ class WorldTab:
                     self._renderer.flags ^= WorldRenderer.Flags.RENDER_FG
                 elif event.key == glfw.KEY_2:
                     self._renderer.flags ^= WorldRenderer.Flags.RENDER_BG
+                elif event.key == glfw.KEY_SPACE:
+                    self._playing = not self._playing
+                elif event.key == glfw.KEY_LEFT:
+                    self._seek = -1
+                elif event.key == glfw.KEY_RIGHT:
+                    self._seek = 1
+                elif event.key == glfw.KEY_COMMA:
+                    self._sheet.seek(-1, play=True)
+                elif event.key == glfw.KEY_PERIOD:
+                    self._sheet.seek(1, play=True)
+            elif event.action == glfw.RELEASE:
+                if event.key == glfw.KEY_LEFT:
+                    self._seek = 0
+                elif event.key == glfw.KEY_RIGHT:
+                    self._seek = 0
         elif isinstance(event, TouchEvent):
             if self._hovered:
                 self._last_touch_event = time.monotonic()
@@ -162,8 +203,18 @@ class WorldTab:
         self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())
 
         model = mat4x4(1.0)
-        model = glm.translate(model, vec3(self._sheet.playhead * 32, self._sheet.get_staff(), 0.0))
-        model = glm.scale(model, vec3(8.0, 14.0 * 32.0, 0.0))
+        playhead = self._sheet.playhead - 1
+        width = 32.0
+        height = 14.0 * 32.0
+        model = glm.translate(
+            model,
+            vec3(
+                (playhead % self._world.width) * 32 - 16 + width / 2,
+                (playhead // self._world.width) * 14 * 32 - 16 + height / 2,
+                0.0,
+            ),
+        )
+        model = glm.scale(model, vec3(width, height, 1.0))
 
         ptr = glm.value_ptr(model)
         model_ptr = np.frombuffer(ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)), dtype=np.float32).reshape((4, 4), order="C")
@@ -207,6 +258,10 @@ class WorldViewerPanel(Panel):
             if isinstance(world, str):
                 self.open_world(Path(world))
 
+    def update(self, dt: float) -> None:
+        for tab in self._tabs:
+            tab.update(dt)
+
     def render(self) -> None:
         opened, should_stay = self._imgui_begin()
         if opened:
@@ -220,6 +275,9 @@ class WorldViewerPanel(Panel):
 
     def handle_event(self, event: Event) -> bool:
         for tab in self._tabs:
+            if isinstance(event, KeyEvent) and not tab.is_active:
+                continue
+
             if tab.handle_event(event):
                 return True
         return False

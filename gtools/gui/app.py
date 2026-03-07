@@ -50,11 +50,16 @@ class App:
             self.world_viewer.open_world(world_path)
 
         self.fps = 60
+        self.prev = time.perf_counter()
 
     def run(self) -> None:
         logger.info("starting App.run main loop")
         while not glfw.window_should_close(self.window):
             frame_start = time.perf_counter()
+
+            now = time.perf_counter()
+            dt = now - self.prev
+            self.prev = now
 
             glfw.poll_events()
             self.imgui_renderer.process_inputs()
@@ -65,6 +70,9 @@ class App:
 
             glClearColor(0.1, 0.1, 0.1, 1.0)
             glClear(GL_COLOR_BUFFER_BIT)
+
+            for panel in self.panels:
+                panel.update(dt)
 
             for panel in self.panels:
                 panel.render()

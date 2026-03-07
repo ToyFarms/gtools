@@ -1338,11 +1338,21 @@ class _WSLBackend(_LinuxBackend):
 
         return "|".join(parts)
 
+    _PS_OWNER_FORM = (
+        "$owner = New-Object System.Windows.Forms.Form;"
+        "$owner.TopMost = $true;"
+        "$owner.StartPosition = 'Manual';"
+        "$owner.Location = New-Object System.Drawing.Point(-32000, -32000);"
+        "$owner.Size = New-Object System.Drawing.Size(1, 1);"
+        "$owner.Show();"
+        "$owner.Activate();"
+    )
+
     def _run_powershell(self, script: str) -> str | None:
         if not self._ps_exec:
             return None
 
-        cmd = [self._ps_exec, "-NoProfile", "-Command", script]
+        cmd = [self._ps_exec, "-NoProfile", "-Sta", "-Command", script]
 
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -1362,13 +1372,14 @@ class _WSLBackend(_LinuxBackend):
             f"$ofd.Filter = {self._ps_quote(filter_str)};",
             f"$ofd.Multiselect = {('$true' if multiple else '$false')};",
         ]
+        ps_lines.insert(1, self._PS_OWNER_FORM)
 
         if win_dir:
             ps_lines.append(f"$ofd.InitialDirectory = {self._ps_quote(win_dir)};")
         if title:
             ps_lines.append(f"$ofd.Title = {self._ps_quote(title)};")
 
-        ps_lines.append("if ($ofd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {" ' if ($ofd.Multiselect) { $ofd.FileNames -join "`n" } else { $ofd.FileName }' " }")
+        ps_lines.append("if ($ofd.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {" ' if ($ofd.Multiselect) { $ofd.FileNames -join "`n" } else { $ofd.FileName }' " }")
         script = self._ps_join_lines(ps_lines)
         out = self._run_powershell(script)
         if out is None:
@@ -1391,6 +1402,7 @@ class _WSLBackend(_LinuxBackend):
             "$sfd = New-Object System.Windows.Forms.SaveFileDialog;",
             f"$sfd.Filter = {self._ps_quote(filter_str)};",
         ]
+        ps_lines.insert(1, self._PS_OWNER_FORM)
 
         if suggested:
             ps_lines.append(f"$sfd.FileName = {self._ps_quote(suggested)};")
@@ -1399,7 +1411,7 @@ class _WSLBackend(_LinuxBackend):
         if title:
             ps_lines.append(f"$sfd.Title = {self._ps_quote(title)};")
 
-        ps_lines.append("if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $sfd.FileName }")
+        ps_lines.append("if ($sfd.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { $sfd.FileName }")
         script = self._ps_join_lines(ps_lines)
         out = self._run_powershell(script)
         if out is None:
@@ -1416,13 +1428,14 @@ class _WSLBackend(_LinuxBackend):
             "Add-Type -AssemblyName System.Windows.Forms;",
             "$fbd = New-Object System.Windows.Forms.FolderBrowserDialog;",
         ]
+        ps_lines.insert(1, self._PS_OWNER_FORM)
 
         if win_dir:
             ps_lines.append(f"$fbd.SelectedPath = {self._ps_quote(win_dir)};")
         if title:
             ps_lines.append(f"$fbd.Description = {self._ps_quote(title)};")
 
-        ps_lines.append("if ($fbd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $fbd.SelectedPath }")
+        ps_lines.append("if ($fbd.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { $fbd.SelectedPath }")
         script = self._ps_join_lines(ps_lines)
         out = self._run_powershell(script)
         if out is None:
