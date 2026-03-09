@@ -18,12 +18,16 @@ from OpenGL.GL import (
 from imgui_bundle import imgui
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 
+from gtools import setting
+from gtools.core import ndialog
 from gtools.core.highres_sleep import nanosleep
 from gtools.core.log import setup_logger
 from gtools.core.wsl import windows_home
-from gtools.gui.event import Event, EventRouter, ResizeEvent
+from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent
 from gtools.gui.panels.panel import DockspacePanel, Panel
-from gtools.gui.panels.world_viewer import WorldViewerPanel
+from gtools.gui.panels.proxy_interface import ProxyPanel
+from gtools.gui.panels.world_viewer import WorldTab
+from gtools.gui.widgets.command_palette import CommandPalette, PaletteBuilder
 
 logger = logging.getLogger("gui")
 
@@ -42,15 +46,45 @@ class App:
         self.event_router = EventRouter(self.window)
 
         self.dockspace = DockspacePanel()
-        self.world_viewer = WorldViewerPanel(self.dockspace.node_id)
-        self.panels: list[Panel] = [self.dockspace, self.world_viewer]
+        self.panels: list[Panel] = [self.dockspace, ProxyPanel(self.dockspace.node_id)]
+
+        self._cmd = CommandPalette()
+        self._cmd_builder = self._setup_cmd_palette()
 
         if world_path:
             logger.debug(f"app pre-loading world {world_path}")
-            self.world_viewer.open_world(world_path)
+            self.add_panel(WorldTab(self.dockspace.node_id, world_path))
 
         self.fps = 60
         self.prev = time.perf_counter()
+        self.worlds: list[Path] = []
+
+    def _setup_cmd_palette(self) -> PaletteBuilder:
+        root = PaletteBuilder("Command palette")
+
+        @root.cmd("Open World")
+        def _() -> None:
+            world = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
+            if isinstance(world, str):
+                self.add_panel(WorldTab(self.dockspace.node_id, Path(world)))
+
+        @root.submenu("Search World")
+        def _(sub: PaletteBuilder) -> None:
+            self.worlds = [x for x in (windows_home() / ".gtools/worlds").glob("*")]
+            for world in self.worlds:
+
+                @sub.cmd(world.name)
+                def _(p=world) -> None:
+                    self.add_panel(WorldTab(self.dockspace.node_id, p))
+
+        return root
+
+    def add_panel(self, panel: Panel) -> None:
+        self.panels.append(panel)
+
+    def remove_panel(self, panel: Panel) -> None:
+        panel.delete()
+        self.panels.remove(panel)
 
     def run(self) -> None:
         logger.info("starting App.run main loop")
@@ -71,11 +105,18 @@ class App:
             glClearColor(0.1, 0.1, 0.1, 1.0)
             glClear(GL_COLOR_BUFFER_BIT)
 
+            to_remove: list[Panel] = []
             for panel in self.panels:
-                panel.update(dt)
+                if not panel.is_open:
+                    to_remove.append(panel)
 
-            for panel in self.panels:
+                panel.update(dt)
                 panel.render()
+
+            for panel in to_remove:
+                self.remove_panel(panel)
+
+            self._cmd.render()
 
             imgui.render()
             self.imgui_renderer.render(imgui.get_draw_data())
@@ -89,7 +130,11 @@ class App:
         self.shutdown()
 
     def process_events(self, e: Event) -> None:
-        if isinstance(e, ResizeEvent):
+        if isinstance(e, KeyEvent):
+            if e.action == glfw.PRESS:
+                if e.key == glfw.KEY_P and e.mods & glfw.MOD_CONTROL:
+                    self._cmd.open(self._cmd_builder.build())
+        elif isinstance(e, ResizeEvent):
             glViewport(0, 0, e.width, e.height)
             return
 
@@ -105,7 +150,7 @@ class App:
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 5)
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-        self.window = glfw.create_window(width, height, "gui", None, None)
+        self.window = glfw.create_window(width, height, "gtools gui", None, None)
         if not self.window:
             glfw.terminate()
             raise RuntimeError("failed to create GLFW window.")

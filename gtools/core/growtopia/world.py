@@ -2209,7 +2209,7 @@ class World:
                 notes = rack.note.split(b" ")
 
                 for note in notes:
-                    if not note:
+                    if not note or len(note) != 3:
                         continue
 
                     code, pitch_str, accidental = list(note.decode())

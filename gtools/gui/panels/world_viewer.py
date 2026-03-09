@@ -11,8 +11,6 @@ from pyglm.glm import mat4x4, vec3
 import numpy as np
 import ctypes
 
-from gtools import setting
-from gtools.core import ndialog
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.growtopia.world import World
 
@@ -26,12 +24,16 @@ from gtools.gui.lib.world_renderer import WorldRenderer
 logger = logging.getLogger("gui-world-viewer")
 
 
-class WorldTab:
-    _WORLD_TAB_COUNTER = itertools.count(1)
+class WorldTab(Panel):
+    _UNIQUE = itertools.count()
 
     def __init__(self, dockspace_id: int, path: Path) -> None:
-        logger.info(f"creating WorldTab for {path}")
-        self._name = f"{path.stem}##{next(self._WORLD_TAB_COUNTER)}"
+        super().__init__()
+
+        pkt = NetPacket.deserialize(path.read_bytes())
+        self._world = World.from_tank(pkt.tank)
+        self._name = f"{self._world.name.decode()}##{next(WorldTab._UNIQUE)}"
+
         # TODO: need to cleanup shader globally
         self._shader = ShaderProgram.get("shaders/world")
         self._mvp = self._shader.get_uniform("u_mvp")
@@ -52,8 +54,6 @@ class WorldTab:
         self._first_render = True
         self._is_active = False
 
-        pkt = NetPacket.deserialize(path.read_bytes())
-        self._world = World.from_tank(pkt.tank)
         self._renderer.load(self._world)
         self._mixer = AudioMixer()
         self._sheet = self._world.get_sheet(self._mixer)
@@ -148,31 +148,32 @@ class WorldTab:
                 self._camera.pos.y = self._drag["start_cam"].y - dy / self._camera.zoom
                 return True
         elif isinstance(event, KeyEvent):
-            if event.action == glfw.PRESS:
-                if self._hovered and event.key == glfw.KEY_R:
-                    self._camera.reset()
-                    return True
-                if event.key == glfw.KEY_0:
-                    self._renderer.flags |= WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
-                elif event.key == glfw.KEY_1:
-                    self._renderer.flags ^= WorldRenderer.Flags.RENDER_FG
-                elif event.key == glfw.KEY_2:
-                    self._renderer.flags ^= WorldRenderer.Flags.RENDER_BG
-                elif event.key == glfw.KEY_SPACE:
-                    self._playing = not self._playing
-                elif event.key == glfw.KEY_LEFT:
-                    self._seek = -1
-                elif event.key == glfw.KEY_RIGHT:
-                    self._seek = 1
-                elif event.key == glfw.KEY_COMMA:
-                    self._sheet.seek(-1, play=True)
-                elif event.key == glfw.KEY_PERIOD:
-                    self._sheet.seek(1, play=True)
-            elif event.action == glfw.RELEASE:
-                if event.key == glfw.KEY_LEFT:
-                    self._seek = 0
-                elif event.key == glfw.KEY_RIGHT:
-                    self._seek = 0
+            if self._is_active:
+                if event.action == glfw.PRESS:
+                    if self._hovered and event.key == glfw.KEY_R:
+                        self._camera.reset()
+                        return True
+                    if event.key == glfw.KEY_0:
+                        self._renderer.flags |= WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
+                    elif event.key == glfw.KEY_1:
+                        self._renderer.flags ^= WorldRenderer.Flags.RENDER_FG
+                    elif event.key == glfw.KEY_2:
+                        self._renderer.flags ^= WorldRenderer.Flags.RENDER_BG
+                    elif event.key == glfw.KEY_SPACE:
+                        self._playing = not self._playing
+                    elif event.key == glfw.KEY_LEFT:
+                        self._seek = -1
+                    elif event.key == glfw.KEY_RIGHT:
+                        self._seek = 1
+                    elif event.key == glfw.KEY_COMMA:
+                        self._sheet.seek(-1, play=True)
+                    elif event.key == glfw.KEY_PERIOD:
+                        self._sheet.seek(1, play=True)
+                elif event.action == glfw.RELEASE:
+                    if event.key == glfw.KEY_LEFT:
+                        self._seek = 0
+                    elif event.key == glfw.KEY_RIGHT:
+                        self._seek = 0
         elif isinstance(event, TouchEvent):
             if self._hovered:
                 self._last_touch_event = time.monotonic()
@@ -224,90 +225,3 @@ class WorldTab:
             self._playhead.draw()
 
         self._fbo.unbind()
-
-
-class WorldViewerPanel(Panel):
-    def __init__(self, outer_dockspace_id: int) -> None:
-        super().__init__()
-        logger.debug(f"initializing WorldViewerPanel with outer_dockspace_id={outer_dockspace_id}")
-        self._outer_dockspace_id = outer_dockspace_id
-
-        self._inner_dockspace_id: int = 0
-        self._inner_dockspace_key = "WorldViewerDock"
-        self._tabs: list[WorldTab] = []
-
-        self._open = True
-        self._first_render = True
-
-    @property
-    def is_open(self) -> bool:
-        return self._open
-
-    def delete(self) -> None:
-        logger.info("deleting WorldViewerPanel and its tabs")
-        for tab in self._tabs:
-            tab.delete()
-        self._tabs = []
-
-    def open_world(self, path: Path) -> None:
-        logger.info(f"worldViewerPanel opening world: {path}")
-        self._tabs.append(WorldTab(self._inner_dockspace_id, path))
-
-    def render_debug(self) -> None:
-        if imgui.button("Open World", (-1, 0)):
-            world = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
-            if isinstance(world, str):
-                self.open_world(Path(world))
-
-    def update(self, dt: float) -> None:
-        for tab in self._tabs:
-            tab.update(dt)
-
-    def render(self) -> None:
-        opened, should_stay = self._imgui_begin()
-        if opened:
-            self._render_body()
-        self._imgui_end()
-        self._on_close(should_stay)
-
-        self._prune_closed_tabs()
-        for tab in self._tabs:
-            tab.render()
-
-    def handle_event(self, event: Event) -> bool:
-        for tab in self._tabs:
-            if isinstance(event, KeyEvent) and not tab.is_active:
-                continue
-
-            if tab.handle_event(event):
-                return True
-        return False
-
-    def _imgui_begin(self) -> tuple[bool, bool]:
-        if self._first_render and self._outer_dockspace_id:
-            imgui.set_next_window_dock_id(self._outer_dockspace_id)
-            self._first_render = False
-        x, y = imgui.begin("World Viewer", self._open)
-        return x, bool(y)
-
-    def _imgui_end(self) -> None:
-        imgui.end()
-
-    def _on_close(self, should_stay: bool) -> None:
-        self._open = should_stay
-
-    def _render_content(self) -> None:
-        self._inner_dockspace_id = imgui.dock_space(
-            imgui.get_id(self._inner_dockspace_key),
-            (0.0, 0.0),
-            imgui.DockNodeFlags_.passthru_central_node,
-        )
-
-    def _prune_closed_tabs(self) -> None:
-        alive = []
-        for tab in self._tabs:
-            if tab.is_open:
-                alive.append(tab)
-            else:
-                tab.delete()
-        self._tabs = alive
