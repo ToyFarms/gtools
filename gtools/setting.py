@@ -14,6 +14,7 @@ from gtools.core.wsl import windows_home
 logger = logging.getLogger("setting")
 
 APPDIR = Path.home() / ".gtools"
+APPDIR.mkdir(exist_ok=True)
 SETTING_FILE = APPDIR / "setting.json"
 
 _setting_lock = threading.RLock()
