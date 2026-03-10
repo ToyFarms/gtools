@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import IntEnum, auto
 import logging
 import time
 from pyglm.glm import ivec2, vec2
@@ -104,12 +104,13 @@ class Telemetry:
 
 
 class Status(IntEnum):
-    DISCONNECTED = 0
-    CONNECTED = 1
-    CONNECTING = 2
-    LOGGING_IN = 3
-    LOGGED_IN = 4
-    IN_WORLD = 5
+    WAITING_FOR_SERVER_DATA = auto()
+    DISCONNECTED = auto()
+    CONNECTED = auto()
+    CONNECTING = auto()
+    LOGGING_IN = auto()
+    LOGGED_IN = auto()
+    IN_WORLD = auto()
 
 
 @dataclass(slots=True)

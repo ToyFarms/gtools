@@ -46,6 +46,7 @@ class Proxy:
         self._event_queue: Queue[tuple[ProxyEvent | None, int]] = Queue()
         self._worker_thread_id: threading.Thread | None = None
         self._channel_thread_id: threading.Thread | None = None
+        self._main_loop_thread_id: threading.Thread | None = None
         self._worker_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._should_reconnect = threading.Event()
@@ -66,6 +67,8 @@ class Proxy:
         self._last_telemetry_update: float = 0.0
         self._telemetry_update_interval: float = 0.1
         self._in_dialog = False
+        self.from_client_packet = 0
+        self.from_server_packet = 0
 
         listen(UpdateServerData)(lambda ch, ev: self._on_server_data(ch, ev))
 
@@ -79,7 +82,6 @@ class Proxy:
 
     def _on_server_data(self, _channel: str, event: UpdateServerData) -> None:
         self.logger.info(f"server_data: {event.server}:{event.port}")
-        self.running = True
         self.server_data = event
 
     def _dump_packet(self, data: bytes) -> None:
@@ -89,9 +91,11 @@ class Proxy:
             self.logger.debug(f"\t{data}")
 
     def _handle_client_to_server(self, pkt: PreparedPacket) -> None:
+        self.from_client_packet += 1
         self.proxy_client.send(pkt.as_raw, pkt.flags)
 
     def _handle_server_to_client(self, pkt: PreparedPacket) -> None:
+        self.from_server_packet += 1
         try:
             if pkt.as_net.type == NetType.TANK_PACKET:
                 if pkt.as_net.tank.type == TankType.CALL_FUNCTION:
@@ -218,7 +222,6 @@ class Proxy:
             elif pkt.as_net.type == NetType.GAME_MESSAGE:
                 if pkt.as_net.game_message["action", 1] == b"quit":
                     self.disconnect_all()
-                    self.running = False
                     self._should_reconnect.set()
 
                     return
@@ -249,6 +252,7 @@ class Proxy:
         self.proxy_client.disconnect_now()
         self.proxy_server.disconnect_now()
         self._should_reconnect.set()
+        self.state.update_status(self.broker, Status.DISCONNECTED)
         self.logger.info("gt client disconnected")
 
     def _worker(self) -> None:
@@ -316,8 +320,10 @@ class Proxy:
 
         self.logger.debug("channel worker thread exited")
 
-    def run(self) -> None:
+    def start(self, block: bool = False) -> None:
+        self.running = True
         self.logger.info("proxy running")
+
         if self._worker_thread_id is None:
             self._worker_thread_id = threading.Thread(target=self._worker)
             self._worker_thread_id.start()
@@ -326,73 +332,98 @@ class Proxy:
             self._channel_thread_id = threading.Thread(target=self._channel_worker)
             self._channel_thread_id.start()
 
-        try:
-            while True:
-                self.state.update_status(self.broker, Status.CONNECTING)
-                if not self.server_data:
-                    self.logger.info("waiting for server_data...")
-                    while not self.server_data:
-                        time.sleep(0.16)
+        if block:
+            try:
+                self._main_loop()
+            except (InterruptedError, KeyboardInterrupt):
+                pass
+            except Exception as e:
+                traceback.print_exc()
+                self.logger.error(f"failed: {e}")
+            finally:
+                with block_sigint():
+                    self.stop()
+        else:
+            self._main_loop_thread_id = threading.Thread(target=self._main_loop)
+            self._main_loop_thread_id.start()
 
-                self.proxy_client.disconnect_now()
-                self.proxy_client = ProxyClient()
+    def stop(self) -> None:
+        if not self.running:
+            return
 
-                self.logger.info("waiting for growtopia to connect...")
-                while not self.proxy_server.peer:
-                    self.proxy_server.poll()
+        self.running = False
+
+        if self._main_loop_thread_id:
+            self._main_loop_thread_id.join()
+
+        self.broker.stop()
+
+        self.proxy_server.disconnect_now()
+        self.proxy_client.disconnect_now()
+
+        self.proxy_server.destroy()
+        self.proxy_client.destroy()
+
+        self._stop_event.set()
+        self._worker_should_process.set()
+        self._event_queue.put((None, 0))
+        if self._worker_thread_id:
+            self._worker_thread_id.join()
+        self._channel_queue.put((None, 0))
+        if self._channel_thread_id:
+            self._channel_thread_id.join()
+
+    def _main_loop(self) -> None:
+        while self.running:
+            self.state.update_status(self.broker, Status.WAITING_FOR_SERVER_DATA)
+            if not self.server_data:
+                self.logger.info("waiting for server_data...")
+                while self.running and not self.server_data:
                     time.sleep(0.16)
 
-                self.logger.info(f"proxy_client connecting to {self.server_data.server}:{self.server_data.port}")
-                self.proxy_client.connect(self.server_data.server, self.server_data.port)
-                self.logger.info("all connected! now polling for events")
-                self.state.update_status(self.broker, Status.CONNECTED)
+            self.proxy_client.disconnect_now()
+            self.proxy_client = ProxyClient()
 
-                MAX_POLL_MS = 100
+            self.state.update_status(self.broker, Status.CONNECTING)
+            self.logger.info("waiting for growtopia to connect...")
+            while self.running and not self.proxy_server.peer:
+                self.proxy_server.poll()
+                time.sleep(0.16)
 
-                self._worker_should_process.set()
-                while True:
-                    start = time.perf_counter()
-                    while (event := self.proxy_server.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                        self._event_queue.put((ProxyEvent(event, DIRECTION_CLIENT_TO_SERVER), self._packet_version))
+            if not self.running:
+                break
 
-                    start = time.perf_counter()
-                    while (event := self.proxy_client.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                        self._event_queue.put((ProxyEvent(event, DIRECTION_SERVER_TO_CLIENT), self._packet_version))
+            assert self.server_data
 
-                    if time.time() - self._last_telemetry_update > self._telemetry_update_interval:
-                        self.state.telemetry.server_ping = ctypes.cast(self.proxy_client.peer, ctypes.POINTER(ENetPeer)).contents.roundTripTime if self.proxy_client.peer else 0
-                        self.state.telemetry.client_ping = ctypes.cast(self.proxy_server.peer, ctypes.POINTER(ENetPeer)).contents.roundTripTime if self.proxy_server.peer else 0
-                        with self.broker.suppressed_log():
-                            self.state.emit_telemetry(self.broker)
+            self.logger.info(f"proxy_client connecting to {self.server_data.server}:{self.server_data.port}")
+            self.proxy_client.connect(self.server_data.server, self.server_data.port)
+            self.logger.info("all connected! now polling for events")
+            self.state.update_status(self.broker, Status.CONNECTED)
 
-                    if self._should_reconnect.is_set():
-                        self.disconnect_all()
-                        self._should_reconnect.clear()
-                        with self.broker.suppressed_log():
-                            self.state.emit_telemetry(self.broker)
-                        break
+            MAX_POLL_MS = 100
 
-                self._worker_should_process.clear()
-                self._packet_version += 1
+            self._worker_should_process.set()
+            while self.running:
+                start = time.perf_counter()
+                while (event := self.proxy_server.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
+                    self._event_queue.put((ProxyEvent(event, DIRECTION_CLIENT_TO_SERVER), self._packet_version))
 
-        except (InterruptedError, KeyboardInterrupt):
-            pass
-        except Exception as e:
-            traceback.print_exc()
-            self.logger.error(f"failed: {e}")
-        finally:
-            with block_sigint():
-                self.broker.stop()
+                start = time.perf_counter()
+                while (event := self.proxy_client.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
+                    self._event_queue.put((ProxyEvent(event, DIRECTION_SERVER_TO_CLIENT), self._packet_version))
 
-                self.proxy_server.disconnect_now()
-                self.proxy_client.disconnect_now()
+                if time.time() - self._last_telemetry_update > self._telemetry_update_interval:
+                    self.state.telemetry.server_ping = ctypes.cast(self.proxy_client.peer, ctypes.POINTER(ENetPeer)).contents.roundTripTime if self.proxy_client.peer else 0
+                    self.state.telemetry.client_ping = ctypes.cast(self.proxy_server.peer, ctypes.POINTER(ENetPeer)).contents.roundTripTime if self.proxy_server.peer else 0
+                    with self.broker.suppressed_log():
+                        self.state.emit_telemetry(self.broker)
 
-                self.proxy_server.destroy()
-                self.proxy_client.destroy()
+                if self._should_reconnect.is_set():
+                    self.disconnect_all()
+                    self._should_reconnect.clear()
+                    with self.broker.suppressed_log():
+                        self.state.emit_telemetry(self.broker)
+                    break
 
-                self._stop_event.set()
-                self._worker_should_process.set()
-                self._event_queue.put((None, 0))
-                self._worker_thread_id.join()
-                self._channel_queue.put((None, 0))
-                self._channel_thread_id.join()
+            self._worker_should_process.clear()
+            self._packet_version += 1

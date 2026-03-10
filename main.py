@@ -166,7 +166,7 @@ def run_proxy() -> None:
     server = setup_server()
     t = threading.Thread(target=lambda: server.serve_forever())
     t.start()
-    Proxy().run()
+    Proxy().start(block=True)
 
     with block_sigint():
         server.shutdown()
@@ -523,9 +523,7 @@ if __name__ == "__main__":
         finally:
             mixer.stop()
 
-# TODO: camera implement fit_to_rect and use it in world viewer
 # TODO: properly render tree, display block, vending
 # TODO: implement shadow in world viewer
-# TODO: show block info on hover in world viewer
 # TODO: fix PortraitTile for the world START (prob bcs old world version)
 # TODO: implement override callback for connect, disconnect, destroy for extension sdk

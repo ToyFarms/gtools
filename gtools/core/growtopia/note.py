@@ -122,7 +122,7 @@ class Sheet:
             self.start = 0
             self.end = 0
 
-        self.bpm = bpm
+        self._bpm = bpm
         self.bps = (bpm * 4) / 60
 
         self.mixer = mixer
@@ -137,6 +137,15 @@ class Sheet:
         self._preload_thread = threading.Thread(target=self._preload, daemon=True)
         self._preload_thread.start()
         # TODO: configurable volume, make this dynamic (so it can react to world changes)
+
+    @property
+    def bpm(self) -> int:
+        return self._bpm
+
+    @bpm.setter
+    def bpm(self, x: float) -> None:
+        self._bpm = int(x)
+        self.bps = (x * 4) / 60
 
     def _preload(self) -> None:
         for col in range(self.start, self.end):

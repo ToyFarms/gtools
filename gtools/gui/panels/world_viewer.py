@@ -1,18 +1,18 @@
 import itertools
 import logging
+import math
 from pathlib import Path
 import time
 from OpenGL.GL import GL_COLOR_BUFFER_BIT, glClear, glClearColor
 
 import glfw
-from imgui_bundle import imgui
+from imgui_bundle import imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
 from pyglm import glm
 from pyglm.glm import mat4x4, vec3
 import numpy as np
-import ctypes
 
 from gtools.core.growtopia.packet import NetPacket
-from gtools.core.growtopia.world import World
+from gtools.core.growtopia.world import Tile, World
 
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
@@ -63,15 +63,26 @@ class WorldTab(Panel):
         self._solid_model = self._solid_shader.get_uniform("u_model")
         # fmt: off
         playhead_vertices = np.array([
-            -0.5, -0.5, 1.0, 1.0, 1.0, 0.4,
-            0.5,  -0.5, 1.0, 1.0, 1.0, 0.4,
-            0.5,  0.5,  1.0, 1.0, 1.0, 0.4,
-            -0.5, 0.5,  1.0, 1.0, 1.0, 0.4,
+            -0.5, -0.5, 1.0, 1.0, 1.0, 0.2,
+            0.5,  -0.5, 1.0, 1.0, 1.0, 0.2,
+            0.5,  0.5,  1.0, 1.0, 1.0, 0.2,
+            -0.5, 0.5,  1.0, 1.0, 1.0, 0.2,
         ], dtype=np.float32)
         # fmt: on
         self._playhead = Mesh(playhead_vertices, [2, 4], Mesh.RECT_INDICES)
         self._playing = True
         self._seek = 0
+
+        # fmt: off
+        hover_vertices = np.array([
+            -0.5, -0.5, 1.0, 1.0, 1.0, 0.3,
+            0.5,  -0.5, 1.0, 1.0, 1.0, 0.3,
+            0.5,  0.5,  1.0, 1.0, 1.0, 0.3,
+            -0.5, 0.5,  1.0, 1.0, 1.0, 0.3,
+        ], dtype=np.float32)
+        # fmt: on
+        self._hover = Mesh(hover_vertices, [2, 4], Mesh.RECT_INDICES)
+        self._hovered_tile: Tile | None = None
 
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
@@ -98,10 +109,41 @@ class WorldTab(Panel):
         if self._first_render and self._dockspace_id:
             imgui.set_next_window_dock_id(self._dockspace_id)
             self._first_render = False
+            self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
 
         opened, self._open = imgui.begin(self._name, self._open)
         self._is_active = imgui.is_window_focused(imgui.FocusedFlags_.child_windows)
         if opened:
+            if self._hovered_tile:
+                if self._hovered_tile.extra:
+                    imgui.text(f"{self._hovered_tile.extra}")
+                else:
+                    imgui.text(f"-")
+            else:
+                imgui.text(f"-")
+
+            _, self._sheet.bpm = imgui_knobs.knob("BPM", self._sheet.bpm, 20.0, 200.0, format="%.0f", size=24, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
+
+            imgui.same_line()
+            _, self._playing = imgui.checkbox("Play Music", self._playing)
+
+            FLAGS = [
+                ("Render FG", WorldRenderer.Flags.RENDER_FG),
+                ("Render BG", WorldRenderer.Flags.RENDER_BG),
+            ]
+
+            imgui.same_line()
+
+            for i, (label, flag) in enumerate(FLAGS):
+                if i != 0:
+                    imgui.same_line()
+                changed, is_set = imgui.checkbox(label, self._renderer.flags & flag != 0)
+                if changed:
+                    if is_set:
+                        self._renderer.flags |= flag
+                    else:
+                        self._renderer.flags &= ~flag
+
             cw, ch = imgui.get_content_region_avail()
             cw, ch = int(cw), int(ch)
             if cw > 0 and ch > 0:
@@ -138,6 +180,9 @@ class WorldTab(Panel):
                 elif event.action == glfw.RELEASE and self._drag.get("active"):
                     self._drag["active"] = False
                     return True
+            if event.button == glfw.MOUSE_BUTTON_RIGHT:
+                if event.action == glfw.PRESS:
+                    self._playing = not self._playing
         elif isinstance(event, CursorMoveEvent):
             self._cursor_pos = (event.xpos, event.ypos)
             if self._drag.get("active"):
@@ -151,7 +196,7 @@ class WorldTab(Panel):
             if self._is_active:
                 if event.action == glfw.PRESS:
                     if self._hovered and event.key == glfw.KEY_R:
-                        self._camera.reset()
+                        self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
                         return True
                     if event.key == glfw.KEY_0:
                         self._renderer.flags |= WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
@@ -200,10 +245,10 @@ class WorldTab(Panel):
             self._mvp.set_mat4x4(self._camera.proj_as_numpy())
             self._renderer.draw(self._tex)
 
-        if self._sheet.any:
-            self._solid_shader.use()
-            self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())
+        self._solid_shader.use()
+        self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())
 
+        if self._sheet.any:
             model = mat4x4(1.0)
             playhead = self._sheet.playhead - 1
             width = 32.0
@@ -218,10 +263,24 @@ class WorldTab(Panel):
             )
             model = glm.scale(model, vec3(width, height, 1.0))
 
-            ptr = glm.value_ptr(model)
-            model_ptr = np.frombuffer(ctypes.string_at(ptr, 16 * ctypes.sizeof(ctypes.c_float)), dtype=np.float32).reshape((4, 4), order="C")
-
-            self._solid_model.set_mat4x4(model_ptr)
+            self._solid_model.set_mat4x4(glm.value_ptr(model))
             self._playhead.draw()
+
+        local = self._to_local(self._cursor_pos[0], self._cursor_pos[1])
+        world = self._camera.screen_to_world(local[0], local[1])
+
+        tile_x = math.floor((world.x + 16) / 32)
+        tile_y = math.floor((world.y + 16) / 32)
+        if 0 < tile_x < self._world.width and 0 < tile_y < self._world.height:
+            self._hovered_tile = self._world.get_tile(tile_x, tile_y)
+        else:
+            self._hovered_tile = None
+
+        model = mat4x4(1.0)
+        model = glm.translate(model, vec3(tile_x * 32, tile_y * 32, 0.0))
+        model = glm.scale(model, vec3(32.0, 32.0, 1.0))
+        self._solid_model.set_mat4x4(glm.value_ptr(model))
+
+        self._hover.draw()
 
         self._fbo.unbind()

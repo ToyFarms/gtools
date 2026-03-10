@@ -2201,7 +2201,7 @@ class World:
         ret: list[Note] = []
 
         for tile in self.tiles.values():
-            # 7 staff in one world, the topmost is 0, each staff height is 14 note
+            # 4 (60 / 14) staff in one world, the topmost is 0, each staff height is 14 note
             staff_baseline = int(tile.pos.y // 14) * 14
 
             if tile.extra and isinstance(tile.extra, AudioRackTile):

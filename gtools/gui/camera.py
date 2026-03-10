@@ -47,3 +47,11 @@ class Camera2D:
     def resize(self, width: int, height: int) -> None:
         self.width = width
         self.height = height
+
+    def fit_to_rect(self, x: float, y: float, w: float, h: float, padding: float = 0.0) -> None:
+        self.pos = vec2(x + w / 2.0, y + h / 2.0)
+        padded_w = w + padding * 2.0
+        padded_h = h + padding * 2.0
+        zoom_x = self.width / padded_w if padded_w > 0 else self.max_zoom
+        zoom_y = self.height / padded_h if padded_h > 0 else self.max_zoom
+        self.zoom = max(self.min_zoom, min(min(zoom_x, zoom_y), self.max_zoom))
