@@ -7,36 +7,37 @@ from gtools.core.growtopia.packet import TankFlags
 from gtools.protogen import growtopia_pb2
 
 
-# https://github.com/RebillionXX/GTServer/blob/654ecd9bb0e4c74b3cb0a3be4c392b851db85e17/src/player/objects/character_state.h
-# https://github.com/zKaan/GTOSLatest/blob/d2108f6e6c60f69f6e02cf1ae4cff98b375352bf/player.h#L361
+# https://github.com/trailyy/morphine/blob/d3e7c841f633a37699ca9f2ac48ccdb8ed461af2/gt-internal/sdk/enums.hpp#L537
 class CharacterFlags(IntFlag):
-    NONE = 0
-    NOCLIP = 1 << 0
-    DOUBLE_JUMP = 1 << 1
-    INVISIBLE = 1 << 2
-    NO_HAND = 1 << 3
-    NO_EYE = 1 << 4
-    NO_BODY = 1 << 5
-    DEVIL_HORN = 1 << 6
-    GOLDEN_HALO = 1 << 7
-    UNKNOWN_8 = 1 << 8
-    UNKNOWN_9 = 1 << 9
-    UNKNOWN_10 = 1 << 10
-    FROZEN = 1 << 11
-    CURSED = 1 << 12
-    DUCT_TAPE = 1 << 13
-    CIGAR = 1 << 14
-    SHINING = 1 << 15
-    ZOMBIE = 1 << 16
-    RED_BODY = 1 << 17
-    HAUNTED_SHADOWS = 1 << 18
-    GEIGER_RADIATION = 1 << 19
-    SPOTLIGHT = 1 << 20
-    YELLOW_BODY = 1 << 21
-    PINEAPPLE_FLAG = 1 << 22
-    FLYING_PINEAPPLE = 1 << 23
-    SUPER_SUPPORTER_NAME = 1 << 24
-    SUPER_PINEAPPLE = 1 << 25
+    NONE = 0x0
+    NOCLIP = 0x1
+    DOUBLE_JUMP = 0x2
+    INVISIBLE = 0x4
+    NO_HANDS = 0x8
+    NO_FACE = 0x10
+    NO_BODY = 0x20
+    DEVIL_HORNS = 0x40
+    GOLDEN_HALO = 0x80
+    RESPAWN_EFFECT = 0x100
+    IGNORE_LAVA = 0x200
+    IGNORE_SPIKES = 0x400
+    FROZEN = 0x800
+    CURSED = 0x1000
+    DUCT_TAPE = 0x2000
+    SMOKE = 0x4000
+    SHINY = 0x8000
+    ZOMBIE = 0x10000
+    SPICY = 0x20000
+    SHADOWS = 0x40000
+    RADIOACTIVE = 0x80000
+    SPOTLIGHT = 0x100000
+    PINEAPPLE_SKIN = 0x200000
+    PINEAPPLE_FLAG = 0x400000
+    SUPPORTER = 0x800000
+    SUPER_SUPPORTER = 0x1000000
+    PINEAPPLE_AURA = 0x2000000
+    WATER_RING = 0x4000000
+    WET = 0x8000000
 
 
 @dataclass(slots=True)
