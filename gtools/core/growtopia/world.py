@@ -98,7 +98,16 @@ from gtools.core.buffer import Buffer
 import cbor2
 
 from gtools.core.color import color_matrix_filter
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoCollisionType, ItemInfoFlag2, ItemInfoTextureType, ItemInfoType, TerraformType, WeatherType, item_database
+from gtools.core.growtopia.items_dat import (
+    ItemFlag,
+    ItemInfoCollisionType,
+    ItemInfoFlag2,
+    ItemInfoTextureType,
+    ItemInfoType,
+    TerraformType,
+    WeatherType,
+    item_database,
+)
 from gtools.core.growtopia.note import ACCIDENT_MAP, CODE_TO_INSTRUMENT_SET, CODE_TO_PITCH_MAP, ID_TO_INSTRUMENT_SET, SHEET_FLAT_ID, SHEET_SHARP_ID, Y_TO_PITCH_MAP, Note, Sheet
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
@@ -1906,6 +1915,10 @@ class Tile:
         else:
             is_flipped = False
 
+        if item.item_type == ItemInfoType.SWITCHEROO and self.flags & TileFlags.IS_ON != 0:
+            tex_index += 1
+            stride = 2
+
         off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
         tex = (ivec2(item.tex_coord_x, item.tex_coord_y) + off) * 32
 
@@ -2552,7 +2565,7 @@ class World:
                     tile.fg_tex_index = handle_smart_edge_horiz_connection(self, tile, 0)
             case ItemInfoTextureType.SMART_CLING2:
                 tile.fg_tex_index = handle_smart_cling2_connection(self, tile, 0)
-            case ItemInfoTextureType.SMART_CLING:
+            case ItemInfoTextureType.SMART_CLING | ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
                 tile.fg_tex_index = handle_smart_cling_connection(self, tile, 0)
             case ItemInfoTextureType.RANDOM:
                 if item.is_seed():
@@ -2563,6 +2576,8 @@ class World:
                 tile.fg_tex_index = handle_smart_edge_vert_connection(self, tile, 0)
             case ItemInfoTextureType.SMART_EDGE_DIAGON:
                 tile.fg_tex_index = handle_smart_edge_diagon_connection(self, tile, 0)
+            case _:
+                self.logger.warning(f"texture {item.texture_type.name} not handled")
 
         item = item_database.get(tile.bg_id)
         match item.texture_type:
@@ -2577,7 +2592,7 @@ class World:
                     tile.bg_tex_index = handle_smart_edge_horiz_connection(self, tile, 1)
             case ItemInfoTextureType.SMART_CLING2:
                 tile.bg_tex_index = handle_smart_cling2_connection(self, tile, 1)
-            case ItemInfoTextureType.SMART_CLING:
+            case ItemInfoTextureType.SMART_CLING | ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
                 tile.bg_tex_index = handle_smart_cling_connection(self, tile, 1)
             case ItemInfoTextureType.RANDOM:
                 tile.bg_tex_index = handle_random_connection(self, tile, 1)
@@ -2585,6 +2600,8 @@ class World:
                 tile.bg_tex_index = handle_smart_edge_vert_connection(self, tile, 1)
             case ItemInfoTextureType.SMART_EDGE_DIAGON:
                 tile.bg_tex_index = handle_smart_edge_horiz_seed_connection(self, tile, 1)
+            case _:
+                self.logger.warning(f"texture {item.texture_type.name} not handled")
 
     def update_all_connection(self) -> None:
         for tile in self.tiles.values():
@@ -3954,6 +3971,15 @@ def handle_smart_cling_connection(world: World, tile: Tile, _a3: int) -> int:
         neighbor = world.get_tile(ivec2(x, y))
         if not neighbor or neighbor.fg_id == 0:
             return False
+
+        item = item_database.get(neighbor.fg_id)
+
+        if item.collision_type == ItemInfoCollisionType.COLLIDE_IF_OFF and neighbor.flags & TileFlags.IS_ON == 0:
+            return True
+
+        if item.collision_type == ItemInfoCollisionType.COLLIDE_IF_ON and neighbor.flags & TileFlags.IS_ON != 0:
+            return True
+
         return item_database.get(neighbor.fg_id).collision_type == ItemInfoCollisionType.FULL
 
     x, y = tile.pos.x, tile.pos.y
