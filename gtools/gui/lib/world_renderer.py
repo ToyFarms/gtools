@@ -8,7 +8,8 @@ from gtools import setting
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import Tile, World
 
-from gtools.gui.opengl import Mesh, Uniform
+from gtools.gui.camera import Camera2D
+from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.texture import TextureArray, get_tex_manager
 
 logger = logging.getLogger("gui-world-renderer")
@@ -30,6 +31,11 @@ class WorldRenderer:
         self._fg_meshes: dict[TextureArray, Mesh] = {}
         self.flags = WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
 
+        self._shader = ShaderProgram.get("shaders/world")
+        self._mvp = self._shader.get_uniform("u_mvp")
+        self._tex = self._shader.get_uniform("texArray")
+        self._layer = self._shader.get_uniform("u_layer")
+
     def load(self, world: World) -> None:
         self._build_meshes(world)
         self._tex_mgr.flush()
@@ -37,18 +43,21 @@ class WorldRenderer:
     def any(self) -> bool:
         return bool(self._bg_meshes) or bool(self._fg_meshes)
 
-    def draw(self, tex: Uniform, layer: Uniform) -> None:
+    def draw(self, camera: Camera2D) -> None:
+        self._shader.use()
+        self._mvp.set_mat4x4(camera.proj_as_numpy())
+
         if self.flags & WorldRenderer.Flags.RENDER_BG:
-            layer.set_float(-0.2)
+            self._layer.set_float(-0.2)
             for tex_array, mesh in self._bg_meshes.items():
                 tex_array.bind(unit=0)
-                tex.set_int(0)
+                self._tex.set_int(0)
                 mesh.draw_instanced()
         if self.flags & WorldRenderer.Flags.RENDER_FG:
-            layer.set_float(-0.1)
+            self._layer.set_float(-0.1)
             for tex_array, mesh in self._fg_meshes.items():
                 tex_array.bind(unit=0)
-                tex.set_int(0)
+                self._tex.set_int(0)
                 mesh.draw_instanced()
 
     @staticmethod

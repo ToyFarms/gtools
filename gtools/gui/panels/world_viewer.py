@@ -36,10 +36,6 @@ class WorldTab(Panel):
         self._name = f"{self._world.name.decode()}##{next(WorldTab._UNIQUE)}"
 
         # TODO: need to cleanup shader globally
-        self._world_shader = ShaderProgram.get("shaders/world")
-        self._mvp = self._world_shader.get_uniform("u_mvp")
-        self._tex = self._world_shader.get_uniform("texArray")
-        self._world_layer = self._world_shader.get_uniform("u_layer")
         self._dockspace_id = dockspace_id
 
         self._camera = Camera2D(800, 600)
@@ -86,10 +82,6 @@ class WorldTab(Panel):
         self._hover = Mesh(hover_vertices, [2, 4], Mesh.RECT_INDICES)
         self._hovered_tile: Tile | None = None
 
-        self._object_shader = ShaderProgram.get("shaders/object")
-        self._object_mvp = self._object_shader.get_uniform("u_mvp")
-        self._object_tex = self._object_shader.get_uniform("texArray")
-        self._object_tile_size = self._object_shader.get_uniform("u_tileSize")
         self._object_renderer = ObjectRenderer()
         self._object_renderer.load(self._world)
 
@@ -249,17 +241,13 @@ class WorldTab(Panel):
         self._fbo.bind()
 
         glClearColor(0.08, 0.08, 0.08, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # pyright: ignore[reportOperatorIssue]
 
         if self._world_renderer.any():
-            self._world_shader.use()
-            self._mvp.set_mat4x4(self._camera.proj_as_numpy())
-            self._world_renderer.draw(self._tex, self._world_layer)
+            self._world_renderer.draw(self._camera)
 
         if self._object_renderer.any():
-            self._object_shader.use()
-            self._object_mvp.set_mat4x4(self._camera.proj_as_numpy())
-            self._object_renderer.draw(self._object_tex, self._object_tile_size)
+            self._object_renderer.draw(self._camera)
 
         self._solid_shader.use()
         self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())

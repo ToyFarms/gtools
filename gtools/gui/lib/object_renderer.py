@@ -1,8 +1,10 @@
 from collections import defaultdict
+
 from gtools import setting
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import World
-from gtools.gui.opengl import Mesh, Uniform
+from gtools.gui.camera import Camera2D
+from gtools.gui.opengl import Mesh, ShaderProgram, Uniform
 from gtools.gui.texture import TextureArray, get_tex_manager
 import numpy as np
 
@@ -25,20 +27,28 @@ class ObjectRenderer:
         self._dropped_meshes: dict[TextureArray, Mesh] = {}
         self._pickup_overlay: dict[TextureArray, Mesh] = {}
 
+        self._shader = ShaderProgram.get("shaders/object")
+        self._mvp = self._shader.get_uniform("u_mvp")
+        self._tex = self._shader.get_uniform("texArray")
+        self._tile_size = self._shader.get_uniform("u_tileSize")
+
     def any(self) -> bool:
         return bool(self._dropped_meshes)
 
-    def draw(self, tex: Uniform, tile_size: Uniform) -> None:
-        tile_size.set_float(20.0)
+    def draw(self, camera: Camera2D) -> None:
+        self._shader.use()
+        self._mvp.set_mat4x4(camera.proj_as_numpy())
+
+        self._tile_size.set_float(20.0)
         for arr, mesh in self._pickup_overlay.items():
             arr.bind(unit=0)
-            tex.set_int(0)
+            self._tex.set_int(0)
             mesh.draw_instanced()
 
-        tile_size.set_float(32.0)
+        self._tile_size.set_float(32.0)
         for arr, mesh in self._dropped_meshes.items():
             arr.bind(unit=0)
-            tex.set_int(0)
+            self._tex.set_int(0)
             mesh.draw_instanced()
 
     def load(self, world: World) -> None:
@@ -48,7 +58,7 @@ class ObjectRenderer:
         for dropped in world.dropped.items:
             item = item_database.get(dropped.id)
             tex = self._tex_mgr.push_texture(setting.asset_path / "game" / item.texture_file.decode())
-            depth = 1.0 - dropped.pos.y / (world.height * 32);
+            depth = 1.0 - dropped.pos.y / (world.height * 32)
             instances[tex.array].extend(
                 [
                     dropped.pos.x,

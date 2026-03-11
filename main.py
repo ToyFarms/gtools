@@ -530,4 +530,3 @@ if __name__ == "__main__":
 
 # TODO: create generalized layer system
 # TODO: fix shader lifecycle
-# TODO: move shader into renderer
