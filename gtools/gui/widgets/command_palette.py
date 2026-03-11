@@ -359,6 +359,7 @@ class CommandPalette:
         if imgui.is_key_pressed(imgui.Key.escape):
             self.pop_level()
         if imgui.is_key_pressed(imgui.Key.enter) or imgui.is_key_pressed(imgui.Key.keypad_enter):
+            self._focus_input = True
             self._execute_selected()
         if imgui.is_key_pressed(imgui.Key.down_arrow):
             self._selected_idx = (self._selected_idx + 1) % max(1, len(self._filtered))

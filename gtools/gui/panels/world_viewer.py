@@ -3,7 +3,7 @@ import logging
 import math
 from pathlib import Path
 import time
-from OpenGL.GL import GL_COLOR_BUFFER_BIT, glClear, glClearColor
+from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, glClear, glClearColor
 
 import glfw
 from imgui_bundle import imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
@@ -16,6 +16,7 @@ from gtools.core.growtopia.world import Tile, World
 
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
+from gtools.gui.lib.object_renderer import ObjectRenderer
 from gtools.gui.opengl import Framebuffer, Mesh, ShaderProgram
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
 from gtools.gui.panels.panel import Panel
@@ -35,14 +36,16 @@ class WorldTab(Panel):
         self._name = f"{self._world.name.decode()}##{next(WorldTab._UNIQUE)}"
 
         # TODO: need to cleanup shader globally
-        self._shader = ShaderProgram.get("shaders/world")
-        self._mvp = self._shader.get_uniform("u_mvp")
-        self._tex = self._shader.get_uniform("texArray")
+        self._world_shader = ShaderProgram.get("shaders/world")
+        self._mvp = self._world_shader.get_uniform("u_mvp")
+        self._tex = self._world_shader.get_uniform("texArray")
+        self._world_layer = self._world_shader.get_uniform("u_layer")
         self._dockspace_id = dockspace_id
 
         self._camera = Camera2D(800, 600)
         self._fbo = Framebuffer(800, 600)
-        self._renderer = WorldRenderer()
+        self._world_renderer = WorldRenderer()
+        self._world_renderer.load(self._world)
 
         self._hovered = False
         self._drag: dict = {"active": False}
@@ -54,7 +57,6 @@ class WorldTab(Panel):
         self._first_render = True
         self._is_active = False
 
-        self._renderer.load(self._world)
         self._mixer = AudioMixer()
         self._sheet = self._world.get_sheet(self._mixer)
 
@@ -84,9 +86,17 @@ class WorldTab(Panel):
         self._hover = Mesh(hover_vertices, [2, 4], Mesh.RECT_INDICES)
         self._hovered_tile: Tile | None = None
 
+        self._object_shader = ShaderProgram.get("shaders/object")
+        self._object_mvp = self._object_shader.get_uniform("u_mvp")
+        self._object_tex = self._object_shader.get_uniform("texArray")
+        self._object_tile_size = self._object_shader.get_uniform("u_tileSize")
+        self._object_renderer = ObjectRenderer()
+        self._object_renderer.load(self._world)
+
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
-        self._renderer.delete()
+        self._world_renderer.delete()
+        self._object_renderer.delete()
         self._fbo.delete()
         self._mixer.stop()
 
@@ -137,12 +147,12 @@ class WorldTab(Panel):
             for i, (label, flag) in enumerate(FLAGS):
                 if i != 0:
                     imgui.same_line()
-                changed, is_set = imgui.checkbox(label, self._renderer.flags & flag != 0)
+                changed, is_set = imgui.checkbox(label, self._world_renderer.flags & flag != 0)
                 if changed:
                     if is_set:
-                        self._renderer.flags |= flag
+                        self._world_renderer.flags |= flag
                     else:
-                        self._renderer.flags &= ~flag
+                        self._world_renderer.flags &= ~flag
 
             cw, ch = imgui.get_content_region_avail()
             cw, ch = int(cw), int(ch)
@@ -199,11 +209,11 @@ class WorldTab(Panel):
                         self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
                         return True
                     if event.key == glfw.KEY_0:
-                        self._renderer.flags |= WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
+                        self._world_renderer.flags |= WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
                     elif event.key == glfw.KEY_1:
-                        self._renderer.flags ^= WorldRenderer.Flags.RENDER_FG
+                        self._world_renderer.flags ^= WorldRenderer.Flags.RENDER_FG
                     elif event.key == glfw.KEY_2:
-                        self._renderer.flags ^= WorldRenderer.Flags.RENDER_BG
+                        self._world_renderer.flags ^= WorldRenderer.Flags.RENDER_BG
                     elif event.key == glfw.KEY_SPACE:
                         self._playing = not self._playing
                     elif event.key == glfw.KEY_LEFT:
@@ -239,11 +249,17 @@ class WorldTab(Panel):
         self._fbo.bind()
 
         glClearColor(0.08, 0.08, 0.08, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT)
-        if self._renderer.any():
-            self._shader.use()
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
+        if self._world_renderer.any():
+            self._world_shader.use()
             self._mvp.set_mat4x4(self._camera.proj_as_numpy())
-            self._renderer.draw(self._tex)
+            self._world_renderer.draw(self._tex, self._world_layer)
+
+        if self._object_renderer.any():
+            self._object_shader.use()
+            self._object_mvp.set_mat4x4(self._camera.proj_as_numpy())
+            self._object_renderer.draw(self._object_tex, self._object_tile_size)
 
         self._solid_shader.use()
         self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())

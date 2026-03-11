@@ -527,3 +527,7 @@ if __name__ == "__main__":
 # TODO: implement shadow in world viewer
 # TODO: fix PortraitTile for the world START (prob bcs old world version)
 # TODO: implement override callback for connect, disconnect, destroy for extension sdk
+
+# TODO: create generalized layer system
+# TODO: fix shader lifecycle
+# TODO: move shader into renderer

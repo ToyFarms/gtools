@@ -7,11 +7,17 @@ import glfw
 from OpenGL.GL import (
     GL_BLEND,
     GL_COLOR_BUFFER_BIT,
+    GL_DEPTH_BUFFER_BIT,
+    GL_DEPTH_TEST,
+    GL_LESS,
     GL_ONE_MINUS_SRC_ALPHA,
     GL_SRC_ALPHA,
+    GL_TRUE,
     glBlendFunc,
     glClear,
     glClearColor,
+    glDepthFunc,
+    glDepthMask,
     glEnable,
     glViewport,
 )
@@ -103,7 +109,7 @@ class App:
                 self.process_events(event)
 
             glClearColor(0.1, 0.1, 0.1, 1.0)
-            glClear(GL_COLOR_BUFFER_BIT)
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
             to_remove: list[Panel] = []
             for panel in self.panels:
@@ -160,6 +166,10 @@ class App:
         glViewport(0, 0, width, height)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
 
     def shutdown(self) -> None:
         self.event_router.delete()

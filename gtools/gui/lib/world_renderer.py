@@ -37,13 +37,15 @@ class WorldRenderer:
     def any(self) -> bool:
         return bool(self._bg_meshes) or bool(self._fg_meshes)
 
-    def draw(self, tex: Uniform) -> None:
+    def draw(self, tex: Uniform, layer: Uniform) -> None:
         if self.flags & WorldRenderer.Flags.RENDER_BG:
+            layer.set_float(-0.2)
             for tex_array, mesh in self._bg_meshes.items():
                 tex_array.bind(unit=0)
                 tex.set_int(0)
                 mesh.draw_instanced()
         if self.flags & WorldRenderer.Flags.RENDER_FG:
+            layer.set_float(-0.1)
             for tex_array, mesh in self._fg_meshes.items():
                 tex_array.bind(unit=0)
                 tex.set_int(0)
@@ -84,6 +86,7 @@ class WorldRenderer:
                 unit_inds.copy(),
                 instance_data=instance_arr,
                 instance_layout=WorldRenderer.INSTANCE_LAYOUT,
+                instance_attrib_base=3,
             )
 
         for tex_array, instances in fg_instances.items():
@@ -94,6 +97,7 @@ class WorldRenderer:
                 unit_inds.copy(),
                 instance_data=instance_arr,
                 instance_layout=WorldRenderer.INSTANCE_LAYOUT,
+                instance_attrib_base=3,
             )
 
     def _tile_instance_data(self, tile: Tile, item_id: int, tex_index: int) -> tuple[TextureArray, list[float]]:

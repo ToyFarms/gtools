@@ -252,7 +252,7 @@ class Mesh:
         usage: int = GL_STATIC_DRAW,
         instance_data: npt.NDArray[np.float32] | None = None,
         instance_layout: list[int] | None = None,
-        instance_attrib_base: int = 3,
+        instance_attrib_base: int | None = None,
     ) -> None:
         self._components = sum(layout)
         self._vertex_count = int(vertices.size // self._components)
@@ -296,6 +296,9 @@ class Mesh:
         self._instance_vbo = None
         self._instance_count = 0
         if instance_data is not None and instance_layout is not None:
+            if instance_attrib_base is None:
+                raise ValueError("please supply instance_attrib_base (where the instance data begins)")
+
             self._instance_count = int(instance_data.size // sum(instance_layout))
             self._instance_vbo = glGenBuffers(1)
             glBindBuffer(GL_ARRAY_BUFFER, self._instance_vbo)
