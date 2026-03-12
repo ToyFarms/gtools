@@ -9,6 +9,7 @@ from OpenGL.GL import (
     GL_COMPILE_STATUS,
     GL_DEPTH24_STENCIL8,
     GL_DEPTH_STENCIL_ATTACHMENT,
+    GL_DYNAMIC_DRAW,
     GL_ELEMENT_ARRAY_BUFFER,
     GL_FALSE,
     GL_FLOAT,
@@ -17,9 +18,11 @@ from OpenGL.GL import (
     GL_FRAMEBUFFER_COMPLETE,
     GL_LINK_STATUS,
     GL_LINEAR,
+    GL_READ_WRITE,
     GL_RENDERBUFFER,
     GL_RGBA,
     GL_RGBA8,
+    GL_SHADER_STORAGE_BUFFER,
     GL_STATIC_DRAW,
     GL_TEXTURE_2D,
     GL_TEXTURE_MAG_FILTER,
@@ -31,11 +34,13 @@ from OpenGL.GL import (
     GL_VERTEX_SHADER,
     glAttachShader,
     glBindBuffer,
+    glBindBufferBase,
     glBindFramebuffer,
     glBindRenderbuffer,
     glBindTexture,
     glBindVertexArray,
     glBufferData,
+    glBufferSubData,
     glCheckFramebufferStatus,
     glCompileShader,
     glCreateProgram,
@@ -60,12 +65,14 @@ from OpenGL.GL import (
     glGenRenderbuffers,
     glGenTextures,
     glGenVertexArrays,
+    glGetBufferSubData,
     glGetProgramInfoLog,
     glGetProgramiv,
     glGetShaderInfoLog,
     glGetShaderiv,
     glGetUniformLocation,
     glLinkProgram,
+    glMapBuffer,
     glRenderbufferStorage,
     glShaderSource,
     glTexImage2D,
@@ -85,6 +92,7 @@ from OpenGL.GL import (
     glUniformMatrix2fv,
     glUniformMatrix3fv,
     glUniformMatrix4fv,
+    glUnmapBuffer,
     glUseProgram,
     glVertexAttribDivisor,
     glVertexAttribPointer,
@@ -401,3 +409,69 @@ class Framebuffer:
         glDeleteFramebuffers(1, [self.fbo])
         glDeleteTextures(1, [self.color_tex])
         glDeleteRenderbuffers(1, [self.rbo])
+
+
+class SSBO:
+    def __init__(
+        self,
+        binding: int,
+        data: npt.NDArray | None = None,
+        size: int | None = None,
+        usage: int = GL_DYNAMIC_DRAW,
+    ) -> None:
+        if data is None and size is None:
+            raise ValueError("supply either data or size")
+
+        self.binding = binding
+        self._ssbo = glGenBuffers(1)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self._ssbo)
+        if data is not None:
+            self._size = data.nbytes
+            glBufferData(GL_SHADER_STORAGE_BUFFER, self._size, data.tobytes(), usage)
+        else:
+            self._size = cast(int, size)
+            glBufferData(GL_SHADER_STORAGE_BUFFER, self._size, None, usage)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+    def bind(self) -> None:
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, self.binding, self._ssbo)
+
+    def unbind(self) -> None:
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, self.binding, 0)
+
+    def upload(self, data: npt.NDArray, offset: int = 0) -> None:
+        if offset + data.nbytes > self._size:
+            raise ValueError(f"upload out of range: offset={offset} data={data.nbytes}B buffer={self._size}B")
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self._ssbo)
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, offset, data.nbytes, data.tobytes())
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+    def download(self, dtype: npt.DTypeLike, offset: int = 0, size: int | None = None) -> npt.NDArray:
+        byte_count = (self._size - offset) if size is None else size
+        if offset + byte_count > self._size:
+            raise ValueError(f"download out of range: offset={offset} size={byte_count}B buffer={self._size}B")
+
+        buf = np.empty(byte_count, dtype=np.uint8)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self._ssbo)
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, offset, byte_count, buf)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+        return buf.view(dtype)
+
+    def map(self, access: int = GL_READ_WRITE) -> memoryview:
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self._ssbo)
+        ptr = glMapBuffer(GL_SHADER_STORAGE_BUFFER, access)
+
+        return (ctypes.c_char * self._size).from_address(ptr)  # type: ignore[return-value]
+
+    def unmap(self) -> None:
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+    @property
+    def size(self) -> int:
+        return self._size
+
+    def delete(self) -> None:
+        glDeleteBuffers(1, [self._ssbo])

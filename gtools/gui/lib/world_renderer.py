@@ -18,7 +18,7 @@ logger = logging.getLogger("gui-world-renderer")
 
 class WorldRenderer(Renderer):
     LAYOUT = [2, 2]
-    INSTANCE_LAYOUT = [2, 4, 1]
+    INSTANCE_LAYOUT = [2, 4, 1, 1]
     TILE_SIZE = 32
 
     class Flags(IntFlag):
@@ -122,6 +122,7 @@ class WorldRenderer(Renderer):
             u1,
             v1,
             float(tex.layer),
+            float(tile.get_paint_index()),
         ]
 
         return tex.array, instance_data

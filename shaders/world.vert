@@ -6,9 +6,11 @@ layout (location = 1) in vec2 in_texCoord;
 layout (location = 3) in vec2 in_tilePos;
 layout (location = 4) in vec4 in_texCoords;
 layout (location = 5) in float in_layer;
+layout (location = 6) in float in_paintIndex;
 
 out vec2 texCoord;
 flat out float layer;
+flat out float paintIndex;
 
 uniform mat4 u_mvp;
 uniform float u_layer;
@@ -24,4 +26,5 @@ void main() {
         mix(in_texCoords.y, in_texCoords.w, in_texCoord.y)
     );
     layer = in_layer;
+    paintIndex = in_paintIndex;
 }

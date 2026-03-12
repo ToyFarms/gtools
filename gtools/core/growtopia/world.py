@@ -1856,11 +1856,6 @@ COLOR_MASK = TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED
 COLOR_SHIFT = TileFlags.PAINTED_RED.bit_length() - 1
 
 
-def _get_color_matrix(flags: TileFlags) -> npt.NDArray[np.float32]:
-    key = (int(flags) & COLOR_MASK) >> COLOR_SHIFT
-    return _COLOR_MATRICES[key]
-
-
 @dataclass(slots=True)
 class Tile:
     fg_id: int = 0
@@ -1880,6 +1875,9 @@ class Tile:
 
     logger = logging.getLogger("tile")
 
+    def get_paint_index(self) -> int:
+        return (int(self.flags) & COLOR_MASK) >> COLOR_SHIFT
+
     def tex_pos(self, id: int, tex_index: int) -> tuple[ivec2, bool]:
         item = item_database.get(id)
 
@@ -1895,9 +1893,9 @@ class Tile:
         else:
             is_flipped = False
 
-        if self.flags & TileFlags.IS_ON != 0:
-            tex_index += 1
-            stride = 2
+        # if self.flags & TileFlags.IS_ON != 0:
+        #     tex_index += 1
+        #     stride = 2
 
         off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
         tex = ivec2(item.tex_coord_x, item.tex_coord_y) + off
@@ -1911,7 +1909,7 @@ class Tile:
         tex = mgr.get(setting.asset_path / "game" / item.texture_file.decode(), tex_pos.x * 32, tex_pos.y * 32, 32, 32, flip_x=is_flipped)
         # in the website, they uses css feColorMatrix which uses linear space, but in the game they don't,
         # causing a more saturated color as opposed to a "pastel" look in the website
-        tex = color_matrix_filter(tex, _get_color_matrix(self.flags), linear=False)
+        tex = color_matrix_filter(tex, _COLOR_MATRICES[self.get_paint_index()], linear=False)
 
         return tex
 
