@@ -1893,9 +1893,11 @@ class Tile:
         else:
             is_flipped = False
 
-        # if self.flags & TileFlags.IS_ON != 0:
-        #     tex_index += 1
-        #     stride = 2
+        if (item.collision_type == ItemInfoCollisionType.COLLIDE_IF_OFF and self.flags & TileFlags.IS_ON != 0 or
+            item.collision_type == ItemInfoCollisionType.COLLIDE_IF_ON and self.flags & TileFlags.IS_ON == 0 or
+            item.item_type == ItemInfoType.BOOMBOX and self.flags & TileFlags.IS_ON != 0):
+            tex_index += 1
+            stride = 2
 
         off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
         tex = ivec2(item.tex_coord_x, item.tex_coord_y) + off
