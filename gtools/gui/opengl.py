@@ -242,7 +242,17 @@ class ShaderProgram:
 
 
 class Mesh:
+    # fmt: off
+    RECT_WITH_UV_VERTS = np.array([
+        -0.5, -0.5, 0.0, 0.0,
+        0.5, -0.5, 1.0, 0.0,
+        0.5,  0.5, 1.0, 1.0,
+        -0.5,  0.5, 0.0, 1.0,
+    ], dtype=np.float32)
+    RECT_WITH_UV_VERTS.setflags(write=False)
+    # fmt: on
     RECT_INDICES = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint16)
+    RECT_INDICES.setflags(write=False)
 
     def __init__(
         self,

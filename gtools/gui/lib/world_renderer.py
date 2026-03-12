@@ -2,20 +2,21 @@ from collections import defaultdict
 from enum import IntFlag, auto
 import logging
 import numpy as np
-import numpy.typing as npt
 
 from gtools import setting
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import Tile, World
 
 from gtools.gui.camera import Camera2D
+from gtools.gui.lib import layer
+from gtools.gui.lib.renderer import Renderer
 from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.texture import TextureArray, get_tex_manager
 
 logger = logging.getLogger("gui-world-renderer")
 
 
-class WorldRenderer:
+class WorldRenderer(Renderer):
     LAYOUT = [2, 2]
     INSTANCE_LAYOUT = [2, 4, 1]
     TILE_SIZE = 32
@@ -44,38 +45,26 @@ class WorldRenderer:
         return bool(self._bg_meshes) or bool(self._fg_meshes)
 
     def draw(self, camera: Camera2D) -> None:
+        if not self.any():
+            return
+
         self._shader.use()
         self._mvp.set_mat4x4(camera.proj_as_numpy())
 
         if self.flags & WorldRenderer.Flags.RENDER_BG:
-            self._layer.set_float(-0.2)
+            self._layer.set_float(layer.WORLD_BACKGROUND)
             for tex_array, mesh in self._bg_meshes.items():
                 tex_array.bind(unit=0)
                 self._tex.set_int(0)
                 mesh.draw_instanced()
         if self.flags & WorldRenderer.Flags.RENDER_FG:
-            self._layer.set_float(-0.1)
+            self._layer.set_float(layer.WORLD_FOREGROUND)
             for tex_array, mesh in self._fg_meshes.items():
                 tex_array.bind(unit=0)
                 self._tex.set_int(0)
                 mesh.draw_instanced()
 
-    @staticmethod
-    def _get_unit_quad_data() -> tuple[npt.NDArray[np.float32], npt.NDArray[np.uint16]]:
-        # fmt: off
-        verts = np.array([
-            -0.5, -0.5, 0.0, 0.0,
-            0.5, -0.5, 1.0, 0.0,
-            0.5,  0.5, 1.0, 1.0,
-            -0.5,  0.5, 0.0, 1.0,
-        ], dtype=np.float32)
-        # fmt: on
-        inds = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint16)
-        return verts, inds
-
     def _build_meshes(self, world: World) -> None:
-        unit_verts, unit_inds = self._get_unit_quad_data()
-
         bg_instances: dict[TextureArray, list[float]] = defaultdict(list)
         fg_instances: dict[TextureArray, list[float]] = defaultdict(list)
 
@@ -90,9 +79,9 @@ class WorldRenderer:
         for tex_array, instances in bg_instances.items():
             instance_arr = np.array(instances, dtype=np.float32)
             self._bg_meshes[tex_array] = Mesh(
-                unit_verts.copy(),
+                Mesh.RECT_WITH_UV_VERTS,
                 WorldRenderer.LAYOUT,
-                unit_inds.copy(),
+                Mesh.RECT_INDICES,
                 instance_data=instance_arr,
                 instance_layout=WorldRenderer.INSTANCE_LAYOUT,
                 instance_attrib_base=3,
@@ -101,9 +90,9 @@ class WorldRenderer:
         for tex_array, instances in fg_instances.items():
             instance_arr = np.array(instances, dtype=np.float32)
             self._fg_meshes[tex_array] = Mesh(
-                unit_verts.copy(),
+                Mesh.RECT_WITH_UV_VERTS,
                 WorldRenderer.LAYOUT,
-                unit_inds.copy(),
+                Mesh.RECT_INDICES,
                 instance_data=instance_arr,
                 instance_layout=WorldRenderer.INSTANCE_LAYOUT,
                 instance_attrib_base=3,

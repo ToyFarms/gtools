@@ -1895,6 +1895,10 @@ class Tile:
         else:
             is_flipped = False
 
+        if self.flags & TileFlags.IS_ON != 0:
+            tex_index += 1
+            stride = 2
+
         off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
         tex = ivec2(item.tex_coord_x, item.tex_coord_y) + off
 
@@ -1903,26 +1907,8 @@ class Tile:
     def get_texture(self, mgr: RTTexManager, id: int, tex_index: int) -> npt.NDArray[np.uint8]:
         item = item_database.get(id)
 
-        stride = item.get_tex_stride()
-        if item.flags & ItemFlag.FLIPPABLE != 0:
-            is_flipped = self.flags & TileFlags.FLIPPED_X != 0
-            if is_flipped and item.texture_type == ItemInfoTextureType.SMART_EDGE_HORIZ:
-                # handle flipped couch texture
-                if tex_index == 0:
-                    tex_index = 2
-                elif tex_index == 2:
-                    tex_index = 0
-        else:
-            is_flipped = False
-
-        if item.item_type == ItemInfoType.SWITCHEROO and self.flags & TileFlags.IS_ON != 0:
-            tex_index += 1
-            stride = 2
-
-        off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
-        tex = (ivec2(item.tex_coord_x, item.tex_coord_y) + off) * 32
-
-        tex = mgr.get(setting.asset_path / "game" / item.texture_file.decode(), tex.x, tex.y, 32, 32, flip_x=is_flipped)
+        tex_pos, is_flipped = self.tex_pos(id, tex_index)
+        tex = mgr.get(setting.asset_path / "game" / item.texture_file.decode(), tex_pos.x * 32, tex_pos.y * 32, 32, 32, flip_x=is_flipped)
         # in the website, they uses css feColorMatrix which uses linear space, but in the game they don't,
         # causing a more saturated color as opposed to a "pastel" look in the website
         tex = color_matrix_filter(tex, _get_color_matrix(self.flags), linear=False)

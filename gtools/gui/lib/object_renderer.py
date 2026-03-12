@@ -4,21 +4,23 @@ from gtools import setting
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import World
 from gtools.gui.camera import Camera2D
-from gtools.gui.opengl import Mesh, ShaderProgram, Uniform
+from gtools.gui.lib.layer import OBJECT_DROPPED_END, OBJECT_DROPPED_START
+from gtools.gui.lib.renderer import Renderer
+from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.texture import TextureArray, get_tex_manager
 import numpy as np
 
-# fmt: off
-verts = np.array([
-    -0.5, -0.5, 0.0, 0.0,
-    0.5, -0.5, 1.0, 0.0,
-    0.5,  0.5, 1.0, 1.0,
-    -0.5,  0.5, 0.0, 1.0,
-], dtype=np.float32)
-# fmt: on
+MAX_DROPPED = 10000
+LAYER_RANGE = OBJECT_DROPPED_END - OBJECT_DROPPED_START
+
+SUBLAYER_ICON = 0
+SUBLAYER_OVERLAY = 1
+LAYER_STRIDE = 2
+
+MAX_LAYER = MAX_DROPPED * LAYER_STRIDE
 
 
-class ObjectRenderer:
+class ObjectRenderer(Renderer):
     LAYOUT = [2, 2]
     INSTANCE_LAYOUT = [2, 2, 2, 1, 1]
 
@@ -32,10 +34,10 @@ class ObjectRenderer:
         self._tex = self._shader.get_uniform("texArray")
         self._tile_size = self._shader.get_uniform("u_tileSize")
 
-    def any(self) -> bool:
-        return bool(self._dropped_meshes)
-
     def draw(self, camera: Camera2D) -> None:
+        if not self._dropped_meshes:
+            return
+
         self._shader.use()
         self._mvp.set_mat4x4(camera.proj_as_numpy())
 
@@ -51,14 +53,19 @@ class ObjectRenderer:
             self._tex.set_int(0)
             mesh.draw_instanced()
 
+    def get_object_z(self, index: int, sublayer: int) -> float:
+        slot = index * LAYER_STRIDE + sublayer
+        t = slot / MAX_LAYER
+
+        return OBJECT_DROPPED_START + t * LAYER_RANGE
+
     def load(self, world: World) -> None:
         instances: dict[TextureArray, list[float]] = defaultdict(list)
         overlay: dict[TextureArray, list[float]] = defaultdict(list)
 
-        for dropped in world.dropped.items:
+        for i, dropped in enumerate(world.dropped.items):
             item = item_database.get(dropped.id)
             tex = self._tex_mgr.push_texture(setting.asset_path / "game" / item.texture_file.decode())
-            depth = 1.0 - dropped.pos.y / (world.height * 32)
             instances[tex.array].extend(
                 [
                     dropped.pos.x,
@@ -68,7 +75,7 @@ class ObjectRenderer:
                     item.tex_coord_x * 32 / tex.width,
                     item.tex_coord_y * 32 / tex.height,
                     tex.layer,
-                    depth,
+                    self.get_object_z(i, SUBLAYER_ICON),
                 ]
             )
 
@@ -83,16 +90,16 @@ class ObjectRenderer:
                     0,
                     0,
                     overlay_tex.layer,
-                    depth - 0.001,
+                    self.get_object_z(i, SUBLAYER_OVERLAY),
                 ]
             )
 
         for arr, inst in instances.items():
             instance_arr = np.array(inst, dtype=np.float32)
             self._dropped_meshes[arr] = Mesh(
-                verts.copy(),
+                Mesh.RECT_WITH_UV_VERTS,
                 ObjectRenderer.LAYOUT,
-                Mesh.RECT_INDICES.copy(),
+                Mesh.RECT_INDICES,
                 instance_data=instance_arr,
                 instance_layout=ObjectRenderer.INSTANCE_LAYOUT,
                 instance_attrib_base=2,
@@ -101,9 +108,9 @@ class ObjectRenderer:
         for arr, inst in overlay.items():
             instance_arr = np.array(inst, dtype=np.float32)
             self._pickup_overlay[arr] = Mesh(
-                verts.copy(),
+                Mesh.RECT_WITH_UV_VERTS,
                 ObjectRenderer.LAYOUT,
-                Mesh.RECT_INDICES.copy(),
+                Mesh.RECT_INDICES,
                 instance_data=instance_arr,
                 instance_layout=ObjectRenderer.INSTANCE_LAYOUT,
                 instance_attrib_base=2,

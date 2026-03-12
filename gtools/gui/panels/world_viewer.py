@@ -40,8 +40,6 @@ class WorldTab(Panel):
 
         self._camera = Camera2D(800, 600)
         self._fbo = Framebuffer(800, 600)
-        self._world_renderer = WorldRenderer()
-        self._world_renderer.load(self._world)
 
         self._hovered = False
         self._drag: dict = {"active": False}
@@ -82,6 +80,8 @@ class WorldTab(Panel):
         self._hover = Mesh(hover_vertices, [2, 4], Mesh.RECT_INDICES)
         self._hovered_tile: Tile | None = None
 
+        self._world_renderer = WorldRenderer()
+        self._world_renderer.load(self._world)
         self._object_renderer = ObjectRenderer()
         self._object_renderer.load(self._world)
 
@@ -243,11 +243,8 @@ class WorldTab(Panel):
         glClearColor(0.08, 0.08, 0.08, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # pyright: ignore[reportOperatorIssue]
 
-        if self._world_renderer.any():
-            self._world_renderer.draw(self._camera)
-
-        if self._object_renderer.any():
-            self._object_renderer.draw(self._camera)
+        self._world_renderer.draw(self._camera)
+        self._object_renderer.draw(self._camera)
 
         self._solid_shader.use()
         self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())
