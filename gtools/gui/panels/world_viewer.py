@@ -16,6 +16,7 @@ from gtools.core.growtopia.world import Tile, World
 
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
+from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib.object_renderer import ObjectRenderer
 from gtools.gui.opengl import Framebuffer, Mesh, ShaderProgram
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
@@ -39,6 +40,7 @@ class WorldTab(Panel):
         self._dockspace_id = dockspace_id
 
         self._camera = Camera2D(800, 600)
+        self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
         self._fbo = Framebuffer(800, 600)
 
         self._hovered = False
@@ -80,6 +82,14 @@ class WorldTab(Panel):
         self._hover = Mesh(hover_vertices, [2, 4], Mesh.RECT_INDICES)
         self._hovered_tile: Tile | None = None
 
+        self._mode_3d = False
+        self._camera3d = Camera3D(800, 600)
+        self._camera3d.fit_to_rect(self._world.width, self._world.height)
+        self._layer_spread: float = 200.0
+
+        # FPS movement key state
+        self._keys_held: set[int] = set()
+
         self._world_renderer = WorldRenderer()
         self._world_renderer.load(self._world)
         self._object_renderer = ObjectRenderer()
@@ -107,11 +117,32 @@ class WorldTab(Panel):
         if self._seek != 0:
             self._sheet.seek(self._seek)
 
+        if self._mode_3d and self._is_active:
+            fwd = 0.0
+            rgt = 0.0
+            vert = 0.0
+            if glfw.KEY_W in self._keys_held:
+                fwd += 1.0
+            if glfw.KEY_S in self._keys_held:
+                fwd -= 1.0
+            if glfw.KEY_D in self._keys_held:
+                rgt += 1.0
+            if glfw.KEY_A in self._keys_held:
+                rgt -= 1.0
+            if glfw.KEY_LEFT_SHIFT in self._keys_held:
+                vert -= 1.0
+            if glfw.KEY_SPACE in self._keys_held:
+                vert += 1.0
+
+            boost = glfw.KEY_LEFT_CONTROL in self._keys_held or glfw.KEY_RIGHT_CONTROL in self._keys_held
+
+            if fwd != 0.0 or rgt != 0.0 or vert != 0.0:
+                self._camera3d.move(fwd, rgt, vert, dt, speed_mul=2 if boost else 1)
+
     def render(self) -> None:
         if self._first_render and self._dockspace_id:
             imgui.set_next_window_dock_id(self._dockspace_id)
             self._first_render = False
-            self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
 
         opened, self._open = imgui.begin(self._name, self._open)
         self._is_active = imgui.is_window_focused(imgui.FocusedFlags_.child_windows)
@@ -146,11 +177,22 @@ class WorldTab(Panel):
                     else:
                         self._world_renderer.flags &= ~flag
 
+            imgui.same_line()
+            _, self._mode_3d = imgui.checkbox("3D", self._mode_3d)
+
+            if self._mode_3d:
+                imgui.same_line()
+                imgui.set_next_item_width(120)
+                _, self._layer_spread = imgui.slider_float("Layer Spread", self._layer_spread, 10.0, 1000.0)
+                imgui.same_line()
+                imgui.text(f"Speed: {self._camera3d.speed:.0f}")
+
             cw, ch = imgui.get_content_region_avail()
             cw, ch = int(cw), int(ch)
             if cw > 0 and ch > 0:
                 self._fbo.resize(cw, ch)
                 self._camera.resize(cw, ch)
+                self._camera3d.resize(cw, ch)
                 self._render_to_fbo()
                 imgui.image(
                     imgui.ImTextureRef(self._fbo.color_tex),
@@ -164,6 +206,79 @@ class WorldTab(Panel):
         imgui.end()
 
     def handle_event(self, event: Event) -> bool:
+        if isinstance(event, KeyEvent):
+            if event.action == glfw.PRESS:
+                if event.key == glfw.KEY_3:
+                    self._mode_3d = not self._mode_3d
+                if event.key == glfw.KEY_0:
+                    self._world_renderer.flags |= WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
+                elif event.key == glfw.KEY_1:
+                    self._world_renderer.flags ^= WorldRenderer.Flags.RENDER_FG
+                elif event.key == glfw.KEY_2:
+                    self._world_renderer.flags ^= WorldRenderer.Flags.RENDER_BG
+                elif event.key == glfw.KEY_LEFT:
+                    self._seek = -1
+                elif event.key == glfw.KEY_RIGHT:
+                    self._seek = 1
+                elif event.key == glfw.KEY_COMMA:
+                    self._sheet.seek(-1, play=True)
+                elif event.key == glfw.KEY_PERIOD:
+                    self._sheet.seek(1, play=True)
+            elif event.action == glfw.RELEASE:
+                if event.key == glfw.KEY_LEFT:
+                    self._seek = 0
+                elif event.key == glfw.KEY_RIGHT:
+                    self._seek = 0
+
+        if self._mode_3d:
+            return self._handle_event_3d(event)
+        return self._handle_event_2d(event)
+
+    def _handle_event_3d(self, event: Event) -> bool:
+        if isinstance(event, ScrollEvent):
+            if self._hovered:
+                self._camera3d.speed *= 1.1**event.yoff
+                self._camera3d.speed = max(50.0, min(self._camera3d.speed, 10000.0))
+                return True
+        elif isinstance(event, MouseButtonEvent):
+            if event.button == glfw.MOUSE_BUTTON_LEFT or event.button == glfw.MOUSE_BUTTON_RIGHT:
+                if event.action == glfw.PRESS and self._hovered:
+                    lx, ly = self._to_local(event.screen_x, event.screen_y)
+                    self._drag = {
+                        "active": True,
+                        "last_screen": (lx, ly),
+                    }
+                    return True
+                elif event.action == glfw.RELEASE and self._drag.get("active"):
+                    self._drag["active"] = False
+                    return True
+        elif isinstance(event, CursorMoveEvent):
+            self._cursor_pos = (event.xpos, event.ypos)
+            if self._drag.get("active"):
+                lx, ly = self._to_local(event.xpos, event.ypos)
+                prev = self._drag["last_screen"]
+                dx = lx - prev[0]
+                dy = ly - prev[1]
+                self._drag["last_screen"] = (lx, ly)
+                self._camera3d.look(dx, dy)
+                return True
+        elif isinstance(event, KeyEvent):
+            if self._is_active:
+                if event.action == glfw.PRESS:
+                    self._keys_held.add(event.key)
+                    if event.key == glfw.KEY_R:
+                        self._camera3d.fit_to_rect(self._world.width * 32, self._world.height * 32)
+                        return True
+                elif event.action == glfw.RELEASE:
+                    self._keys_held.discard(event.key)
+        elif isinstance(event, TouchEvent):
+            if self._hovered:
+                self._last_touch_event = time.monotonic()
+                self._camera3d.look(event.dx, event.dy)
+                return True
+        return False
+
+    def _handle_event_2d(self, event: Event) -> bool:
         if isinstance(event, ScrollEvent):
             if self._hovered and time.monotonic() - self._last_touch_event >= 0.5:
                 lx, ly = self._to_local(event.screen_x, event.screen_y)
@@ -200,27 +315,8 @@ class WorldTab(Panel):
                     if self._hovered and event.key == glfw.KEY_R:
                         self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
                         return True
-                    if event.key == glfw.KEY_0:
-                        self._world_renderer.flags |= WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
-                    elif event.key == glfw.KEY_1:
-                        self._world_renderer.flags ^= WorldRenderer.Flags.RENDER_FG
-                    elif event.key == glfw.KEY_2:
-                        self._world_renderer.flags ^= WorldRenderer.Flags.RENDER_BG
                     elif event.key == glfw.KEY_SPACE:
                         self._playing = not self._playing
-                    elif event.key == glfw.KEY_LEFT:
-                        self._seek = -1
-                    elif event.key == glfw.KEY_RIGHT:
-                        self._seek = 1
-                    elif event.key == glfw.KEY_COMMA:
-                        self._sheet.seek(-1, play=True)
-                    elif event.key == glfw.KEY_PERIOD:
-                        self._sheet.seek(1, play=True)
-                elif event.action == glfw.RELEASE:
-                    if event.key == glfw.KEY_LEFT:
-                        self._seek = 0
-                    elif event.key == glfw.KEY_RIGHT:
-                        self._seek = 0
         elif isinstance(event, TouchEvent):
             if self._hovered:
                 self._last_touch_event = time.monotonic()
@@ -243,6 +339,18 @@ class WorldTab(Panel):
         glClearColor(0.08, 0.08, 0.08, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # pyright: ignore[reportOperatorIssue]
 
+        if self._mode_3d:
+            self._render_to_fbo_3d()
+        else:
+            self._render_to_fbo_2d()
+
+        self._fbo.unbind()
+
+    def _render_to_fbo_3d(self) -> None:
+        self._world_renderer.draw_3d(self._camera3d, self._layer_spread)
+        self._object_renderer.draw_3d(self._camera3d, self._layer_spread)
+
+    def _render_to_fbo_2d(self) -> None:
         self._world_renderer.draw(self._camera)
         self._object_renderer.draw(self._camera)
 
@@ -283,5 +391,3 @@ class WorldTab(Panel):
         self._solid_model.set_mat4x4(glm.value_ptr(model))
 
         self._hover.draw()
-
-        self._fbo.unbind()

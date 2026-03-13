@@ -8,6 +8,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import Tile, World
 
 from gtools.gui.camera import Camera2D
+from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib import layer
 from gtools.gui.lib.renderer import Renderer
 from gtools.gui.opengl import Mesh, ShaderProgram
@@ -37,6 +38,12 @@ class WorldRenderer(Renderer):
         self._tex = self._shader.get_uniform("texArray")
         self._layer = self._shader.get_uniform("u_layer")
 
+        self._shader3d = ShaderProgram.get("shaders/world3d")
+        self._vp3d = self._shader3d.get_uniform("u_view_proj")
+        self._tex3d = self._shader3d.get_uniform("texArray")
+        self._layer3d = self._shader3d.get_uniform("u_layer")
+        self._spread3d = self._shader3d.get_uniform("u_layer_spread")
+
     def load(self, world: World) -> None:
         self._build_meshes(world)
         self._tex_mgr.flush()
@@ -62,6 +69,27 @@ class WorldRenderer(Renderer):
             for tex_array, mesh in self._fg_meshes.items():
                 tex_array.bind(unit=0)
                 self._tex.set_int(0)
+                mesh.draw_instanced()
+
+    def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+        if not self.any():
+            return
+
+        self._shader3d.use()
+        self._vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
+        self._spread3d.set_float(layer_spread)
+
+        if self.flags & WorldRenderer.Flags.RENDER_BG:
+            self._layer3d.set_float(layer.WORLD_BACKGROUND)
+            for tex_array, mesh in self._bg_meshes.items():
+                tex_array.bind(unit=0)
+                self._tex3d.set_int(0)
+                mesh.draw_instanced()
+        if self.flags & WorldRenderer.Flags.RENDER_FG:
+            self._layer3d.set_float(layer.WORLD_FOREGROUND)
+            for tex_array, mesh in self._fg_meshes.items():
+                tex_array.bind(unit=0)
+                self._tex3d.set_int(0)
                 mesh.draw_instanced()
 
     def _build_meshes(self, world: World) -> None:

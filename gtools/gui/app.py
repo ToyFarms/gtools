@@ -10,6 +10,7 @@ from OpenGL.GL import (
     GL_DEPTH_BUFFER_BIT,
     GL_DEPTH_TEST,
     GL_LESS,
+    GL_ONE,
     GL_ONE_MINUS_SRC_ALPHA,
     GL_SRC_ALPHA,
     GL_TRUE,
@@ -165,7 +166,7 @@ class App:
         glfw.swap_interval(1)
         glViewport(0, 0, width, height)
         glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
 
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);

@@ -131,7 +131,7 @@ class TextureArray:
                 total_layers,
             )
 
-            logger.debug(f"growing TextureArray {self.width}x{self.height} from {self._allocated_layers} to {new_capacity} layers")
+            logger.debug(f"growing TextureArray {self.width}x{self.height} from {self._allocated_layers} to {new_capacity} layers (used: {total_layers})")
 
             self._allocate(new_capacity)
 
