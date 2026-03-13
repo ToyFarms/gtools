@@ -1,3 +1,4 @@
+from PIL import Image
 import numpy as np
 
 
@@ -69,3 +70,13 @@ def color_mix(
 ) -> np.ndarray:
     mixed = np.round(color_a[:3] * mix_factor + color_b[:3] * (1 - mix_factor)).astype(np.uint8)
     return np.append(mixed, 255).astype(np.uint8)
+
+
+def composite(top: np.ndarray, bottom: np.ndarray, dx=0, dy=0) -> np.ndarray:
+    top_im = Image.fromarray(top, mode="RGBA")
+    bot_im = Image.fromarray(bottom, mode="RGBA")
+
+    canvas = Image.new("RGBA", top_im.size, (0, 0, 0, 0))
+    canvas.paste(bot_im, (dx, dy), bot_im)
+    result = Image.alpha_composite(canvas, top_im)
+    return np.array(result)

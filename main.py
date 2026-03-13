@@ -15,6 +15,7 @@ from pyglm.glm import ivec4, ivec2
 
 from gtools import flags
 from gtools.core.block_sigint import block_sigint
+from gtools.core.color import composite
 from gtools.core.growtopia.items_dat import ItemFlag, item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.rttex import RTTexManager
@@ -450,16 +451,6 @@ if __name__ == "__main__":
                 traceback.print_exc()
                 break
     elif args.cmd == "render":
-
-        def composite(top: np.ndarray, bottom: np.ndarray, dx=0, dy=0) -> np.ndarray:
-            top_im = Image.fromarray(top, mode="RGBA")
-            bot_im = Image.fromarray(bottom, mode="RGBA")
-
-            canvas = Image.new("RGBA", top_im.size, (0, 0, 0, 0))
-            canvas.paste(bot_im, (dx, dy), bot_im)
-            result = Image.alpha_composite(canvas, top_im)
-            return np.array(result)
-
         world = World.from_tank(Path(args.world).read_bytes())
 
         bg_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
