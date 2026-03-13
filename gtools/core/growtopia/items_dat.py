@@ -568,6 +568,66 @@ def _decrypt(s: bytes, item_id: int) -> bytes:
     return bytes(chars)
 
 
+TEXTURE_WITH_ICONS_VARIANT = {
+    b"bf_begchmp.rttex": "bf_begchmp_icon.rttex",
+    b"comhr.rttex": "comhr_icon.rttex",
+    b"d_aura.rttex": "d_aura_icon.rttex",
+    b"es_egchmp.rttex": "es_egchmp_icon.rttex",
+    b"io_rif.rttex": "io_rif_icon.rttex",
+    b"io_rif_wing.rttex": "io_rif_wing_icon.rttex",
+    b"mi_minbot.rttex": "mi_minbot_icon.rttex",
+    b"player_chestitem2.rttex": "player_chestitem2_icon.rttex",
+    b"player_chestitem.rttex": "player_chestitem_icon.rttex",
+    b"player_cosmetics1.rttex": "player_cosmetics1_icon.rttex",
+    b"player_cosmetics2.rttex": "player_cosmetics2_icon.rttex",
+    b"player_cosmetics3.rttex": "player_cosmetics3_icon.rttex",
+    b"player_cosmetics4.rttex": "player_cosmetics4_icon.rttex",
+    b"player_faceitem5.rttex": "player_faceitem5_icon.rttex",
+    b"player_faceitem6.rttex": "player_faceitem6_icon.rttex",
+    b"player_faceitem7.rttex": "player_faceitem7_icon.rttex",
+    b"player_feet10.rttex": "player_feet10_icon.rttex",
+    b"player_feet11.rttex": "player_feet11_icon.rttex",
+    b"player_feet12.rttex": "player_feet12_icon.rttex",
+    b"player_feet13.rttex": "player_feet13_icon.rttex",
+    b"player_feet14.rttex": "player_feet14_icon.rttex",
+    b"player_feet15.rttex": "player_feet15_icon.rttex",
+    b"player_feet16.rttex": "player_feet16_icon.rttex",
+    b"player_feet2.rttex": "player_feet2_icon.rttex",
+    b"player_feet3.rttex": "player_feet3_icon.rttex",
+    b"player_feet4.rttex": "player_feet4_icon.rttex",
+    b"player_feet5.rttex": "player_feet5_icon.rttex",
+    b"player_feet6.rttex": "player_feet6_icon.rttex",
+    b"player_feet7.rttex": "player_feet7_icon.rttex",
+    b"player_feet8.rttex": "player_feet8_icon.rttex",
+    b"player_feet9.rttex": "player_feet9_icon.rttex",
+    b"player_feet.rttex": "player_feet_icon.rttex",
+    b"player_feet_monthly1.rttex": "player_feet_monthly1_icon.rttex",
+    b"player_hair3.rttex": "player_hair3_icon.rttex",
+    b"player_hair4.rttex": "player_hair4_icon.rttex",
+    b"player_hair5.rttex": "player_hair5_icon.rttex",
+    b"player_hair_monthly1.rttex": "player_hair_monthly1_icon.rttex",
+    b"player_handitem2.rttex": "player_handitem2_icon.rttex",
+    b"player_handitem3.rttex": "player_handitem3_icon.rttex",
+    b"player_handitem4.rttex": "player_handitem4_icon.rttex",
+    b"player_handitem5.rttex": "player_handitem5_icon.rttex",
+    b"player_handitem6.rttex": "player_handitem6_icon.rttex",
+    b"player_handitem7.rttex": "player_handitem7_icon.rttex",
+    b"player_handitem.rttex": "player_handitem_icon.rttex",
+    b"player_hater.rttex": "player_hater_icon.rttex",
+    b"player_longhanditem1.rttex": "player_longhanditem1_icon.rttex",
+    b"player_longhanditem2.rttex": "player_longhanditem2_icon.rttex",
+    b"player_longhanditem3.rttex": "player_longhanditem3_icon.rttex",
+    b"player_longhanditem4.rttex": "player_longhanditem4_icon.rttex",
+    b"player_pants2.rttex": "player_pants2_icon.rttex",
+    b"player_pants3.rttex": "player_pants3_icon.rttex",
+    b"player_pants_monthly1.rttex": "player_pants_monthly1_icon.rttex",
+    b"player_shirt3.rttex": "player_shirt3_icon.rttex",
+    b"player_shirt4.rttex": "player_shirt4_icon.rttex",
+    b"player_shirt_monthly1.rttex": "player_shirt_monthly1_icon.rttex",
+    b"st_caura.rttex": "st_caura_icon.rttex",
+}
+
+
 @dataclass(slots=True)
 class Item:
     id: int = 0  # u32
@@ -714,6 +774,9 @@ class Item:
                 return 3
             case ItemInfoTextureType.SMART_EDGE_DIAGON:
                 return 0
+
+    def get_icon_texture(self) -> str | None:
+        return TEXTURE_WITH_ICONS_VARIANT.get(self.texture_file)
 
     @classmethod
     def deserialize(cls, s: Buffer, version: int = 99999999999) -> "Item":

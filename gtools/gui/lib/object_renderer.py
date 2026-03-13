@@ -178,7 +178,8 @@ class ObjectRenderer(Renderer):
             region_counters[region] += 1
 
             item = item_database.get(dropped.id)
-            tex = self._tex_mgr.push_texture(setting.asset_path / "game" / item.texture_file.decode())
+            tex_file = item.get_icon_texture() or item.texture_file.decode()
+            tex = self._tex_mgr.push_texture(setting.asset_path / "game" / tex_file)
 
             tex_index = item.get_default_tex()
             stride = item.get_tex_stride()
