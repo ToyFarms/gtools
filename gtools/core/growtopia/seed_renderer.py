@@ -24,8 +24,8 @@ class SeedRenderer:
         base = self._texture.crop(int(base_type) * 16, 0, 16, 16)
         overlay = self._texture.crop(int(overlay_type) * 16, 16, 16, 16)
 
-        base_col = (base_color.r, base_color.g, base_color.b, base_color.a)
-        overlay_col = (overlay_color.r, overlay_color.g, overlay_color.b, overlay_color.a)
+        base_col = np.array([base_color.r, base_color.g, base_color.b, base_color.a], dtype=np.uint8)
+        overlay_col = np.array([overlay_color.r, overlay_color.g, overlay_color.b, overlay_color.a], dtype=np.uint8)
 
         base_tinted = color_tint(base, base_col)
         overlay_tinted = color_tint(overlay, color_mix(base_col, overlay_col, 0.5))
