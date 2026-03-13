@@ -104,7 +104,8 @@ class ObjectRenderer(Renderer):
         self._shadow_shader.use()
         self._shadow_mvp.set_mat4x4(camera.proj_as_numpy())
         self._shadow_alpha.set_float(0.4)
-        self._shadow_offset.set_vec2(np.array([-8.0, 8.0], dtype=np.float32))
+        offset = 5.0
+        self._shadow_offset.set_vec2(np.array([-offset, offset], dtype=np.float32))
 
         self._shadow_tile_size.set_float(32.0)
         for arr, mesh in self._icon_shadows.items():
@@ -218,9 +219,8 @@ class ObjectRenderer(Renderer):
                 ]
             )
 
-            overlay_tex = self._tex_mgr.push_texture(setting.asset_path / "game/pickup_box.rttex")
-
-            if not item.is_seed() or item.id != GEMS:
+            if not item.is_seed() and item.id != GEMS:
+                overlay_tex = self._tex_mgr.push_texture(setting.asset_path / "game/pickup_box.rttex")
                 overlay[overlay_tex.array].extend(
                     [
                         x,
@@ -248,7 +248,7 @@ class ObjectRenderer(Renderer):
                 )
 
             if dropped.amount > 1:
-                target_width = 24.0
+                target_width = 20 * 1.2
                 padding = 4.0
                 max_text_width = target_width - padding * 2
 
@@ -258,7 +258,7 @@ class ObjectRenderer(Renderer):
                 text_str = str(dropped.amount)
                 _, text_h = self._text_renderer.get_text_size(text_str, scale=auto_scale)
 
-                half = 20 * 1.2 / 2
+                half = target_width / 2
                 text_x = x - half + padding
                 text_y = y + half - (text_h + padding)
 
