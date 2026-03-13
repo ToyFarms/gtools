@@ -16,12 +16,12 @@ class TextRenderer:
         self._tex = self.shader.get_uniform("u_texture")
         self._color = self.shader.get_uniform("u_textColor")
 
-        self._batch_data = []
-        self._shadow_batch_data = []
-        self._mesh = None
-        self._shadow_mesh = None
+        self._batch_data: list[float] = []
+        self._shadow_batch_data: list[float] = []
+        self._mesh: Mesh | None = None
+        self._shadow_mesh: Mesh | None = None
 
-    def clear(self) -> None:
+    def delete(self) -> None:
         self._batch_data.clear()
         self._shadow_batch_data.clear()
         if self._mesh:

@@ -12,10 +12,7 @@ from gtools.gui.texture import TextureArray, get_tex_manager
 from gtools.gui.lib.text_renderer import TextRenderer
 import numpy as np
 
-MAX_DROPPED = 10000
 LAYER_RANGE = OBJECT_DROPPED_END - OBJECT_DROPPED_START
-
-# TODO: fix each dropped, the order should be: icon, overlay, text
 
 SUBLAYER_ICON = 0
 SUBLAYER_OVERLAY = 1
@@ -23,7 +20,9 @@ SUBLAYER_TEXT_SHADOW = 2
 SUBLAYER_TEXT = 3
 LAYER_STRIDE = 4
 
-MAX_LAYER = MAX_DROPPED * LAYER_STRIDE
+REGION_TILE_SIZE = 3
+MAX_PER_REGION = 1024
+MAX_LAYER = MAX_PER_REGION * LAYER_STRIDE
 
 
 class ObjectRenderer(Renderer):
@@ -92,18 +91,25 @@ class ObjectRenderer(Renderer):
         # TODO: render text in 3d
         # self._text_renderer.render(camera3d, shadow_color=(0.0, 0.0, 0.0))
 
-    def get_object_z(self, index: int, sublayer: int) -> float:
-        slot = index * LAYER_STRIDE + sublayer
+    def get_object_z(self, local_index: int, sublayer: int) -> float:
+        slot = local_index * LAYER_STRIDE + sublayer
         t = slot / MAX_LAYER
-
         return OBJECT_DROPPED_START + t * LAYER_RANGE
 
     def load(self, world: World) -> None:
         instances: dict[TextureArray, list[float]] = defaultdict(list)
         overlay: dict[TextureArray, list[float]] = defaultdict(list)
-        self._text_renderer.clear()
 
-        for i, dropped in enumerate(world.dropped.items):
+        region_counters: dict[tuple[int, int], int] = defaultdict(int)
+
+        for dropped in world.dropped.items:
+            tile_x = int(dropped.pos.x // 32)
+            tile_y = int(dropped.pos.y // 32)
+            region = (tile_x // REGION_TILE_SIZE, tile_y // REGION_TILE_SIZE)
+
+            local_index = region_counters[region]
+            region_counters[region] += 1
+
             item = item_database.get(dropped.id)
             tex = self._tex_mgr.push_texture(setting.asset_path / "game" / item.texture_file.decode())
             instances[tex.array].extend(
@@ -115,7 +121,7 @@ class ObjectRenderer(Renderer):
                     item.tex_coord_x * 32 / tex.width,
                     item.tex_coord_y * 32 / tex.height,
                     tex.layer,
-                    self.get_object_z(i, SUBLAYER_ICON),
+                    self.get_object_z(local_index, SUBLAYER_ICON),
                 ]
             )
 
@@ -130,7 +136,7 @@ class ObjectRenderer(Renderer):
                     0,
                     0,
                     overlay_tex.layer,
-                    self.get_object_z(i, SUBLAYER_OVERLAY),
+                    self.get_object_z(local_index, SUBLAYER_OVERLAY),
                 ]
             )
 
@@ -153,9 +159,9 @@ class ObjectRenderer(Renderer):
                     text_str,
                     text_x,
                     text_y,
-                    self.get_object_z(i, SUBLAYER_TEXT),
+                    self.get_object_z(local_index, SUBLAYER_TEXT),
                     scale=auto_scale,
-                    shadow_z=self.get_object_z(i, SUBLAYER_TEXT_SHADOW),
+                    shadow_z=self.get_object_z(local_index, SUBLAYER_TEXT_SHADOW),
                 )
 
         self._text_renderer.build()
@@ -188,6 +194,9 @@ class ObjectRenderer(Renderer):
         for mesh in self._dropped_meshes.values():
             mesh.delete()
 
+        for mesh in self._pickup_overlay.values():
+            mesh.delete()
+
         self._dropped_meshes.clear()
         self._pickup_overlay.clear()
-        self._text_renderer.clear()
+        self._text_renderer.delete()
