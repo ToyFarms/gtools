@@ -157,7 +157,7 @@ class App:
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 5)
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-        self.window = glfw.create_window(width, height, "gtools gui", None, None)
+        self.window = glfw.create_window(width, height, "gtools gui (ctrl+p command palette)", None, None)
         if not self.window:
             glfw.terminate()
             raise RuntimeError("failed to create GLFW window.")
