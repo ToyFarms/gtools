@@ -55,7 +55,7 @@ def color_matrix_filter(image: np.ndarray, matrix: np.ndarray, linear: bool = Fa
     return out.reshape(h, w, 4)
 
 
-def apply_color(image: np.ndarray, color: tuple[int, int, int, int]) -> np.ndarray:
+def color_tint(image: np.ndarray, color: tuple[int, int, int, int]) -> np.ndarray:
     tint = np.array(color[:3], dtype=np.float32) / 255.0
     result = image.astype(np.float32)
     result[..., :3] *= tint
