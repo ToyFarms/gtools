@@ -350,6 +350,7 @@ class WorldTab(Panel):
         self._object_renderer.draw_3d(self._camera3d, self._layer_spread)
 
     def _render_to_fbo_2d(self) -> None:
+        self._object_renderer.draw_shadow(self._camera)
         self._world_renderer.draw(self._camera)
         self._object_renderer.draw(self._camera)
 
