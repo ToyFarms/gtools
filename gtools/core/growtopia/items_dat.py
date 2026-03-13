@@ -491,13 +491,13 @@ class ItemInfoColor:
     b: int = 0
 
     def __init__(self, x: int = 0) -> None:
-        self.a = (x >> 24) & 0xFF
-        self.r = (x >> 16) & 0xFF
-        self.g = (x >> 8) & 0xFF
-        self.b = x & 0xFF
+        self.b = (x >> 24) & 0xFF
+        self.g = (x >> 16) & 0xFF
+        self.r = (x >> 8) & 0xFF
+        self.a = x & 0xFF
 
     def __int__(self) -> int:
-        return ((self.a & 0xFF) << 24) | ((self.r & 0xFF) << 16) | ((self.g & 0xFF) << 8) | (self.b & 0xFF)
+        return ((self.b & 0xFF) << 24) | ((self.g & 0xFF) << 16) | ((self.r & 0xFF) << 8) | (self.a & 0xFF)
 
 
 class FXFlags(IntFlag):

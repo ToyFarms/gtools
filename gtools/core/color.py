@@ -53,3 +53,28 @@ def color_matrix_filter(image: np.ndarray, matrix: np.ndarray, linear: bool = Fa
 
     out = np.rint(result * 255.0).astype(np.uint8)
     return out.reshape(h, w, 4)
+
+
+def apply_color(image: np.ndarray, color: tuple[int, int, int, int]) -> np.ndarray:
+    image = image[..., [2, 1, 0, 3]]
+    tint = np.array(color[:3], dtype=np.float32) / 255.0
+    result = image.astype(np.float32)
+    result[..., :3] *= tint
+
+    return np.clip(result, 0, 255).round().astype(np.uint8)
+
+
+def color_mix(
+    color_a: tuple[int, int, int, int],
+    color_b: tuple[int, int, int, int],
+    mix_factor: float,
+) -> tuple[int, int, int, int]:
+    def _mix_ch(a: int, b: int) -> int:
+        return round(a * mix_factor + b * (1 - mix_factor))
+
+    return (
+        _mix_ch(color_a[0], color_b[0]),
+        _mix_ch(color_a[1], color_b[1]),
+        _mix_ch(color_a[2], color_b[2]),
+        255,
+    )

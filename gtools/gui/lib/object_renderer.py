@@ -219,7 +219,8 @@ class ObjectRenderer(Renderer):
                 ]
             )
 
-            if not item.is_seed() and item.id != GEMS:
+            dont_render_overlay = item.is_seed() or item.id == GEMS
+            if not dont_render_overlay:
                 overlay_tex = self._tex_mgr.push_texture(setting.asset_path / "game/pickup_box.rttex")
                 overlay[overlay_tex.array].extend(
                     [
@@ -249,17 +250,17 @@ class ObjectRenderer(Renderer):
 
             if dropped.amount > 1:
                 target_width = 20 * 1.2
-                padding = 4.0
+                padding = 2.0
                 max_text_width = target_width - padding * 2
 
                 ref_width, _ = self._text_renderer.get_text_size("000", scale=1.0)
                 auto_scale = max_text_width / ref_width if ref_width > 0 else 0.25
 
                 text_str = str(dropped.amount)
-                _, text_h = self._text_renderer.get_text_size(text_str, scale=auto_scale)
+                text_w, text_h = self._text_renderer.get_text_size(text_str, scale=auto_scale)
 
                 half = target_width / 2
-                text_x = x - half + padding
+                text_x = x + half - padding - text_w
                 text_y = y + half - (text_h + padding)
 
                 self._text_renderer.build_text(
