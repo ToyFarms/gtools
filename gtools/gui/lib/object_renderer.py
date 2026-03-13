@@ -19,8 +19,9 @@ LAYER_RANGE = OBJECT_DROPPED_END - OBJECT_DROPPED_START
 
 SUBLAYER_ICON = 0
 SUBLAYER_OVERLAY = 1
-SUBLAYER_TEXT = 2
-LAYER_STRIDE = 3
+SUBLAYER_TEXT_SHADOW = 2
+SUBLAYER_TEXT = 3
+LAYER_STRIDE = 4
 
 MAX_LAYER = MAX_DROPPED * LAYER_STRIDE
 
@@ -45,8 +46,7 @@ class ObjectRenderer(Renderer):
         self._tile_size3d = self._shader3d.get_uniform("u_tileSize")
         self._spread3d = self._shader3d.get_uniform("u_layer_spread")
 
-        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"
-        self._text_renderer = TextRenderer(font_path, size=32)
+        self._text_renderer = TextRenderer("resources/fonts/centurygothic_bold.ttf", size=32)
 
     def draw(self, camera: Camera2D) -> None:
         if not self._dropped_meshes:
@@ -67,7 +67,7 @@ class ObjectRenderer(Renderer):
             self._tex.set_int(0)
             mesh.draw_instanced()
 
-        self._text_renderer.render(camera, shadow_color=(0.0, 0.0, 0.0), shadow_offset=(0.2, 0.2))
+        self._text_renderer.draw(camera, offset=(0.2, 0.2), shadow_color=(0, 0, 0))
 
     def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
         if not self._dropped_meshes:
@@ -149,12 +149,13 @@ class ObjectRenderer(Renderer):
                 text_x = dropped.pos.x - half + padding
                 text_y = dropped.pos.y + half - (text_h + padding)
 
-                self._text_renderer.draw_text(
+                self._text_renderer.build_text(
                     text_str,
                     text_x,
                     text_y,
                     self.get_object_z(i, SUBLAYER_TEXT),
                     scale=auto_scale,
+                    shadow_z=self.get_object_z(i, SUBLAYER_TEXT_SHADOW),
                 )
 
         self._text_renderer.build()

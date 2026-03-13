@@ -1,5 +1,5 @@
 import numpy as np
-from OpenGL.GL import glBindTexture, GL_TEXTURE_2D, glActiveTexture, GL_TEXTURE0, glDepthFunc, GL_LEQUAL, GL_LESS
+from OpenGL.GL import glBindTexture, GL_TEXTURE_2D, glActiveTexture, GL_TEXTURE0
 from gtools.gui.camera import Camera2D
 from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.lib.font import FontManager
@@ -8,7 +8,7 @@ from gtools.gui.lib.font import FontManager
 class TextRenderer:
     INSTANCE_LAYOUT = [2, 2, 2, 2, 1]
 
-    def __init__(self, font_path: str, size: int = 16):
+    def __init__(self, font_path: str, size: int = 16) -> None:
         self.font = FontManager(font_path, size)
         self.shader = ShaderProgram.get("shaders/text")
         self._mvp = self.shader.get_uniform("u_mvp")
@@ -17,13 +17,19 @@ class TextRenderer:
         self._color = self.shader.get_uniform("u_textColor")
 
         self._batch_data = []
+        self._shadow_batch_data = []
         self._mesh = None
+        self._shadow_mesh = None
 
-    def clear(self):
+    def clear(self) -> None:
         self._batch_data.clear()
+        self._shadow_batch_data.clear()
         if self._mesh:
             self._mesh.delete()
             self._mesh = None
+        if self._shadow_mesh:
+            self._shadow_mesh.delete()
+            self._shadow_mesh = None
 
     def get_text_size(self, text: str, scale: float = 1.0) -> tuple[float, float]:
         width = 0.0
@@ -34,7 +40,7 @@ class TextRenderer:
             max_height = max(max_height, glyph.size[1] * scale)
         return width, max_height
 
-    def draw_text(self, text: str, x: float, y: float, z: float, scale: float = 1.0):
+    def build_text(self, text: str, x: float, y: float, z: float, scale: float = 1.0, shadow_z: float | None = None) -> None:
         current_x = x
         for char in text:
             glyph = self.font.get_char(char)
@@ -50,23 +56,29 @@ class TextRenderer:
 
             self._batch_data.extend([xpos, ypos, w, h, glyph.tex_offset[0], glyph.tex_offset[1], glyph.tex_size[0], glyph.tex_size[1], z])
 
+            if shadow_z is not None:
+                self._shadow_batch_data.extend([xpos, ypos, w, h, glyph.tex_offset[0], glyph.tex_offset[1], glyph.tex_size[0], glyph.tex_size[1], shadow_z])
+
             current_x += (glyph.advance >> 6) * scale
 
-    def build(self):
-        if not self._batch_data:
-            return
+    def build(self) -> None:
+        if self._batch_data:
+            instance_data = np.array(self._batch_data, dtype=np.float32)
+            self._mesh = Mesh(Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES, instance_data=instance_data, instance_layout=self.INSTANCE_LAYOUT, instance_attrib_base=2)
+            self._batch_data.clear()
 
-        instance_data = np.array(self._batch_data, dtype=np.float32)
-        self._mesh = Mesh(Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES, instance_data=instance_data, instance_layout=self.INSTANCE_LAYOUT, instance_attrib_base=2)
-        self._batch_data.clear()
+        if self._shadow_batch_data:
+            shadow_instance_data = np.array(self._shadow_batch_data, dtype=np.float32)
+            self._shadow_mesh = Mesh(Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES, instance_data=shadow_instance_data, instance_layout=self.INSTANCE_LAYOUT, instance_attrib_base=2)
+            self._shadow_batch_data.clear()
 
-    def render(
+    def draw(
         self,
         camera: Camera2D,
         color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        offset: tuple[float, float] = (0.0, 0.0),
         shadow_color: tuple[float, float, float] | None = None,
-        shadow_offset: tuple[float, float] = (1.0, -1.0),
-    ):
+    ) -> None:
         if not self._mesh:
             return
 
@@ -77,15 +89,11 @@ class TextRenderer:
         glBindTexture(GL_TEXTURE_2D, self.font.atlas_tex)
         self._tex.set_int(0)
 
-        glDepthFunc(GL_LEQUAL)
-
-        if shadow_color is not None:
+        if self._shadow_mesh and shadow_color is not None:
             self._color.set_vec3(np.array(shadow_color, dtype=np.float32))
-            self._offset.set_vec2(np.array(shadow_offset, dtype=np.float32))
-            self._mesh.draw_instanced()
+            self._offset.set_vec2(np.array(offset, dtype=np.float32))
+            self._shadow_mesh.draw_instanced()
 
         self._color.set_vec3(np.array(color, dtype=np.float32))
-        self._offset.set_vec2(np.array([0.0, 0.0], dtype=np.float32))
+        self._offset.set_vec2(np.zeros(2, dtype=np.float32))
         self._mesh.draw_instanced()
-
-        glDepthFunc(GL_LESS)

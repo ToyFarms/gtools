@@ -87,7 +87,6 @@ class WorldTab(Panel):
         self._camera3d.fit_to_rect(self._world.width, self._world.height)
         self._layer_spread: float = 200.0
 
-        # FPS movement key state
         self._keys_held: set[int] = set()
 
         self._world_renderer = WorldRenderer()

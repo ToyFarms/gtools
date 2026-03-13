@@ -5,8 +5,11 @@ out vec4 f_color;
 uniform sampler2D u_texture;
 uniform vec3 u_textColor;
 
+const float SOFTNESS = 0.2;
+
 void main() {
     float alpha = texture(u_texture, v_tex).r;
+    alpha = smoothstep(SOFTNESS, 1.0 - SOFTNESS, alpha);
     if (alpha < 0.01) discard;
     f_color = vec4(u_textColor * alpha, alpha);
 }
