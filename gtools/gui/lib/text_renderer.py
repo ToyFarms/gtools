@@ -1,11 +1,12 @@
 import numpy as np
 from OpenGL.GL import glBindTexture, GL_TEXTURE_2D, glActiveTexture, GL_TEXTURE0
 from gtools.gui.camera import Camera2D
+from gtools.gui.lib.renderer import Renderer
 from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.lib.font import FontManager
 
 
-class TextRenderer:
+class TextRenderer(Renderer):
     INSTANCE_LAYOUT = [2, 2, 2, 2, 1]
 
     def __init__(self, font_path: str, size: int = 16) -> None:
@@ -22,6 +23,7 @@ class TextRenderer:
         self._shadow_mesh: Mesh | None = None
 
     def delete(self) -> None:
+        self.font.delete()
         self._batch_data.clear()
         self._shadow_batch_data.clear()
         if self._mesh:

@@ -126,8 +126,8 @@ class TextureArray:
 
         if total_layers > self._allocated_layers:
             new_capacity = max(
-                16,
-                self._allocated_layers * 2 if self._allocated_layers else 16,
+                4,
+                self._allocated_layers * 2 if self._allocated_layers else 4,
                 total_layers,
             )
 

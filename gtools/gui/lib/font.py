@@ -13,6 +13,7 @@ from OpenGL.GL import (
     GL_UNPACK_ALIGNMENT,
     GL_UNSIGNED_BYTE,
     glBindTexture,
+    glDeleteTextures,
     glGenTextures,
     glPixelStorei,
     glTexImage2D,
@@ -37,7 +38,7 @@ class FontManager:
         self.face = freetype.Face(str(font_path))
         self.face.set_pixel_sizes(0, size)
         self.chars: dict[str, Character] = {}
-        self.atlas_tex = None
+        self.atlas_tex: int | None = None
         self._load_ascii()
 
     def _load_ascii(self) -> None:
@@ -80,3 +81,7 @@ class FontManager:
 
     def get_char(self, char: str) -> Character:
         return self.chars.get(char, self.chars[" "])
+
+    def delete(self) -> None:
+        if self.atlas_tex:
+            glDeleteTextures(1, self.atlas_tex)

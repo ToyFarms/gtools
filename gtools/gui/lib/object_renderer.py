@@ -1,31 +1,17 @@
 from collections import defaultdict
 
-from OpenGL.GL import (
-    GL_EQUAL,
-    GL_FALSE,
-    GL_KEEP,
-    GL_REPLACE,
-    GL_STENCIL_BUFFER_BIT,
-    GL_STENCIL_TEST,
-    GL_TRUE,
-    glClear,
-    glDepthMask,
-    glDisable,
-    glEnable,
-    glStencilFunc,
-    glStencilMask,
-    glStencilOp,
-)
+from OpenGL.GL import GL_FALSE, GL_TRUE, glDepthMask
 from pyglm.glm import ivec2
 
 from gtools import setting
 from gtools.baked.items import GEMS
 from gtools.core.growtopia.items_dat import item_database
-from gtools.core.growtopia.world import World
+from gtools.core.growtopia.world import DroppedItem, World
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib.layer import OBJECT_DROPPED_END, OBJECT_DROPPED_SHADOW_END, OBJECT_DROPPED_SHADOW_START, OBJECT_DROPPED_START
 from gtools.gui.lib.renderer import Renderer
+from gtools.gui.lib.seed_icon_renderer import SeedIconRenderer
 from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.texture import TextureArray, get_tex_manager
 from gtools.gui.lib.text_renderer import TextRenderer
@@ -64,6 +50,9 @@ class ObjectRenderer(Renderer):
 
         self._icon_shadows: dict[TextureArray, Mesh] = {}
         self._overlay_shadows: dict[TextureArray, Mesh] = {}
+
+        self._seed_renderer = SeedIconRenderer()
+        self._seed_mesh: Mesh | None = None
 
         self._shader = ShaderProgram.get("shaders/object")
         self._mvp = self._shader.get_uniform("u_mvp")
@@ -122,7 +111,7 @@ class ObjectRenderer(Renderer):
         glDepthMask(GL_TRUE)
 
     def draw(self, camera: Camera2D) -> None:
-        if not self._dropped_meshes:
+        if not (self._dropped_meshes and self._seed_mesh):
             return
 
         self._shader.use()
@@ -140,10 +129,13 @@ class ObjectRenderer(Renderer):
             self._tex.set_int(0)
             mesh.draw_instanced()
 
+        if self._seed_mesh:
+            self._seed_renderer.draw(camera, self._seed_mesh)
+
         self._text_renderer.draw(camera, offset=(0.2, 0.2), shadow_color=(0, 0, 0))
 
     def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
-        if not self._dropped_meshes:
+        if not (self._dropped_meshes and self._seed_mesh):
             return
 
         self._shader3d.use()
@@ -162,6 +154,9 @@ class ObjectRenderer(Renderer):
             self._tex3d.set_int(0)
             mesh.draw_instanced()
 
+        if self._seed_mesh:
+            self._seed_renderer.draw_3d(camera3d, self._seed_mesh, layer_spread)
+
     def load(self, world: World) -> None:
         icons: dict[TextureArray, list[float]] = defaultdict(list)
         overlay: dict[TextureArray, list[float]] = defaultdict(list)
@@ -169,6 +164,8 @@ class ObjectRenderer(Renderer):
         overlay_shadows: dict[TextureArray, list[float]] = defaultdict(list)
 
         region_counters: dict[tuple[int, int], int] = defaultdict(int)
+
+        seeds: list[tuple[DroppedItem, int]] = []
 
         for dropped in world.dropped.items:
             tile_x = int(dropped.pos.x // 32)
@@ -178,46 +175,51 @@ class ObjectRenderer(Renderer):
             local_index = region_counters[region]
             region_counters[region] += 1
 
+            is_seed = dropped.id % 2 != 0
             item = item_database.get(dropped.id)
-            tex_file = item.get_icon_texture() or item.texture_file.decode()
-            tex = self._tex_mgr.push_texture(setting.asset_path / "game" / tex_file)
-
-            tex_index = item.get_default_tex()
-            stride = item.get_tex_stride()
-            off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
-            tex_pos = ivec2(item.tex_coord_x, item.tex_coord_y) + off
-
-            uv_x = tex_pos.x * 32 / tex.width
-            uv_y = tex_pos.y * 32 / tex.height
 
             x = dropped.pos.x - 8
             y = dropped.pos.y - 8
 
-            icons[tex.array].extend(
-                [
-                    x,
-                    y,
-                    0.67,
-                    0.67,
-                    uv_x,
-                    uv_y,
-                    tex.layer,
-                    self.get_object_z(local_index, SUBLAYER_ICON),
-                ]
-            )
+            if is_seed:
+                seeds.append((dropped, local_index))
+            else:
+                tex_file = item.get_icon_texture() or item.texture_file.decode()
+                tex = self._tex_mgr.push_texture(setting.asset_path / "game" / tex_file)
 
-            icon_shadows[tex.array].extend(
-                [
-                    x,
-                    y,
-                    0.67,
-                    0.67,
-                    uv_x,
-                    uv_y,
-                    tex.layer,
-                    self.get_shadow_z(local_index, SHADOW_SUBLAYER_ICON),
-                ]
-            )
+                tex_index = item.get_default_tex()
+                stride = item.get_tex_stride()
+                off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
+                tex_pos = ivec2(item.tex_coord_x, item.tex_coord_y) + off
+
+                uv_x = tex_pos.x * 32 / tex.width
+                uv_y = tex_pos.y * 32 / tex.height
+
+                icons[tex.array].extend(
+                    [
+                        x,
+                        y,
+                        0.67,
+                        0.67,
+                        uv_x,
+                        uv_y,
+                        tex.layer,
+                        self.get_object_z(local_index, SUBLAYER_ICON),
+                    ]
+                )
+
+                icon_shadows[tex.array].extend(
+                    [
+                        x,
+                        y,
+                        0.67,
+                        0.67,
+                        uv_x,
+                        uv_y,
+                        tex.layer,
+                        self.get_shadow_z(local_index, SHADOW_SUBLAYER_ICON),
+                    ]
+                )
 
             dont_render_overlay = item.is_seed() or item.id == GEMS
             if not dont_render_overlay:
@@ -249,7 +251,10 @@ class ObjectRenderer(Renderer):
                 )
 
             if dropped.amount > 1:
-                target_width = 20 * 1.2
+                if item.is_seed():
+                    target_width = 20
+                else:
+                    target_width = 20 * 1.2
                 padding = 2.0
                 max_text_width = target_width - padding * 2
 
@@ -271,6 +276,8 @@ class ObjectRenderer(Renderer):
                     scale=auto_scale,
                     shadow_z=self.get_object_z(local_index, SUBLAYER_TEXT_SHADOW),
                 )
+
+        self._seed_mesh = self._seed_renderer.build([(seed, self.get_object_z(li, SUBLAYER_ICON)) for seed, li in seeds])
 
         self._text_renderer.build()
 
@@ -304,5 +311,9 @@ class ObjectRenderer(Renderer):
             for mesh in meshes.values():
                 mesh.delete()
             meshes.clear()
+
+        self._seed_renderer.delete()
+        if self._seed_mesh:
+            self._seed_mesh.delete()
 
         self._text_renderer.delete()

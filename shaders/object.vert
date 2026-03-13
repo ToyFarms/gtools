@@ -20,7 +20,7 @@ void main() {
     vec2 worldPos = in_pos * u_tileSize * in_tileScale + in_tilePos;
     gl_Position = u_mvp * vec4(worldPos, in_depth, 1.0);
 
-    vec2 texSize = vec2(textureSize(texArray, 0).xy);
+    vec2 texSize = textureSize(texArray, 0).xy;
     vec2 uvStep = vec2(u_tileSize) / texSize;
     texCoord = vec2(
         mix(in_texCoords.x, in_texCoords.x + uvStep.x, in_texCoord.x),
