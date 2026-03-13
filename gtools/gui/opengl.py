@@ -5,6 +5,7 @@ from typing import cast
 
 from OpenGL.GL import (
     GL_ARRAY_BUFFER,
+    GL_BYTE,
     GL_COLOR_ATTACHMENT0,
     GL_COMPILE_STATUS,
     GL_DEPTH24_STENCIL8,
@@ -17,12 +18,14 @@ from OpenGL.GL import (
     GL_FRAMEBUFFER,
     GL_FRAMEBUFFER_COMPLETE,
     GL_LINK_STATUS,
+    GL_INT,
     GL_LINEAR,
     GL_READ_WRITE,
     GL_RENDERBUFFER,
     GL_RGBA,
     GL_RGBA8,
     GL_SHADER_STORAGE_BUFFER,
+    GL_SHORT,
     GL_STATIC_DRAW,
     GL_TEXTURE_2D,
     GL_TEXTURE_MAG_FILTER,
@@ -95,6 +98,7 @@ from OpenGL.GL import (
     glUnmapBuffer,
     glUseProgram,
     glVertexAttribDivisor,
+    glVertexAttribIPointer,
     glVertexAttribPointer,
     glViewport,
 )
@@ -262,19 +266,54 @@ class Mesh:
     RECT_INDICES = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint16)
     RECT_INDICES.setflags(write=False)
 
+    def _setup_attribs(self, layout: list[int | tuple[int, int]], base_loc: int, is_instance: bool = False) -> int:
+        type_sizes = {
+            GL_FLOAT: ctypes.sizeof(ctypes.c_float),
+            GL_INT: ctypes.sizeof(ctypes.c_int),
+            GL_UNSIGNED_INT: ctypes.sizeof(ctypes.c_uint),
+            GL_BYTE: ctypes.sizeof(ctypes.c_byte),
+            GL_UNSIGNED_BYTE: ctypes.sizeof(ctypes.c_ubyte),
+            GL_SHORT: ctypes.sizeof(ctypes.c_short),
+            GL_UNSIGNED_SHORT: ctypes.sizeof(ctypes.c_ushort),
+        }
+        integer_types = {GL_INT, GL_UNSIGNED_INT, GL_BYTE, GL_UNSIGNED_BYTE, GL_SHORT, GL_UNSIGNED_SHORT}
+
+        parsed_layout = []
+        stride = 0
+        for item in layout:
+            if isinstance(item, int):
+                count, gl_type = item, GL_FLOAT
+            else:
+                count, gl_type = item
+            size = type_sizes.get(gl_type, 4)
+            parsed_layout.append((count, gl_type, size))
+            stride += count * size
+
+        offset = 0
+        for i, (count, gl_type, size) in enumerate(parsed_layout):
+            loc = base_loc + i
+            glEnableVertexAttribArray(loc)
+            if gl_type in integer_types:
+                glVertexAttribIPointer(loc, count, gl_type, stride, ctypes.c_void_p(offset))
+            else:
+                glVertexAttribPointer(loc, count, gl_type, GL_FALSE, stride, ctypes.c_void_p(offset))
+
+            if is_instance:
+                glVertexAttribDivisor(loc, 1)
+            offset += count * size
+
+        return stride
+
     def __init__(
         self,
-        vertices: npt.NDArray[np.float32],
-        layout: list[int],
+        vertices: npt.NDArray,
+        layout: list[int | tuple[int, int]],
         indices: npt.NDArray | None = None,
         usage: int = GL_STATIC_DRAW,
-        instance_data: npt.NDArray[np.float32] | None = None,
-        instance_layout: list[int] | None = None,
+        instance_data: npt.NDArray | None = None,
+        instance_layout: list[int | tuple[int, int]] | None = None,
         instance_attrib_base: int | None = None,
     ) -> None:
-        self._components = sum(layout)
-        self._vertex_count = int(vertices.size // self._components)
-
         self._vao = glGenVertexArrays(1)
         glBindVertexArray(self._vao)
 
@@ -297,19 +336,8 @@ class Mesh:
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices.tobytes(), usage)
             self._index_count = int(indices.size)
 
-        stride = self._components * ctypes.sizeof(ctypes.c_float)
-        offset = 0
-        for loc, components in enumerate(layout):
-            glEnableVertexAttribArray(loc)
-            glVertexAttribPointer(
-                loc,
-                components,
-                GL_FLOAT,
-                GL_FALSE,
-                stride,
-                ctypes.c_void_p(offset * ctypes.sizeof(ctypes.c_float)),
-            )
-            offset += components
+        vertex_stride = self._setup_attribs(layout, 0)
+        self._vertex_count = int(vertices.nbytes // vertex_stride)
 
         self._instance_vbo = None
         self._instance_count = 0
@@ -317,26 +345,12 @@ class Mesh:
             if instance_attrib_base is None:
                 raise ValueError("please supply instance_attrib_base (where the instance data begins)")
 
-            self._instance_count = int(instance_data.size // sum(instance_layout))
             self._instance_vbo = glGenBuffers(1)
             glBindBuffer(GL_ARRAY_BUFFER, self._instance_vbo)
             glBufferData(GL_ARRAY_BUFFER, instance_data.nbytes, instance_data.tobytes(), usage)
 
-            instance_stride = sum(instance_layout) * ctypes.sizeof(ctypes.c_float)
-            instance_offset = 0
-            for loc_offset, components in enumerate(instance_layout):
-                loc = instance_attrib_base + loc_offset
-                glEnableVertexAttribArray(loc)
-                glVertexAttribPointer(
-                    loc,
-                    components,
-                    GL_FLOAT,
-                    GL_FALSE,
-                    instance_stride,
-                    ctypes.c_void_p(instance_offset * ctypes.sizeof(ctypes.c_float)),
-                )
-                glVertexAttribDivisor(loc, 1)
-                instance_offset += components
+            instance_stride = self._setup_attribs(instance_layout, instance_attrib_base, is_instance=True)
+            self._instance_count = int(instance_data.nbytes // instance_stride)
 
         glBindVertexArray(0)
         glBindBuffer(GL_ARRAY_BUFFER, 0)

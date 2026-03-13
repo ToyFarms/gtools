@@ -4,6 +4,7 @@ from gtools.core.growtopia.world import DroppedItem
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib.renderer import Renderer
+from OpenGL.GL import GL_UNSIGNED_INT
 import numpy as np
 
 from gtools.gui.opengl import Mesh, ShaderProgram
@@ -26,25 +27,33 @@ class SeedIconRenderer(Renderer):
     def build(self, items: list[tuple[DroppedItem, float]]) -> Mesh:
         self.tex = self.tex_mgr.push_texture(setting.asset_path / "game/seed.rttex")
 
-        data: list[float] = []
-        for drop, z in items:
+        data_dtype = np.dtype(
+            [
+                ("tilePos", np.float32, 3),
+                ("baseColor", np.uint32),
+                ("overlayColor", np.uint32),
+                ("baseUV", np.float32),
+                ("overlayUV", np.float32),
+                ("layer", np.float32),
+            ]
+        )
+        data = np.zeros(len(items), dtype=data_dtype)
+        for i, (drop, z) in enumerate(items):
             item = item_database.get(drop.id)
-            data.extend(
-                [
-                    drop.pos.x - 8,
-                    drop.pos.y - 8,
-                    z,
-                    float(item.seed_color.r) / 255.0,
-                    float(item.seed_color.g) / 255.0,
-                    float(item.seed_color.b) / 255.0,
-                    (item.seed_color.r + item.seed_overlay_color.r) / 2.0 / 255.0,
-                    (item.seed_color.g + item.seed_overlay_color.g) / 2.0 / 255.0,
-                    (item.seed_color.b + item.seed_overlay_color.b) / 2.0 / 255.0,
-                    float(item.seed_base.value * 16 / self.tex.width),
-                    float(item.seed_overlay.value * 16 / self.tex.width),
-                    self.tex.layer,
-                ]
-            )
+
+            base_color = (item.seed_color.r << 16) | (item.seed_color.g << 8) | item.seed_color.b
+
+            overlay_r = (item.seed_color.r + item.seed_overlay_color.r) // 2
+            overlay_g = (item.seed_color.g + item.seed_overlay_color.g) // 2
+            overlay_b = (item.seed_color.b + item.seed_overlay_color.b) // 2
+            overlay_color = (overlay_r << 16) | (overlay_g << 8) | overlay_b
+
+            data[i]["tilePos"] = [drop.pos.x - 8, drop.pos.y - 8, z]
+            data[i]["baseColor"] = base_color
+            data[i]["overlayColor"] = overlay_color
+            data[i]["baseUV"] = item.seed_base.value * 16 / self.tex.width
+            data[i]["overlayUV"] = item.seed_overlay.value * 16 / self.tex.width
+            data[i]["layer"] = self.tex.layer
 
         self.tex_mgr.flush()
 
@@ -52,8 +61,8 @@ class SeedIconRenderer(Renderer):
             Mesh.RECT_WITH_UV_VERTS,
             [2, 2],
             Mesh.RECT_INDICES,
-            instance_data=np.array(data, dtype=np.float32),
-            instance_layout=[3, 3, 3, 1, 1, 1],
+            instance_data=data,
+            instance_layout=[3, (1, GL_UNSIGNED_INT), (1, GL_UNSIGNED_INT), 1, 1, 1],
             instance_attrib_base=2,
         )
 
