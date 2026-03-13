@@ -1,7 +1,7 @@
 import ctypes
 import logging
 from pathlib import Path
-from typing import cast
+from typing import Sequence, cast
 
 from OpenGL.GL import (
     GL_ARRAY_BUFFER,
@@ -266,7 +266,7 @@ class Mesh:
     RECT_INDICES = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint16)
     RECT_INDICES.setflags(write=False)
 
-    def _setup_attribs(self, layout: list[int | tuple[int, int]], base_loc: int, is_instance: bool = False) -> int:
+    def _setup_attribs(self, layout: Sequence[int | tuple[int, int]], base_loc: int, is_instance: bool = False) -> int:
         type_sizes = {
             GL_FLOAT: ctypes.sizeof(ctypes.c_float),
             GL_INT: ctypes.sizeof(ctypes.c_int),
@@ -307,11 +307,11 @@ class Mesh:
     def __init__(
         self,
         vertices: npt.NDArray,
-        layout: list[int | tuple[int, int]],
+        layout: Sequence[int | tuple[int, int]],
         indices: npt.NDArray | None = None,
         usage: int = GL_STATIC_DRAW,
         instance_data: npt.NDArray | None = None,
-        instance_layout: list[int | tuple[int, int]] | None = None,
+        instance_layout: Sequence[int | tuple[int, int]] | None = None,
         instance_attrib_base: int | None = None,
     ) -> None:
         self._vao = glGenVertexArrays(1)
