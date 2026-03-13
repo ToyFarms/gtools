@@ -8,6 +8,7 @@ from pathlib import Path
 import pickle
 import tempfile
 from typing import Any, Hashable, Literal, Sequence, overload
+import inspect
 
 import xxhash
 from zmq import IntFlag
@@ -642,7 +643,7 @@ class Item:
     tex_coord_x: int = 0  # u8
     tex_coord_y: int = 0  # u8
     texture_type: ItemInfoTextureType = ItemInfoTextureType.SINGLE_FRAME_ALONE  # u8
-    is_stripey_wallpaper: int = 0  # u8
+    unk7: int = 0  # u8
     collision_type: ItemInfoCollisionType = ItemInfoCollisionType.NONE  # u8
     health: int = 0  # u8
     restore_time: int = 0  # u32
@@ -794,7 +795,7 @@ class Item:
         item.tex_coord_x = s.read_u8()
         item.tex_coord_y = s.read_u8()
         item.texture_type = ItemInfoTextureType(s.read_u8())
-        item.is_stripey_wallpaper = s.read_u8()
+        item.unk7 = s.read_u8()
         item.collision_type = ItemInfoCollisionType(s.read_u8())
         item.health = s.read_u8()
         item.restore_time = s.read_u32()
@@ -878,6 +879,7 @@ class ItemDatabase:
 class item_database:
     _db: ItemDatabase | None = None
     _date_fmt = "%Y%m%d_%H%M%S"
+    _schema_hash_cache: str | None = None
     logger = logging.getLogger("item_database")
 
     # TODO: i think version is not only the version number, but the content needs to be factored in
@@ -885,6 +887,32 @@ class item_database:
     _name_index_cache: dict[int, dict[bytes, Item]] = {}
     _name_str_list_cache: dict[int, list[str]] = {}
     _name_str_to_items_cache: dict[int, dict[str, list[Item]]] = {}
+
+    @classmethod
+    def _schema_hash(cls) -> str:
+        if cls._schema_hash_cache is not None:
+            return cls._schema_hash_cache
+
+        schema_classes = [
+            Item,
+            ItemInfoColor,
+            ItemFlag,
+            ItemInfoType,
+            ItemInfoMaterialType,
+            ItemInfoVisualEffect,
+            ItemInfoTextureType,
+            ItemInfoCollisionType,
+            ItemInfoClothingType,
+            ItemInfoSeedBase,
+            ItemInfoSeedOverlay,
+            ItemInfoTreeBase,
+            ItemInfoTreeLeaves,
+            FXFlags,
+            ItemInfoFlag2,
+        ]
+        combined = "\n".join(inspect.getsource(c) for c in schema_classes)
+        cls._schema_hash_cache = xxhash.xxh64_hexdigest(combined.encode())
+        return cls._schema_hash_cache
 
     @classmethod
     def _atomic_write(cls, path: Path, obj: Any) -> None:
@@ -953,7 +981,7 @@ class item_database:
         else:
             filename = f"{datetime.now(timezone.utc).strftime(cls._date_fmt)}_{hash}.pkl"
             try:
-                cls._atomic_write(version_dir / filename, db)
+                cls._atomic_write(version_dir / filename, {"schema": cls._schema_hash(), "db": db})
                 cls._version_cache[db.version] = db
                 cls.logger.info(f"wrote cache {filename} version={db.version}")
                 cls._build_name_index(db)
@@ -999,15 +1027,30 @@ class item_database:
                 continue
             try:
                 with path.open("rb") as f:
-                    cached = pickle.load(f)
-                    if getattr(cached, "version", None) != version:
-                        cls.logger.warning(f"cached file version mismatch {path} (expected {version})")
-                        continue
-                    cls._version_cache[version] = cached
-                    cls.logger.info(f"loaded cache {path}")
-                    return cached
+                    payload = pickle.load(f)
+
+                if isinstance(payload, ItemDatabase):
+                    cached = payload
+                    stored_schema = None
+                else:
+                    stored_schema = payload.get("schema")
+                    cached = payload.get("db")
+
+                if stored_schema != cls._schema_hash():
+                    cls.logger.info(f"schema mismatch in cache {path}, invalidating")
+                    path.unlink(missing_ok=True)
+                    return None
+
+                if getattr(cached, "version", None) != version:
+                    cls.logger.warning(f"cached file version mismatch {path} (expected {version})")
+                    continue
+
+                cls._version_cache[version] = cached
+                cls.logger.info(f"loaded cache {path}")
+                return cached
             except Exception as e:
-                cls.logger.error(f"failed parsing pickle object {path}: {e}")
+                cls.logger.error(f"failed parsing pickle object {path}: {e}, invalidating")
+                path.unlink(missing_ok=True)
 
     @classmethod
     def load_version(cls, version: int) -> ItemDatabase | None:
