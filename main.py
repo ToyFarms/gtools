@@ -523,5 +523,3 @@ if __name__ == "__main__":
 # TODO: implement override callback for connect, disconnect, destroy for extension sdk
 
 # TODO: fix shader lifecycle
-# TODO: fix seeds not rendering begin water/fire
-# TODO: fix audio distortion

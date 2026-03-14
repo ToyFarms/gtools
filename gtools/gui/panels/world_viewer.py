@@ -434,8 +434,8 @@ class WorldTab(Panel):
     def _render_to_fbo_2d(self) -> None:
         self._dropped_renderer.draw_shadow(self._camera, self._dropped_mesh)
         self._display_renderer.draw(self._camera, self._display_mesh)
-        self._world_renderer.draw(self._camera)
         self._dropped_renderer.draw(self._camera, self._dropped_mesh)
+        self._world_renderer.draw(self._camera)
         self._easel_renderer.draw(self._camera, self._easel_mesh, rotation=0.2, pixel_scale=1.2)
         self._easel_mark_renderer.draw(self._camera, self._easel_mark_mesh, rotation=0.1, tint=(0.1, 0.1, 0.1))
         self._vend_renderer.draw(self._camera, self._vend_mesh)

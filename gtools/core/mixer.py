@@ -67,8 +67,6 @@ class _PlaybackHandle:
         chunk = self._sound.data[self._pos : self._pos + n]
         self._pos += len(chunk)
 
-        # i don't know if they convert it to linear or not
-        # return chunk * _perceptual_to_linear(self.gain)
         return chunk * self.gain
 
 
@@ -122,6 +120,4 @@ class AudioMixer:
                 survivors.append(s)
 
         self._streams = survivors
-
-        np.tanh(mixed, out=mixed)
         outdata[:] = mixed * _perceptual_to_linear(self.master_gain)
