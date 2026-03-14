@@ -517,7 +517,6 @@ if __name__ == "__main__":
 
 # TODO: render tree
 # TODO: fix ui (its so ugly!!)
-# TODO: fix focus system
 # TODO: implement shadow in world viewer
 # TODO: fix PortraitTile for the world START (prob bcs old world version)
 # TODO: implement override callback for connect, disconnect, destroy for extension sdk

@@ -9,12 +9,9 @@ from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
     GL_DEPTH_BUFFER_BIT,
     GL_DEPTH_TEST,
-    GL_FRONT_AND_BACK,
     GL_LESS,
-    GL_LINE,
     GL_ONE,
     GL_ONE_MINUS_SRC_ALPHA,
-    GL_SRC_ALPHA,
     GL_TRUE,
     glBlendFunc,
     glClear,
@@ -22,7 +19,6 @@ from OpenGL.GL import (
     glDepthFunc,
     glDepthMask,
     glEnable,
-    glPolygonMode,
     glViewport,
 )
 from imgui_bundle import imgui
@@ -113,7 +109,7 @@ class App:
                 self.process_events(event)
 
             glClearColor(0.1, 0.1, 0.1, 1.0)
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # pyright: ignore[reportOperatorIssue]
 
             to_remove: list[Panel] = []
             for panel in self.panels:
@@ -148,7 +144,7 @@ class App:
             glViewport(0, 0, e.width, e.height)
             return
 
-        for panel in self.panels:
+        for panel in reversed(self.panels):
             if panel.handle_event(e):
                 break
 

@@ -8,8 +8,7 @@ from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, glClear, glClear
 import glfw
 from imgui_bundle import imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
 from pyglm import glm
-from pyglm.glm import ivec2, mat4x4, vec2, vec3
-import numpy as np
+from pyglm.glm import ivec2, vec2
 
 from gtools.baked.items import PAINTING_EASEL
 from gtools.core.growtopia.packet import NetPacket
@@ -29,7 +28,7 @@ from gtools.gui.lib.layer import (
     WORLD_FOREGROUND_AFTER_END,
 )
 from gtools.gui.lib.object_renderer import ObjectRenderer
-from gtools.gui.opengl import Framebuffer, Mesh, ShaderProgram
+from gtools.gui.opengl import Framebuffer
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
@@ -64,7 +63,7 @@ class WorldTab(Panel):
 
         self._open = True
         self._first_render = True
-        self._is_active = False
+        self._is_active = True
 
         self._mixer = AudioMixer()
         self._mixer.master_gain = 0.5
@@ -216,10 +215,16 @@ class WorldTab(Panel):
     def render(self) -> None:
         if self._first_render and self._dockspace_id:
             imgui.set_next_window_dock_id(self._dockspace_id)
-            self._first_render = False
 
         opened, self._open = imgui.begin(self._name, self._open)
+        if self._first_render:
+            imgui.set_window_focus()
+            self._first_render = False
+
+        was_active = self._is_active
         self._is_active = imgui.is_window_focused(imgui.FocusedFlags_.child_windows)
+        if was_active and not self._is_active:
+            self._keys_held.clear()
         if opened:
             total_w, _ = imgui.get_content_region_avail()
             sidebar_w = min(250, max(80, int(total_w * 0.2)))
@@ -308,6 +313,8 @@ class WorldTab(Panel):
 
     def handle_event(self, event: Event) -> bool:
         if isinstance(event, KeyEvent):
+            if not self._is_active:
+                return False
             if event.action == glfw.PRESS:
                 self._keys_held.add(event.key)
                 if event.key == glfw.KEY_3:
@@ -509,7 +516,7 @@ class WorldTab(Panel):
         self._vend_renderer.draw_3d(self._camera3d, self._vend_mesh, self._layer_spread)
 
         if self._hovered_tile:
-            self._highlight_renderer.draw_hover_3d(self._camera3d, self._hovered_tile.pos, self._layer_spread)
+            self._highlight_renderer.draw_hover_3d(self._camera3d, vec2(self._hovered_tile.pos), self._layer_spread)
 
         self._highlight_renderer.draw_playhead_3d(self._camera3d, self._sheet, self._world.width, self._layer_spread)
 
@@ -535,4 +542,4 @@ class WorldTab(Panel):
             self._hovered_tile = None
 
         if self._hovered_tile:
-            self._highlight_renderer.draw_hover(self._camera, self._hovered_tile.pos)
+            self._highlight_renderer.draw_hover(self._camera, vec2(self._hovered_tile.pos))
