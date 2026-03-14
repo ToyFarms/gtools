@@ -33,6 +33,7 @@ from gtools.gui.opengl import Framebuffer, Mesh, ShaderProgram
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
+from gtools.gui.lib.highlight_renderer import HighlightRenderer
 
 logger = logging.getLogger("gui-world-viewer")
 
@@ -68,30 +69,9 @@ class WorldTab(Panel):
         self._mixer.master_gain = 0.5
         self._sheet = self._world.get_sheet(self._mixer)
 
-        self._solid_shader = ShaderProgram.get("shaders/solid")
-        self._solid_proj = self._solid_shader.get_uniform("u_proj")
-        self._solid_model = self._solid_shader.get_uniform("u_model")
-        # fmt: off
-        playhead_vertices = np.array([
-            -0.5, -0.5, 1.0, 1.0, 1.0, 0.2,
-            0.5,  -0.5, 1.0, 1.0, 1.0, 0.2,
-            0.5,  0.5,  1.0, 1.0, 1.0, 0.2,
-            -0.5, 0.5,  1.0, 1.0, 1.0, 0.2,
-        ], dtype=np.float32)
-        # fmt: on
-        self._playhead = Mesh(playhead_vertices, [2, 4], Mesh.RECT_INDICES)
+        self._highlight_renderer = HighlightRenderer()
         self._playing = True
         self._seek = 0
-
-        # fmt: off
-        hover_vertices = np.array([
-            -0.5, -0.5, 1.0, 1.0, 1.0, 0.3,
-            0.5,  -0.5, 1.0, 1.0, 1.0, 0.3,
-            0.5,  0.5,  1.0, 1.0, 1.0, 0.3,
-            -0.5, 0.5,  1.0, 1.0, 1.0, 0.3,
-        ], dtype=np.float32)
-        # fmt: on
-        self._hover = Mesh(hover_vertices, [2, 4], Mesh.RECT_INDICES)
         self._hovered_tile: Tile | None = None
 
         self._mode_3d = False
@@ -172,6 +152,7 @@ class WorldTab(Panel):
         self._easel_mark_mesh.delete()
 
         self._fbo.delete()
+        self._highlight_renderer.delete()
         self._mixer.stop()
 
     @property
@@ -428,8 +409,18 @@ class WorldTab(Panel):
         self._fbo.unbind()
 
     def _render_to_fbo_3d(self) -> None:
-        self._world_renderer.draw_3d(self._camera3d, self._layer_spread)
+        self._dropped_renderer.draw_shadow_3d(self._camera3d, self._dropped_mesh, self._layer_spread)
+        self._display_renderer.draw_3d(self._camera3d, self._display_mesh, self._layer_spread)
         self._dropped_renderer.draw_3d(self._camera3d, self._dropped_mesh, self._layer_spread)
+        self._world_renderer.draw_3d(self._camera3d, self._layer_spread)
+        self._easel_renderer.draw_3d(self._camera3d, self._easel_mesh, self._layer_spread, rotation=0.2, pixel_scale=1.2)
+        self._easel_mark_renderer.draw_3d(self._camera3d, self._easel_mark_mesh, self._layer_spread, rotation=0.1, tint=(0.1, 0.1, 0.1))
+        self._vend_renderer.draw_3d(self._camera3d, self._vend_mesh, self._layer_spread)
+
+        if self._hovered_tile:
+            self._highlight_renderer.draw_hover_3d(self._camera3d, self._hovered_tile.pos, self._layer_spread)
+
+        self._highlight_renderer.draw_playhead_3d(self._camera3d, self._sheet, self._world.width, self._layer_spread)
 
     def _render_to_fbo_2d(self) -> None:
         self._dropped_renderer.draw_shadow(self._camera, self._dropped_mesh)
@@ -440,26 +431,7 @@ class WorldTab(Panel):
         self._easel_mark_renderer.draw(self._camera, self._easel_mark_mesh, rotation=0.1, tint=(0.1, 0.1, 0.1))
         self._vend_renderer.draw(self._camera, self._vend_mesh)
 
-        self._solid_shader.use()
-        self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())
-
-        if self._sheet.any:
-            model = mat4x4(1.0)
-            playhead = self._sheet.playhead - 1
-            width = 32.0
-            height = 14.0 * 32.0
-            model = glm.translate(
-                model,
-                vec3(
-                    (playhead % self._world.width) * 32 - 16 + width / 2,
-                    (playhead // self._world.width) * 14 * 32 - 16 + height / 2,
-                    0.0,
-                ),
-            )
-            model = glm.scale(model, vec3(width, height, 1.0))
-
-            self._solid_model.set_mat4x4(glm.value_ptr(model))
-            self._playhead.draw()
+        self._highlight_renderer.draw_playhead(self._camera, self._sheet, self._world.width)
 
         local = self._to_local(self._cursor_pos[0], self._cursor_pos[1])
         world = self._camera.screen_to_world(local[0], local[1])
@@ -471,9 +443,5 @@ class WorldTab(Panel):
         else:
             self._hovered_tile = None
 
-        model = mat4x4(1.0)
-        model = glm.translate(model, vec3(tile_x * 32, tile_y * 32, 0.0))
-        model = glm.scale(model, vec3(32.0, 32.0, 1.0))
-        self._solid_model.set_mat4x4(glm.value_ptr(model))
-
-        self._hover.draw()
+        if self._hovered_tile:
+            self._highlight_renderer.draw_hover(self._camera, self._hovered_tile.pos)

@@ -17,6 +17,13 @@ class TextRenderer(Renderer):
         self._tex = self.shader.get_uniform("u_texture")
         self._color = self.shader.get_uniform("u_textColor")
 
+        self.shader3d = ShaderProgram.from_file("shaders/text3d.vert", "shaders/text.frag")
+        self._vp3d = self.shader3d.get_uniform("u_view_proj")
+        self._offset3d = self.shader3d.get_uniform("u_offset")
+        self._tex3d = self.shader3d.get_uniform("u_texture")
+        self._color3d = self.shader3d.get_uniform("u_textColor")
+        self._spread3d = self.shader3d.get_uniform("u_layer_spread")
+
         self._batch_data: list[float] = []
         self._shadow_batch_data: list[float] = []
         self._mesh: Mesh | None = None
@@ -98,4 +105,34 @@ class TextRenderer(Renderer):
 
         self._color.set_vec3(np.array(color, dtype=np.float32))
         self._offset.set_vec2(np.zeros(2, dtype=np.float32))
+        self._mesh.draw_instanced()
+
+    def draw_3d(
+        self,
+        camera3d: "Camera3D",
+        layer_spread: float,
+        color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        offset: tuple[float, float] = (0.0, 0.0),
+        shadow_color: tuple[float, float, float] | None = None,
+    ) -> None:
+        from gtools.gui.camera3d import Camera3D  # avoid circular import if any
+
+        if not self._mesh:
+            return
+
+        self.shader3d.use()
+        self._vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
+        self._spread3d.set_float(layer_spread)
+
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.font.atlas_tex)
+        self._tex3d.set_int(0)
+
+        if self._shadow_mesh and shadow_color is not None:
+            self._color3d.set_vec3(np.array(shadow_color, dtype=np.float32))
+            self._offset3d.set_vec2(np.array(offset, dtype=np.float32))
+            self._shadow_mesh.draw_instanced()
+
+        self._color3d.set_vec3(np.array(color, dtype=np.float32))
+        self._offset3d.set_vec2(np.zeros(2, dtype=np.float32))
         self._mesh.draw_instanced()
