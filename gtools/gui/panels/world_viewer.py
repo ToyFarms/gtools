@@ -8,16 +8,16 @@ from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, glClear, glClear
 import glfw
 from imgui_bundle import imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
 from pyglm import glm
-from pyglm.glm import mat4x4, vec3
+from pyglm.glm import mat4x4, vec2, vec3
 import numpy as np
 
 from gtools.core.growtopia.packet import NetPacket
-from gtools.core.growtopia.world import Tile, World
+from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, Tile, VendingMachineTile, World
 
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
-from gtools.gui.lib.layer import OBJECT_DROPPED_END, OBJECT_DROPPED_START
+from gtools.gui.lib.layer import OBJECT_DISPLAY_END, OBJECT_DISPLAY_START, OBJECT_DROPPED_END, OBJECT_DROPPED_START, OBJECT_VEND_END, OBJECT_VEND_START
 from gtools.gui.lib.object_renderer import ObjectRenderer
 from gtools.gui.opengl import Framebuffer, Mesh, ShaderProgram
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
@@ -92,14 +92,45 @@ class WorldTab(Panel):
 
         self._world_renderer = WorldRenderer()
         self._world_renderer.load(self._world)
+
         self._dropped_renderer = ObjectRenderer(OBJECT_DROPPED_START, OBJECT_DROPPED_END)
         self._dropped_mesh = self._dropped_renderer.build(self._world.dropped.items)
+
+        self._display_renderer = ObjectRenderer(OBJECT_DISPLAY_START, OBJECT_DISPLAY_END)
+
+        display: list[DroppedItem] = []
+        for tile in self._world.tiles.values():
+            if tile.extra and isinstance(tile.extra, DisplayBlockTile) and tile.extra.item_id != 0:
+                display.append(DroppedItem(pos=vec2(tile.pos) * 32 + 8, id=tile.extra.item_id))
+
+        self._display_mesh = self._display_renderer.build(
+            display,
+            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
+            icon_scale=1.0,
+        )
+
+        self._vend_renderer = ObjectRenderer(OBJECT_VEND_START, OBJECT_VEND_END)
+
+        vend: list[DroppedItem] = []
+        for tile in self._world.tiles.values():
+            if tile.extra and isinstance(tile.extra, VendingMachineTile) and tile.extra.item_id != 0:
+                vend.append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(6, 5), id=tile.extra.item_id))
+
+        self._vend_mesh = self._vend_renderer.build(
+            vend,
+            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
+            icon_scale=0.5,
+        )
 
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
         self._world_renderer.delete()
         self._dropped_mesh.delete()
         self._dropped_renderer.delete()
+        self._display_mesh.delete()
+        self._display_renderer.delete()
+        self._vend_mesh.delete()
+        self._vend_renderer.delete()
         self._fbo.delete()
         self._mixer.stop()
 
@@ -353,8 +384,10 @@ class WorldTab(Panel):
 
     def _render_to_fbo_2d(self) -> None:
         self._dropped_renderer.draw_shadow(self._camera, self._dropped_mesh)
+        self._display_renderer.draw(self._camera, self._display_mesh)
         self._world_renderer.draw(self._camera)
         self._dropped_renderer.draw(self._camera, self._dropped_mesh)
+        self._vend_renderer.draw(self._camera, self._vend_mesh)
 
         self._solid_shader.use()
         self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())

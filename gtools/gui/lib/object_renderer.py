@@ -1,5 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
+from enum import IntFlag, auto
 
 from OpenGL.GL import GL_FALSE, GL_TRUE, glDepthMask
 from pyglm.glm import ivec2
@@ -65,6 +66,12 @@ class ObjectRenderMesh:
 class ObjectRenderer(Renderer):
     LAYOUT = [2, 2]
     INSTANCE_LAYOUT = [2, 2, 2, 1, 1]
+
+    class Flags(IntFlag):
+        NO_TEXT = auto()
+        NO_SHADOW = auto()
+        NO_OVERLAY = auto()
+        NO_ICON = auto()
 
     def __init__(self, z_start: float, z_end: float) -> None:
         self._tex_mgr = get_tex_manager()
@@ -155,12 +162,7 @@ class ObjectRenderer(Renderer):
         if render_mesh.text_renderer is not None:
             render_mesh.text_renderer.draw(camera, offset=(0.2, 0.2), shadow_color=(0, 0, 0))
 
-    def draw_3d(
-        self,
-        camera3d: Camera3D,
-        render_mesh: ObjectRenderMesh,
-        layer_spread: float,
-    ) -> None:
+    def draw_3d(self, camera3d: Camera3D, render_mesh: ObjectRenderMesh, layer_spread: float) -> None:
         if not render_mesh.dropped_meshes:
             return
 
@@ -183,7 +185,7 @@ class ObjectRenderer(Renderer):
         if render_mesh.seed_mesh is not None:
             self._seed_renderer.draw_3d(camera3d, render_mesh.seed_mesh, layer_spread)
 
-    def build(self, items: list[DroppedItem]) -> ObjectRenderMesh:
+    def build(self, items: list[DroppedItem], overlay_scale: float = 1.2, icon_scale: float = 0.67, flags: "ObjectRenderer.Flags" = Flags(0)) -> ObjectRenderMesh:
         region_counters: dict[tuple[int, int], int] = defaultdict(int)
         bucketed: defaultdict[int, list[DroppedItem]] = defaultdict(list)
 
@@ -195,7 +197,12 @@ class ObjectRenderer(Renderer):
             region_counters[region] += 1
             bucketed[local_index].append(dropped)
 
-        text_renderer = TextRenderer("resources/fonts/centurygothic_bold.ttf", size=32)
+        no_text = ObjectRenderer.Flags.NO_TEXT in flags
+        no_shadow = ObjectRenderer.Flags.NO_SHADOW in flags
+        no_overlay = ObjectRenderer.Flags.NO_OVERLAY in flags
+        no_icon = ObjectRenderer.Flags.NO_ICON in flags
+
+        text_renderer = None if no_text else TextRenderer("resources/fonts/centurygothic_bold.ttf", size=32)
 
         icons: dict[TextureArray, list[float]] = defaultdict(list)
         overlay: dict[TextureArray, list[float]] = defaultdict(list)
@@ -211,67 +218,94 @@ class ObjectRenderer(Renderer):
 
                 if item.is_seed():
                     seeds.append((dropped, self._get_object_z(local_index, SUBLAYER_ICON)))
-                    if dropped.amount > 1:
+                    if text_renderer is not None and dropped.amount > 1:
                         self._build_text(text_renderer, dropped, local_index, x, y)
                     continue
 
-                if dropped.amount > 1:
+                if text_renderer is not None and dropped.amount > 1:
                     self._build_text(text_renderer, dropped, local_index, x, y)
 
-                tex_file = item.get_icon_texture() or item.texture_file.decode()
-                tex = self._tex_mgr.load_texture(setting.asset_path / "game" / tex_file)
+                if not no_icon:
+                    tex_file = item.get_icon_texture() or item.texture_file.decode()
+                    tex = self._tex_mgr.load_texture(setting.asset_path / "game" / tex_file)
 
-                tex_index = item.get_default_tex()
-                stride = item.get_tex_stride()
-                off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
-                tex_pos = ivec2(item.tex_coord_x, item.tex_coord_y) + off
+                    tex_index = item.get_default_tex()
+                    stride = item.get_tex_stride()
+                    off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
+                    tex_pos = ivec2(item.tex_coord_x, item.tex_coord_y) + off
 
-                uv_x = tex_pos.x * 32 / tex.width
-                uv_y = tex_pos.y * 32 / tex.height
+                    uv_x = tex_pos.x * 32 / tex.width
+                    uv_y = tex_pos.y * 32 / tex.height
 
-                icons[tex.array].extend([
-                    x, y, 0.67, 0.67,
-                    uv_x, uv_y,
-                    tex.layer,
-                    self._get_object_z(local_index, SUBLAYER_ICON),
-                ])
-                icon_shadows[tex.array].extend([
-                    x, y, 0.67, 0.67,
-                    uv_x, uv_y,
-                    tex.layer,
-                    self._get_shadow_z(local_index, SHADOW_SUBLAYER_ICON),
-                ])
-
-                if item.id != GEMS:
-                    overlay_tex = self._tex_mgr.load_texture(
-                        setting.asset_path / "game/pickup_box.rttex"
+                    icons[tex.array].extend(
+                        [
+                            x,
+                            y,
+                            icon_scale,
+                            icon_scale,
+                            uv_x,
+                            uv_y,
+                            tex.layer,
+                            self._get_object_z(local_index, SUBLAYER_ICON),
+                        ]
                     )
-                    overlay[overlay_tex.array].extend([
-                        x, y, 1.2, 1.2,
-                        0, 0,
-                        overlay_tex.layer,
-                        self._get_object_z(local_index, SUBLAYER_OVERLAY),
-                    ])
-                    overlay_shadows[overlay_tex.array].extend([
-                        x, y, 1.2, 1.2,
-                        0, 0,
-                        overlay_tex.layer,
-                        self._get_shadow_z(local_index, SHADOW_SUBLAYER_OVERLAY),
-                    ])
+
+                    if not no_shadow:
+                        icon_shadows[tex.array].extend(
+                            [
+                                x,
+                                y,
+                                icon_scale,
+                                icon_scale,
+                                uv_x,
+                                uv_y,
+                                tex.layer,
+                                self._get_shadow_z(local_index, SHADOW_SUBLAYER_ICON),
+                            ]
+                        )
+
+                if not no_overlay and item.id != GEMS:
+                    overlay_tex = self._tex_mgr.load_texture(setting.asset_path / "game/pickup_box.rttex")
+                    overlay[overlay_tex.array].extend(
+                        [
+                            x,
+                            y,
+                            overlay_scale,
+                            overlay_scale,
+                            0,
+                            0,
+                            overlay_tex.layer,
+                            self._get_object_z(local_index, SUBLAYER_OVERLAY),
+                        ]
+                    )
+
+                    if not no_shadow:
+                        overlay_shadows[overlay_tex.array].extend(
+                            [
+                                x,
+                                y,
+                                overlay_scale,
+                                overlay_scale,
+                                0,
+                                0,
+                                overlay_tex.layer,
+                                self._get_shadow_z(local_index, SHADOW_SUBLAYER_OVERLAY),
+                            ]
+                        )
 
         self._tex_mgr.flush()
 
-        text_renderer.build()
+        if text_renderer is not None:
+            text_renderer.build()
 
-        render_mesh = ObjectRenderMesh(
+        return ObjectRenderMesh(
             dropped_meshes=self._make_meshes(icons),
             pickup_overlay=self._make_meshes(overlay),
             icon_shadows=self._make_meshes(icon_shadows),
             overlay_shadows=self._make_meshes(overlay_shadows),
-            seed_mesh=self._seed_renderer.build(seeds),
+            seed_mesh=self._seed_renderer.build(seeds) if seeds else None,
             text_renderer=text_renderer,
         )
-        return render_mesh
 
     def _build_text(
         self,
