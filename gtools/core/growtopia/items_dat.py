@@ -1323,8 +1323,6 @@ class item_database:
 
     @classmethod
     def is_seed(cls, id: int) -> bool:
-        if id == NON_SEED_ID:
-            return False
         return id % 2 == 1
 
     @classmethod
@@ -1341,3 +1339,29 @@ class item_database:
             items.STEAM_SPIKES,
             items.STEAM_LAMP,
         )
+
+    @classmethod
+    def get_tex_stride(self, texture_type: ItemInfoTextureType) -> int:
+        match texture_type:
+            case ItemInfoTextureType.SINGLE_FRAME_ALONE:
+                return 0
+            case ItemInfoTextureType.SINGLE_FRAME:
+                return 0
+            case ItemInfoTextureType.SMART_EDGE:
+                return 8
+            case ItemInfoTextureType.SMART_EDGE_HORIZ:
+                return 8
+            case ItemInfoTextureType.SMART_CLING:
+                return 5
+            case ItemInfoTextureType.SMART_CLING2:
+                return 8
+            case ItemInfoTextureType.SMART_OUTER:
+                return 5
+            case ItemInfoTextureType.RANDOM:
+                return 4
+            case ItemInfoTextureType.SMART_EDGE_VERT:
+                return 10
+            case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
+                return 4
+            case ItemInfoTextureType.SMART_EDGE_DIAGON:
+                return 4

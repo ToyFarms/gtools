@@ -5,6 +5,7 @@ in vec2 texCoord;
 flat in float layer;
 flat in float paintIndex;
 uniform sampler2DArray texArray;
+uniform float u_opacity;
 
 const vec3 COLOR_TABLE[8] = vec3[8](
     vec3(1.0,   1.0,   1.0  ),  // 0b000 none
@@ -19,6 +20,7 @@ const vec3 COLOR_TABLE[8] = vec3[8](
 
 void main() {
     vec4 base = texture(texArray, vec3(texCoord, layer));
+    base.a *= u_opacity;
     base.rgb *= COLOR_TABLE[int(paintIndex)] * base.a;
     out_fragColor = base;
 }

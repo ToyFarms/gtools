@@ -1871,6 +1871,7 @@ class Tile:
     # data
     fg_tex_index: int = 0
     bg_tex_index: int = 0
+    overlay_tex_index: int = 0  # ON_FIRE, IS_WET
     json_data: dict = field(default_factory=dict)
 
     logger = logging.getLogger("tile")
@@ -1893,9 +1894,14 @@ class Tile:
         else:
             is_flipped = False
 
-        if (item.collision_type == ItemInfoCollisionType.COLLIDE_IF_OFF and self.flags & TileFlags.IS_ON != 0 or
-            item.collision_type == ItemInfoCollisionType.COLLIDE_IF_ON and self.flags & TileFlags.IS_ON == 0 or
-            item.item_type == ItemInfoType.BOOMBOX and self.flags & TileFlags.IS_ON != 0):
+        if (
+            item.collision_type == ItemInfoCollisionType.COLLIDE_IF_OFF
+            and self.flags & TileFlags.IS_ON != 0
+            or item.collision_type == ItemInfoCollisionType.COLLIDE_IF_ON
+            and self.flags & TileFlags.IS_ON == 0
+            or item.item_type == ItemInfoType.BOOMBOX
+            and self.flags & TileFlags.IS_ON != 0
+        ):
             tex_index += 1
             stride = 2
 
@@ -2589,6 +2595,11 @@ class World:
             case _:
                 self.logger.warning(f"texture {item.texture_type.name} not handled")
 
+        if tile.flags & (TileFlags.ON_FIRE | TileFlags.IS_WET):
+            tile.overlay_tex_index = handle_smart_edge_connection(self, tile, 3)
+        else:
+            tile.overlay_tex_index = 0
+
     def update_all_connection(self) -> None:
         for tile in self.tiles.values():
             self.update_tile_connection(tile)
@@ -3267,6 +3278,20 @@ def tile_should_connect(a1: World, x: int, y: int, id: int, flag: int, /) -> boo
     return __goto_return_value
 
 
+def tile_flag_equal(world: World, x: int, y: int, flag: TileFlags, /) -> bool:
+    if x | y < 0:
+        return True
+
+    if world.width <= x or world.height <= y:
+        return True
+
+    t = world.get_tile(x, y)
+    if not t:
+        return True
+
+    return bool(t.flags & flag)
+
+
 def handle_smart_edge_connection(world: World, a2: Tile | None, mode: int, /) -> int:
     x: int = 0
     y: int = 0
@@ -3331,6 +3356,19 @@ def handle_smart_edge_connection(world: World, a2: Tile | None, mode: int, /) ->
             v9 = is_steam(world, x - 1, y_min_1)
             v10 = is_steam(world, x, y_min_1)
             v13 = is_steam(world, x_plus_1_1, y_min_1)
+        elif mode == 3:
+            flag = a2.flags & (TileFlags.ON_FIRE | TileFlags.IS_WET)
+            overlay_flag = TileFlags.ON_FIRE if (flag & TileFlags.ON_FIRE) else TileFlags.IS_WET
+
+            should_connect = tile_flag_equal(world, x_plus_1, y, overlay_flag)
+            v45 = tile_flag_equal(world, x_plus_1, y + 1, overlay_flag)
+            v42 = tile_flag_equal(world, x, y + 1, overlay_flag)
+            v40 = tile_flag_equal(world, x - 1, y + 1, overlay_flag)
+            v12 = tile_flag_equal(world, x - 1, y, overlay_flag)
+            y_min_1 = y - 1
+            v9 = tile_flag_equal(world, x - 1, y_min_1, overlay_flag)
+            v10 = tile_flag_equal(world, x, y_min_1, overlay_flag)
+            v13 = tile_flag_equal(world, x_plus_1_1, y_min_1, overlay_flag)
         else:
             x_1 = a2.pos.x
             if mode == 1:
