@@ -17,6 +17,7 @@ from gtools.core.growtopia.world import Tile, World
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
+from gtools.gui.lib.layer import OBJECT_DROPPED_END, OBJECT_DROPPED_START
 from gtools.gui.lib.object_renderer import ObjectRenderer
 from gtools.gui.opengl import Framebuffer, Mesh, ShaderProgram
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
@@ -91,13 +92,14 @@ class WorldTab(Panel):
 
         self._world_renderer = WorldRenderer()
         self._world_renderer.load(self._world)
-        self._object_renderer = ObjectRenderer()
-        self._object_renderer.load(self._world)
+        self._dropped_renderer = ObjectRenderer(OBJECT_DROPPED_START, OBJECT_DROPPED_END)
+        self._dropped_mesh = self._dropped_renderer.build(self._world.dropped.items)
 
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
         self._world_renderer.delete()
-        self._object_renderer.delete()
+        self._dropped_mesh.delete()
+        self._dropped_renderer.delete()
         self._fbo.delete()
         self._mixer.stop()
 
@@ -347,12 +349,12 @@ class WorldTab(Panel):
 
     def _render_to_fbo_3d(self) -> None:
         self._world_renderer.draw_3d(self._camera3d, self._layer_spread)
-        self._object_renderer.draw_3d(self._camera3d, self._layer_spread)
+        self._dropped_renderer.draw_3d(self._camera3d, self._dropped_mesh, self._layer_spread)
 
     def _render_to_fbo_2d(self) -> None:
-        self._object_renderer.draw_shadow(self._camera)
+        self._dropped_renderer.draw_shadow(self._camera, self._dropped_mesh)
         self._world_renderer.draw(self._camera)
-        self._object_renderer.draw(self._camera)
+        self._dropped_renderer.draw(self._camera, self._dropped_mesh)
 
         self._solid_shader.use()
         self._solid_proj.set_mat4x4(self._camera.proj_as_numpy())

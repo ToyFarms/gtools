@@ -25,7 +25,7 @@ class SeedIconRenderer(Renderer):
         self.spread3d = self.shader3d.get_uniform("u_layer_spread")
 
     def build(self, items: list[tuple[DroppedItem, float]]) -> Mesh:
-        self.tex = self.tex_mgr.push_texture(setting.asset_path / "game/seed.rttex")
+        self.tex = self.tex_mgr.load_texture(setting.asset_path / "game/seed.rttex")
 
         data_dtype = np.dtype(
             [

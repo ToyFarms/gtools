@@ -1,4 +1,5 @@
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 from OpenGL.GL import GL_FALSE, GL_TRUE, glDepthMask
 from pyglm.glm import ivec2
@@ -6,21 +7,15 @@ from pyglm.glm import ivec2
 from gtools import setting
 from gtools.baked.items import GEMS
 from gtools.core.growtopia.items_dat import item_database
-from gtools.core.growtopia.world import DroppedItem, World
+from gtools.core.growtopia.world import DroppedItem
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
-from gtools.gui.lib.layer import OBJECT_DROPPED_END, OBJECT_DROPPED_SHADOW_END, OBJECT_DROPPED_SHADOW_START, OBJECT_DROPPED_START
 from gtools.gui.lib.renderer import Renderer
 from gtools.gui.lib.seed_icon_renderer import SeedIconRenderer
 from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.texture import TextureArray, get_tex_manager
 from gtools.gui.lib.text_renderer import TextRenderer
 import numpy as np
-
-SHADOW_Z_START = OBJECT_DROPPED_SHADOW_START
-SHADOW_Z_END = OBJECT_DROPPED_SHADOW_END
-OBJECT_Z_START = OBJECT_DROPPED_START
-OBJECT_Z_END = OBJECT_DROPPED_END
 
 REGION_TILE_SIZE = 3
 MAX_PER_REGION = 64
@@ -38,21 +33,48 @@ LAYER_STRIDE = 4
 MAX_LAYER = MAX_PER_REGION * LAYER_STRIDE
 
 
+@dataclass
+class ObjectRenderMesh:
+    dropped_meshes: dict[TextureArray, Mesh] = field(default_factory=dict)
+    pickup_overlay: dict[TextureArray, Mesh] = field(default_factory=dict)
+    icon_shadows: dict[TextureArray, Mesh] = field(default_factory=dict)
+    overlay_shadows: dict[TextureArray, Mesh] = field(default_factory=dict)
+    seed_mesh: Mesh | None = None
+    text_renderer: TextRenderer | None = None
+
+    def delete(self) -> None:
+        for meshes in (
+            self.dropped_meshes,
+            self.pickup_overlay,
+            self.icon_shadows,
+            self.overlay_shadows,
+        ):
+            for mesh in meshes.values():
+                mesh.delete()
+            meshes.clear()
+
+        if self.seed_mesh is not None:
+            self.seed_mesh.delete()
+            self.seed_mesh = None
+
+        if self.text_renderer is not None:
+            self.text_renderer.delete()
+            self.text_renderer = None
+
+
 class ObjectRenderer(Renderer):
     LAYOUT = [2, 2]
     INSTANCE_LAYOUT = [2, 2, 2, 1, 1]
 
-    def __init__(self) -> None:
+    def __init__(self, z_start: float, z_end: float) -> None:
         self._tex_mgr = get_tex_manager()
-
-        self._dropped_meshes: dict[TextureArray, Mesh] = {}
-        self._pickup_overlay: dict[TextureArray, Mesh] = {}
-
-        self._icon_shadows: dict[TextureArray, Mesh] = {}
-        self._overlay_shadows: dict[TextureArray, Mesh] = {}
-
         self._seed_renderer = SeedIconRenderer()
-        self._seed_mesh: Mesh | None = None
+
+        z_mid = (z_start + z_end) / 2.0
+        self._shadow_z_start = z_start
+        self._shadow_z_end = z_mid
+        self._object_z_start = z_mid
+        self._object_z_end = z_end
 
         self._shader = ShaderProgram.get("shaders/object")
         self._mvp = self._shader.get_uniform("u_mvp")
@@ -72,20 +94,18 @@ class ObjectRenderer(Renderer):
         self._tile_size3d = self._shader3d.get_uniform("u_tileSize")
         self._spread3d = self._shader3d.get_uniform("u_layer_spread")
 
-        self._text_renderer = TextRenderer("resources/fonts/centurygothic_bold.ttf", size=32)
-
-    def get_shadow_z(self, local_index: int, sublayer: int) -> float:
+    def _get_shadow_z(self, local_index: int, sublayer: int) -> float:
         slot = local_index * SHADOW_STRIDE + sublayer
         t = slot / MAX_SHADOW_LAYER
-        return SHADOW_Z_START + t * (SHADOW_Z_END - SHADOW_Z_START)
+        return self._shadow_z_start + t * (self._shadow_z_end - self._shadow_z_start)
 
-    def get_object_z(self, local_index: int, sublayer: int) -> float:
+    def _get_object_z(self, local_index: int, sublayer: int) -> float:
         slot = local_index * LAYER_STRIDE + sublayer
         t = slot / MAX_LAYER
-        return OBJECT_Z_START + t * (OBJECT_Z_END - OBJECT_Z_START)
+        return self._object_z_start + t * (self._object_z_end - self._object_z_start)
 
-    def draw_shadow(self, camera: Camera2D) -> None:
-        if not self._dropped_meshes:
+    def draw_shadow(self, camera: Camera2D, render_mesh: ObjectRenderMesh) -> None:
+        if not render_mesh.dropped_meshes:
             return
 
         glDepthMask(GL_FALSE)
@@ -97,45 +117,51 @@ class ObjectRenderer(Renderer):
         self._shadow_offset.set_vec2(np.array([-offset, offset], dtype=np.float32))
 
         self._shadow_tile_size.set_float(32.0)
-        for arr, mesh in self._icon_shadows.items():
+        for arr, mesh in render_mesh.icon_shadows.items():
             arr.bind(unit=0)
             self._shadow_tex.set_int(0)
             mesh.draw_instanced()
 
         self._shadow_tile_size.set_float(20.0)
-        for arr, mesh in self._overlay_shadows.items():
+        for arr, mesh in render_mesh.overlay_shadows.items():
             arr.bind(unit=0)
             self._shadow_tex.set_int(0)
             mesh.draw_instanced()
 
         glDepthMask(GL_TRUE)
 
-    def draw(self, camera: Camera2D) -> None:
-        if not (self._dropped_meshes and self._seed_mesh):
+    def draw(self, camera: Camera2D, render_mesh: ObjectRenderMesh) -> None:
+        if not render_mesh.dropped_meshes:
             return
 
         self._shader.use()
         self._mvp.set_mat4x4(camera.proj_as_numpy())
 
         self._tile_size.set_float(32.0)
-        for arr, mesh in self._dropped_meshes.items():
+        for arr, mesh in render_mesh.dropped_meshes.items():
             arr.bind(unit=0)
             self._tex.set_int(0)
             mesh.draw_instanced()
 
         self._tile_size.set_float(20.0)
-        for arr, mesh in self._pickup_overlay.items():
+        for arr, mesh in render_mesh.pickup_overlay.items():
             arr.bind(unit=0)
             self._tex.set_int(0)
             mesh.draw_instanced()
 
-        if self._seed_mesh:
-            self._seed_renderer.draw(camera, self._seed_mesh)
+        if render_mesh.seed_mesh is not None:
+            self._seed_renderer.draw(camera, render_mesh.seed_mesh)
 
-        self._text_renderer.draw(camera, offset=(0.2, 0.2), shadow_color=(0, 0, 0))
+        if render_mesh.text_renderer is not None:
+            render_mesh.text_renderer.draw(camera, offset=(0.2, 0.2), shadow_color=(0, 0, 0))
 
-    def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
-        if not (self._dropped_meshes and self._seed_mesh):
+    def draw_3d(
+        self,
+        camera3d: Camera3D,
+        render_mesh: ObjectRenderMesh,
+        layer_spread: float,
+    ) -> None:
+        if not render_mesh.dropped_meshes:
             return
 
         self._shader3d.use()
@@ -143,49 +169,57 @@ class ObjectRenderer(Renderer):
         self._spread3d.set_float(layer_spread)
 
         self._tile_size3d.set_float(32.0)
-        for arr, mesh in self._dropped_meshes.items():
+        for arr, mesh in render_mesh.dropped_meshes.items():
             arr.bind(unit=0)
             self._tex3d.set_int(0)
             mesh.draw_instanced()
 
         self._tile_size3d.set_float(20.0)
-        for arr, mesh in self._pickup_overlay.items():
+        for arr, mesh in render_mesh.pickup_overlay.items():
             arr.bind(unit=0)
             self._tex3d.set_int(0)
             mesh.draw_instanced()
 
-        if self._seed_mesh:
-            self._seed_renderer.draw_3d(camera3d, self._seed_mesh, layer_spread)
+        if render_mesh.seed_mesh is not None:
+            self._seed_renderer.draw_3d(camera3d, render_mesh.seed_mesh, layer_spread)
 
-    def load(self, world: World) -> None:
+    def build(self, items: list[DroppedItem]) -> ObjectRenderMesh:
+        region_counters: dict[tuple[int, int], int] = defaultdict(int)
+        bucketed: defaultdict[int, list[DroppedItem]] = defaultdict(list)
+
+        for dropped in items:
+            tile_x = int(dropped.pos.x // 32)
+            tile_y = int(dropped.pos.y // 32)
+            region = (tile_x // REGION_TILE_SIZE, tile_y // REGION_TILE_SIZE)
+            local_index = region_counters[region]
+            region_counters[region] += 1
+            bucketed[local_index].append(dropped)
+
+        text_renderer = TextRenderer("resources/fonts/centurygothic_bold.ttf", size=32)
+
         icons: dict[TextureArray, list[float]] = defaultdict(list)
         overlay: dict[TextureArray, list[float]] = defaultdict(list)
         icon_shadows: dict[TextureArray, list[float]] = defaultdict(list)
         overlay_shadows: dict[TextureArray, list[float]] = defaultdict(list)
+        seeds: list[tuple[DroppedItem, float]] = []
 
-        region_counters: dict[tuple[int, int], int] = defaultdict(int)
+        for local_index, drops in bucketed.items():
+            for dropped in drops:
+                item = item_database.get(dropped.id)
+                x = dropped.pos.x - 8
+                y = dropped.pos.y - 8
 
-        seeds: list[tuple[DroppedItem, int]] = []
+                if item.is_seed():
+                    seeds.append((dropped, self._get_object_z(local_index, SUBLAYER_ICON)))
+                    if dropped.amount > 1:
+                        self._build_text(text_renderer, dropped, local_index, x, y)
+                    continue
 
-        for dropped in world.dropped.items:
-            tile_x = int(dropped.pos.x // 32)
-            tile_y = int(dropped.pos.y // 32)
-            region = (tile_x // REGION_TILE_SIZE, tile_y // REGION_TILE_SIZE)
+                if dropped.amount > 1:
+                    self._build_text(text_renderer, dropped, local_index, x, y)
 
-            local_index = region_counters[region]
-            region_counters[region] += 1
-
-            is_seed = dropped.id % 2 != 0
-            item = item_database.get(dropped.id)
-
-            x = dropped.pos.x - 8
-            y = dropped.pos.y - 8
-
-            if is_seed:
-                seeds.append((dropped, local_index))
-            else:
                 tex_file = item.get_icon_texture() or item.texture_file.decode()
-                tex = self._tex_mgr.push_texture(setting.asset_path / "game" / tex_file)
+                tex = self._tex_mgr.load_texture(setting.asset_path / "game" / tex_file)
 
                 tex_index = item.get_default_tex()
                 stride = item.get_tex_stride()
@@ -195,125 +229,100 @@ class ObjectRenderer(Renderer):
                 uv_x = tex_pos.x * 32 / tex.width
                 uv_y = tex_pos.y * 32 / tex.height
 
-                icons[tex.array].extend(
-                    [
-                        x,
-                        y,
-                        0.67,
-                        0.67,
-                        uv_x,
-                        uv_y,
-                        tex.layer,
-                        self.get_object_z(local_index, SUBLAYER_ICON),
-                    ]
-                )
+                icons[tex.array].extend([
+                    x, y, 0.67, 0.67,
+                    uv_x, uv_y,
+                    tex.layer,
+                    self._get_object_z(local_index, SUBLAYER_ICON),
+                ])
+                icon_shadows[tex.array].extend([
+                    x, y, 0.67, 0.67,
+                    uv_x, uv_y,
+                    tex.layer,
+                    self._get_shadow_z(local_index, SHADOW_SUBLAYER_ICON),
+                ])
 
-                icon_shadows[tex.array].extend(
-                    [
-                        x,
-                        y,
-                        0.67,
-                        0.67,
-                        uv_x,
-                        uv_y,
-                        tex.layer,
-                        self.get_shadow_z(local_index, SHADOW_SUBLAYER_ICON),
-                    ]
-                )
-
-            dont_render_overlay = item.is_seed() or item.id == GEMS
-            if not dont_render_overlay:
-                overlay_tex = self._tex_mgr.push_texture(setting.asset_path / "game/pickup_box.rttex")
-                overlay[overlay_tex.array].extend(
-                    [
-                        x,
-                        y,
-                        1.2,
-                        1.2,
-                        0,
-                        0,
+                if item.id != GEMS:
+                    overlay_tex = self._tex_mgr.load_texture(
+                        setting.asset_path / "game/pickup_box.rttex"
+                    )
+                    overlay[overlay_tex.array].extend([
+                        x, y, 1.2, 1.2,
+                        0, 0,
                         overlay_tex.layer,
-                        self.get_object_z(local_index, SUBLAYER_OVERLAY),
-                    ]
-                )
-
-                overlay_shadows[overlay_tex.array].extend(
-                    [
-                        x,
-                        y,
-                        1.2,
-                        1.2,
-                        0,
-                        0,
+                        self._get_object_z(local_index, SUBLAYER_OVERLAY),
+                    ])
+                    overlay_shadows[overlay_tex.array].extend([
+                        x, y, 1.2, 1.2,
+                        0, 0,
                         overlay_tex.layer,
-                        self.get_shadow_z(local_index, SHADOW_SUBLAYER_OVERLAY),
-                    ]
-                )
-
-            if dropped.amount > 1:
-                if item.is_seed():
-                    target_width = 20
-                else:
-                    target_width = 20 * 1.2
-                padding = 2.0
-                max_text_width = target_width - padding * 2
-
-                ref_width, _ = self._text_renderer.get_text_size("000", scale=1.0)
-                auto_scale = max_text_width / ref_width if ref_width > 0 else 0.25
-
-                text_str = str(dropped.amount)
-                text_w, text_h = self._text_renderer.get_text_size(text_str, scale=auto_scale)
-
-                half = target_width / 2
-                text_x = x + half - padding - text_w
-                text_y = y + half - (text_h + padding)
-
-                self._text_renderer.build_text(
-                    text_str,
-                    text_x,
-                    text_y,
-                    self.get_object_z(local_index, SUBLAYER_TEXT),
-                    scale=auto_scale,
-                    shadow_z=self.get_object_z(local_index, SUBLAYER_TEXT_SHADOW),
-                )
-
-        self._seed_mesh = self._seed_renderer.build([(seed, self.get_object_z(li, SUBLAYER_ICON)) for seed, li in seeds])
-
-        self._text_renderer.build()
-
-        def _build_meshes(src: dict[TextureArray, list[float]]) -> dict[TextureArray, Mesh]:
-            return {
-                arr: Mesh(
-                    Mesh.RECT_WITH_UV_VERTS,
-                    ObjectRenderer.LAYOUT,
-                    Mesh.RECT_INDICES,
-                    instance_data=np.array(inst, dtype=np.float32),
-                    instance_layout=ObjectRenderer.INSTANCE_LAYOUT,
-                    instance_attrib_base=2,
-                )
-                for arr, inst in src.items()
-            }
-
-        self._dropped_meshes = _build_meshes(icons)
-        self._pickup_overlay = _build_meshes(overlay)
-        self._icon_shadows = _build_meshes(icon_shadows)
-        self._overlay_shadows = _build_meshes(overlay_shadows)
+                        self._get_shadow_z(local_index, SHADOW_SUBLAYER_OVERLAY),
+                    ])
 
         self._tex_mgr.flush()
 
+        text_renderer.build()
+
+        render_mesh = ObjectRenderMesh(
+            dropped_meshes=self._make_meshes(icons),
+            pickup_overlay=self._make_meshes(overlay),
+            icon_shadows=self._make_meshes(icon_shadows),
+            overlay_shadows=self._make_meshes(overlay_shadows),
+            seed_mesh=self._seed_renderer.build(seeds),
+            text_renderer=text_renderer,
+        )
+        return render_mesh
+
+    def _build_text(
+        self,
+        text_renderer: TextRenderer,
+        dropped: DroppedItem,
+        local_index: int,
+        x: float,
+        y: float,
+    ) -> None:
+        overlay_size = 20 * 1.2
+        vpadding = 2.0
+        hpadding = 2.0
+        text_width = overlay_size - hpadding * 4
+
+        ref_width, _ = text_renderer.get_text_size("000", scale=1.0)
+        auto_scale = text_width / ref_width if ref_width > 0 else 0.25
+
+        text_str = str(dropped.amount)
+        text_w, text_h = text_renderer.get_text_size(text_str, scale=auto_scale)
+
+        if len(text_str) == 3:
+            text_x = x - overlay_size / 2 + (overlay_size - text_w) / 2
+        else:
+            text_x = x + overlay_size / 2 - hpadding - text_w
+
+        text_y = y + overlay_size / 2 - vpadding - text_h
+
+        text_renderer.build_text(
+            text_str,
+            text_x,
+            text_y,
+            self._get_object_z(local_index, SUBLAYER_TEXT),
+            scale=auto_scale,
+            shadow_z=self._get_object_z(local_index, SUBLAYER_TEXT_SHADOW),
+        )
+
+    @staticmethod
+    def _make_meshes(
+        src: dict[TextureArray, list[float]],
+    ) -> dict[TextureArray, Mesh]:
+        return {
+            arr: Mesh(
+                Mesh.RECT_WITH_UV_VERTS,
+                ObjectRenderer.LAYOUT,
+                Mesh.RECT_INDICES,
+                instance_data=np.array(inst, dtype=np.float32),
+                instance_layout=ObjectRenderer.INSTANCE_LAYOUT,
+                instance_attrib_base=2,
+            )
+            for arr, inst in src.items()
+        }
+
     def delete(self) -> None:
-        for meshes in (
-            self._dropped_meshes,
-            self._pickup_overlay,
-            self._icon_shadows,
-            self._overlay_shadows,
-        ):
-            for mesh in meshes.values():
-                mesh.delete()
-            meshes.clear()
-
         self._seed_renderer.delete()
-        if self._seed_mesh:
-            self._seed_mesh.delete()
-
-        self._text_renderer.delete()

@@ -250,7 +250,7 @@ class GLTexManager:
         self._default_tex = self._textures[_DEFAULT_TEXTURE_KEY]
         return self._default_tex
 
-    def push_texture(self, file: str | Path) -> GLTex:
+    def load_texture(self, file: str | Path) -> GLTex:
         key = str(file)
 
         if key in self._textures:
@@ -327,7 +327,7 @@ def get_texture(file: str | Path, unit: int = 0, bind: bool = False) -> GLTex:
     try:
         tex = _GLOBAL_TEX_MANAGER._textures.get(key)
         if tex is None:
-            tex = _GLOBAL_TEX_MANAGER.push_texture(file)
+            tex = _GLOBAL_TEX_MANAGER.load_texture(file)
         else:
             tex_id_valid = bool(glIsTexture(int(tex.tex_id)))
             layer_in_range = tex.layer < tex.array._allocated_layers if tex.array else False
@@ -336,7 +336,7 @@ def get_texture(file: str | Path, unit: int = 0, bind: bool = False) -> GLTex:
                 logger.debug(f"recreating texture array for {key}: tex_id_valid={tex_id_valid}, layer_ok={layer_in_range}")
                 if key in _GLOBAL_TEX_MANAGER._textures:
                     _GLOBAL_TEX_MANAGER.delete_texture(key)
-                tex = _GLOBAL_TEX_MANAGER.push_texture(file)
+                tex = _GLOBAL_TEX_MANAGER.load_texture(file)
 
         _GLOBAL_TEX_MANAGER.flush()
 
