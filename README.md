@@ -1,4 +1,4 @@
-![gui](images/gui.png)
+![gui](images/gui-v2.png)
 ![render](images/render.png)
 
 ```
