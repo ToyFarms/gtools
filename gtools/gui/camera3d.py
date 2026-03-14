@@ -80,9 +80,44 @@ class Camera3D:
         self.width = width
         self.height = height
 
-    def fit_to_rect(self, world_width: int, world_height: int) -> None:
-        cx = world_width / 2.0
-        cy = world_height / 2.0
-        self.pos = vec3(cx, cy, 1500.0)
+    def unproject(self, screen_x: float, screen_y: float, z_plane: float = 0.0) -> vec3:
+        nx = (2.0 * screen_x) / self.width - 1.0
+        ny = 1.0 - (2.0 * screen_y) / self.height
+
+        inv_vp = glm.inverse(self.view_proj())
+
+        near_vec4 = inv_vp * glm.vec4(nx, ny, -1.0, 1.0)
+        far_vec4 = inv_vp * glm.vec4(nx, ny, 1.0, 1.0)
+
+        near_world = vec3(near_vec4) / near_vec4.w  # pyright: ignore[reportAttributeAccessIssue]
+        far_world = vec3(far_vec4) / far_vec4.w  # pyright: ignore[reportAttributeAccessIssue]
+
+        ray_origin = near_world
+        ray_dir = glm.normalize(far_world - near_world)
+
+        if abs(ray_dir.z) < 1e-6:
+            return near_world
+
+        t = (z_plane - ray_origin.z) / ray_dir.z
+
+        return ray_origin + ray_dir * t
+
+    def fit_to_rect(self, x: float, y: float, w: float, h: float, z: float = 0.0, padding: float = 0.1) -> None:
+        pw = w * (1.0 + padding * 2.0)
+        ph = h * (1.0 + padding * 2.0)
+
+        cx = x + w / 2.0
+        cy = y + h / 2.0
+
+        dist_y = ph / (2.0 * math.tan(self.fov / 2.0))
+
+        aspect = self.width / max(self.height, 1)
+        fov_x = 2.0 * math.atan(math.tan(self.fov / 2.0) * aspect)
+        dist_x = pw / (2.0 * math.tan(fov_x / 2.0))
+
+        dist = max(dist_x, dist_y)
+        dist = max(100.0, min(dist, 40000.0))
+
+        self.pos = vec3(cx, cy, z + dist)
         self.yaw = 0.0
-        self.pitch = -0.6
+        self.pitch = 0.0

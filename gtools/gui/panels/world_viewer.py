@@ -57,6 +57,7 @@ class WorldTab(Panel):
 
         self._hovered = False
         self._drag: dict = {"active": False}
+        self._selection_drag: dict = {"active": False, "start": (0.0, 0.0), "current": (0.0, 0.0)}
         self._image_origin: tuple[float, float] = (0.0, 0.0)
         self._cursor_pos: tuple[float, float] = (0.0, 0.0)
         self._last_touch_event = 0.0
@@ -76,7 +77,7 @@ class WorldTab(Panel):
 
         self._mode_3d = False
         self._camera3d = Camera3D(800, 600)
-        self._camera3d.fit_to_rect(self._world.width, self._world.height)
+        self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
         self._layer_spread: float = 200.0
 
         self._keys_held: set[int] = set()
@@ -265,6 +266,23 @@ class WorldTab(Panel):
                 self._hovered = imgui.is_item_hovered()
                 rect_min = imgui.get_item_rect_min()
                 self._image_origin = (rect_min.x, rect_min.y)
+
+                if self._selection_drag["active"]:
+                    draw_list = imgui.get_window_draw_list()
+                    ox, oy = self._image_origin
+                    s = self._selection_drag["start"]
+                    c = self._selection_drag["current"]
+                    draw_list.add_rect(
+                        imgui.ImVec2(ox + s[0], oy + s[1]),
+                        imgui.ImVec2(ox + c[0], oy + c[1]),
+                        imgui.get_color_u32(imgui.Col_.text, 1.0),
+                        thickness=2.0,
+                    )
+                    draw_list.add_rect_filled(
+                        imgui.ImVec2(ox + s[0], oy + s[1]),
+                        imgui.ImVec2(ox + c[0], oy + c[1]),
+                        imgui.get_color_u32(imgui.Col_.text, 0.2),
+                    )
         imgui.end()
 
     def handle_event(self, event: Event) -> bool:
@@ -303,7 +321,7 @@ class WorldTab(Panel):
                 self._camera3d.speed = max(50.0, min(self._camera3d.speed, 10000.0))
                 return True
         elif isinstance(event, MouseButtonEvent):
-            if event.button == glfw.MOUSE_BUTTON_LEFT or event.button == glfw.MOUSE_BUTTON_RIGHT:
+            if event.button == glfw.MOUSE_BUTTON_LEFT:
                 if event.action == glfw.PRESS and self._hovered:
                     lx, ly = self._to_local(event.screen_x, event.screen_y)
                     self._drag = {
@@ -314,22 +332,48 @@ class WorldTab(Panel):
                 elif event.action == glfw.RELEASE and self._drag.get("active"):
                     self._drag["active"] = False
                     return True
+            elif event.button == glfw.MOUSE_BUTTON_RIGHT:
+                if event.action == glfw.PRESS and self._hovered:
+                    lx, ly = self._to_local(event.screen_x, event.screen_y)
+                    self._selection_drag = {
+                        "active": True,
+                        "start": (lx, ly),
+                        "current": (lx, ly),
+                    }
+                    return True
+                elif event.action == glfw.RELEASE and self._selection_drag.get("active"):
+                    self._selection_drag["active"] = False
+                    s = self._selection_drag["start"]
+                    e = self._selection_drag["current"]
+
+                    if abs(s[0] - e[0]) > 5 and abs(s[1] - e[1]) > 5:
+                        z = WORLD_FOREGROUND_AFTER * self._layer_spread
+                        p1 = self._camera3d.unproject(s[0], s[1], z_plane=z)
+                        p2 = self._camera3d.unproject(e[0], e[1], z_plane=z)
+                        min_x, max_x = min(p1.x, p2.x), max(p1.x, p2.x)
+                        min_y, max_y = min(p1.y, p2.y), max(p1.y, p2.y)
+                        self._camera3d.fit_to_rect(min_x, min_y, max_x - min_x, max_y - min_y, z=z)
+
+                    return True
         elif isinstance(event, CursorMoveEvent):
             self._cursor_pos = (event.xpos, event.ypos)
+            lx, ly = self._to_local(event.xpos, event.ypos)
             if self._drag.get("active"):
-                lx, ly = self._to_local(event.xpos, event.ypos)
                 prev = self._drag["last_screen"]
                 dx = lx - prev[0]
                 dy = ly - prev[1]
                 self._drag["last_screen"] = (lx, ly)
                 self._camera3d.look(dx, dy)
                 return True
+            if self._selection_drag.get("active"):
+                self._selection_drag["current"] = (lx, ly)
+                return True
         elif isinstance(event, KeyEvent):
             if self._is_active:
                 if event.action == glfw.PRESS:
                     self._keys_held.add(event.key)
                     if event.key == glfw.KEY_R:
-                        self._camera3d.fit_to_rect(self._world.width * 32, self._world.height * 32)
+                        self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
                         return True
                 elif event.action == glfw.RELEASE:
                     self._keys_held.discard(event.key)
@@ -359,17 +403,39 @@ class WorldTab(Panel):
                 elif event.action == glfw.RELEASE and self._drag.get("active"):
                     self._drag["active"] = False
                     return True
-            if event.button == glfw.MOUSE_BUTTON_RIGHT:
-                if event.action == glfw.PRESS:
-                    self._playing = not self._playing
+            elif event.button == glfw.MOUSE_BUTTON_RIGHT:
+                if event.action == glfw.PRESS and self._hovered:
+                    lx, ly = self._to_local(event.screen_x, event.screen_y)
+                    self._selection_drag = {
+                        "active": True,
+                        "start": (lx, ly),
+                        "current": (lx, ly),
+                    }
+                    return True
+                elif event.action == glfw.RELEASE and self._selection_drag.get("active"):
+                    self._selection_drag["active"] = False
+                    s = self._selection_drag["start"]
+                    e = self._selection_drag["current"]
+
+                    if abs(s[0] - e[0]) > 5 and abs(s[1] - e[1]) > 5:
+                        p1 = self._camera.screen_to_world(s[0], s[1])
+                        p2 = self._camera.screen_to_world(e[0], e[1])
+                        min_x, max_x = min(p1.x, p2.x), max(p1.x, p2.x)
+                        min_y, max_y = min(p1.y, p2.y), max(p1.y, p2.y)
+                        self._camera.fit_to_rect(min_x, min_y, max_x - min_x, max_y - min_y)
+
+                    return True
         elif isinstance(event, CursorMoveEvent):
             self._cursor_pos = (event.xpos, event.ypos)
+            lx, ly = self._to_local(event.xpos, event.ypos)
             if self._drag.get("active"):
-                lx, ly = self._to_local(event.xpos, event.ypos)
                 dx = lx - self._drag["start_screen"][0]
                 dy = ly - self._drag["start_screen"][1]
                 self._camera.pos.x = self._drag["start_cam"].x - dx / self._camera.zoom
                 self._camera.pos.y = self._drag["start_cam"].y - dy / self._camera.zoom
+                return True
+            if self._selection_drag.get("active"):
+                self._selection_drag["current"] = (lx, ly)
                 return True
         elif isinstance(event, KeyEvent):
             if self._is_active:
