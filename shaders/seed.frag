@@ -17,4 +17,5 @@ void main() {
     vec4 overlay = vec4(overlayTint * overlayColor.rgb * overlayColor.a, overlayColor.a);
 
     out_fragColor = overlay + (1.0 - overlayColor.a) * base;
+    if (out_fragColor.a < 0.01) discard;
 }

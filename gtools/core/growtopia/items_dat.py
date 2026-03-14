@@ -764,7 +764,7 @@ class Item:
             case ItemInfoTextureType.SMART_CLING:
                 return 3
             case ItemInfoTextureType.SMART_CLING2:
-                return 0
+                return 12
             case ItemInfoTextureType.SMART_OUTER:
                 return 0
             case ItemInfoTextureType.RANDOM:
@@ -1323,6 +1323,8 @@ class item_database:
 
     @classmethod
     def is_seed(cls, id: int) -> bool:
+        if id == NON_SEED_ID:
+            return False
         return id % 2 == 1
 
     @classmethod

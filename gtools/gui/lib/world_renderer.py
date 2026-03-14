@@ -7,7 +7,7 @@ from pyglm.glm import ivec2
 
 from gtools import setting
 from gtools.core.growtopia.items_dat import item_database
-from gtools.core.growtopia.world import DisplayBlockTile, Tile, TileFlags, VendingMachineTile, World
+from gtools.core.growtopia.world import DisplayBlockTile, PaintingEaselTile, Tile, TileFlags, VendingMachineTile, World
 
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
@@ -144,7 +144,6 @@ class WorldRenderer(Renderer):
                         tex_array, instance_data = self._tile_instance_data_raw(tile, item.texture_file.decode(), ivec2(item.tex_coord_x, item.tex_coord_y + 1))
                         fg_before[tex_array].extend(instance_data)
                     elif isinstance(tile.extra, VendingMachineTile):
-                        # TODO: is this correct?
                         tex = 0
                         if tile.extra.item_id == 0 and tile.extra.price == 0:
                             tex = 1

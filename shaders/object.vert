@@ -15,9 +15,18 @@ flat out float layer;
 uniform mat4 u_mvp;
 uniform sampler2DArray texArray;
 uniform float u_tileSize;
+uniform float u_rotation;
 
 void main() {
-    vec2 worldPos = in_pos * u_tileSize * in_tileScale + in_tilePos;
+    vec2 centered = in_pos - 0.5;
+
+    float c = cos(u_rotation);
+    float s = sin(u_rotation);
+    mat2 rot = mat2(c, -s, s,  c);
+
+    vec2 rotated = rot * centered + 0.5;
+
+    vec2 worldPos = rotated * u_tileSize * in_tileScale + in_tilePos;
     gl_Position = u_mvp * vec4(worldPos, in_depth, 1.0);
 
     vec2 texSize = textureSize(texArray, 0).xy;
@@ -26,6 +35,5 @@ void main() {
         mix(in_texCoords.x, in_texCoords.x + uvStep.x, in_texCoord.x),
         mix(in_texCoords.y, in_texCoords.y + uvStep.y, in_texCoord.y)
     );
-
     layer = in_layer;
 }

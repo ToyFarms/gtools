@@ -15,6 +15,7 @@ flat out float layer;
 uniform mat4 u_view_proj;
 uniform sampler2DArray texArray;
 uniform float u_tileSize;
+uniform float u_rotation;
 uniform float u_layer_spread;
 
 void main() {

@@ -8,16 +8,26 @@ from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, glClear, glClear
 import glfw
 from imgui_bundle import imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
 from pyglm import glm
-from pyglm.glm import mat4x4, vec2, vec3
+from pyglm.glm import ivec2, mat4x4, vec2, vec3
 import numpy as np
 
+from gtools.baked.items import PAINTING_EASEL
 from gtools.core.growtopia.packet import NetPacket
-from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, Tile, VendingMachineTile, World
+from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, Tile, VendingMachineTile, World
 
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
-from gtools.gui.lib.layer import OBJECT_DISPLAY_END, OBJECT_DISPLAY_START, OBJECT_DROPPED_END, OBJECT_DROPPED_START, OBJECT_VEND_END, OBJECT_VEND_START
+from gtools.gui.lib.layer import (
+    OBJECT_DISPLAY_END,
+    OBJECT_DISPLAY_START,
+    OBJECT_DROPPED_END,
+    OBJECT_DROPPED_START,
+    OBJECT_VEND_END,
+    OBJECT_VEND_START,
+    WORLD_FOREGROUND_AFTER,
+    WORLD_FOREGROUND_AFTER_END,
+)
 from gtools.gui.lib.object_renderer import ObjectRenderer
 from gtools.gui.opengl import Framebuffer, Mesh, ShaderProgram
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
@@ -97,7 +107,6 @@ class WorldTab(Panel):
         self._dropped_mesh = self._dropped_renderer.build(self._world.dropped.items)
 
         self._display_renderer = ObjectRenderer(OBJECT_DISPLAY_START, OBJECT_DISPLAY_END)
-
         display: list[DroppedItem] = []
         for tile in self._world.tiles.values():
             if tile.extra and isinstance(tile.extra, DisplayBlockTile) and tile.extra.item_id != 0:
@@ -110,7 +119,6 @@ class WorldTab(Panel):
         )
 
         self._vend_renderer = ObjectRenderer(OBJECT_VEND_START, OBJECT_VEND_END)
-
         vend: list[DroppedItem] = []
         for tile in self._world.tiles.values():
             if tile.extra and isinstance(tile.extra, VendingMachineTile) and tile.extra.item_id != 0:
@@ -122,15 +130,46 @@ class WorldTab(Panel):
             icon_scale=0.5,
         )
 
+        self._easel_renderer = ObjectRenderer(OBJECT_VEND_START, OBJECT_VEND_END)
+        easel: list[DroppedItem] = []
+        easel_mark: list[DroppedItem] = []
+        for tile in self._world.tiles.values():
+            if tile.extra and isinstance(tile.extra, PaintingEaselTile) and tile.extra.item_id != 0:
+                easel.append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(10, 2), id=tile.extra.item_id))
+                easel_mark.append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(10, 8), id=PAINTING_EASEL))
+
+        self._easel_mesh = self._easel_renderer.build(
+            easel,
+            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_TEXT | ObjectRenderer.Flags.NO_SHADOW,
+            icon_scale=0.6,
+        )
+
+        self._easel_mark_renderer = ObjectRenderer(WORLD_FOREGROUND_AFTER, WORLD_FOREGROUND_AFTER_END)
+        self._easel_mark_mesh = self._easel_mark_renderer.build(
+            easel_mark,
+            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_TEXT | ObjectRenderer.Flags.NO_SHADOW,
+            icon_scale=1.1,
+            tex_offset=ivec2(0, 1),
+        )
+
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
         self._world_renderer.delete()
+
         self._dropped_mesh.delete()
         self._dropped_renderer.delete()
+
         self._display_mesh.delete()
         self._display_renderer.delete()
+
         self._vend_mesh.delete()
         self._vend_renderer.delete()
+
+        self._easel_renderer.delete()
+        self._easel_mesh.delete()
+        self._easel_mark_renderer.delete()
+        self._easel_mark_mesh.delete()
+
         self._fbo.delete()
         self._mixer.stop()
 
@@ -387,6 +426,8 @@ class WorldTab(Panel):
         self._display_renderer.draw(self._camera, self._display_mesh)
         self._world_renderer.draw(self._camera)
         self._dropped_renderer.draw(self._camera, self._dropped_mesh)
+        self._easel_renderer.draw(self._camera, self._easel_mesh, rotation=0.2, pixel_scale=1.2)
+        self._easel_mark_renderer.draw(self._camera, self._easel_mark_mesh, rotation=0.1, tint=(0.1, 0.1, 0.1))
         self._vend_renderer.draw(self._camera, self._vend_mesh)
 
         self._solid_shader.use()

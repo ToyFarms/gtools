@@ -9,7 +9,9 @@ from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
     GL_DEPTH_BUFFER_BIT,
     GL_DEPTH_TEST,
+    GL_FRONT_AND_BACK,
     GL_LESS,
+    GL_LINE,
     GL_ONE,
     GL_ONE_MINUS_SRC_ALPHA,
     GL_SRC_ALPHA,
@@ -20,6 +22,7 @@ from OpenGL.GL import (
     glDepthFunc,
     glDepthMask,
     glEnable,
+    glPolygonMode,
     glViewport,
 )
 from imgui_bundle import imgui
