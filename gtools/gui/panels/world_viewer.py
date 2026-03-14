@@ -235,7 +235,8 @@ class WorldTab(Panel):
 
             imgui.separator()
 
-            _, self._sheet.bpm = imgui_knobs.knob("BPM", self._sheet.bpm, 20.0, 200.0, format="%.0f", size=24, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
+            _, self._sheet.bpm = imgui_knobs.knob("BPM", self._sheet.bpm, 20.0, 200.0, format="%.0f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
+            imgui.same_line()
             _, self._mixer.master_gain = imgui_knobs.knob("GAIN", self._mixer.master_gain, 0.0, 1.0, format="%.2f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
 
             imgui.separator()
