@@ -498,6 +498,7 @@ if __name__ == "__main__":
     elif args.cmd == "music":
         world = World.from_tank(Path(args.world).read_bytes())
         mixer = AudioMixer()
+        mixer.master_gain = 0.7
         sheet = world.get_sheet(mixer)
 
         prev = time.time()
@@ -514,10 +515,11 @@ if __name__ == "__main__":
         finally:
             mixer.stop()
 
-# TODO: properly render tree, display block, vending
+# TODO: render tree
+# TODO: fix ui (its so ugly!!)
+# TODO: fix focus system
 # TODO: implement shadow in world viewer
 # TODO: fix PortraitTile for the world START (prob bcs old world version)
 # TODO: implement override callback for connect, disconnect, destroy for extension sdk
 
-# TODO: create generalized layer system
 # TODO: fix shader lifecycle

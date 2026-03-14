@@ -65,6 +65,7 @@ class WorldTab(Panel):
         self._is_active = False
 
         self._mixer = AudioMixer()
+        self._mixer.master_gain = 0.5
         self._sheet = self._world.get_sheet(self._mixer)
 
         self._solid_shader = ShaderProgram.get("shaders/solid")
@@ -218,29 +219,34 @@ class WorldTab(Panel):
         opened, self._open = imgui.begin(self._name, self._open)
         self._is_active = imgui.is_window_focused(imgui.FocusedFlags_.child_windows)
         if opened:
+            total_w, _ = imgui.get_content_region_avail()
+            sidebar_w = min(250, max(80, int(total_w * 0.2)))
+            imgui.begin_child("##controls", (sidebar_w, 0), child_flags=imgui.ChildFlags_.borders)
+
             if self._hovered_tile:
                 if self._hovered_tile.extra:
-                    imgui.text(f"{self._hovered_tile.extra}")
+                    imgui.text_wrapped(f"{self._hovered_tile.extra}")
                 else:
-                    imgui.text(f"-")
+                    imgui.text("-")
             else:
-                imgui.text(f"-")
+                imgui.text("-")
+
+            imgui.separator()
 
             _, self._sheet.bpm = imgui_knobs.knob("BPM", self._sheet.bpm, 20.0, 200.0, format="%.0f", size=24, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
+            _, self._mixer.master_gain = imgui_knobs.knob("GAIN", self._mixer.master_gain, 0.0, 1.0, format="%.2f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
 
-            imgui.same_line()
-            _, self._playing = imgui.checkbox("Play Music", self._playing)
+            imgui.separator()
+
+            _, self._playing = imgui.checkbox("Play", self._playing)
+
+            imgui.separator()
 
             FLAGS = [
-                ("Render FG", WorldRenderer.Flags.RENDER_FG),
-                ("Render BG", WorldRenderer.Flags.RENDER_BG),
+                ("FG", WorldRenderer.Flags.RENDER_FG),
+                ("BG", WorldRenderer.Flags.RENDER_BG),
             ]
-
-            imgui.same_line()
-
-            for i, (label, flag) in enumerate(FLAGS):
-                if i != 0:
-                    imgui.same_line()
+            for label, flag in FLAGS:
                 changed, is_set = imgui.checkbox(label, self._world_renderer.flags & flag != 0)
                 if changed:
                     if is_set:
@@ -248,15 +254,19 @@ class WorldTab(Panel):
                     else:
                         self._world_renderer.flags &= ~flag
 
-            imgui.same_line()
+            imgui.separator()
+
             _, self._mode_3d = imgui.checkbox("3D", self._mode_3d)
 
             if self._mode_3d:
-                imgui.same_line()
-                imgui.set_next_item_width(120)
-                _, self._layer_spread = imgui.slider_float("Layer Spread", self._layer_spread, 10.0, 1000.0)
-                imgui.same_line()
-                imgui.text(f"Speed: {self._camera3d.speed:.0f}")
+                imgui.set_next_item_width(sidebar_w - 16)
+                _, self._layer_spread = imgui.slider_float("##spread", self._layer_spread, 10.0, 1000.0)
+                imgui.text("Spread")
+                imgui.text(f"Spd: {self._camera3d.speed:.0f}")
+
+            imgui.end_child()
+
+            imgui.same_line()
 
             cw, ch = imgui.get_content_region_avail()
             cw, ch = int(cw), int(ch)

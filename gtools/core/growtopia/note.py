@@ -156,7 +156,7 @@ class Sheet:
                     continue
                 path = note.to_path()
                 if path not in _SOUNDS:
-                    _SOUNDS[path] = Sound.from_file(str(path), volume=0.5)
+                    _SOUNDS[path] = Sound.from_file(str(path))
         self._can_go.set()
 
     def _find_repeat_begin(self, end_note: Note) -> int:
@@ -206,8 +206,8 @@ class Sheet:
                 continue
             path = note.to_path()
             if path not in _SOUNDS:
-                _SOUNDS[path] = Sound.from_file(str(path), volume=0.5)
-            self.mixer.play(_SOUNDS[path])
+                _SOUNDS[path] = Sound.from_file(str(path))
+            self.mixer.play(_SOUNDS[path], note.volume)
 
         self.playhead += n
 

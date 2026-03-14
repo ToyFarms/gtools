@@ -64,6 +64,7 @@ class WorldRenderer(Renderer):
         self._tex3d = self._shader3d.get_uniform("texArray")
         self._layer3d = self._shader3d.get_uniform("u_layer")
         self._spread3d = self._shader3d.get_uniform("u_layer_spread")
+        self._opacity3d = self._shader3d.get_uniform("u_opacity")
 
     def load(self, world: World) -> None:
         self._build_meshes(world)
@@ -77,7 +78,7 @@ class WorldRenderer(Renderer):
             return
         self._shader.use()
         self._mvp.set_mat4x4(camera.proj_as_numpy())
-        self._draw_layers(self._tex, self._layer)
+        self._draw_layers(self._tex, self._layer, self._opacity)
 
     def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
         if not self.any():
@@ -85,7 +86,7 @@ class WorldRenderer(Renderer):
         self._shader3d.use()
         self._vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
         self._spread3d.set_float(layer_spread)
-        self._draw_layers(self._tex3d, self._layer3d)
+        self._draw_layers(self._tex3d, self._layer3d, self._opacity3d)
 
     def delete(self) -> None:
         for rl in self._layers.values():
@@ -93,7 +94,7 @@ class WorldRenderer(Renderer):
                 mesh.delete()
             rl.meshes.clear()
 
-    def _draw_layers(self, tex_uniform: Uniform, layer_uniform: Uniform) -> None:
+    def _draw_layers(self, tex_uniform: Uniform, layer_uniform: Uniform, opacity: Uniform) -> None:
         for rl in self._layers.values():
             if not (self.flags & rl.render_flag) or not rl.meshes:
                 continue
@@ -101,7 +102,7 @@ class WorldRenderer(Renderer):
             if not rl.depth_write:
                 glDepthMask(GL_FALSE)
 
-            self._opacity.set_float(rl.opacity)
+            opacity.set_float(rl.opacity)
             layer_uniform.set_float(rl.depth)
 
             for tex_array, mesh in rl.meshes.items():
