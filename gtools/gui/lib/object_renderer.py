@@ -70,6 +70,7 @@ class ObjectRendererBase(Renderer, ABC):
     INSTANCE_LAYOUT: ClassVar[list[int]]
 
     class Flags(IntFlag):
+        NONE = 0
         NO_TEXT = auto()
         NO_SHADOW = auto()
         NO_OVERLAY = auto()
@@ -253,10 +254,10 @@ class ObjectRendererBase(Renderer, ABC):
             region_counters[region] += 1
             bucketed[local_index].append(dropped)
 
-        no_text = ObjectRendererBase.Flags.NO_TEXT in flags
-        no_shadow = ObjectRendererBase.Flags.NO_SHADOW in flags
-        no_overlay = ObjectRendererBase.Flags.NO_OVERLAY in flags
-        no_icon = ObjectRendererBase.Flags.NO_ICON in flags
+        no_text = flags & ObjectRendererBase.Flags.NO_TEXT
+        no_shadow = flags & ObjectRendererBase.Flags.NO_SHADOW
+        no_overlay = flags & ObjectRendererBase.Flags.NO_OVERLAY
+        no_icon = flags & ObjectRendererBase.Flags.NO_ICON
 
         text_renderer = None if no_text else TextRenderer("resources/fonts/centurygothic_bold.ttf", size=32)
 

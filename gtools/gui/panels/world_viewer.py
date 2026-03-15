@@ -143,9 +143,9 @@ class WorldTab(Panel):
                     if id != 0:
                         icons["shelf"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(pos), id=id))
 
-        tasks = []
+        renderable: list[ObjectRenderable] = []
         if icons["display"]:
-            tasks.append(
+            renderable.append(
                 ObjectRenderable(
                     mesh=self._renderer_pre_fg.build(
                         icons["display"],
@@ -157,7 +157,7 @@ class WorldTab(Panel):
             )
 
         if self._world.dropped.items:
-            tasks.append(
+            renderable.append(
                 ObjectRenderable(
                     mesh=self._renderer_post_fg.build(self._world.dropped.items, icon_scale=0.67, overlay_scale=1.2),
                     renderer=self._renderer_post_fg,
@@ -166,10 +166,10 @@ class WorldTab(Panel):
 
         flag = ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT
         if icons["easel"]:
-            tasks.append(
+            renderable.append(
                 ObjectRenderable(mesh=self._renderer_post_fg.build(icons["easel"], flags=flag, icon_scale=0.6), renderer=self._renderer_post_fg, rotation=0.2, pixel_scale=1.2)
             )
-            tasks.append(
+            renderable.append(
                 ObjectRenderable(
                     mesh=self._renderer_post_fg.build(icons["easel_mark"], flags=flag, icon_scale=1.1, tex_offset=ivec2(0, 1)),
                     renderer=self._renderer_post_fg,
@@ -180,12 +180,12 @@ class WorldTab(Panel):
             )
 
         if icons["vending"]:
-            tasks.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["vending"], flags=flag, icon_scale=0.5), renderer=self._renderer_post_fg))
+            renderable.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["vending"], flags=flag, icon_scale=0.5), renderer=self._renderer_post_fg))
 
         if icons["shelf"]:
-            tasks.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["shelf"], flags=flag, icon_scale=0.3), renderer=self._renderer_post_fg))
+            renderable.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["shelf"], flags=flag, icon_scale=0.3), renderer=self._renderer_post_fg))
 
-        return tasks
+        return renderable
 
     def _init_render_order(self) -> None:
         self._render_order.clear()
