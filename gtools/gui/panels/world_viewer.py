@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import defaultdict, deque
 import itertools
 import logging
 import math
@@ -92,6 +92,11 @@ class WorldTab(Panel):
         self._renderer_pre_fg = ObjectRenderer(OBJECT_DISPLAY_START, OBJECT_DISPLAY_END)
         self._renderer_post_fg = ObjectRenderer(OBJECT_VEND_START, OBJECT_DROPPED_END)
         self._obj_render_task: list[ObjectRenderTask] = []
+
+        self._history_2d: deque[tuple[glm.vec2, float]] = deque(maxlen=10)
+        self._history_3d: deque[tuple[glm.vec3, float, float]] = deque(maxlen=10)
+        self._last_right_click_time = 0.0
+        self._last_right_click_pos = (0.0, 0.0)
 
         self._init_objects()
 
@@ -433,6 +438,11 @@ class WorldTab(Panel):
         elif isinstance(event, MouseButtonEvent):
             if event.button == glfw.MOUSE_BUTTON_LEFT:
                 if event.action == glfw.PRESS and self._hovered:
+                    if self._selection_drag.get("active"):
+                        self._selection_drag["active"] = False
+                        self._dirty = True
+                        return True
+
                     lx, ly = self._to_local(event.screen_x, event.screen_y)
                     self._drag = {
                         "active": True,
@@ -445,6 +455,15 @@ class WorldTab(Panel):
             elif event.button == glfw.MOUSE_BUTTON_RIGHT:
                 if event.action == glfw.PRESS and self._hovered:
                     lx, ly = self._to_local(event.screen_x, event.screen_y)
+                    now = time.monotonic()
+                    if now - self._last_right_click_time < 0.3 and math.hypot(lx - self._last_right_click_pos[0], ly - self._last_right_click_pos[1]) < 10:
+                        self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
+                        self._last_right_click_time = 0.0
+                        self._dirty = True
+                        return True
+
+                    self._last_right_click_time = now
+                    self._last_right_click_pos = (lx, ly)
                     self._selection_drag = {
                         "active": True,
                         "start": (lx, ly),
@@ -452,11 +471,26 @@ class WorldTab(Panel):
                     }
                     return True
                 elif event.action == glfw.RELEASE and self._selection_drag.get("active"):
+                    s = self._selection_drag["start"]
+                    e = self._selection_drag["current"]
+                    dist = math.hypot(e[0] - s[0], e[1] - s[1])
+
                     self._selection_drag["active"] = False
+
+                    if dist < 5:
+                        if self._history_3d:
+                            pos, yaw, pitch = self._history_3d.pop()
+                            self._camera3d.pos = pos
+                            self._camera3d.yaw = yaw
+                            self._camera3d.pitch = pitch
+                            self._dirty = True
+                        return True
+
                     s = self._selection_drag["start"]
                     e = self._selection_drag["current"]
 
                     if abs(s[0] - e[0]) > 5 and abs(s[1] - e[1]) > 5:
+                        self._history_3d.append((glm.vec3(self._camera3d.pos), self._camera3d.yaw, self._camera3d.pitch))
                         z = WORLD_FOREGROUND_AFTER * self._layer_spread
                         p1 = self._camera3d.unproject(s[0], s[1], z_plane=z)
                         p2 = self._camera3d.unproject(e[0], e[1], z_plane=z)
@@ -499,6 +533,11 @@ class WorldTab(Panel):
         elif isinstance(event, MouseButtonEvent):
             if event.button == glfw.MOUSE_BUTTON_LEFT:
                 if event.action == glfw.PRESS and self._hovered:
+                    if self._selection_drag.get("active"):
+                        self._selection_drag["active"] = False
+                        self._dirty = True
+                        return True
+
                     lx, ly = self._to_local(event.screen_x, event.screen_y)
                     self._drag = {
                         "active": True,
@@ -512,6 +551,15 @@ class WorldTab(Panel):
             elif event.button == glfw.MOUSE_BUTTON_RIGHT:
                 if event.action == glfw.PRESS and self._hovered:
                     lx, ly = self._to_local(event.screen_x, event.screen_y)
+                    now = time.monotonic()
+                    if now - self._last_right_click_time < 0.3 and math.hypot(lx - self._last_right_click_pos[0], ly - self._last_right_click_pos[1]) < 10:
+                        self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
+                        self._last_right_click_time = 0.0
+                        self._dirty = True
+                        return True
+
+                    self._last_right_click_time = now
+                    self._last_right_click_pos = (lx, ly)
                     self._selection_drag = {
                         "active": True,
                         "start": (lx, ly),
@@ -519,11 +567,25 @@ class WorldTab(Panel):
                     }
                     return True
                 elif event.action == glfw.RELEASE and self._selection_drag.get("active"):
+                    s = self._selection_drag["start"]
+                    e = self._selection_drag["current"]
+                    dist = math.hypot(e[0] - s[0], e[1] - s[1])
+
                     self._selection_drag["active"] = False
+
+                    if dist < 5:
+                        if self._history_2d:
+                            pos, zoom = self._history_2d.pop()
+                            self._camera.pos = pos
+                            self._camera.zoom = zoom
+                            self._dirty = True
+                        return True
+
                     s = self._selection_drag["start"]
                     e = self._selection_drag["current"]
 
                     if abs(s[0] - e[0]) > 5 and abs(s[1] - e[1]) > 5:
+                        self._history_2d.append((glm.vec2(self._camera.pos), self._camera.zoom))
                         p1 = self._camera.screen_to_world(s[0], s[1])
                         p2 = self._camera.screen_to_world(e[0], e[1])
                         min_x, max_x = min(p1.x, p2.x), max(p1.x, p2.x)
