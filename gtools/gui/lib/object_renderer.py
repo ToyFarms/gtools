@@ -5,7 +5,7 @@ from enum import IntFlag, auto
 from typing import ClassVar
 
 from OpenGL.GL import GL_FALSE, GL_TRUE, glDepthMask
-from pyglm.glm import ivec2
+from pyglm.glm import ivec2, vec2
 
 from gtools import setting
 from gtools.baked.items import GEMS, MUTATED_SEED
@@ -63,6 +63,14 @@ class ObjectRenderMesh:
         if self.text_renderer is not None:
             self.text_renderer.delete()
             self.text_renderer = None
+
+
+@dataclass(slots=True)
+class IconInfo:
+    texture_path: str
+    world_pos: vec2
+    tex_pos: ivec2
+    z: float
 
 
 class ObjectRendererBase(Renderer, ABC):
@@ -270,8 +278,8 @@ class ObjectRendererBase(Renderer, ABC):
         for local_index, drops in bucketed.items():
             for dropped in drops:
                 item = item_database.get(dropped.id)
-                x = dropped.pos.x - 8
-                y = dropped.pos.y - 8
+                x = dropped.pos.x
+                y = dropped.pos.y
 
                 NON_SEED_ID = [
                     MUTATED_SEED,
@@ -361,6 +369,53 @@ class ObjectRendererBase(Renderer, ABC):
             text_renderer=text_renderer,
         )
 
+    def build_icon(
+        self,
+        icons: list[IconInfo],
+        icon_scale: float = 1,
+        shadow: bool = False,
+    ) -> ObjectRenderMesh:
+        icon_data: dict[TextureArray, list[float]] = defaultdict(list)
+        shadow_data: dict[TextureArray, list[float]] = defaultdict(list)
+
+        for info in icons:
+            tex = self._tex_mgr.load_texture(setting.asset_path / "game" / info.texture_path)
+            uv_x = info.tex_pos.x / tex.width
+            uv_y = info.tex_pos.y / tex.height
+
+            x, y = info.world_pos.x, info.world_pos.y
+            instance = [
+                x,
+                y,
+                icon_scale,
+                icon_scale,
+                uv_x,
+                uv_y,
+                tex.layer,
+                info.z,
+            ]
+            icon_data[tex.array].extend(instance)
+
+            if shadow:
+                shadow_instance = [
+                    x,
+                    y,
+                    icon_scale,
+                    icon_scale,
+                    uv_x,
+                    uv_y,
+                    tex.layer,
+                    info.z - 0.0001,
+                ]
+                shadow_data[tex.array].extend(shadow_instance)
+
+        self._tex_mgr.flush()
+
+        return ObjectRenderMesh(
+            dropped_meshes=self._make_meshes(icon_data),
+            icon_shadows=self._make_meshes(shadow_data) if shadow else {},
+        )
+
     def _get_shadow_z(self, local_index: int, sublayer: int) -> float:
         slot = local_index * SHADOW_STRIDE + sublayer
         t = slot / MAX_SHADOW_LAYER
@@ -379,6 +434,7 @@ class ObjectRendererBase(Renderer, ABC):
         x: float,
         y: float,
     ) -> None:
+        # i don't know, need to recheck the text placement again
         overlay_size = 20 * 1.2
         vpadding = 2.0
         hpadding = 2.0
@@ -395,7 +451,7 @@ class ObjectRendererBase(Renderer, ABC):
         else:
             text_x = x + overlay_size / 2 - hpadding - text_w
 
-        text_y = y + overlay_size / 2 - vpadding - text_h
+        text_y = y + overlay_size / 2 - vpadding - text_h + 8 - vpadding
 
         text_renderer.build_text(
             text_str,

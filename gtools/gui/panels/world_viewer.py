@@ -129,18 +129,18 @@ class WorldTab(Panel):
                 continue
 
             if isinstance(tile.extra, DisplayBlockTile) and tile.extra.item_id != 0:
-                icons["display"].append(DroppedItem(pos=vec2(tile.pos) * 32 + 8, id=tile.extra.item_id))
+                icons["display"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
             elif isinstance(tile.extra, VendingMachineTile) and tile.extra.item_id != 0:
-                icons["vending"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(6, 5), id=tile.extra.item_id))
+                icons["vending"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(-2, -3), id=tile.extra.item_id))
             elif isinstance(tile.extra, PaintingEaselTile) and tile.extra.item_id != 0:
-                icons["easel"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(10, 2), id=tile.extra.item_id))
-                icons["easel_mark"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(10, 8), id=PAINTING_EASEL))
+                icons["easel"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(2, -6), id=tile.extra.item_id))
+                icons["easel_mark"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(2, 0), id=PAINTING_EASEL))
             elif isinstance(tile.extra, ShelfTile):
                 for id, pos in (
-                    (tile.extra.top_left_item_id, (3, 0)),
-                    (tile.extra.top_right_item_id, (15, 0)),
-                    (tile.extra.bottom_left_item_id, (3, 15)),
-                    (tile.extra.bottom_right_item_id, (15, 15)),
+                    (tile.extra.top_left_item_id, (-5, -8)),
+                    (tile.extra.top_right_item_id, (7, -8)),
+                    (tile.extra.bottom_left_item_id, (-5, 7)),
+                    (tile.extra.bottom_right_item_id, (7, 7)),
                 ):
                     if id != 0:
                         icons["shelf"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(pos), id=id))

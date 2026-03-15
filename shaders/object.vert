@@ -19,13 +19,10 @@ uniform float u_rotation;
 uniform float u_zOffset;
 
 void main() {
-    vec2 centered = in_pos - 0.5;
-
     float c = cos(u_rotation);
     float s = sin(u_rotation);
-    mat2 rot = mat2(c, -s, s,  c);
-
-    vec2 rotated = rot * centered + 0.5;
+    mat2 rot = mat2(c, -s, s, c);
+    vec2 rotated = rot * in_pos;
 
     vec2 worldPos = rotated * u_tileSize * in_tileScale + in_tilePos;
     gl_Position = u_mvp * vec4(worldPos, in_depth + u_zOffset, 1.0);

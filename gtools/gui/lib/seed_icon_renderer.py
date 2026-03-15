@@ -48,7 +48,7 @@ class SeedIconRenderer(Renderer):
             overlay_b = (item.seed_color.b + item.seed_overlay_color.b) // 2
             overlay_color = (overlay_r << 16) | (overlay_g << 8) | overlay_b
 
-            data[i]["tilePos"] = [drop.pos.x - 8, drop.pos.y - 8, z]
+            data[i]["tilePos"] = [drop.pos.x, drop.pos.y, z]
             data[i]["baseColor"] = base_color
             data[i]["overlayColor"] = overlay_color
             data[i]["baseUV"] = item.seed_base.value * 16 / self.tex.width

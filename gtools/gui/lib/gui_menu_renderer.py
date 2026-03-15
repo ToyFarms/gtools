@@ -35,7 +35,7 @@ class GuiMenuRenderer(Renderer):
         self.tex = get_texture(setting.asset_path / "game/gui_box.rttex")
         self.mesh = Mesh(Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES)
 
-        self.text_renderer = TextRenderer("resources/fonts/centurygothic_bold.ttf", size=14)
+        self.text_renderer = TextRenderer("resources/fonts/centurygothic_bold.ttf", size=16)
 
     def _wrap_text(self, text: str, max_width: float) -> list[str]:
         lines = []
@@ -62,7 +62,6 @@ class GuiMenuRenderer(Renderer):
         padding = 10.0
 
         lines = self._wrap_text(text, max_width)
-        lines.reverse()
         font = self.text_renderer.font
 
         line_height = font.height * 1.1
@@ -96,14 +95,14 @@ class GuiMenuRenderer(Renderer):
 
         self.text_renderer._batch_data.clear()
 
-        text_block_top = th_total / 2
-        current_baseline_y = center_y + text_block_top - font.ascender + 8
+        text_block_height = th_total
+        current_baseline_y = center_y - text_block_height / 2 + font.ascender
 
         for line in lines:
             lw, _ = self.text_renderer.get_text_size(line)
             tx = world_pos.x - lw / 2
             self.text_renderer.build_text(line, tx, current_baseline_y, layer.GUI_MENU_TEXT)
-            current_baseline_y -= line_height
+            current_baseline_y += line_height
 
         self.text_renderer.build()
         self.text_renderer.draw(camera, color=(1.0, 1.0, 1.0))
@@ -148,8 +147,8 @@ class GuiMenuRenderer(Renderer):
         self.mesh.draw()
 
         self.text_renderer._batch_data.clear()
-        text_block_top = th_total / 2
-        current_baseline_y = center_y + text_block_top - font.ascender
+        text_block_height = th_total
+        current_baseline_y = center_y + text_block_height / 2 - font.ascender
 
         for line in lines:
             lw, _ = self.text_renderer.get_text_size(line)

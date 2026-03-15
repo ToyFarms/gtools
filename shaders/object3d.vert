@@ -21,13 +21,10 @@ uniform float u_layer_spread;
 uniform float u_zOffset;
 
 void main() {
-    vec2 centered = in_pos - 0.5;
-
     float c = cos(u_rotation);
     float s = sin(u_rotation);
-    mat2 rot = mat2(c, -s, s,  c);
-
-    vec2 rotated = rot * centered + 0.5;
+    mat2 rot = mat2(c, -s, s, c);
+    vec2 rotated = rot * in_pos;
 
     vec2 worldPos = rotated * u_tileSize * in_tileScale + in_tilePos;
     float z = (in_depth + u_zOffset) * u_layer_spread;
