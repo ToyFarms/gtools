@@ -332,8 +332,6 @@ class WorldTab(Panel):
                     self._camera3d.resize(cw, ch)
                     self._dirty = True
 
-                self._update_hover()
-
                 if self._dirty:
                     self._render_to_fbo()
                     self._dirty = False
@@ -347,6 +345,7 @@ class WorldTab(Panel):
                 self._hovered = imgui.is_item_hovered()
                 rect_min = imgui.get_item_rect_min()
                 self._image_origin = (rect_min.x, rect_min.y)
+                self._update_hover()
 
                 if self._selection_drag["active"]:
                     draw_list = imgui.get_window_draw_list()
@@ -677,6 +676,12 @@ class WorldTab(Panel):
             self._highlight_renderer.draw_hover(self._camera, vec2(self._hovered_tile.pos))
 
     def _update_hover(self) -> None:
+        if not self._hovered:
+            if self._hovered_tile is not None:
+                self._hovered_tile = None
+                self._dirty = True
+            return
+
         old_hovered_tile = self._hovered_tile
 
         local = self._to_local(self._cursor_pos[0], self._cursor_pos[1])
