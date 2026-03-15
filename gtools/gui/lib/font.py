@@ -79,6 +79,18 @@ class FontManager:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
         glBindTexture(GL_TEXTURE_2D, 0)
 
+    @property
+    def ascender(self) -> int:
+        return self.face.size.ascender >> 6
+
+    @property
+    def descender(self) -> int:
+        return self.face.size.descender >> 6
+
+    @property
+    def height(self) -> int:
+        return self.face.size.height >> 6
+
     def get_char(self, char: str) -> Character:
         return self.chars.get(char, self.chars[" "])
 

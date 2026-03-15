@@ -27,6 +27,7 @@ from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEve
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
 from gtools.gui.lib.highlight_renderer import HighlightRenderer
+from gtools.gui.lib.gui_menu_renderer import GuiMenuRenderer
 
 logger = logging.getLogger("gui-world-viewer")
 
@@ -94,6 +95,7 @@ class WorldTab(Panel):
         self._sheet = self._world.get_sheet(self._mixer)
 
         self._highlight_renderer = HighlightRenderer()
+        self._gui_menu_renderer = GuiMenuRenderer()
         self._playing = True
         self._seek = 0
         self._hovered_tile: Tile | None = None
@@ -245,6 +247,8 @@ class WorldTab(Panel):
 
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
+        self._mixer.stop()
+
         self._world_renderer.delete()
 
         self._render_order.clear()
@@ -254,7 +258,7 @@ class WorldTab(Panel):
 
         self._fbo.delete()
         self._highlight_renderer.delete()
-        self._mixer.stop()
+        self._gui_menu_renderer.delete()
 
     @property
     def is_open(self) -> bool:
@@ -718,9 +722,13 @@ class WorldTab(Panel):
 
     def _render_to_fbo_3d(self) -> None:
         self._render_order.draw_3d(self._camera3d, self._layer_spread)
+        if self._hovered_tile and self._hovered_tile.extra:
+            self._gui_menu_renderer.draw_3d(self._camera3d, str(self._hovered_tile.extra), vec2(self._hovered_tile.pos) * 32, self._layer_spread)
 
     def _render_to_fbo_2d(self) -> None:
         self._render_order.draw_2d(self._camera)
+        if self._hovered_tile and self._hovered_tile.extra:
+            self._gui_menu_renderer.draw(self._camera, str(self._hovered_tile.extra), vec2(self._hovered_tile.pos) * 32)
 
     def _update_hover(self) -> None:
         if not self._hovered:
@@ -742,7 +750,7 @@ class WorldTab(Panel):
         tile_x = math.floor((world.x + 16) / 32)
         tile_y = math.floor((world.y + 16) / 32)
 
-        if 0 < tile_x < self._world.width and 0 < tile_y < self._world.height:
+        if 0 <= tile_x < self._world.width and 0 <= tile_y < self._world.height:
             self._hovered_tile = self._world.get_tile(tile_x, tile_y)
         else:
             self._hovered_tile = None

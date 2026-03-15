@@ -1,6 +1,7 @@
 import numpy as np
 from OpenGL.GL import glBindTexture, GL_TEXTURE_2D, glActiveTexture, GL_TEXTURE0
 from gtools.gui.camera import Camera2D
+from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib.renderer import Renderer
 from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.lib.font import FontManager
@@ -43,9 +44,12 @@ class TextRenderer(Renderer):
     def get_text_size(self, text: str, scale: float = 1.0) -> tuple[float, float]:
         width = 0.0
         max_height = 0.0
-        for char in text:
+        for i, char in enumerate(text):
             glyph = self.font.get_char(char)
-            width += (glyph.advance >> 6) * scale
+            if i == len(text) - 1:
+                width += (glyph.bearing[0] + glyph.size[0]) * scale
+            else:
+                width += (glyph.advance >> 6) * scale
             max_height = max(max_height, glyph.size[1] * scale)
         return width, max_height
 
@@ -61,7 +65,7 @@ class TextRenderer(Renderer):
             h = glyph.size[1] * scale
 
             xpos = current_x + glyph.bearing[0] * scale
-            ypos = y - (glyph.size[1] - glyph.bearing[1]) * scale
+            ypos = y - glyph.bearing[1] * scale
 
             self._batch_data.extend([xpos, ypos, w, h, glyph.tex_offset[0], glyph.tex_offset[1], glyph.tex_size[0], glyph.tex_size[1], z])
 
@@ -72,11 +76,15 @@ class TextRenderer(Renderer):
 
     def build(self) -> None:
         if self._batch_data:
+            if self._mesh:
+                self._mesh.delete()
             instance_data = np.array(self._batch_data, dtype=np.float32)
             self._mesh = Mesh(Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES, instance_data=instance_data, instance_layout=self.INSTANCE_LAYOUT, instance_attrib_base=2)
             self._batch_data.clear()
 
         if self._shadow_batch_data:
+            if self._shadow_mesh:
+                self._shadow_mesh.delete()
             shadow_instance_data = np.array(self._shadow_batch_data, dtype=np.float32)
             self._shadow_mesh = Mesh(Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES, instance_data=shadow_instance_data, instance_layout=self.INSTANCE_LAYOUT, instance_attrib_base=2)
             self._shadow_batch_data.clear()
@@ -109,14 +117,12 @@ class TextRenderer(Renderer):
 
     def draw_3d(
         self,
-        camera3d: "Camera3D",
+        camera3d: Camera3D,
         layer_spread: float,
         color: tuple[float, float, float] = (1.0, 1.0, 1.0),
         offset: tuple[float, float] = (0.0, 0.0),
         shadow_color: tuple[float, float, float] | None = None,
     ) -> None:
-        from gtools.gui.camera3d import Camera3D  # avoid circular import if any
-
         if not self._mesh:
             return
 
