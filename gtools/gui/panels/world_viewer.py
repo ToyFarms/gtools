@@ -3,7 +3,7 @@ import logging
 import math
 from pathlib import Path
 import time
-from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, glClear, glClearColor
+from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_FILL, GL_FRONT_AND_BACK, GL_LINE, glClear, glClearColor, glPolygonMode
 
 import glfw
 from imgui_bundle import imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
@@ -81,6 +81,7 @@ class WorldTab(Panel):
         self._layer_spread: float = 200.0
 
         self._keys_held: set[int] = set()
+        self._wireframe = False
 
         self._world_renderer = WorldRenderer()
         self._world_renderer.load(self._world)
@@ -287,6 +288,12 @@ class WorldTab(Panel):
                 imgui.text("Spread")
                 imgui.text(f"Spd: {self._camera3d.speed:.0f}")
 
+            imgui.separator()
+
+            changed, self._wireframe = imgui.checkbox("Wireframe", self._wireframe)
+            if changed:
+                self._dirty = True
+
             imgui.end_child()
 
             imgui.same_line()
@@ -300,9 +307,12 @@ class WorldTab(Panel):
                     self._camera3d.resize(cw, ch)
                     self._dirty = True
 
+                self._update_hover()
+
                 if self._dirty:
                     self._render_to_fbo()
                     self._dirty = False
+
                 imgui.image(
                     imgui.ImTextureRef(self._fbo.color_tex),
                     (cw, ch),
@@ -539,10 +549,16 @@ class WorldTab(Panel):
         glClearColor(0.08, 0.08, 0.08, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # pyright: ignore[reportOperatorIssue]
 
+        if self._wireframe:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+
         if self._mode_3d:
             self._render_to_fbo_3d()
         else:
             self._render_to_fbo_2d()
+
+        if self._wireframe:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
         self._fbo.unbind()
 
@@ -571,13 +587,23 @@ class WorldTab(Panel):
 
         self._highlight_renderer.draw_playhead(self._camera, self._sheet, self._world.width)
 
-        local = self._to_local(self._cursor_pos[0], self._cursor_pos[1])
-        world = self._camera.screen_to_world(local[0], local[1])
+        if self._hovered_tile:
+            self._highlight_renderer.draw_hover(self._camera, vec2(self._hovered_tile.pos))
 
+    def _update_hover(self) -> None:
         old_hovered_tile = self._hovered_tile
+
+        local = self._to_local(self._cursor_pos[0], self._cursor_pos[1])
+
+        if self._mode_3d:
+            z = WORLD_FOREGROUND_AFTER * self._layer_spread
+            world = self._camera3d.unproject(local[0], local[1], z_plane=z)
+        else:
+            world = self._camera.screen_to_world(local[0], local[1])
 
         tile_x = math.floor((world.x + 16) / 32)
         tile_y = math.floor((world.y + 16) / 32)
+
         if 0 < tile_x < self._world.width and 0 < tile_y < self._world.height:
             self._hovered_tile = self._world.get_tile(tile_x, tile_y)
         else:
@@ -585,6 +611,3 @@ class WorldTab(Panel):
 
         if self._hovered_tile != old_hovered_tile:
             self._dirty = True
-
-        if self._hovered_tile:
-            self._highlight_renderer.draw_hover(self._camera, vec2(self._hovered_tile.pos))
