@@ -5,6 +5,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 import time
+from typing import Any, Callable
 from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_FALSE, GL_FILL, GL_FRONT_AND_BACK, GL_LINE, GL_TRUE, glClear, glClearColor, glDepthMask, glPolygonMode
 
 import glfw
@@ -31,13 +32,32 @@ logger = logging.getLogger("gui-world-viewer")
 
 
 @dataclass(slots=True)
-class ObjectRenderTask:
+class ObjectRenderable:
     mesh: ObjectRenderMesh
     renderer: ObjectRenderer
     rotation: float = 0.0
     pixel_scale: float = 1.0
     tint: tuple[float, float, float] = (1.0, 1.0, 1.0)
     z_offset: float = 0.0
+
+
+class RenderOrder:
+    def __init__(self) -> None:
+        self._renderer: list[tuple[Callable[[Camera2D], Any], Callable[[Camera3D, float], Any]]] = []
+
+    def add(self, draw_2d: Callable[[Camera2D], Any], draw_3d: Callable[[Camera3D, float], Any]) -> None:
+        self._renderer.append((draw_2d, draw_3d))
+
+    def clear(self) -> None:
+        self._renderer.clear()
+
+    def draw_2d(self, camera: Camera2D) -> None:
+        for draw_2d, _ in self._renderer:
+            draw_2d(camera)
+
+    def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+        for _, draw_3d in self._renderer:
+            draw_3d(camera3d, layer_spread)
 
 
 class WorldTab(Panel):
@@ -91,20 +111,16 @@ class WorldTab(Panel):
 
         self._renderer_pre_fg = ObjectRenderer(OBJECT_DISPLAY_START, OBJECT_DISPLAY_END)
         self._renderer_post_fg = ObjectRenderer(OBJECT_VEND_START, OBJECT_DROPPED_END)
-        self._obj_render_task: list[ObjectRenderTask] = []
 
         self._history_2d: deque[tuple[glm.vec2, float]] = deque(maxlen=10)
         self._history_3d: deque[tuple[glm.vec3, float, float]] = deque(maxlen=10)
         self._last_right_click_time = 0.0
         self._last_right_click_pos = (0.0, 0.0)
 
-        self._init_objects()
+        self._render_order = RenderOrder()
+        self._init_render_order()
 
-    def _init_objects(self) -> None:
-        for task in self._obj_render_task:
-            task.mesh.delete()
-        self._obj_render_task.clear()
-
+    def _build_object_renderable(self) -> list[ObjectRenderable]:
         icons: defaultdict[str, list[DroppedItem]] = defaultdict(list)
         for tile in self._world.tiles.values():
             if not tile.extra:
@@ -127,9 +143,10 @@ class WorldTab(Panel):
                     if id != 0:
                         icons["shelf"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(pos), id=id))
 
+        tasks = []
         if icons["display"]:
-            self._obj_render_task.append(
-                ObjectRenderTask(
+            tasks.append(
+                ObjectRenderable(
                     mesh=self._renderer_pre_fg.build(
                         icons["display"],
                         flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
@@ -140,8 +157,8 @@ class WorldTab(Panel):
             )
 
         if self._world.dropped.items:
-            self._obj_render_task.append(
-                ObjectRenderTask(
+            tasks.append(
+                ObjectRenderable(
                     mesh=self._renderer_post_fg.build(self._world.dropped.items, icon_scale=0.67, overlay_scale=1.2),
                     renderer=self._renderer_post_fg,
                 )
@@ -149,11 +166,11 @@ class WorldTab(Panel):
 
         flag = ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT
         if icons["easel"]:
-            self._obj_render_task.append(
-                ObjectRenderTask(mesh=self._renderer_post_fg.build(icons["easel"], flags=flag, icon_scale=0.6), renderer=self._renderer_post_fg, rotation=0.2, pixel_scale=1.2)
+            tasks.append(
+                ObjectRenderable(mesh=self._renderer_post_fg.build(icons["easel"], flags=flag, icon_scale=0.6), renderer=self._renderer_post_fg, rotation=0.2, pixel_scale=1.2)
             )
-            self._obj_render_task.append(
-                ObjectRenderTask(
+            tasks.append(
+                ObjectRenderable(
                     mesh=self._renderer_post_fg.build(icons["easel_mark"], flags=flag, icon_scale=1.1, tex_offset=ivec2(0, 1)),
                     renderer=self._renderer_post_fg,
                     rotation=0.1,
@@ -163,18 +180,74 @@ class WorldTab(Panel):
             )
 
         if icons["vending"]:
-            self._obj_render_task.append(ObjectRenderTask(mesh=self._renderer_post_fg.build(icons["vending"], flags=flag, icon_scale=0.5), renderer=self._renderer_post_fg))
+            tasks.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["vending"], flags=flag, icon_scale=0.5), renderer=self._renderer_post_fg))
 
         if icons["shelf"]:
-            self._obj_render_task.append(ObjectRenderTask(mesh=self._renderer_post_fg.build(icons["shelf"], flags=flag, icon_scale=0.3), renderer=self._renderer_post_fg))
+            tasks.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["shelf"], flags=flag, icon_scale=0.3), renderer=self._renderer_post_fg))
+
+        return tasks
+
+    def _init_render_order(self) -> None:
+        self._render_order.clear()
+        obj_renderable = self._build_object_renderable()
+
+        self._render_order.add(
+            lambda cam: self._draw_obj_group_shadows_2d(cam, obj_renderable),
+            lambda cam3d, s: self._draw_obj_group_shadows_3d(cam3d, s, obj_renderable),
+        )
+
+        pre_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_pre_fg]
+        self._render_order.add(
+            lambda cam: self._draw_obj_group_main_2d(cam, pre_fg_tasks),
+            lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, pre_fg_tasks),
+        )
+
+        self._render_order.add(
+            lambda camera: self._world_renderer.draw(camera),
+            lambda camera3d, layer_spread: self._world_renderer.draw_3d(camera3d, layer_spread),
+        )
+
+        post_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_post_fg]
+        self._render_order.add(
+            lambda cam: self._draw_obj_group_main_2d(cam, post_fg_tasks),
+            lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, post_fg_tasks),
+        )
+
+        self._render_order.add(
+            lambda camera: self._highlight_renderer.draw_hover(camera, vec2(self._hovered_tile.pos)) if self._hovered_tile else None,
+            lambda camera3d, layer_spread: self._highlight_renderer.draw_hover_3d(camera3d, vec2(self._hovered_tile.pos), layer_spread) if self._hovered_tile else None,
+        )
+
+        self._render_order.add(
+            lambda camera: self._highlight_renderer.draw_playhead(camera, self._sheet, self._world.width),
+            lambda camera3d, layer_spread: self._highlight_renderer.draw_playhead_3d(camera3d, self._sheet, self._world.width, layer_spread),
+        )
+
+    def _draw_obj_group_shadows_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
+        glDepthMask(GL_FALSE)
+        for task in tasks:
+            task.renderer.draw_shadow(camera, task.mesh, z_offset=task.z_offset)
+        glDepthMask(GL_TRUE)
+
+    def _draw_obj_group_shadows_3d(self, camera3d: Camera3D, layer_spread: float, tasks: list[ObjectRenderable]) -> None:
+        glDepthMask(GL_FALSE)
+        for task in tasks:
+            task.renderer.draw_shadow_3d(camera3d, task.mesh, layer_spread, z_offset=task.z_offset)
+        glDepthMask(GL_TRUE)
+
+    def _draw_obj_group_main_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
+        for task in tasks:
+            task.renderer.draw(camera, task.mesh, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
+
+    def _draw_obj_group_main_3d(self, camera3d: Camera3D, layer_spread: float, tasks: list[ObjectRenderable]) -> None:
+        for task in tasks:
+            task.renderer.draw_3d(camera3d, task.mesh, layer_spread, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
 
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
         self._world_renderer.delete()
 
-        for task in self._obj_render_task:
-            task.mesh.delete()
-        self._obj_render_task.clear()
+        self._render_order.clear()
 
         self._renderer_pre_fg.delete()
         self._renderer_post_fg.delete()
@@ -644,36 +717,10 @@ class WorldTab(Panel):
         self._fbo.unbind()
 
     def _render_to_fbo_3d(self) -> None:
-        glDepthMask(GL_FALSE)
-        for task in self._obj_render_task:
-            task.renderer.draw_shadow_3d(self._camera3d, task.mesh, self._layer_spread, z_offset=task.z_offset)
-        glDepthMask(GL_TRUE)
-
-        self._world_renderer.draw_3d(self._camera3d, self._layer_spread)
-
-        for task in self._obj_render_task:
-            task.renderer.draw_3d(self._camera3d, task.mesh, self._layer_spread, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
-
-        if self._hovered_tile:
-            self._highlight_renderer.draw_hover_3d(self._camera3d, vec2(self._hovered_tile.pos), self._layer_spread)
-
-        self._highlight_renderer.draw_playhead_3d(self._camera3d, self._sheet, self._world.width, self._layer_spread)
+        self._render_order.draw_3d(self._camera3d, self._layer_spread)
 
     def _render_to_fbo_2d(self) -> None:
-        glDepthMask(GL_FALSE)
-        for task in self._obj_render_task:
-            task.renderer.draw_shadow(self._camera, task.mesh, z_offset=task.z_offset)
-        glDepthMask(GL_TRUE)
-
-        self._world_renderer.draw(self._camera)
-
-        for task in self._obj_render_task:
-            task.renderer.draw(self._camera, task.mesh, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
-
-        self._highlight_renderer.draw_playhead(self._camera, self._sheet, self._world.width)
-
-        if self._hovered_tile:
-            self._highlight_renderer.draw_hover(self._camera, vec2(self._hovered_tile.pos))
+        self._render_order.draw_2d(self._camera)
 
     def _update_hover(self) -> None:
         if not self._hovered:
