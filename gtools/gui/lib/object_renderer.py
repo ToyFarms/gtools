@@ -21,7 +21,7 @@ from gtools.gui.lib.text_renderer import TextRenderer
 import numpy as np
 
 REGION_TILE_SIZE = 3
-MAX_PER_REGION = 64
+MAX_PER_REGION = 4096
 
 SHADOW_SUBLAYER_OVERLAY = 0
 SHADOW_SUBLAYER_ICON = 1
