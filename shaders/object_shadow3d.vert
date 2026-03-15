@@ -16,10 +16,11 @@ uniform sampler2DArray texArray;
 uniform float u_tileSize;
 uniform vec2 u_shadowOffset;
 uniform float u_layer_spread;
+uniform float u_zOffset;
 
 void main() {
     vec2 worldPos = in_pos * u_tileSize * in_tileScale + in_tilePos + u_shadowOffset;
-    float z = in_depth * u_layer_spread;
+    float z = (in_depth + u_zOffset) * u_layer_spread;
     gl_Position = u_view_proj * vec4(worldPos, z, 1.0);
 
     vec2 texSize = vec2(textureSize(texArray, 0).xy);

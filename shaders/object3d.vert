@@ -18,6 +18,7 @@ uniform float u_tileSize;
 uniform float u_rotation;
 uniform float u_pixelScale;
 uniform float u_layer_spread;
+uniform float u_zOffset;
 
 void main() {
     vec2 centered = in_pos - 0.5;
@@ -29,7 +30,7 @@ void main() {
     vec2 rotated = rot * centered + 0.5;
 
     vec2 worldPos = rotated * u_tileSize * in_tileScale + in_tilePos;
-    float z = in_depth * u_layer_spread;
+    float z = (in_depth + u_zOffset) * u_layer_spread;
     gl_Position = u_view_proj * vec4(worldPos.x, worldPos.y, z, 1.0);
 
     vec2 texSize = vec2(textureSize(texArray, 0).xy);

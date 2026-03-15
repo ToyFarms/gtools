@@ -94,14 +94,16 @@ class ObjectRendererBase(Renderer, ABC):
         self._shadow_tile_size = self._shadow_shader.get_uniform("u_tileSize")
         self._shadow_offset = self._shadow_shader.get_uniform("u_shadowOffset")
         self._shadow_alpha = self._shadow_shader.get_uniform("u_shadowAlpha")
+        self._shadow_z_offset = self._shadow_shader.get_uniform("u_zOffset")
 
-        self._shadow_shader3d = ShaderProgram.from_file("shaders/object_shadow3d.vert", "shaders/object_shadow.frag")
+        self._shadow_shader3d = ShaderProgram.from_file("shaders/object_shadow3d.vert", "shaders/object.frag")
         self._shadow_vp3d = self._shadow_shader3d.get_uniform("u_view_proj")
         self._shadow_tex3d = self._shadow_shader3d.get_uniform("texArray")
         self._shadow_tile_size3d = self._shadow_shader3d.get_uniform("u_tileSize")
         self._shadow_offset3d = self._shadow_shader3d.get_uniform("u_shadowOffset")
         self._shadow_alpha3d = self._shadow_shader3d.get_uniform("u_shadowAlpha")
         self._shadow_spread3d = self._shadow_shader3d.get_uniform("u_layer_spread")
+        self._shadow_z_offset3d = self._shadow_shader3d.get_uniform("u_zOffset")
 
         self._shader3d = ShaderProgram.get("shaders/object3d")
         self._vp3d = self._shader3d.get_uniform("u_view_proj")
@@ -111,6 +113,7 @@ class ObjectRendererBase(Renderer, ABC):
         self._rotation3d = self._shader3d.get_uniform("u_rotation")
         self._pixel_scale3d = self._shader3d.get_uniform("u_pixelScale")
         self._tint3d = self._shader3d.get_uniform("u_tint")
+        self._z_offset3d = self._shader3d.get_uniform("u_zOffset")
 
         self._init_main_shader()
 
@@ -137,7 +140,7 @@ class ObjectRendererBase(Renderer, ABC):
         dropped: DroppedItem,
     ) -> list[float]: ...
 
-    def draw_shadow(self, camera: Camera2D, render_mesh: ObjectRenderMesh) -> None:
+    def draw_shadow(self, camera: Camera2D, render_mesh: ObjectRenderMesh, z_offset: float = 0) -> None:
         if not render_mesh.dropped_meshes:
             return
 
@@ -146,6 +149,7 @@ class ObjectRendererBase(Renderer, ABC):
         self._shadow_shader.use()
         self._shadow_mvp.set_mat4x4(camera.proj_as_numpy())
         self._shadow_alpha.set_float(0.4)
+        self._shadow_z_offset.set_float(z_offset)
         offset = 5.0
         self._shadow_offset.set_vec2(np.array([-offset, offset], dtype=np.float32))
 
@@ -163,7 +167,7 @@ class ObjectRendererBase(Renderer, ABC):
 
         glDepthMask(GL_TRUE)
 
-    def draw_shadow_3d(self, camera3d: Camera3D, render_mesh: ObjectRenderMesh, layer_spread: float) -> None:
+    def draw_shadow_3d(self, camera3d: Camera3D, render_mesh: ObjectRenderMesh, layer_spread: float, z_offset: float = 0) -> None:
         if not render_mesh.dropped_meshes:
             return
 
@@ -173,6 +177,7 @@ class ObjectRendererBase(Renderer, ABC):
         self._shadow_vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
         self._shadow_alpha3d.set_float(0.4)
         self._shadow_spread3d.set_float(layer_spread)
+        self._shadow_z_offset3d.set_float(z_offset)
         offset = 5.0
         self._shadow_offset3d.set_vec2(np.array([-offset, offset], dtype=np.float32))
 
@@ -198,6 +203,7 @@ class ObjectRendererBase(Renderer, ABC):
         rotation: float = 0,
         pixel_scale: float = 1,
         tint: tuple[float, float, float] = (1, 1, 1),
+        z_offset: float = 0,
     ) -> None:
         if not render_mesh.dropped_meshes:
             return
@@ -208,6 +214,7 @@ class ObjectRendererBase(Renderer, ABC):
         self._rotation3d.set_float(rotation)
         self._pixel_scale3d.set_float(pixel_scale)
         self._tint3d.set_vec3(np.array(tint, dtype=np.float32))
+        self._z_offset3d.set_float(z_offset)
 
         self._tile_size3d.set_float(32.0)
         for arr, mesh in render_mesh.dropped_meshes.items():
@@ -429,6 +436,7 @@ class ObjectRenderer(ObjectRendererBase):
         self._rotation = self._shader.get_uniform("u_rotation")
         self._pixel_scale = self._shader.get_uniform("u_pixelScale")
         self._tint = self._shader.get_uniform("u_tint")
+        self._z_offset = self._shader.get_uniform("u_zOffset")
 
     def draw(
         self,
@@ -437,6 +445,7 @@ class ObjectRenderer(ObjectRendererBase):
         rotation: float = 0,
         pixel_scale: float = 1,
         tint: tuple[float, float, float] = (1, 1, 1),
+        z_offset: float = 0,
     ) -> None:
         if not render_mesh.dropped_meshes:
             return
@@ -445,6 +454,7 @@ class ObjectRenderer(ObjectRendererBase):
         self._rotation.set_float(rotation)
         self._pixel_scale.set_float(pixel_scale)
         self._tint.set_vec3(np.array(tint, dtype=np.float32))
+        self._z_offset.set_float(z_offset)
         self._mvp.set_mat4x4(camera.proj_as_numpy())
 
         self._tile_size.set_float(32.0)

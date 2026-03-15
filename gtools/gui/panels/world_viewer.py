@@ -1,9 +1,11 @@
+from collections import defaultdict
 import itertools
 import logging
 import math
+from dataclasses import dataclass
 from pathlib import Path
 import time
-from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_FILL, GL_FRONT_AND_BACK, GL_LINE, glClear, glClearColor, glPolygonMode
+from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_FALSE, GL_FILL, GL_FRONT_AND_BACK, GL_LINE, GL_TRUE, glClear, glClearColor, glDepthMask, glPolygonMode
 
 import glfw
 from imgui_bundle import imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
@@ -17,17 +19,8 @@ from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingE
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
-from gtools.gui.lib.layer import (
-    OBJECT_DISPLAY_END,
-    OBJECT_DISPLAY_START,
-    OBJECT_DROPPED_END,
-    OBJECT_DROPPED_START,
-    OBJECT_VEND_END,
-    OBJECT_VEND_START,
-    WORLD_FOREGROUND_AFTER,
-    WORLD_FOREGROUND_AFTER_END,
-)
-from gtools.gui.lib.object_renderer import ObjectRenderer
+from gtools.gui.lib.layer import OBJECT_DISPLAY_END, OBJECT_DISPLAY_START, OBJECT_DROPPED_END, OBJECT_VEND_START, WORLD_FOREGROUND_AFTER
+from gtools.gui.lib.object_renderer import ObjectRenderMesh, ObjectRenderer
 from gtools.gui.opengl import Framebuffer
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
 from gtools.gui.panels.panel import Panel
@@ -35,6 +28,16 @@ from gtools.gui.lib.world_renderer import WorldRenderer
 from gtools.gui.lib.highlight_renderer import HighlightRenderer
 
 logger = logging.getLogger("gui-world-viewer")
+
+
+@dataclass(slots=True)
+class ObjectRenderTask:
+    mesh: ObjectRenderMesh
+    renderer: ObjectRenderer
+    rotation: float = 0.0
+    pixel_scale: float = 1.0
+    tint: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    z_offset: float = 0.0
 
 
 class WorldTab(Panel):
@@ -86,97 +89,85 @@ class WorldTab(Panel):
         self._world_renderer = WorldRenderer()
         self._world_renderer.load(self._world)
 
-        self._dropped_renderer = ObjectRenderer(OBJECT_DROPPED_START, OBJECT_DROPPED_END)
-        self._dropped_mesh = self._dropped_renderer.build(self._world.dropped.items)
+        self._renderer_pre_fg = ObjectRenderer(OBJECT_DISPLAY_START, OBJECT_DISPLAY_END)
+        self._renderer_post_fg = ObjectRenderer(OBJECT_VEND_START, OBJECT_DROPPED_END)
+        self._obj_render_task: list[ObjectRenderTask] = []
 
-        self._display_renderer = ObjectRenderer(OBJECT_DISPLAY_START, OBJECT_DISPLAY_END)
-        display: list[DroppedItem] = []
+        self._init_objects()
+
+    def _init_objects(self) -> None:
+        for task in self._obj_render_task:
+            task.mesh.delete()
+        self._obj_render_task.clear()
+
+        icons: defaultdict[str, list[DroppedItem]] = defaultdict(list)
         for tile in self._world.tiles.values():
-            if tile.extra and isinstance(tile.extra, DisplayBlockTile) and tile.extra.item_id != 0:
-                display.append(DroppedItem(pos=vec2(tile.pos) * 32 + 8, id=tile.extra.item_id))
+            if not tile.extra:
+                continue
 
-        self._display_mesh = self._display_renderer.build(
-            display,
-            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
-            icon_scale=1.0,
-        )
-
-        self._vend_renderer = ObjectRenderer(OBJECT_VEND_START, OBJECT_VEND_END)
-        vend: list[DroppedItem] = []
-        for tile in self._world.tiles.values():
-            if tile.extra and isinstance(tile.extra, VendingMachineTile) and tile.extra.item_id != 0:
-                vend.append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(6, 5), id=tile.extra.item_id))
-
-        self._vend_mesh = self._vend_renderer.build(
-            vend,
-            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
-            icon_scale=0.5,
-        )
-
-        self._easel_renderer = ObjectRenderer(OBJECT_VEND_START, OBJECT_VEND_END)
-        easel: list[DroppedItem] = []
-        easel_mark: list[DroppedItem] = []
-        for tile in self._world.tiles.values():
-            if tile.extra and isinstance(tile.extra, PaintingEaselTile) and tile.extra.item_id != 0:
-                easel.append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(10, 2), id=tile.extra.item_id))
-                easel_mark.append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(10, 8), id=PAINTING_EASEL))
-
-        self._easel_mesh = self._easel_renderer.build(
-            easel,
-            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_TEXT | ObjectRenderer.Flags.NO_SHADOW,
-            icon_scale=0.6,
-        )
-
-        self._easel_mark_renderer = ObjectRenderer(WORLD_FOREGROUND_AFTER, WORLD_FOREGROUND_AFTER_END)
-        self._easel_mark_mesh = self._easel_mark_renderer.build(
-            easel_mark,
-            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_TEXT | ObjectRenderer.Flags.NO_SHADOW,
-            icon_scale=1.1,
-            tex_offset=ivec2(0, 1),
-        )
-
-        self._shelf_renderer = ObjectRenderer(OBJECT_VEND_START, OBJECT_VEND_END)
-        shelf: list[DroppedItem] = []
-
-        for tile in self._world.tiles.values():
-            if tile.extra and isinstance(tile.extra, ShelfTile):
+            if isinstance(tile.extra, DisplayBlockTile) and tile.extra.item_id != 0:
+                icons["display"].append(DroppedItem(pos=vec2(tile.pos) * 32 + 8, id=tile.extra.item_id))
+            elif isinstance(tile.extra, VendingMachineTile) and tile.extra.item_id != 0:
+                icons["vending"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(6, 5), id=tile.extra.item_id))
+            elif isinstance(tile.extra, PaintingEaselTile) and tile.extra.item_id != 0:
+                icons["easel"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(10, 2), id=tile.extra.item_id))
+                icons["easel_mark"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(10, 8), id=PAINTING_EASEL))
+            elif isinstance(tile.extra, ShelfTile):
                 for id, pos in (
                     (tile.extra.top_left_item_id, (3, 0)),
                     (tile.extra.top_right_item_id, (15, 0)),
                     (tile.extra.bottom_left_item_id, (3, 15)),
                     (tile.extra.bottom_right_item_id, (15, 15)),
                 ):
-                    if id == 0:
-                        continue
+                    if id != 0:
+                        icons["shelf"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(pos), id=id))
 
-                    shelf.append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(pos), id=id))
+        if icons["display"]:
+            self._obj_render_task.append(
+                ObjectRenderTask(
+                    mesh=self._renderer_pre_fg.build(
+                        icons["display"],
+                        flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
+                        icon_scale=1,
+                    ),
+                    renderer=self._renderer_pre_fg,
+                )
+            )
 
-        self._shelf_mesh = self._shelf_renderer.build(
-            shelf,
-            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
-            icon_scale=0.3,
-        )
+        if self._world.dropped.items:
+            self._obj_render_task.append(ObjectRenderTask(mesh=self._renderer_post_fg.build(self._world.dropped.items), renderer=self._renderer_post_fg))
+
+        flag = ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT
+        if icons["easel"]:
+            self._obj_render_task.append(
+                ObjectRenderTask(mesh=self._renderer_post_fg.build(icons["easel"], flags=flag, icon_scale=0.6), renderer=self._renderer_post_fg, rotation=0.2, pixel_scale=1.2)
+            )
+            self._obj_render_task.append(
+                ObjectRenderTask(
+                    mesh=self._renderer_post_fg.build(icons["easel_mark"], flags=flag, icon_scale=1.1, tex_offset=ivec2(0, 1)),
+                    renderer=self._renderer_post_fg,
+                    rotation=0.1,
+                    tint=(0.3, 0.3, 0.3),
+                    z_offset=0.001
+                )
+            )
+
+        if icons["vending"]:
+            self._obj_render_task.append(ObjectRenderTask(mesh=self._renderer_post_fg.build(icons["vending"], flags=flag, icon_scale=0.5), renderer=self._renderer_post_fg))
+
+        if icons["shelf"]:
+            self._obj_render_task.append(ObjectRenderTask(mesh=self._renderer_post_fg.build(icons["shelf"], flags=flag, icon_scale=0.3), renderer=self._renderer_post_fg))
 
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
         self._world_renderer.delete()
 
-        self._dropped_mesh.delete()
-        self._dropped_renderer.delete()
+        for task in self._obj_render_task:
+            task.mesh.delete()
+        self._obj_render_task.clear()
 
-        self._display_mesh.delete()
-        self._display_renderer.delete()
-
-        self._vend_mesh.delete()
-        self._vend_renderer.delete()
-
-        self._easel_renderer.delete()
-        self._easel_mesh.delete()
-        self._easel_mark_renderer.delete()
-        self._easel_mark_mesh.delete()
-
-        self._shelf_mesh.delete()
-        self._shelf_renderer.delete()
+        self._renderer_pre_fg.delete()
+        self._renderer_post_fg.delete()
 
         self._fbo.delete()
         self._highlight_renderer.delete()
@@ -587,14 +578,15 @@ class WorldTab(Panel):
         self._fbo.unbind()
 
     def _render_to_fbo_3d(self) -> None:
-        self._dropped_renderer.draw_shadow_3d(self._camera3d, self._dropped_mesh, self._layer_spread)
-        self._display_renderer.draw_3d(self._camera3d, self._display_mesh, self._layer_spread)
-        self._dropped_renderer.draw_3d(self._camera3d, self._dropped_mesh, self._layer_spread)
+        glDepthMask(GL_FALSE)
+        for task in self._obj_render_task:
+            task.renderer.draw_shadow_3d(self._camera3d, task.mesh, self._layer_spread, z_offset=task.z_offset)
+        glDepthMask(GL_TRUE)
+
         self._world_renderer.draw_3d(self._camera3d, self._layer_spread)
-        self._easel_renderer.draw_3d(self._camera3d, self._easel_mesh, self._layer_spread, rotation=0.2, pixel_scale=1.2)
-        self._easel_mark_renderer.draw_3d(self._camera3d, self._easel_mark_mesh, self._layer_spread, rotation=0.1, tint=(0.1, 0.1, 0.1))
-        self._vend_renderer.draw_3d(self._camera3d, self._vend_mesh, self._layer_spread)
-        self._shelf_renderer.draw_3d(self._camera3d, self._shelf_mesh, self._layer_spread)
+
+        for task in self._obj_render_task:
+            task.renderer.draw_3d(self._camera3d, task.mesh, self._layer_spread, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
 
         if self._hovered_tile:
             self._highlight_renderer.draw_hover_3d(self._camera3d, vec2(self._hovered_tile.pos), self._layer_spread)
@@ -602,14 +594,16 @@ class WorldTab(Panel):
         self._highlight_renderer.draw_playhead_3d(self._camera3d, self._sheet, self._world.width, self._layer_spread)
 
     def _render_to_fbo_2d(self) -> None:
-        self._dropped_renderer.draw_shadow(self._camera, self._dropped_mesh)
-        self._display_renderer.draw(self._camera, self._display_mesh)
-        self._dropped_renderer.draw(self._camera, self._dropped_mesh)
+        glDepthMask(GL_FALSE)
+        for task in self._obj_render_task:
+            task.renderer.draw_shadow(self._camera, task.mesh, z_offset=task.z_offset)
+        glDepthMask(GL_TRUE)
+
         self._world_renderer.draw(self._camera)
-        self._easel_renderer.draw(self._camera, self._easel_mesh, rotation=0.2, pixel_scale=1.2)
-        self._easel_mark_renderer.draw(self._camera, self._easel_mark_mesh, rotation=0.1, tint=(0.1, 0.1, 0.1))
-        self._vend_renderer.draw(self._camera, self._vend_mesh)
-        self._shelf_renderer.draw(self._camera, self._shelf_mesh)
+
+        for task in self._obj_render_task:
+            task.renderer.draw(self._camera, task.mesh, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
+
 
         self._highlight_renderer.draw_playhead(self._camera, self._sheet, self._world.width)
 

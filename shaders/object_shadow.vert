@@ -15,10 +15,11 @@ uniform mat4 u_mvp;
 uniform sampler2DArray texArray;
 uniform float u_tileSize;
 uniform vec2 u_shadowOffset;
+uniform float u_zOffset;
 
 void main() {
     vec2 worldPos = in_pos * u_tileSize * in_tileScale + in_tilePos + u_shadowOffset;
-    gl_Position = u_mvp * vec4(worldPos, in_depth, 1.0);
+    gl_Position = u_mvp * vec4(worldPos, in_depth + u_zOffset, 1.0);
 
     vec2 texSize = vec2(textureSize(texArray, 0).xy);
     vec2 uvStep  = vec2(u_tileSize) / texSize;

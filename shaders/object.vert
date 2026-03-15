@@ -16,6 +16,7 @@ uniform mat4 u_mvp;
 uniform sampler2DArray texArray;
 uniform float u_tileSize;
 uniform float u_rotation;
+uniform float u_zOffset;
 
 void main() {
     vec2 centered = in_pos - 0.5;
@@ -27,7 +28,7 @@ void main() {
     vec2 rotated = rot * centered + 0.5;
 
     vec2 worldPos = rotated * u_tileSize * in_tileScale + in_tilePos;
-    gl_Position = u_mvp * vec4(worldPos, in_depth, 1.0);
+    gl_Position = u_mvp * vec4(worldPos, in_depth + u_zOffset, 1.0);
 
     vec2 texSize = textureSize(texArray, 0).xy;
     vec2 uvStep = vec2(u_tileSize) / texSize;
