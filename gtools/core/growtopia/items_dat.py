@@ -434,6 +434,7 @@ class ItemInfoClothingType(IntEnum):
     BACK = 6
     HAIR = 7
     NECK = 8
+    ARTIFACTS = 9
 
 
 class ItemInfoSeedBase(IntEnum):

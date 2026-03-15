@@ -659,15 +659,15 @@ class MannequinTile(TileExtra):
     text: bytes = b""
     unk1: int = 0  # u8
     unk2: int = 0  # u32
-    clothing_1: int = 0  # u16
-    clothing_2: int = 0  # u16
-    clothing_3: int = 0  # u16
-    clothing_4: int = 0  # u16
-    clothing_5: int = 0  # u16
-    clothing_6: int = 0  # u16
-    clothing_7: int = 0  # u16
-    clothing_8: int = 0  # u16
-    clothing_9: int = 0  # u16
+    shirt: int = 0  # u16
+    pants: int = 0  # u16
+    shoes: int = 0  # u16
+    face: int = 0  # u16
+    hand: int = 0  # u16
+    back: int = 0  # u16
+    hair: int = 0  # u16
+    neck: int = 0  # u16
+    artifacts: int = 0  # u16
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "MannequinTile":
@@ -675,15 +675,15 @@ class MannequinTile(TileExtra):
         t.text = s.read_pascal_bytes("H")
         t.unk1 = s.read_u8()
         t.unk2 = s.read_u32()
-        t.clothing_1 = s.read_u16()
-        t.clothing_2 = s.read_u16()
-        t.clothing_3 = s.read_u16()
-        t.clothing_4 = s.read_u16()
-        t.clothing_5 = s.read_u16()
-        t.clothing_6 = s.read_u16()
-        t.clothing_7 = s.read_u16()
-        t.clothing_8 = s.read_u16()
-        t.clothing_9 = s.read_u16()
+        t.shirt = s.read_u16()
+        t.pants = s.read_u16()
+        t.shoes = s.read_u16()
+        t.face = s.read_u16()
+        t.hand = s.read_u16()
+        t.back = s.read_u16()
+        t.hair = s.read_u16()
+        t.neck = s.read_u16()
+        t.artifacts = s.read_u16()
 
         return t
 
@@ -736,28 +736,28 @@ class XenoniteCrystalTile(TileExtra):
 
 @dataclass(slots=True)
 class PhoneBoothTile(TileExtra):
-    clothing_1: int = 0  # u16
-    clothing_2: int = 0  # u16
-    clothing_3: int = 0  # u16
-    clothing_4: int = 0  # u16
-    clothing_5: int = 0  # u16
-    clothing_6: int = 0  # u16
-    clothing_7: int = 0  # u16
-    clothing_8: int = 0  # u16
-    clothing_9: int = 0  # u16
+    shirt: int = 0  # u16
+    pants: int = 0  # u16
+    shoes: int = 0  # u16
+    face: int = 0  # u16
+    hand: int = 0  # u16
+    back: int = 0  # u16
+    hair: int = 0  # u16
+    neck: int = 0  # u16
+    artifacts: int = 0  # u16
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "PhoneBoothTile":
         t = cls()
-        t.clothing_1 = s.read_u16()
-        t.clothing_2 = s.read_u16()
-        t.clothing_3 = s.read_u16()
-        t.clothing_4 = s.read_u16()
-        t.clothing_5 = s.read_u16()
-        t.clothing_6 = s.read_u16()
-        t.clothing_7 = s.read_u16()
-        t.clothing_8 = s.read_u16()
-        t.clothing_9 = s.read_u16()
+        t.shirt = s.read_u16()
+        t.pants = s.read_u16()
+        t.shoes = s.read_u16()
+        t.face = s.read_u16()
+        t.hand = s.read_u16()
+        t.back = s.read_u16()
+        t.hair = s.read_u16()
+        t.neck = s.read_u16()
+        t.artifacts = s.read_u16()
 
         return t
 
