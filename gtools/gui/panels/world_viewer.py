@@ -12,7 +12,7 @@ from pyglm.glm import ivec2, vec2
 
 from gtools.baked.items import PAINTING_EASEL
 from gtools.core.growtopia.packet import NetPacket
-from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, Tile, VendingMachineTile, World
+from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, ShelfTile, Tile, VendingMachineTile, World
 
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
@@ -135,6 +135,28 @@ class WorldTab(Panel):
             tex_offset=ivec2(0, 1),
         )
 
+        self._shelf_renderer = ObjectRenderer(OBJECT_VEND_START, OBJECT_VEND_END)
+        shelf: list[DroppedItem] = []
+
+        for tile in self._world.tiles.values():
+            if tile.extra and isinstance(tile.extra, ShelfTile):
+                for id, pos in (
+                    (tile.extra.top_left_item_id, (3, 0)),
+                    (tile.extra.top_right_item_id, (15, 0)),
+                    (tile.extra.bottom_left_item_id, (3, 15)),
+                    (tile.extra.bottom_right_item_id, (15, 15)),
+                ):
+                    if id == 0:
+                        continue
+
+                    shelf.append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(pos), id=id))
+
+        self._shelf_mesh = self._shelf_renderer.build(
+            shelf,
+            flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
+            icon_scale=0.3,
+        )
+
     def delete(self) -> None:
         logger.info(f"deleting tab {self._name}")
         self._world_renderer.delete()
@@ -153,6 +175,9 @@ class WorldTab(Panel):
         self._easel_mark_renderer.delete()
         self._easel_mark_mesh.delete()
 
+        self._shelf_mesh.delete()
+        self._shelf_renderer.delete()
+
         self._fbo.delete()
         self._highlight_renderer.delete()
         self._mixer.stop()
@@ -167,7 +192,6 @@ class WorldTab(Panel):
 
     @property
     def is_dirty(self) -> bool:
-        # If playing, we are always dirty (animated)
         return self._dirty or self._playing
 
     def update(self, dt: float) -> None:
@@ -570,6 +594,7 @@ class WorldTab(Panel):
         self._easel_renderer.draw_3d(self._camera3d, self._easel_mesh, self._layer_spread, rotation=0.2, pixel_scale=1.2)
         self._easel_mark_renderer.draw_3d(self._camera3d, self._easel_mark_mesh, self._layer_spread, rotation=0.1, tint=(0.1, 0.1, 0.1))
         self._vend_renderer.draw_3d(self._camera3d, self._vend_mesh, self._layer_spread)
+        self._shelf_renderer.draw_3d(self._camera3d, self._shelf_mesh, self._layer_spread)
 
         if self._hovered_tile:
             self._highlight_renderer.draw_hover_3d(self._camera3d, vec2(self._hovered_tile.pos), self._layer_spread)
@@ -584,6 +609,7 @@ class WorldTab(Panel):
         self._easel_renderer.draw(self._camera, self._easel_mesh, rotation=0.2, pixel_scale=1.2)
         self._easel_mark_renderer.draw(self._camera, self._easel_mark_mesh, rotation=0.1, tint=(0.1, 0.1, 0.1))
         self._vend_renderer.draw(self._camera, self._vend_mesh)
+        self._shelf_renderer.draw(self._camera, self._shelf_mesh)
 
         self._highlight_renderer.draw_playhead(self._camera, self._sheet, self._world.width)
 

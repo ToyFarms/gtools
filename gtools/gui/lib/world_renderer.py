@@ -196,9 +196,6 @@ class WorldRenderer(Renderer):
         for key, chunks_data in instances.items():
             rl = self._layers[key]
             for (cx, cy), per_tex in chunks_data.items():
-                # Correct bounding box for the chunk including tile size
-                # Subtract 16 for center-based tiles? No, tile.pos is in 32x32 grid.
-                # Actually tiles are 32x32.
                 bounds = (
                     cx * CHUNK_SIZE * self.TILE_SIZE - 16,
                     cy * CHUNK_SIZE * self.TILE_SIZE - 16,
