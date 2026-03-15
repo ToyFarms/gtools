@@ -101,7 +101,12 @@ class App:
             dt = now - self.prev
             self.prev = now
 
-            glfw.poll_events()
+            any_dirty = any(p.is_dirty for p in self.panels)
+            if not any_dirty and not self._cmd.is_open:
+                glfw.wait_events_timeout(0.1)
+            else:
+                glfw.poll_events()
+
             self.imgui_renderer.process_inputs()
             imgui.new_frame()
 

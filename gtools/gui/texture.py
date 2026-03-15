@@ -133,32 +133,34 @@ class TextureArray:
 
             logger.debug(f"growing TextureArray {self.width}x{self.height} from {self._allocated_layers} to {new_capacity} layers (used: {total_layers})")
 
+            from OpenGL.GL import glCopyImageSubData
+
+            new_tex_id = int(glGenTextures(1))
+            old_tex_id = self.tex_id
+            old_allocated = self._allocated_layers
+
+            self.tex_id = new_tex_id
             self._allocate(new_capacity)
 
-            glBindTexture(GL_TEXTURE_2D_ARRAY, self.tex_id)
-
-            for tex in self._resident:
-                try:
-                    data = RTTex.from_file(tex.key)
-                    mip = data.get_mip(0)
-                    pixels = mip.pixels
-                except Exception:
-                    logger.warning("failed to read resident texture '%s', fallback to default texture", tex.key)
-                    pixels = _get_default_pixels(self.width, self.height)
-
-                glTexSubImage3D(
+            if old_tex_id != 0 and old_allocated > 0:
+                glCopyImageSubData(
+                    old_tex_id,
                     GL_TEXTURE_2D_ARRAY,
                     0,
                     0,
                     0,
-                    tex.layer,
+                    0,
+                    new_tex_id,
+                    GL_TEXTURE_2D_ARRAY,
+                    0,
+                    0,
+                    0,
+                    0,
                     self.width,
                     self.height,
-                    1,
-                    GL_RGBA,
-                    GL_UNSIGNED_BYTE,
-                    pixels,
+                    old_allocated,
                 )
+                glDeleteTextures(1, [old_tex_id])
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, self.tex_id)
 

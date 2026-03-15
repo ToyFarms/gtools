@@ -64,6 +64,7 @@ class WorldTab(Panel):
         self._open = True
         self._first_render = True
         self._is_active = True
+        self._dirty = True
 
         self._mixer = AudioMixer()
         self._mixer.master_gain = 0.5
@@ -163,12 +164,19 @@ class WorldTab(Panel):
     def is_active(self) -> bool:
         return self._is_active
 
+    @property
+    def is_dirty(self) -> bool:
+        # If playing, we are always dirty (animated)
+        return self._dirty or self._playing
+
     def update(self, dt: float) -> None:
         if self._playing:
             self._sheet.update(dt)
+            self._dirty = True
 
         if self._seek != 0:
             self._sheet.seek(self._seek)
+            self._dirty = True
 
         if self._is_active:
             if self._mode_3d:
@@ -192,6 +200,7 @@ class WorldTab(Panel):
 
                 if fwd != 0.0 or rgt != 0.0 or vert != 0.0:
                     self._camera3d.move(fwd, rgt, vert, dt, speed_mul=2 if boost else 1)
+                    self._dirty = True
             else:
                 dx = 0.0
                 dy = 0.0
@@ -211,6 +220,7 @@ class WorldTab(Panel):
                         speed *= 2.5
 
                     self._camera.pan_by_screen(-dx * speed, -dy * speed)
+                    self._dirty = True
 
     def render(self) -> None:
         if self._first_render and self._dockspace_id:
@@ -261,14 +271,19 @@ class WorldTab(Panel):
                         self._world_renderer.flags |= flag
                     else:
                         self._world_renderer.flags &= ~flag
+                    self._dirty = True
 
             imgui.separator()
 
-            _, self._mode_3d = imgui.checkbox("3D", self._mode_3d)
+            changed, self._mode_3d = imgui.checkbox("3D", self._mode_3d)
+            if changed:
+                self._dirty = True
 
             if self._mode_3d:
                 imgui.set_next_item_width(sidebar_w - 16)
-                _, self._layer_spread = imgui.slider_float("##spread", self._layer_spread, 10.0, 1000.0)
+                changed, self._layer_spread = imgui.slider_float("##spread", self._layer_spread, 10.0, 1000.0)
+                if changed:
+                    self._dirty = True
                 imgui.text("Spread")
                 imgui.text(f"Spd: {self._camera3d.speed:.0f}")
 
@@ -279,10 +294,15 @@ class WorldTab(Panel):
             cw, ch = imgui.get_content_region_avail()
             cw, ch = int(cw), int(ch)
             if cw > 0 and ch > 0:
-                self._fbo.resize(cw, ch)
-                self._camera.resize(cw, ch)
-                self._camera3d.resize(cw, ch)
-                self._render_to_fbo()
+                if self._fbo.width != cw or self._fbo.height != ch:
+                    self._fbo.resize(cw, ch)
+                    self._camera.resize(cw, ch)
+                    self._camera3d.resize(cw, ch)
+                    self._dirty = True
+
+                if self._dirty:
+                    self._render_to_fbo()
+                    self._dirty = False
                 imgui.image(
                     imgui.ImTextureRef(self._fbo.color_tex),
                     (cw, ch),
@@ -319,36 +339,46 @@ class WorldTab(Panel):
                 self._keys_held.add(event.key)
                 if event.key == glfw.KEY_3:
                     self._mode_3d = not self._mode_3d
+                    self._dirty = True
                     return True
                 if event.key == glfw.KEY_0:
                     self._world_renderer.flags |= WorldRenderer.Flags.RENDER_FG | WorldRenderer.Flags.RENDER_BG
+                    self._dirty = True
                     return True
                 elif event.key == glfw.KEY_1:
                     self._world_renderer.flags ^= WorldRenderer.Flags.RENDER_FG
+                    self._dirty = True
                     return True
                 elif event.key == glfw.KEY_2:
                     self._world_renderer.flags ^= WorldRenderer.Flags.RENDER_BG
+                    self._dirty = True
                     return True
                 elif event.key == glfw.KEY_LEFT:
                     self._seek = -1
+                    self._dirty = True
                     return True
                 elif event.key == glfw.KEY_RIGHT:
                     self._seek = 1
+                    self._dirty = True
                     return True
                 elif event.key == glfw.KEY_COMMA:
                     self._sheet.seek(-1, play=True)
+                    self._dirty = True
                     return True
                 elif event.key == glfw.KEY_PERIOD:
                     self._sheet.seek(1, play=True)
+                    self._dirty = True
                     return True
                 elif event.key == glfw.KEY_R:
                     if self._mode_3d:
                         self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
                     else:
                         self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
+                    self._dirty = True
                     return True
                 elif event.key == glfw.KEY_SPACE and not self._mode_3d:
                     self._playing = not self._playing
+                    self._dirty = True
                     return True
             elif event.action == glfw.RELEASE:
                 self._keys_held.discard(event.key)
@@ -368,6 +398,7 @@ class WorldTab(Panel):
             if self._hovered:
                 self._camera3d.speed *= 1.1**event.yoff
                 self._camera3d.speed = max(50.0, min(self._camera3d.speed, 10000.0))
+                self._dirty = True
                 return True
         elif isinstance(event, MouseButtonEvent):
             if event.button == glfw.MOUSE_BUTTON_LEFT:
@@ -402,6 +433,7 @@ class WorldTab(Panel):
                         min_x, max_x = min(p1.x, p2.x), max(p1.x, p2.x)
                         min_y, max_y = min(p1.y, p2.y), max(p1.y, p2.y)
                         self._camera3d.fit_to_rect(min_x, min_y, max_x - min_x, max_y - min_y, z=z)
+                        self._dirty = True
 
                     return True
         elif isinstance(event, CursorMoveEvent):
@@ -413,14 +445,17 @@ class WorldTab(Panel):
                 dy = ly - prev[1]
                 self._drag["last_screen"] = (lx, ly)
                 self._camera3d.look(dx, dy)
+                self._dirty = True
                 return True
             if self._selection_drag.get("active"):
                 self._selection_drag["current"] = (lx, ly)
+                self._dirty = True
                 return True
         elif isinstance(event, TouchEvent):
             if self._hovered:
                 self._last_touch_event = time.monotonic()
                 self._camera3d.look(event.dx, event.dy)
+                self._dirty = True
                 return True
         return False
 
@@ -429,6 +464,7 @@ class WorldTab(Panel):
             if self._hovered and time.monotonic() - self._last_touch_event >= 0.5:
                 lx, ly = self._to_local(event.screen_x, event.screen_y)
                 self._camera.zoom_around(1.1**event.yoff, lx, ly)
+                self._dirty = True
                 return True
         elif isinstance(event, MouseButtonEvent):
             if event.button == glfw.MOUSE_BUTTON_LEFT:
@@ -463,6 +499,7 @@ class WorldTab(Panel):
                         min_x, max_x = min(p1.x, p2.x), max(p1.x, p2.x)
                         min_y, max_y = min(p1.y, p2.y), max(p1.y, p2.y)
                         self._camera.fit_to_rect(min_x, min_y, max_x - min_x, max_y - min_y)
+                        self._dirty = True
 
                     return True
         elif isinstance(event, CursorMoveEvent):
@@ -473,9 +510,11 @@ class WorldTab(Panel):
                 dy = ly - self._drag["start_screen"][1]
                 self._camera.pos.x = self._drag["start_cam"].x - dx / self._camera.zoom
                 self._camera.pos.y = self._drag["start_cam"].y - dy / self._camera.zoom
+                self._dirty = True
                 return True
             if self._selection_drag.get("active"):
                 self._selection_drag["current"] = (lx, ly)
+                self._dirty = True
                 return True
         elif isinstance(event, TouchEvent):
             if self._hovered:
@@ -485,6 +524,7 @@ class WorldTab(Panel):
 
                 lx, ly = self._to_local(self._cursor_pos[0], self._cursor_pos[1])
                 self._camera.zoom_around(event.scale_factor, lx, ly)
+                self._dirty = True
 
                 return True
         return False
@@ -534,12 +574,17 @@ class WorldTab(Panel):
         local = self._to_local(self._cursor_pos[0], self._cursor_pos[1])
         world = self._camera.screen_to_world(local[0], local[1])
 
+        old_hovered_tile = self._hovered_tile
+
         tile_x = math.floor((world.x + 16) / 32)
         tile_y = math.floor((world.y + 16) / 32)
         if 0 < tile_x < self._world.width and 0 < tile_y < self._world.height:
             self._hovered_tile = self._world.get_tile(tile_x, tile_y)
         else:
             self._hovered_tile = None
+
+        if self._hovered_tile != old_hovered_tile:
+            self._dirty = True
 
         if self._hovered_tile:
             self._highlight_renderer.draw_hover(self._camera, vec2(self._hovered_tile.pos))

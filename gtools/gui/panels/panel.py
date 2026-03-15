@@ -14,6 +14,10 @@ class Panel(ABC):
     def is_open(self) -> bool:
         return self._open
 
+    @property
+    def is_dirty(self) -> bool:
+        return True
+
     def handle_event(self, event) -> bool:
         _ = event
         return False

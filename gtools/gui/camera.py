@@ -48,6 +48,15 @@ class Camera2D:
         self.width = width
         self.height = height
 
+    def get_bounds(self) -> tuple[float, float, float, float]:
+        hw = self.width / (2.0 * self.zoom)
+        hh = self.height / (2.0 * self.zoom)
+        return self.pos.x - hw, self.pos.y - hh, hw * 2, hh * 2
+
+    def is_visible(self, x: float, y: float, w: float, h: float) -> bool:
+        bx, by, bw, bh = self.get_bounds()
+        return not (x + w < bx or x > bx + bw or y + h < by or y > by + bh)
+
     def fit_to_rect(self, x: float, y: float, w: float, h: float, padding: float = 0.0) -> None:
         self.pos = vec2(x + w / 2.0, y + h / 2.0)
         padded_w = w + padding * 2.0
