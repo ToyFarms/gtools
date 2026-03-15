@@ -135,7 +135,12 @@ class WorldTab(Panel):
             )
 
         if self._world.dropped.items:
-            self._obj_render_task.append(ObjectRenderTask(mesh=self._renderer_post_fg.build(self._world.dropped.items), renderer=self._renderer_post_fg))
+            self._obj_render_task.append(
+                ObjectRenderTask(
+                    mesh=self._renderer_post_fg.build(self._world.dropped.items, icon_scale=0.67, overlay_scale=1.2),
+                    renderer=self._renderer_post_fg,
+                )
+            )
 
         flag = ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT
         if icons["easel"]:
@@ -148,7 +153,7 @@ class WorldTab(Panel):
                     renderer=self._renderer_post_fg,
                     rotation=0.1,
                     tint=(0.3, 0.3, 0.3),
-                    z_offset=0.001
+                    z_offset=0.001,
                 )
             )
 
@@ -603,7 +608,6 @@ class WorldTab(Panel):
 
         for task in self._obj_render_task:
             task.renderer.draw(self._camera, task.mesh, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
-
 
         self._highlight_renderer.draw_playhead(self._camera, self._sheet, self._world.width)
 

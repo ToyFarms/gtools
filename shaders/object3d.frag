@@ -10,7 +10,7 @@ uniform vec3 u_tint;
 void main() {
     vec2 texSize = textureSize(texArray, 0).xy;
 
-    vec2 pixelatedUV = ceil(texCoord * texSize / u_pixelScale) * u_pixelScale / texSize;
+    vec2 pixelatedUV = (floor(texCoord * texSize / u_pixelScale) + 0.5) * u_pixelScale / texSize;
 
     vec2 halfTexel = vec2(0.5) / texSize;
     pixelatedUV = clamp(pixelatedUV, halfTexel, 1.0 - halfTexel);

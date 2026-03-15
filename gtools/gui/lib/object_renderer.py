@@ -238,8 +238,8 @@ class ObjectRendererBase(Renderer, ABC):
         self,
         items: list[DroppedItem],
         tex_offset: ivec2 = ivec2(0, 0),
-        overlay_scale: float = 1.2,
-        icon_scale: float = 0.67,
+        overlay_scale: float = 1,
+        icon_scale: float = 1,
         flags: "ObjectRendererBase.Flags" = Flags(0),
     ) -> ObjectRenderMesh:
         region_counters: dict[tuple[int, int], int] = defaultdict(int)
