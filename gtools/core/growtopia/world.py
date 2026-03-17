@@ -2684,12 +2684,13 @@ class World:
         if item.is_background():
             self.place_bg(tile, id)
             self.update_3x3_connection(tile)
+            return
         else:
             if item.item_type != ItemInfoType.FIST:
                 self.place_fg(tile, id)
                 if id == ANGRY_ADVENTURE_GORILLA:
                     tile.flags |= TileFlags.IS_ON
-            elif tile.front:
+            elif tile.fg_id:
                 self.place_fg(tile, 0)
             elif tile.bg_id:
                 self.place_bg(tile, 0)

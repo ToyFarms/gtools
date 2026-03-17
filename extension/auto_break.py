@@ -5,6 +5,7 @@ import random
 import time
 
 from pyglm.glm import ivec2
+from gtools.baked.items import BEDROCK
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
@@ -89,7 +90,7 @@ class AutoBreakExtension(Extension):
         """true means state change"""
         if self.auto_state == State.BREAKING:
             for target in self.target:
-                if not self.in_range(target, punch=True) or self.block_destroyed(target):
+                if not self.in_range(target, punch=True) or self.block_destroyed(target, self.item_id):
                     continue
 
                 return TileChangeRequest(item_id=18, target=target)
@@ -97,13 +98,15 @@ class AutoBreakExtension(Extension):
             return True
         elif self.auto_state == State.BUILDING:
             for target in self.target:
+                if self.state.inventory.get(self.item_id) is None:
+                    self.auto_state = State.BREAKING
+                    return True
                 if not self.in_range(target, punch=False) or not self.can_place(target, self.item_id):
                     continue
                 if target in self.place_pending and time.monotonic() - self.place_pending[target] < 1:
                     continue
 
                 assert self.item_id != 0
-                self.place_pending[target] = time.monotonic()
                 return TileChangeRequest(self.item_id, target)
             self.auto_state = State.BREAKING
             return True
@@ -140,9 +143,15 @@ class AutoBreakExtension(Extension):
                     time.sleep(0.01)
                     continue
 
+                now = time.monotonic()
+                self.place_pending = {k: v for k, v in self.place_pending.items() if now - v < 1.0}
+
                 if not self.send_tile_change_request(next.item_id, next.target):
                     time.sleep(0.01)
                     continue
+
+                if next.item_id != 18:
+                    self.place_pending[next.target] = time.monotonic()
 
                 last_tile_change = time.monotonic()
                 time.sleep(random.uniform(0.19, 0.21))
@@ -157,7 +166,7 @@ class AutoBreakExtension(Extension):
             self.reset_state()
             time.sleep(0.1)
 
-    def block_destroyed(self, pos: ivec2) -> bool:
+    def block_destroyed(self, pos: ivec2, id: int) -> bool:
         if not self.state.world:
             return False
 
@@ -165,7 +174,10 @@ class AutoBreakExtension(Extension):
         if not tile:
             return False
 
-        return tile.fg_id == 0 and tile.bg_id == 0
+        if item_database.is_background(id):
+            return tile.bg_id == 0
+
+        return tile.fg_id == 0
 
     def can_place(self, pos: ivec2, item_id: int) -> bool:
         if not self.state.world:
@@ -175,11 +187,16 @@ class AutoBreakExtension(Extension):
         if not tile:
             return False
 
-        if not item_database.is_background(item_id):
-            return tile.fg_id == 0
+        if item_database.is_background(item_id):
+            if tile.fg_id == BEDROCK:
+                return False
 
-        # you can always place background except on bedrock and when its the same type
-        return tile.bg_id != 1 or tile.bg_id != item_id
+            if tile.bg_id == item_id:
+                return False
+
+            return True
+        else:
+            return tile.fg_id == 0
 
     def stop_auto(self) -> None:
         self.enabled = False
@@ -320,7 +337,7 @@ class AutoBreakExtension(Extension):
     def send_tile_change_request(self, id: int, target_tile: ivec2) -> bool:
         if not self.in_range(target_tile, id == 18) or self.state.status != Status.IN_WORLD:
             return False
-        if (id == 18 and self.block_destroyed(target_tile)) or (id != 18 and not self.can_place(target_tile, id)):
+        if (id == 18 and self.block_destroyed(target_tile, self.item_id)) or (id != 18 and not self.can_place(target_tile, id)):
             return False
         if id != 18 and self.state.inventory.get(id) is None:
             return False
