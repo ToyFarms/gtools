@@ -4,7 +4,7 @@ import math
 import random
 import time
 
-from pyglm.glm import ivec2, vec2
+from pyglm.glm import ivec2
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
@@ -120,7 +120,7 @@ class AutoBreakExtension(Extension):
                 if time.monotonic() - last_tile_change > 0.3:
                     break
 
-                if self.state.me.character.flags & CharacterFlags.FROZEN:
+                if self.state.me.state.flags & CharacterFlags.FROZEN:
                     if not printed:
                         print("waiting because character is frozen")
                         printed = True
@@ -204,7 +204,7 @@ class AutoBreakExtension(Extension):
         if template == "bfg":
             self.target.clear()
             for x in range(2):
-                sign = -1 if self.state.me.state & TankFlags.FACING_LEFT else 1
+                sign = -1 if self.state.me.flags & TankFlags.FACING_LEFT else 1
                 target = ivec2(self.state.me.pos // 32) + ((x + 1) * sign, 0)
                 self.target.append(target)
                 self.send_particle(ParticleID.LBOT_PLACE, tile=target)
@@ -327,7 +327,7 @@ class AutoBreakExtension(Extension):
 
         punch_or_place = TankFlags.PUNCH if id == 18 else TankFlags.PLACE
         facing_left = self.facing_left(tile=target_tile)
-        print(f"last={time.time()-self.last_confirmation:.2f}, tile change at {target_tile} {id=} facing={'left' if self.state.me.state & TankFlags.FACING_LEFT != 0 else 'right'}")
+        print(f"last={time.time()-self.last_confirmation:.2f}, tile change at {target_tile} {id=} facing={'left' if self.state.me.flags & TankFlags.FACING_LEFT != 0 else 'right'}")
         self.push(
             PreparedPacket(
                 packet=NetPacket(
@@ -371,7 +371,7 @@ class AutoBreakExtension(Extension):
             return
 
         print("sending reset state")
-        facing_left = self.state.me.state & TankFlags.FACING_LEFT
+        facing_left = self.state.me.flags & TankFlags.FACING_LEFT
         pkt = NetPacket(
             type=NetType.TANK_PACKET,
             data=TankPacket(
