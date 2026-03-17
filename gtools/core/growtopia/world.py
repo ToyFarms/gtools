@@ -2332,6 +2332,7 @@ class World:
         self.nb_tiles = len(self.tiles)
 
     def get_world_lock(self) -> Tile | None:
+        # TODO: this will actually get all lock, including small lock, big lock, etc. not just world lock
         for tile in self.tiles.values():
             if not tile.extra:
                 continue
