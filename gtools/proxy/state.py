@@ -15,7 +15,7 @@ from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.growtopia.world import LockTile, Npc, NpcEvent, NpcType, Tile, TileExtraType, TileFlags, World
 from gtools.protogen import growtopia_pb2
-from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Packet
+from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
     STATE_ENTER_WORLD,
     STATE_EXIT_WORLD,
@@ -195,22 +195,23 @@ class State:
                             ),
                         )
                     case TankType.TILE_CHANGE_REQUEST:
-                        self.send_state_update(
-                            broker,
-                            StateUpdate(
-                                what=STATE_TILE_CHANGE_REQUEST,
-                                tile_change_req=TileChangeRequest(
-                                    x=pkt.tank.int_x,
-                                    y=pkt.tank.int_y,
-                                    id=pkt.tank.value,
-                                    net_id=pkt.tank.net_id,
-                                    flags=pkt.tank.flags,
-                                    splice=pkt.tank.jump_count == 1,
-                                    should_take_item=pkt.tank.particle_rotation == 0.0,
-                                    seed_id=pkt.tank.animation_type,
+                        if event.direction == DIRECTION_SERVER_TO_CLIENT:
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_TILE_CHANGE_REQUEST,
+                                    tile_change_req=TileChangeRequest(
+                                        x=pkt.tank.int_x,
+                                        y=pkt.tank.int_y,
+                                        id=pkt.tank.value,
+                                        net_id=pkt.tank.net_id,
+                                        flags=pkt.tank.flags,
+                                        splice=pkt.tank.jump_count == 1,
+                                        should_take_item=pkt.tank.particle_rotation == 0.0,
+                                        seed_id=pkt.tank.animation_type,
+                                    ),
                                 ),
-                            ),
-                        )
+                            )
                     case TankType.SEND_TILE_TREE_STATE:
                         self.send_state_update(
                             broker,
