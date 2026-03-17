@@ -47,10 +47,8 @@ class CharacterState(_message.Message):
     def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., flags: _Optional[int] = ..., gravity: _Optional[float] = ..., velocity: _Optional[float] = ..., acceleration: _Optional[float] = ..., velocity_in_water: _Optional[float] = ..., jump_strength: _Optional[float] = ...) -> None: ...
 
 class Me(_message.Message):
-    __slots__ = ("net_id", "build_range", "punch_range", "pos", "flags", "state", "server_ping", "client_ping", "time_since_login", "time_in_world")
+    __slots__ = ("net_id", "pos", "flags", "state", "server_ping", "client_ping", "time_since_login", "time_in_world")
     NET_ID_FIELD_NUMBER: _ClassVar[int]
-    BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
-    PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
     POS_FIELD_NUMBER: _ClassVar[int]
     FLAGS_FIELD_NUMBER: _ClassVar[int]
     STATE_FIELD_NUMBER: _ClassVar[int]
@@ -59,8 +57,6 @@ class Me(_message.Message):
     TIME_SINCE_LOGIN_FIELD_NUMBER: _ClassVar[int]
     TIME_IN_WORLD_FIELD_NUMBER: _ClassVar[int]
     net_id: int
-    build_range: int
-    punch_range: int
     pos: Vec2F
     flags: int
     state: CharacterState
@@ -68,7 +64,7 @@ class Me(_message.Message):
     client_ping: int
     time_since_login: float
     time_in_world: float
-    def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., pos: _Optional[_Union[Vec2F, _Mapping]] = ..., flags: _Optional[int] = ..., state: _Optional[_Union[CharacterState, _Mapping]] = ..., server_ping: _Optional[int] = ..., client_ping: _Optional[int] = ..., time_since_login: _Optional[float] = ..., time_in_world: _Optional[float] = ...) -> None: ...
+    def __init__(self, net_id: _Optional[int] = ..., pos: _Optional[_Union[Vec2F, _Mapping]] = ..., flags: _Optional[int] = ..., state: _Optional[_Union[CharacterState, _Mapping]] = ..., server_ping: _Optional[int] = ..., client_ping: _Optional[int] = ..., time_since_login: _Optional[float] = ..., time_in_world: _Optional[float] = ...) -> None: ...
 
 class Item(_message.Message):
     __slots__ = ("id", "amount", "flags")

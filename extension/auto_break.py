@@ -239,7 +239,7 @@ class AutoBreakExtension(Extension):
     def _on_punch(self, event: PendingPacket) -> PendingPacket | None:
         if self._set_id_to_next and self.state.world:
             pkt = NetPacket.deserialize(event.buf)
-            if tile := self.state.world.get_tile(ivec2(pkt.tank.int_x, pkt.tank.int_y)):
+            if tile := self.state.world.get_tile(pkt.tank.int_x, pkt.tank.int_y):
                 self.item_id = tile.fg_id if tile.fg_id != 0 else tile.bg_id
                 self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
                 self._set_id_to_next = False

@@ -87,8 +87,10 @@ message TileChangeRequest {
   int32 x = 1;
   int32 y = 2;
   uint32 id = 3;
+  int32 net_id = 8;
   uint32 flags = 4;
   bool splice = 6;
+  bool should_take_item = 7;
   uint32 seed_id = 5;
 }
 

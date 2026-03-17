@@ -98,6 +98,7 @@ from gtools.core.buffer import Buffer
 import cbor2
 
 from gtools.core.color import color_matrix_filter
+from gtools.core.growtopia.inventory import Inventory
 from gtools.core.growtopia.items_dat import (
     ItemFlag,
     ItemInfoCollisionType,
@@ -2659,8 +2660,22 @@ class World:
         assert tile.extra
         tile.extra.expect(SeedTile).item_on_tree = tree_item_id
 
-    def tile_change(self, tile: Tile, id: int, flags: TankFlags, splice: bool = False, seed_id: int = 0) -> None:
+    def tile_change(
+        self,
+        tile: Tile,
+        inventory: Inventory,
+        id: int,
+        flags: TankFlags,
+        net_id: int,
+        splice: bool = False,
+        should_take_item: bool = True,
+        seed_id: int = 0,
+    ) -> None:
         item = item_database.get(id)
+
+        if net_id != -1 and should_take_item and self.get_player(net_id):
+            inventory.add(id, -1)
+
         if item.item_type == ItemInfoType.SEED:
             if tile.fg_id == 0:
                 self.plant(tile, id)
@@ -2670,7 +2685,7 @@ class World:
             self.place_bg(tile, id)
             self.update_3x3_connection(tile)
         else:
-            if item.item_type == ItemInfoType.FIST:
+            if item.item_type != ItemInfoType.FIST:
                 self.place_fg(tile, id)
                 if id == ANGRY_ADVENTURE_GORILLA:
                     tile.flags |= TileFlags.IS_ON

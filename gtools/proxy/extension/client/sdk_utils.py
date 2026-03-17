@@ -394,6 +394,6 @@ class ExtensionUtility(ABC):
         return TankFlags.FACING_LEFT if self.state.me.pos.x > target.x else TankFlags.NONE
 
     def in_range(self, p2: ivec2, punch: bool) -> bool:
-        range = self.state.me.punch_range if punch else self.state.me.build_range
+        range = self.state.me.state.punch_range if punch else self.state.me.state.build_range
         d = abs(ivec2(self.state.me.pos // 32) - p2)
         return d.x <= range and d.y <= range

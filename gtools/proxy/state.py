@@ -55,8 +55,6 @@ from gtools.proxy.extension.server.broker import Broker
 @dataclass(slots=True)
 class Me:
     net_id: int = 0
-    build_range: int = 0
-    punch_range: int = 0
     pos: vec2 = field(default_factory=vec2)
     flags: TankFlags = TankFlags.NONE
     state: CharacterState = field(default_factory=CharacterState)
@@ -69,8 +67,6 @@ class Me:
     def from_proto(cls, proto: growtopia_pb2.Me) -> "Me":
         return cls(
             net_id=proto.net_id,
-            build_range=proto.build_range,
-            punch_range=proto.punch_range,
             pos=vec2(proto.pos.x, proto.pos.y),
             flags=TankFlags(proto.flags),
             state=CharacterState.from_proto(proto.state),
@@ -83,8 +79,6 @@ class Me:
     def to_proto(self) -> growtopia_pb2.Me:
         return growtopia_pb2.Me(
             net_id=self.net_id,
-            build_range=self.build_range,
-            punch_range=self.punch_range,
             pos=growtopia_pb2.Vec2F(x=self.pos.x, y=self.pos.y),
             flags=self.flags,
             state=self.state.to_proto(),
@@ -172,7 +166,6 @@ class State:
             ),
         )
 
-    # TODO: remove ModifyWorld, just make it super specific to one event
     def emit_event(self, broker: Broker, event: PreparedPacket) -> None:
         """emit event only sends command through the protobuf, no state update should be happening inside this function"""
         pkt = event.as_net
@@ -210,8 +203,10 @@ class State:
                                     x=pkt.tank.int_x,
                                     y=pkt.tank.int_y,
                                     id=pkt.tank.value,
+                                    net_id=pkt.tank.net_id,
                                     flags=pkt.tank.flags,
                                     splice=pkt.tank.jump_count == 1,
+                                    should_take_item=pkt.tank.particle_rotation == 0.0,
                                     seed_id=pkt.tank.animation_type,
                                 ),
                             ),
@@ -699,9 +694,12 @@ class State:
                 if tile := self.world.get_tile(ivec2(upd.tile_change_req.x, upd.tile_change_req.y)):
                     self.world.tile_change(
                         tile=tile,
+                        inventory=self.inventory,
                         id=upd.tile_change_req.id,
                         flags=TankFlags(upd.tile_change_req.flags),
+                        net_id=upd.tile_change_req.net_id,
                         splice=upd.tile_change_req.splice,
+                        should_take_item=upd.tile_change_req.should_take_item,
                         seed_id=upd.tile_change_req.seed_id,
                     )
             case StateUpdateWhat.STATE_NPC_UPDATE:
