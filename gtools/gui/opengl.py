@@ -1,3 +1,4 @@
+import atexit
 import ctypes
 import logging
 from pathlib import Path
@@ -196,6 +197,7 @@ class Uniform:
 
 class ShaderProgram:
     _SHADER: dict[str, "ShaderProgram"] = {}
+    logger = logging.getLogger("shader-program")
 
     def __init__(self, vs_src: str, fs_src: str) -> None:
         self._id = self._link(vs_src, fs_src)
@@ -251,6 +253,15 @@ class ShaderProgram:
 
     def delete(self) -> None:
         glDeleteProgram(self._id)
+
+    @staticmethod
+    def delete_all() -> None:
+        for key, shader in ShaderProgram._SHADER.items():
+            ShaderProgram.logger.debug(f"deleting shader {key}")
+            shader.delete()
+
+
+atexit.register(lambda: ShaderProgram.delete_all())
 
 
 class Mesh:

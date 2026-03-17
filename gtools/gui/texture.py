@@ -207,11 +207,22 @@ class TextureArray:
 
 
 class GLTexManager:
+    _instance: "GLTexManager | None" = None
+
+    def __new__(cls) -> "GLTexManager":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
     def __init__(self) -> None:
+        if self._initialized:
+            return
         self._textures: dict[str, GLTex] = {}
         self._arrays: dict[tuple[int, int], TextureArray] = {}
         self._default_array: TextureArray | None = None
         self._default_tex: GLTex | None = None
+        self._initialized = True
 
     def _get_or_create_array(self, width: int, height: int) -> TextureArray:
         key = (width, height)
@@ -282,6 +293,7 @@ class GLTexManager:
 
     def delete_texture(self, key: str) -> None:
         if key not in self._textures:
+            logger.debug("delete texture '%s' not found, skipping", key)
             return
 
         tex = self._textures.pop(key)
@@ -291,82 +303,88 @@ class GLTexManager:
             return
 
         if self._default_array is not None and array is self._default_array:
+            logger.debug("texture '%s' belongs to the default array, skipping deletion", key)
             return
+
+        logger.debug("deleting texture '%s' (layer=%d, array=%dx%d)", key, tex.layer, array.width, array.height)
 
         keys_referencing = [k for k, t in self._textures.items() if t.array is array]
-        if keys_referencing:
-            for k in keys_referencing:
-                self._textures.pop(k, None)
+        for k in keys_referencing:
+            logger.debug("evicting co-resident texture '%s' from array %dx%d", k, array.width, array.height)
+            self._textures.pop(k, None)
 
-            return
-
-        array.delete()
-        self._arrays.pop((array.width, array.height), None)
+        if len(keys_referencing) <= 1:
+            logger.debug("delete_texture: destroying TextureArray %dx%d (tex_id=%d)", array.width, array.height, array.tex_id)
+            array.delete()
+            self._arrays.pop((array.width, array.height), None)
 
     def delete_all(self) -> None:
-        for array in self._arrays.values():
+        texture_count = len(self._textures)
+        array_count = len(self._arrays)
+        logger.debug("releasing %d texture(s) across %d array(s)", texture_count, array_count)
+
+        for (w, h), array in self._arrays.items():
+            logger.debug("destroying TextureArray %dx%d (tex_id=%d)", w, h, array.tex_id)
             array.delete()
 
         self._arrays.clear()
         self._textures.clear()
 
         if self._default_array:
+            logger.debug("destroying default TextureArray (tex_id=%d)", self._default_array.tex_id)
             try:
                 self._default_array.delete()
             except Exception:
-                pass
+                logger.warning("failed to delete default TextureArray", exc_info=True)
         self._default_array = None
         self._default_tex = None
 
 
-_GLOBAL_TEX_MANAGER = GLTexManager()
-atexit.register(lambda: _GLOBAL_TEX_MANAGER.delete_all())
+atexit.register(lambda: GLTexManager().delete_all())
 
 
 def get_texture(file: str | Path, unit: int = 0, bind: bool = False) -> GLTex:
     key = str(file)
+    manager = GLTexManager()
 
     try:
-        tex = _GLOBAL_TEX_MANAGER._textures.get(key)
+        tex = manager._textures.get(key)
         if tex is None:
-            tex = _GLOBAL_TEX_MANAGER.load_texture(file)
+            tex = manager.load_texture(file)
         else:
             tex_id_valid = bool(glIsTexture(int(tex.tex_id)))
             layer_in_range = tex.layer < tex.array._allocated_layers if tex.array else False
 
             if not tex_id_valid or not layer_in_range:
                 logger.debug(f"recreating texture array for {key}: tex_id_valid={tex_id_valid}, layer_ok={layer_in_range}")
-                if key in _GLOBAL_TEX_MANAGER._textures:
-                    _GLOBAL_TEX_MANAGER.delete_texture(key)
-                tex = _GLOBAL_TEX_MANAGER.load_texture(file)
+                if key in manager._textures:
+                    manager.delete_texture(key)
+                tex = manager.load_texture(file)
 
-        _GLOBAL_TEX_MANAGER.flush()
+        manager.flush()
 
-        tex = _GLOBAL_TEX_MANAGER._textures.get(key)
+        tex = manager._textures.get(key)
         if tex is None:
             logger.error("failed to obtain texture for %s after flush, fallback to default texture", key)
-            _GLOBAL_TEX_MANAGER._ensure_default_texture()
-            tex = _GLOBAL_TEX_MANAGER._textures.get(_DEFAULT_TEXTURE_KEY)
+            manager._ensure_default_texture()
+            tex = manager._textures.get(_DEFAULT_TEXTURE_KEY)
             if tex is None:
                 raise RuntimeError(f"failed to obtain default texture for {key}")
 
         if bind:
-            _GLOBAL_TEX_MANAGER.bind(tex, unit)
+            manager.bind(tex, unit)
 
         return tex
 
     except Exception as exc:
         logger.exception("get_texture failed for %s: %s", key, exc)
-        default = _GLOBAL_TEX_MANAGER._textures.get(_DEFAULT_TEXTURE_KEY)
+        default = manager._textures.get(_DEFAULT_TEXTURE_KEY)
         if default is None:
-            _GLOBAL_TEX_MANAGER._ensure_default_texture()
-            default = _GLOBAL_TEX_MANAGER._textures.get(_DEFAULT_TEXTURE_KEY)
+            manager._ensure_default_texture()
+            default = manager._textures.get(_DEFAULT_TEXTURE_KEY)
         if default is None:
             raise RuntimeError(f"could not load texture '{key}' and could not create default: {exc}") from exc
         if bind:
-            _GLOBAL_TEX_MANAGER.bind(default, unit)
+            manager.bind(default, unit)
 
         return default
-
-def get_tex_manager() -> GLTexManager:
-    return _GLOBAL_TEX_MANAGER

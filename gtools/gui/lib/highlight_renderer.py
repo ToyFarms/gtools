@@ -56,7 +56,7 @@ class HighlightRenderer:
         self._shader3d.use()
         self._u_vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
         self._u_spread3d.set_float(layer_spread)
-        self._u_z3d.set_float(layer.WORLD_FOREGROUND_AFTER_END)
+        self._u_z3d.set_float(layer.WORLD_HIGHLIGHT_OVERLAY)
 
         model = self._get_playhead_model(sheet.playhead - 1, world_width)
         self._u_model3d.set_mat4x4(glm.value_ptr(model))
@@ -76,7 +76,7 @@ class HighlightRenderer:
         self._shader3d.use()
         self._u_vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
         self._u_spread3d.set_float(layer_spread)
-        self._u_z3d.set_float(layer.WORLD_FOREGROUND_AFTER_END)
+        self._u_z3d.set_float(layer.WORLD_HIGHLIGHT_OVERLAY)
 
         model = mat4x4(1.0)
         model = glm.translate(model, vec3(tile_pos.x * 32, tile_pos.y * 32, 0.0))

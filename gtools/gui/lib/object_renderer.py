@@ -16,12 +16,12 @@ from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib.renderer import Renderer
 from gtools.gui.lib.seed_icon_renderer import SeedIconRenderer
 from gtools.gui.opengl import Mesh, ShaderProgram
-from gtools.gui.texture import TextureArray, get_tex_manager
+from gtools.gui.texture import GLTexManager, TextureArray
 from gtools.gui.lib.text_renderer import TextRenderer
 import numpy as np
 
 REGION_TILE_SIZE = 3
-MAX_PER_REGION = 4096
+MAX_PER_REGION = 1024
 
 SHADOW_SUBLAYER_OVERLAY = 0
 SHADOW_SUBLAYER_ICON = 1
@@ -88,7 +88,7 @@ class ObjectRendererBase(Renderer, ABC):
         USE_ORIGINAL_TEXTURE = auto()
 
     def __init__(self, z_start: float, z_end: float) -> None:
-        self._tex_mgr = get_tex_manager()
+        self._tex_mgr = GLTexManager()
         self._seed_renderer = SeedIconRenderer()
 
         z_mid = (z_start + z_end) / 2.0

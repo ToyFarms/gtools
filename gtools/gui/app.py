@@ -31,8 +31,8 @@ from gtools.core.log import setup_logger
 from gtools.core.wsl import windows_home
 from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent
 from gtools.gui.panels.panel import DockspacePanel, Panel
-from gtools.gui.panels.proxy_interface import ProxyPanel
-from gtools.gui.panels.world_viewer import WorldTab
+from gtools.gui.panels.proxy_panel import ProxyPanel
+from gtools.gui.panels.world_panel import WorldPanel
 from gtools.gui.widgets.command_palette import CommandPalette, PaletteBuilder
 
 logger = logging.getLogger("gui")
@@ -59,7 +59,7 @@ class App:
 
         if world_path:
             logger.debug(f"app pre-loading world {world_path}")
-            self.add_panel(WorldTab(self.dockspace.node_id, world_path))
+            self.add_panel(WorldPanel(self.dockspace.node_id, world_path))
 
         self.fps = 60
         self.prev = time.perf_counter()
@@ -72,7 +72,7 @@ class App:
         def _() -> None:
             world = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
             if isinstance(world, str):
-                self.add_panel(WorldTab(self.dockspace.node_id, Path(world)))
+                self.add_panel(WorldPanel(self.dockspace.node_id, Path(world)))
 
         @root.submenu("Search World")
         def _(sub: PaletteBuilder) -> None:
@@ -81,7 +81,7 @@ class App:
 
                 @sub.cmd(world.name)
                 def _(p=world) -> None:
-                    self.add_panel(WorldTab(self.dockspace.node_id, p))
+                    self.add_panel(WorldPanel(self.dockspace.node_id, p))
 
         return root
 
@@ -102,7 +102,7 @@ class App:
             self.prev = now
 
             any_dirty = any(p.is_dirty for p in self.panels)
-            if not any_dirty and not self._cmd.is_open:
+            if not any_dirty:
                 glfw.wait_events_timeout(0.1)
             else:
                 glfw.poll_events()
