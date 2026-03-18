@@ -140,7 +140,10 @@ class AutoBreakExtension(Extension):
 
                 next = self.get_next_target()
                 if isinstance(next, bool) or not next:
-                    time.sleep(0.01)
+                    if next:
+                        time.sleep(0.05)
+                    else:
+                        time.sleep(0.01)
                     continue
 
                 now = time.monotonic()
