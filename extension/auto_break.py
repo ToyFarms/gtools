@@ -1,7 +1,10 @@
+import array
 from dataclasses import dataclass
 from enum import IntEnum, auto
+import io
 import math
 import random
+import sys
 import time
 
 from pyglm.glm import ivec2
@@ -10,6 +13,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
 from gtools.core.growtopia.player import CharacterFlags
+from gtools.core.mixer import AudioMixer, Sound
 from gtools.core.task_scheduler import schedule_task
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_SEND_AND_FORGET,
@@ -45,6 +49,42 @@ class State(IntEnum):
 
 s = helper()
 
+if sys.platform == "win32":
+    try:
+        import wave, winsound
+
+        def beep(freq: int = 440, duration_ms: int = 80, volume: float = 0.3) -> None:
+            sample_rate = 44100
+            n_samples = int(sample_rate * duration_ms / 1000)
+            samples = array.array("h", [int(32767 * volume * math.sin(2 * math.pi * freq * i / sample_rate)) for i in range(n_samples)])
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(sample_rate)
+                w.writeframes(samples.tobytes())
+            winsound.PlaySound(buf.getvalue(), winsound.SND_MEMORY)
+
+    except Exception:
+        pass
+else:
+    try:
+        import numpy as np
+
+        _mixer = AudioMixer()
+
+        def beep(freq: int = 440, duration_ms: int = 80, volume: float = 0.3) -> None:
+            sample_rate = 44100
+            n_samples = int(sample_rate * duration_ms / 1000)
+            t = np.arange(n_samples) / sample_rate
+            pcm = (np.sin(2 * math.pi * freq * t) * volume).astype(np.float32)
+            _mixer.play(Sound(pcm, sample_rate=sample_rate), gain=1.0)
+
+    except Exception:
+
+        def beep(freq: int = 440, duration_ms: int = 80, volume: float = 0.3) -> None:
+            pass
+
 
 class AutoBreakExtension(Extension):
     def __init__(self) -> None:
@@ -62,6 +102,33 @@ class AutoBreakExtension(Extension):
         self.place_pending: dict[ivec2, float] = {}
         self.last_confirmation = 0
         self.recording = False
+        self.beep = False
+
+    @register_thread
+    def tone_worker(self) -> None:
+        dur = 0.05
+        interval = 5
+
+        while True:
+            while not self.beep:
+                time.sleep(0.5)
+
+            if self.state.status != Status.IN_WORLD:
+                beep(660, int(dur * 1000), 0.1)
+                time.sleep(0.1)
+                beep(660, int(dur * 1000), 0.1)
+                time.sleep(1 - dur)
+
+                continue
+
+            if time.time() - self.last_confirmation < 1:
+                beep(500, int(dur * 1000), 0.1)
+                interval = 5
+            else:
+                beep(800, int(dur * 1000), 0.05)
+                interval = 0.5
+
+            time.sleep(interval - dur)
 
     @dispatch(Interest(interest=INTEREST_TILE_APPLY_DAMAGE, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_SERVER_TO_CLIENT, id=s.auto))
     def _apply_damange(self, _event: PendingPacket) -> PendingPacket | None:
@@ -213,6 +280,13 @@ class AutoBreakExtension(Extension):
                 self.last_confirmation = time.time()
         else:
             self.console_log(f"set item id first")
+
+        return self.cancel()
+
+    @dispatch(s.command_toggle("/beep", id=s.auto))
+    def _toggle_beep(self, _event: PendingPacket) -> PendingPacket | None:
+        self.beep = not self.beep
+        self.console_log(f"beep is now {self.beep}")
 
         return self.cancel()
 
