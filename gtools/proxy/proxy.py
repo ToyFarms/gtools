@@ -184,13 +184,7 @@ class Proxy:
                     f"from {'\x1b[32mserver\x1b[0m' if pkt.direction == DIRECTION_SERVER_TO_CLIENT else '\x1b[31mclient\x1b[0m'} ({pkt.as_net.type.name}) {pkt.as_net.compact_repr()}"
                 )
             if pkt.as_net.type == NetType.TANK_PACKET:
-                if pkt.as_net.tank.type in (
-                    TankType.APP_CHECK_RESPONSE,
-                    TankType.APP_INTEGRITY_FAIL,
-                ):
-                    self.logger.info(f"blocked {pkt.as_net.tank} from {Direction.Name(pkt.direction)}")
-                    return
-                elif pkt.as_net.tank.type == TankType.DISCONNECT:
+                if pkt.as_net.tank.type == TankType.DISCONNECT:
                     src_ = self.proxy_client if pkt.direction == DIRECTION_CLIENT_TO_SERVER else self.proxy_server
                     src_.disconnect_now()
             elif pkt.as_net.type == NetType.GENERIC_TEXT:

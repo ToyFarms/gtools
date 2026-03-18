@@ -126,3 +126,21 @@ payload is determiend through the type,
     PVE_NPC_POSITION_UPDATE          (44): (todo)
     SET_EXTRA_MODS                   (45): (todo)
     ON_STEP_TILE_MOD                 (46): (todo)
+
+
+APP_CHECK_RESPONSE and APP_INTEGRITY_FAIL,
+    it looks like,
+        TankPacket(type=APP_CHECK_RESPONSE, net_id=-1, value=1125432991)
+
+    with,
+    net_id      = constant -1
+    value       = hash of the blacklisted android packages
+    ```
+    tank_value = 0
+
+    blacklist = b"cc.cz.madkite.freedom org.aqua.gg idv.aqua.bulldog com.cih.gamecih2 com.cih.gamecih com.cih.game_cih cn.maocai.gamekiller com.gmd.speedtime org.dax.attack com.x0.strai.frep com.x0.strai.free org.cheatengine.cegui org.sbtools.gamehack com.skgames.traffikrider org.sbtoods.gamehaca com.skype.ralder org.cheatengine.cegui.xx.multi1458919170111 com.prohiro.macro me.autotouch.autotouch com.cygery.repetitouch.free com.cygery.repetitouch.pro com.proziro.zacro com.slash.gamebuster"
+    for s in blacklist.split(b" "):
+        tank_value = (tank_value + proton_hash(s)) & 0x7FFFFFFF
+    ```
+
+    APP_CHECK_RESPONSE is sent by the client, idk what happen when APP_INTEGRITY_FAIL is hit though

@@ -20,9 +20,13 @@ class NetType(IntEnum):
     TANK_PACKET = 4
     ERROR = 5
     TRACK = 6
+
     CLIENT_LOG_REQUEST = 7
     CLIENT_LOG_RESPONSE = 8
 
+    # still doesn't fully understand what it does
+    SYNC_CLIENT_POSITION = 9  # protocol > 216
+    WRITE_TO_RING_BUFFER = 10
 
 class TankType(IntEnum):
     STATE = 0
