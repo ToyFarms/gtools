@@ -13,6 +13,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
 from gtools.core.growtopia.player import CharacterFlags
+from gtools.core.growtopia.world import ItemSuckerTile
 from gtools.core.mixer import AudioMixer, Sound
 from gtools.core.task_scheduler import schedule_task
 from gtools.protogen.extension_pb2 import (
@@ -270,6 +271,17 @@ class AutoBreakExtension(Extension):
 
     def stop_auto(self) -> None:
         self.enabled = False
+
+    @dispatch(s.command_toggle("/gaut", id=s.auto))
+    def _gaut_status(self, _event: PendingPacket) -> PendingPacket | None:
+        if self.state.world:
+            for sucker in self.state.world.find_tile(where=lambda x: x.extra and isinstance(x.extra, ItemSuckerTile)):
+                assert sucker.extra
+                extra = sucker.extra.expect(ItemSuckerTile)
+
+                self.console_log(f"{item_database.get(extra.item_id_to_suck).name.decode()}: {extra.item_amount} (of {extra.limit})")
+
+        return self.cancel()
 
     @dispatch(s.command_toggle("/auto", id=s.auto))
     def _toggle_auto(self, _event: PendingPacket) -> PendingPacket | None:

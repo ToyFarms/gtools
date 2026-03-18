@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import IntFlag, IntEnum
 import logging
-from typing import Iterator, Type, overload
+from typing import Callable, Iterator, Type, overload
 
 from pyglm.glm import ivec2, vec2
 from gtools.baked.items import (
@@ -2370,6 +2370,11 @@ class World:
             self.logger.warning(f"tile idx={idx} in {self.name} does not exist")
 
         return tile
+
+    def find_tile(self, where: Callable[[Tile], object]) -> Iterator[Tile]:
+        for tile in self.tiles.values():
+            if bool(where(tile)):
+                yield tile
 
     def index_tile(self, pos: ivec2) -> int | None:
         return pos.y * self.width + pos.x
