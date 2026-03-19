@@ -32,18 +32,3 @@ def compile_proto() -> None:
     call(["protoc", "-I", src, "--python_out", pyi_out, "--pyi_out", pyi_out, *files])
     if fix_import:
         call(["fix-protobuf-imports", pyi_out])
-
-    if not executable_exists("protoc-gen-ts_proto"):
-        print("\x1b[33mWARNING\x1b[0m protoc-gen-ts_proto not found (npm install -g ts-proto)")
-        print("skipping typescript generation")
-        return
-
-    call(
-        [
-            "protoc",
-            "-I",
-            src,
-            f"--ts_proto_out={ts_out}",
-            *files,
-        ]
-    )
