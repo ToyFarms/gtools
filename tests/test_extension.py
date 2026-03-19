@@ -6,7 +6,6 @@ import socket
 import statistics
 import time
 import pytest
-from matplotlib import pyplot as plt
 
 from extension.utils import UtilityExtension
 from gtools.core.growtopia.strkv import StrKV
@@ -2097,6 +2096,8 @@ def compute_packet_timing_stats(received_packets: list[tuple[int, object]], delt
 
 
 def plot_packet_timing_errors_with_tolerance(metrics: dict, tolerance_ns: float) -> None:
+    from matplotlib import pyplot as plt  # pyright: ignore[reportMissingImports]
+
     errors_ns = metrics["errors_ns"]
     errors_ms = [e / 1e6 for e in errors_ns]
     tolerance_ms = tolerance_ns / 1e6

@@ -104,7 +104,7 @@ def recipe(id: int, n: int) -> None:
     print("-" * 50, "fun fact", "-" * 50)
     print()
     most_nodes = sorted(
-        [(f"({i}) {item_database.get(i).name.decode()}", count_nodes(build_crafting_tree(i))) for i in range(len(item_database.items()))],
+        [(f"({i}) {item_database.get(i).name.decode()}", count_nodes(build_crafting_tree(i))) for i in range(len(item_database.items))],
         key=lambda x: x[1],
         reverse=True,
     )[:20]
@@ -121,7 +121,7 @@ def recipe(id: int, n: int) -> None:
         return len(raw_mats)
 
     most_raw_mats = sorted(
-        [(f"({i}) {item_database.get(i).name.decode()}", count_raw_mats(build_crafting_tree(i))) for i in range(len(item_database.items()))],
+        [(f"({i}) {item_database.get(i).name.decode()}", count_raw_mats(build_crafting_tree(i))) for i in range(len(item_database.items))],
         key=lambda x: x[1],
         reverse=True,
     )[:20]

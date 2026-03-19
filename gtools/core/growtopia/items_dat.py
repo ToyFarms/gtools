@@ -1,24 +1,24 @@
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from rapidfuzz import fuzz, process
-from enum import IntEnum
+import inspect
 import logging
 import os
-from pathlib import Path
 import pickle
 import tempfile
-from typing import Any, Hashable, Literal, Sequence, overload
-import inspect
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import IntEnum
+from pathlib import Path
+from typing import Any, ClassVar, Hashable, Literal, Sequence, overload
 
 import xxhash
+from rapidfuzz import fuzz, process
 from zmq import IntFlag
 
+from gtools import setting
+from gtools.core.buffer import Buffer
 from gtools.core.wsl import windows_home
 
 if not os.environ.get("NO_BAKED", None):
     from gtools.baked import items
-from gtools.core.buffer import Buffer
-from gtools import setting
 
 
 class WeatherType(IntEnum):
@@ -558,19 +558,14 @@ class ItemInfoFlag2(IntFlag):
     NEED_RECEPTION_DESK = 1 << 28
 
 
-SECRET = b"PBG892FXX982ABC*"
+_SECRET = b"PBG892FXX982ABC*"
 
 
 def _decrypt(s: bytes, item_id: int) -> bytes:
-    chars = bytearray()
-    for i in range(len(s)):
-        xor = SECRET[(i + item_id) % len(SECRET)]
-        chars.append((s[i] ^ xor))
-
-    return bytes(chars)
+    return bytes(s[i] ^ _SECRET[(i + item_id) % len(_SECRET)] for i in range(len(s)))
 
 
-TEXTURE_WITH_ICONS_VARIANT = {
+TEXTURE_WITH_ICONS_VARIANT: dict[bytes, str] = {
     b"bf_begchmp.rttex": "bf_begchmp_icon.rttex",
     b"comhr.rttex": "comhr_icon.rttex",
     b"d_aura.rttex": "d_aura_icon.rttex",
@@ -628,6 +623,90 @@ TEXTURE_WITH_ICONS_VARIANT = {
     b"player_shirt_monthly1.rttex": "player_shirt_monthly1_icon.rttex",
     b"st_caura.rttex": "st_caura_icon.rttex",
 }
+
+
+def is_seed(id: int) -> bool:
+    return id % 2 == 1
+
+
+def is_steam(item_type: ItemInfoType) -> bool:
+    return item_type in (
+        ItemInfoType.STEAMPUNK,
+        ItemInfoType.STEAM_LAVA_IF_ON,
+        ItemInfoType.STEAM_ORGAN,
+    ) or id in (
+        items.STEAM_DOOR,
+        items.STEAM_LAUNCHER,
+        items.STEAM_PIPE,
+        items.SPIRIT_STORAGE_UNIT,
+        items.STEAM_SPIKES,
+        items.STEAM_LAMP,
+    )
+
+
+def is_background(item_type: ItemInfoType) -> bool:
+    return item_type in (
+        ItemInfoType.BACKGROUND,
+        ItemInfoType.BACKGD_SFX_EXTRA_FRAME,
+        ItemInfoType.BACK_BOOMBOX,
+        ItemInfoType.MUSICNOTE,
+    )
+
+
+def get_tex_stride(texture_type: ItemInfoTextureType) -> int:
+    match texture_type:
+        case ItemInfoTextureType.SINGLE_FRAME_ALONE:
+            return 0
+        case ItemInfoTextureType.SINGLE_FRAME:
+            return 0
+        case ItemInfoTextureType.SMART_EDGE:
+            return 8
+        case ItemInfoTextureType.SMART_EDGE_HORIZ:
+            return 8
+        case ItemInfoTextureType.SMART_CLING:
+            return 5
+        case ItemInfoTextureType.SMART_CLING2:
+            return 8
+        case ItemInfoTextureType.SMART_OUTER:
+            return 5
+        case ItemInfoTextureType.RANDOM:
+            return 4
+        case ItemInfoTextureType.SMART_EDGE_VERT:
+            return 10
+        case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
+            return 4
+        case ItemInfoTextureType.SMART_EDGE_DIAGON:
+            return 4
+
+
+def get_default_tex(texture_type: ItemInfoTextureType) -> int:
+    match texture_type:
+        case ItemInfoTextureType.SINGLE_FRAME_ALONE:
+            return 0
+        case ItemInfoTextureType.SINGLE_FRAME:
+            return 0
+        case ItemInfoTextureType.SMART_EDGE:
+            return 0
+        case ItemInfoTextureType.SMART_EDGE_HORIZ:
+            return 0
+        case ItemInfoTextureType.SMART_CLING:
+            return 3
+        case ItemInfoTextureType.SMART_CLING2:
+            return 12
+        case ItemInfoTextureType.SMART_OUTER:
+            return 0
+        case ItemInfoTextureType.RANDOM:
+            return 0
+        case ItemInfoTextureType.SMART_EDGE_VERT:
+            return 0
+        case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
+            return 3
+        case ItemInfoTextureType.SMART_EDGE_DIAGON:
+            return 0
+
+
+def get_icon_texture(texture_file: bytes) -> str | None:
+    return TEXTURE_WITH_ICONS_VARIANT.get(texture_file)
 
 
 @dataclass(slots=True)
@@ -703,82 +782,22 @@ class Item:
     unk9: int = 0  # u8  only on Me11e's Snowshine with value 2
 
     def is_seed(self) -> bool:
-        return self.id % 2 == 1
+        return is_seed(self.id)
 
     def is_steam(self) -> bool:
-        return self.item_type in (
-            ItemInfoType.STEAMPUNK,
-            ItemInfoType.STEAM_LAVA_IF_ON,
-            ItemInfoType.STEAM_ORGAN,
-        ) or self.id in (
-            items.STEAM_DOOR,
-            items.STEAM_LAUNCHER,
-            items.STEAM_PIPE,
-            items.SPIRIT_STORAGE_UNIT,
-            items.STEAM_SPIKES,
-            items.STEAM_LAMP,
-        )
+        return is_steam(self.item_type)
 
     def is_background(self) -> bool:
-        return self.item_type in (
-            ItemInfoType.BACKGROUND,
-            ItemInfoType.BACKGD_SFX_EXTRA_FRAME,
-            ItemInfoType.BACK_BOOMBOX,
-            ItemInfoType.MUSICNOTE,
-        )
+        return is_background(self.item_type)
 
     def get_tex_stride(self) -> int:
-        match self.texture_type:
-            case ItemInfoTextureType.SINGLE_FRAME_ALONE:
-                return 0
-            case ItemInfoTextureType.SINGLE_FRAME:
-                return 0
-            case ItemInfoTextureType.SMART_EDGE:
-                return 8
-            case ItemInfoTextureType.SMART_EDGE_HORIZ:
-                return 8
-            case ItemInfoTextureType.SMART_CLING:
-                return 5
-            case ItemInfoTextureType.SMART_CLING2:
-                return 8
-            case ItemInfoTextureType.SMART_OUTER:
-                return 5
-            case ItemInfoTextureType.RANDOM:
-                return 4
-            case ItemInfoTextureType.SMART_EDGE_VERT:
-                return 10
-            case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
-                return 4
-            case ItemInfoTextureType.SMART_EDGE_DIAGON:
-                return 4
+        return get_tex_stride(self.texture_type)
 
     def get_default_tex(self) -> int:
-        match self.texture_type:
-            case ItemInfoTextureType.SINGLE_FRAME_ALONE:
-                return 0
-            case ItemInfoTextureType.SINGLE_FRAME:
-                return 0
-            case ItemInfoTextureType.SMART_EDGE:
-                return 0
-            case ItemInfoTextureType.SMART_EDGE_HORIZ:
-                return 0
-            case ItemInfoTextureType.SMART_CLING:
-                return 3
-            case ItemInfoTextureType.SMART_CLING2:
-                return 12
-            case ItemInfoTextureType.SMART_OUTER:
-                return 0
-            case ItemInfoTextureType.RANDOM:
-                return 0
-            case ItemInfoTextureType.SMART_EDGE_VERT:
-                return 0
-            case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
-                return 3
-            case ItemInfoTextureType.SMART_EDGE_DIAGON:
-                return 0
+        return get_default_tex(self.texture_type)
 
     def get_icon_texture(self) -> str | None:
-        return TEXTURE_WITH_ICONS_VARIANT.get(self.texture_file)
+        return get_icon_texture(self.texture_file)
 
     @classmethod
     def deserialize(cls, s: Buffer, version: int = 99999999999) -> "Item":
@@ -870,499 +889,392 @@ class Item:
         return item
 
 
-@dataclass
+_CACHE_DATE_FMT = "%Y%m%d_%H%M%S"
+_log = logging.getLogger("ItemDatabase")
+
+
+def _atomic_write(path: Path, obj: Any) -> None:
+    fd, tmp = tempfile.mkstemp(prefix="tmp_itemdb-", suffix=".pkl", dir=str(path.parent))
+    os.close(fd)
+    try:
+        with open(tmp, "wb") as f:
+            pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, str(path))
+    finally:
+        with Path(tmp) as p:
+            if p.exists():
+                p.unlink(missing_ok=True)
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    fd, tmp = tempfile.mkstemp(prefix="tmp_itemdb-", suffix=".dat", dir=str(path.parent))
+    os.close(fd)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, str(path))
+    finally:
+        with Path(tmp) as p:
+            if p.exists():
+                p.unlink(missing_ok=True)
+
+
+_SCHEMA_CLASSES = [
+    Item,
+    ItemInfoColor,
+    ItemFlag,
+    ItemInfoType,
+    ItemInfoMaterialType,
+    ItemInfoVisualEffect,
+    ItemInfoTextureType,
+    ItemInfoCollisionType,
+    ItemInfoClothingType,
+    ItemInfoSeedBase,
+    ItemInfoSeedOverlay,
+    ItemInfoTreeBase,
+    ItemInfoTreeLeaves,
+    FXFlags,
+    ItemInfoFlag2,
+]
+
+_ITEMS_DAT_CANDIDATES: list[Path] = [
+    windows_home() / "AppData" / "Local" / "Growtopia" / "cache" / "items.dat",
+    Path(os.getenv("ITEMS", "items.dat")),
+    setting.appdir / "resources" / "items.dat",
+]
+
+
 class ItemDatabase:
-    version: int
-    item_count: int
-    items: dict[int, Item]
+    _mem: ClassVar[dict[str, "ItemDatabase"]] = {}
+    _latest_per_version: ClassVar[dict[int, "ItemDatabase"]] = {}
 
+    _schema_hash_cache: ClassVar[str | None] = None
 
-class item_database:
-    _db: ItemDatabase | None = None
-    _date_fmt = "%Y%m%d_%H%M%S"
-    _schema_hash_cache: str | None = None
-    logger = logging.getLogger("item_database")
+    def __init__(
+        self,
+        version: int,
+        items: dict[int, Item],
+        *,
+        source_hash: str = "",
+    ) -> None:
+        self.version = version
+        self.items = items
+        self._source_hash = source_hash
 
-    # TODO: i think version is not only the version number, but the content needs to be factored in
-    _version_cache: dict[int, ItemDatabase] = {}
-    _name_index_cache: dict[int, dict[bytes, Item]] = {}
-    _name_str_list_cache: dict[int, list[str]] = {}
-    _name_str_to_items_cache: dict[int, dict[str, list[Item]]] = {}
+        self._name_index: dict[bytes, Item] = {}
+        self._name_str_list: list[str] = []
+        self._name_str_to_items: dict[str, list[Item]] = {}
+        self._name_index_built = False
+
+    def __repr__(self) -> str:
+        return f"ItemDatabase(version={self.version}, items={len(self.items)})"
+
+    @property
+    def item_count(self) -> int:
+        return len(self.items)
 
     @classmethod
     def _schema_hash(cls) -> str:
-        if cls._schema_hash_cache is not None:
-            return cls._schema_hash_cache
+        if cls._schema_hash_cache is None:
+            combined = "\n".join(inspect.getsource(c) for c in _SCHEMA_CLASSES)
+            cls._schema_hash_cache = xxhash.xxh64_hexdigest(combined.encode())
 
-        schema_classes = [
-            Item,
-            ItemInfoColor,
-            ItemFlag,
-            ItemInfoType,
-            ItemInfoMaterialType,
-            ItemInfoVisualEffect,
-            ItemInfoTextureType,
-            ItemInfoCollisionType,
-            ItemInfoClothingType,
-            ItemInfoSeedBase,
-            ItemInfoSeedOverlay,
-            ItemInfoTreeBase,
-            ItemInfoTreeLeaves,
-            FXFlags,
-            ItemInfoFlag2,
-        ]
-        combined = "\n".join(inspect.getsource(c) for c in schema_classes)
-        cls._schema_hash_cache = xxhash.xxh64_hexdigest(combined.encode())
         return cls._schema_hash_cache
 
-    @classmethod
-    def _atomic_write(cls, path: Path, obj: Any) -> None:
-        fd, tmp = tempfile.mkstemp(prefix="tmp_itemdb-", suffix=".pkl", dir=str(path.parent))
-        os.close(fd)
-        try:
-            with open(tmp, "wb") as f:
-                pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
-            os.replace(tmp, str(path))
-        finally:
-            try:
-                if Path(tmp).exists():
-                    Path(tmp).unlink()
-            except Exception:
-                pass
-
-    @classmethod
-    def _atomic_write_bytes(cls, path: Path, data: bytes) -> None:
-        fd, tmp = tempfile.mkstemp(prefix="tmp_itemdb-", suffix=".dat", dir=str(path.parent))
-        os.close(fd)
-        try:
-            with open(tmp, "wb") as f:
-                f.write(data)
-            os.replace(tmp, str(path))
-        finally:
-            try:
-                if Path(tmp).exists():
-                    Path(tmp).unlink()
-            except Exception:
-                pass
-
-    @classmethod
-    def db(cls) -> ItemDatabase:
-        if not cls._db:
-            candidate: list[Path] = [
-                windows_home() / "AppData" / "Local" / "Growtopia" / "cache" / "items.dat",
-                Path(os.getenv("ITEMS", "items.dat")),
-                setting.appdir / "resources" / "items.dat",
-            ]
-            for path in candidate:
-                if not path.is_file() or path.stat().st_size == 0:
-                    continue
-
-                try:
-                    cls._db = cls.deserialize(path)
-                    cls.logger.info(f"using items.dat from {path}")
-                    break
-                except Exception as e:
-                    cls.logger.error(f"failed parsing items.dat: {e}")
-
-        if not cls._db:
-            raise ValueError("no valid items.dat found")
-
-        return cls._db
-
-    @classmethod
-    def _save_cache(cls, hash: str, db: ItemDatabase, source_path: Path | None = None, source_bytes: bytes | None = None) -> None:
-        version_dir = setting.appdir / "item_database" / f"v{db.version}"
-        version_dir.mkdir(parents=True, exist_ok=True)
-
-        existing = next(version_dir.glob(f"*_{hash}.pkl"), None)
-        if existing is not None:
-            cls._version_cache[db.version] = db
-            cls.logger.debug(f"cache file already exists: {existing}")
-            cls._build_name_index(db)
-        else:
-            filename = f"{datetime.now(timezone.utc).strftime(cls._date_fmt)}_{hash}.pkl"
-            try:
-                cls._atomic_write(version_dir / filename, {"schema": cls._schema_hash(), "db": db})
-                cls._version_cache[db.version] = db
-                cls.logger.info(f"wrote cache {filename} version={db.version}")
-                cls._build_name_index(db)
-            except Exception as e:
-                cls.logger.error(f"failed saving cache {filename}: {e}")
-
-        # archive items.dat
-        data_to_archive: bytes | None = None
-        if source_bytes is not None:
-            data_to_archive = source_bytes
-        elif source_path is not None and source_path.is_file():
-            try:
-                data_to_archive = source_path.read_bytes()
-            except Exception as e:
-                cls.logger.error(f"failed reading source_path for archive {source_path}: {e}")
-                data_to_archive = None
-
-        if data_to_archive is not None:
-            existing_dat = next(version_dir.glob(f"*_{hash}.dat"), None)
-            if existing_dat is not None:
-                cls.logger.debug(f"archive file already exists: {existing_dat}")
-            else:
-                dat_filename = f"{datetime.now(timezone.utc).strftime(cls._date_fmt)}_{hash}.dat"
-                try:
-                    cls._atomic_write_bytes(version_dir / dat_filename, data_to_archive)
-                    cls.logger.info(f"archived items.dat version {db.version} at {version_dir / dat_filename}")
-                except Exception as e:
-                    cls.logger.error(f"archive failed {dat_filename}: {e}")
-
-    @classmethod
-    def _load_cache(cls, hash: str, version: int) -> ItemDatabase | None:
-        if (cached := cls._version_cache.get(version)) is not None:
-            return cached
-
-        version_dir = setting.appdir / "item_database" / f"v{version}"
-        if not version_dir.is_dir():
-            return None
-
-        pattern = f"*_{hash}.pkl"
-        candidates = sorted(version_dir.glob(pattern), reverse=True)
-        for path in candidates:
-            if not path.is_file():
-                continue
-            try:
-                with path.open("rb") as f:
-                    payload = pickle.load(f)
-
-                if isinstance(payload, ItemDatabase):
-                    cached = payload
-                    stored_schema = None
-                else:
-                    stored_schema = payload.get("schema")
-                    cached = payload.get("db")
-
-                if stored_schema != cls._schema_hash():
-                    cls.logger.info(f"schema mismatch in cache {path}, invalidating")
-                    path.unlink(missing_ok=True)
-                    return None
-
-                if getattr(cached, "version", None) != version:
-                    cls.logger.warning(f"cached file version mismatch {path} (expected {version})")
-                    continue
-
-                cls._version_cache[version] = cached
-                cls.logger.info(f"loaded cache {path}")
-                return cached
-            except Exception as e:
-                cls.logger.error(f"failed parsing pickle object {path}: {e}, invalidating")
-                path.unlink(missing_ok=True)
-
-    @classmethod
-    def load_version(cls, version: int) -> ItemDatabase | None:
-        if (cached := cls._version_cache.get(version)) is not None:
-            return cached
-
-        version_dir = setting.appdir / "item_database" / f"v{version}"
-        if not version_dir.is_dir():
+    def _ensure_name_index(self) -> None:
+        if self._name_index_built:
             return
 
-        candidates = sorted(version_dir.glob("*"), reverse=True)
-        for path in candidates:
-            if not path.is_file():
+        for item in self.items.values():
+            if not item.name:
                 continue
 
-            try:
-                with path.open("rb") as f:
-                    cached = pickle.load(f)
-                    cls._version_cache[version] = cached
-                    cls._build_name_index(cached)
-                    return cached
-            except Exception as e:
-                cls.logger.error("failed parsing pickle object %s: %s", path, e)
+            self._name_index.setdefault(item.name, item)
+            name_str = item.name.decode()
+            if name_str not in self._name_str_to_items:
+                self._name_str_to_items[name_str] = []
+                self._name_str_list.append(name_str)
 
-    @classmethod
-    def deserialize(cls, path_or_data: str | Path | bytes) -> ItemDatabase:
-        if isinstance(path_or_data, bytes):
-            data = path_or_data
-            source_path = None
-            source_bytes = data
-        else:
-            path_or_data = Path(path_or_data)
-            data = path_or_data.read_bytes()
-            source_path = path_or_data
-            source_bytes = None
+            self._name_str_to_items[name_str].append(item)
 
-        s = Buffer(data)
-        version = s.read_u16()
-        item_count = s.read_u32()
+        self._name_index_built = True
 
-        hash = xxhash.xxh64_hexdigest(data)
-        if (cached := cls._load_cache(hash, version)) is not None:
-            return cached
+    def get(self, id: int) -> Item:
+        return self.items[id]
 
-        items: dict[int, Item] = {}
-        for _ in range(item_count):
-            item = Item.deserialize(s, version)
-            items[item.id] = item
-
-        db = ItemDatabase(version=version, item_count=item_count, items=items)
-        cls._save_cache(hash, db, source_path, source_bytes)
-
-        return db
-
-    @classmethod
-    def _build_name_index(cls, db: ItemDatabase) -> None:
-        version = getattr(db, "version", None)
-        if version is None:
-            return
-
-        if version in cls._name_index_cache:
-            return
-
-        name_index: dict[bytes, Item] = {}
-        name_str_to_items: dict[str, list[Item]] = {}
-        name_str_list: list[str] = []
-
-        for item in db.items.values():
-            name_bytes = getattr(item, "name", None)
-            if name_bytes is None:
-                continue
-
-            if name_bytes not in name_index:
-                name_index[name_bytes] = item
-
-            name_str = name_bytes.decode()
-            if name_str not in name_str_to_items:
-                name_str_to_items[name_str] = []
-                name_str_list.append(name_str)
-            name_str_to_items[name_str].append(item)
-
-        cls._name_index_cache[version] = name_index
-        cls._name_str_to_items_cache[version] = name_str_to_items
-        cls._name_str_list_cache[version] = name_str_list
-        cls.logger.debug(f"built name index for version {version} ({len(name_str_list)} names)")
-
-    @classmethod
-    def items(cls) -> dict[int, Item]:
-        return cls.db().items
-
-    @classmethod
-    def get(cls, id: int) -> Item:
-        return cls.db().items[id]
-
-    @classmethod
-    def get_by_name(cls, name: bytes | str) -> Item:
-        db = cls.db()
-        version = getattr(db, "version", None)
-        if version is None:
-            raise ValueError("database has no version")
-
+    def get_by_name(self, name: bytes | str) -> Item:
+        self._ensure_name_index()
         key = name.encode() if isinstance(name, str) else name
-        cls._build_name_index(db)
 
-        name_index = cls._name_index_cache.get(version, {})
         try:
-            return name_index[key]
+            return self._name_index[key]
         except KeyError:
-            raise KeyError(f"no item with exact name {key!r} in version {version}")
+            raise KeyError(f"no item with name {key!r}")
 
     @overload
-    @classmethod
     def search(
-        cls,
+        self,
         query: bytes | str,
         n: int = ...,
         cutoff: float = ...,
-        version: int | None = ...,
         return_scores: Literal[False] = ...,
     ) -> Sequence[Item]: ...
+
     @overload
-    @classmethod
     def search(
-        cls,
+        self,
         query: bytes | str,
         n: int = ...,
         cutoff: float = ...,
-        version: int | None = ...,
         return_scores: Literal[True] = ...,
     ) -> Sequence[tuple[Item, float]]: ...
 
-    @classmethod
     def search(
-        cls,
+        self,
         query: bytes | str,
         n: int = 5,
         cutoff: float = 0.6,
-        version: int | None = None,
         return_scores: bool = False,
     ) -> Sequence[tuple[Item, float]] | Sequence[Item]:
-        query = query if isinstance(query, str) else query.decode()
+        self._ensure_name_index()
+        query_str = query if isinstance(query, str) else query.decode()
+        query_norm = query_str.strip().lower()
 
-        if version is None:
-            version = getattr(cls.db(), "version", None)
-            if version is None:
-                raise ValueError("no database version available to search")
-
-        db = cls._version_cache.get(version) or cls.load_version(version) or cls.db()
-        cls._build_name_index(db)
-        name_list = cls._name_str_list_cache.get(version, [])
-        name_str_to_items = cls._name_str_to_items_cache.get(version, {})
-
-        if not name_list:
-            return []
-
-        query_normalized = query.strip().lower()
-
-        def combined_scorer(
+        def scorer(
             _s1: Sequence[Hashable],
             s2: Sequence[Hashable],
             score_cutoff: float | None = None,
         ) -> float:
-            s2 = str(s2)
-            choice_normalized = s2.lower()
-
-            if query_normalized == choice_normalized:
+            _ = score_cutoff
+            choice = str(s2).lower()
+            if query_norm == choice:
                 return 100.0
-            if choice_normalized.startswith(query_normalized):
+            if choice.startswith(query_norm):
                 return 95.0
-            if f" {query_normalized} " in f" {choice_normalized} ":
+            if f" {query_norm} " in f" {choice} ":
                 return 90.0
+            raw = sorted(
+                [
+                    fuzz.ratio(query_norm, choice) * 1.00,
+                    fuzz.partial_ratio(query_norm, choice) * 0.90,
+                    fuzz.token_sort_ratio(query_norm, choice) * 0.85,
+                    fuzz.token_set_ratio(query_norm, choice) * 0.80,
+                ],
+                reverse=True,
+            )
+            return raw[0] * 0.50 + raw[1] * 0.30 + raw[2] * 0.15 + raw[3] * 0.05
 
-            scores = []
-
-            ratio_score = fuzz.ratio(query_normalized, choice_normalized)
-            scores.append(ratio_score * 1.0)
-
-            partial_score = fuzz.partial_ratio(query_normalized, choice_normalized)
-            scores.append(partial_score * 0.9)
-
-            token_sort_score = fuzz.token_sort_ratio(query_normalized, choice_normalized)
-            scores.append(token_sort_score * 0.85)
-
-            token_set_score = fuzz.token_set_ratio(query_normalized, choice_normalized)
-            scores.append(token_set_score * 0.8)
-
-            scores.sort(reverse=True)
-            weighted_score = scores[0] * 0.5 + scores[1] * 0.3 + scores[2] * 0.15 + scores[3] * 0.05
-
-            return max(weighted_score, 0.0)
-
-        cutoff_percent = cutoff * 100
-        matches = process.extract(query, name_list, scorer=combined_scorer, score_cutoff=cutoff_percent, limit=n * 3)
-
+        cutoff_pct = cutoff * 100
+        seen: set[int] = set()
         results: list[tuple[Item, float]] = []
-        seen_item_ids: set[int] = set()
 
-        for matched_name, score, _ in matches:
-            items_for_name = name_str_to_items.get(matched_name, [])
-            normalized_score = score / 100.0
+        def _collect(matches: list) -> None:
+            for matched_name, score, _ in matches:
+                for item in self._name_str_to_items.get(matched_name, []):
+                    if item.id in seen:
+                        continue
+                    results.append((item, score / 100.0))
+                    seen.add(item.id)
+                    if len(results) >= n:
+                        return
 
-            for item in items_for_name:
-                if item.id in seen_item_ids:
-                    continue
-                results.append((item, normalized_score))
-                seen_item_ids.add(item.id)
-
-                if len(results) >= n:
-                    break
-
-            if len(results) >= n:
-                break
+        primary = process.extract(
+            query_str,
+            self._name_str_list,
+            scorer=scorer,
+            score_cutoff=cutoff_pct,
+            limit=n * 3,
+        )
+        _collect(primary)
 
         if len(results) < n:
-            additional_cutoff = max(cutoff_percent * 0.7, 30.0)
-            additional_matches = process.extract(
-                query, [name for name in name_list if name not in [m[0] for m in matches]], scorer=combined_scorer, score_cutoff=additional_cutoff, limit=n * 2
+            already_matched = {m[0] for m in primary}
+            secondary = process.extract(
+                query_str,
+                [name for name in self._name_str_list if name not in already_matched],
+                scorer=scorer,
+                score_cutoff=max(cutoff_pct * 0.7, 30.0),
+                limit=n * 2,
             )
-
-            for matched_name, score, _ in additional_matches:
-                items_for_name = name_str_to_items.get(matched_name, [])
-                normalized_score = score / 100.0
-
-                for item in items_for_name:
-                    if item.id in seen_item_ids:
-                        continue
-                    results.append((item, normalized_score))
-                    seen_item_ids.add(item.id)
-
-                    if len(results) >= n:
-                        break
-
-                if len(results) >= n:
-                    break
+            _collect(secondary)
 
         results.sort(key=lambda x: x[1], reverse=True)
         results = results[:n]
+        return results if return_scores else [item for item, _ in results]
 
-        if return_scores:
-            return results
+    def _cache_dir(self, base: Path | None = None) -> Path:
+        return (base or setting.appdir / "item_database") / f"v{self.version}"
+
+    def save_cache(self, base_dir: Path | None = None) -> None:
+        if not self._source_hash:
+            _log.warning("save_cache: no source hash, skipping")
+            return
+
+        dir_ = self._cache_dir(base_dir)
+        dir_.mkdir(parents=True, exist_ok=True)
+        if next(dir_.glob(f"*_{self._source_hash}.pkl"), None):
+            _log.debug("cache already present, skipping write")
+            return
+
+        filename = f"{datetime.now(timezone.utc).strftime(_CACHE_DATE_FMT)}" f"_{self._source_hash}.pkl"
+        try:
+            _atomic_write(dir_ / filename, {"schema": self._schema_hash(), "db": self})
+            _log.info("wrote cache %s  version=%d", filename, self.version)
+        except Exception as e:
+            _log.error("failed writing cache %s: %s", filename, e)
+
+    def archive_source(self, data: bytes, base_dir: Path | None = None) -> None:
+        if not self._source_hash:
+            return
+
+        dir_ = self._cache_dir(base_dir)
+        dir_.mkdir(parents=True, exist_ok=True)
+        if next(dir_.glob(f"*_{self._source_hash}.dat"), None):
+            return
+
+        filename = f"{datetime.now(timezone.utc).strftime(_CACHE_DATE_FMT)}" f"_{self._source_hash}.dat"
+
+        try:
+            _atomic_write_bytes(dir_ / filename, data)
+            _log.info("archived items.dat v%d → %s", self.version, filename)
+        except Exception as e:
+            _log.error("archive failed %s: %s", filename, e)
+
+    @classmethod
+    def _try_load_disk_cache(
+        cls,
+        source_hash: str,
+        version: int,
+        base_dir: Path | None = None,
+    ) -> "ItemDatabase | None":
+        dir_ = (base_dir or setting.appdir / "item_database") / f"v{version}"
+        if not dir_.is_dir():
+            return None
+
+        for path in sorted(dir_.glob(f"*_{source_hash}.pkl"), reverse=True):
+            try:
+                with path.open("rb") as f:
+                    payload = pickle.load(f)
+                stored_schema = payload.get("schema") if isinstance(payload, dict) else None
+                db = payload.get("db") if isinstance(payload, dict) else payload
+                if stored_schema != cls._schema_hash():
+                    _log.info("schema mismatch, invalidating %s", path)
+                    path.unlink(missing_ok=True)
+                    continue
+                if not isinstance(db, ItemDatabase) or db.version != version:
+                    continue
+                cls._mem[source_hash] = db
+                cls._latest_per_version[version] = db
+                _log.info("loaded disk cache %s", path.name)
+
+                return db
+            except Exception as e:
+                _log.error("corrupt cache %s: %s – removing", path, e)
+                path.unlink(missing_ok=True)
+
+        return None
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "ItemDatabase":
+        s = Buffer(data)
+        version = s.read_u16()
+        item_count = s.read_u32()
+        parsed: dict[int, Item] = {}
+
+        for _ in range(item_count):
+            item = Item.deserialize(s, version)
+            parsed[item.id] = item
+
+        source_hash = xxhash.xxh64_hexdigest(data)
+        return cls(version=version, items=parsed, source_hash=source_hash)
+
+    @classmethod
+    def load(cls, source: str | Path | bytes, *, cached: bool = False, cache_base_dir: Path | None = None) -> "ItemDatabase":
+        if isinstance(source, bytes):
+            data, source_path = source, None
         else:
-            return [itm for itm, _ in results]
+            source_path = Path(source)
+            data = source_path.read_bytes()
 
-    @classmethod
-    def has_version(cls, version: int) -> bool:
-        if version in cls._version_cache:
-            return True
+        source_hash = xxhash.xxh64_hexdigest(data)
 
-        version_dir = setting.appdir / "item_database" / f"v{version}"
-        if not version_dir.is_dir():
-            return False
+        # in-memory hit.
+        if (hit := cls._mem.get(source_hash)) is not None:
+            return hit
 
-        return any(p.is_file() for p in version_dir.iterdir())
+        # disk-cache hit
+        if cached:
+            version = int.from_bytes(data[:2], "little")
+            if (hit := cls._try_load_disk_cache(source_hash, version, cache_base_dir)) is not None:
+                return hit
 
-    @classmethod
-    def v(cls, version: int) -> ItemDatabase:
-        db = cls.load_version(version)
-        if db is None:
-            raise ValueError(f"no cached item database for version {version}")
+        # deserialize
+        db = cls.deserialize(data)
+        cls._mem[source_hash] = db
+        cls._latest_per_version[db.version] = db
+
+        if cached:
+            db.save_cache(cache_base_dir)
+            db.archive_source(data, cache_base_dir)
+
         return db
 
     @classmethod
-    def is_background(cls, id: int) -> bool:
-        return cls.get(id).item_type in (
-            ItemInfoType.BACKGROUND,
-            ItemInfoType.BACKGD_SFX_EXTRA_FRAME,
-            ItemInfoType.BACK_BOOMBOX,
-            ItemInfoType.MUSICNOTE,
-        )
+    def latest(cls, cache_base_dir: Path | None = None) -> "ItemDatabase":
+        for path in _ITEMS_DAT_CANDIDATES:
+            if not path.is_file() or path.stat().st_size == 0:
+                continue
+            try:
+                db = cls.load(path, cached=True, cache_base_dir=cache_base_dir)
+                _log.info("latest: loaded from %s (v%d)", path, db.version)
+                return db
+            except Exception as e:
+                _log.error("latest: failed loading %s: %s", path, e)
+
+        raise FileNotFoundError("no valid items.dat found. checked: " + ", ".join(str(p) for p in _ITEMS_DAT_CANDIDATES))
 
     @classmethod
-    def is_seed(cls, id: int) -> bool:
-        return id % 2 == 1
+    def for_version(
+        cls,
+        version: int,
+        cache_base_dir: Path | None = None,
+    ) -> "ItemDatabase":
+        if (hit := cls._latest_per_version.get(version)) is not None:
+            return hit
+
+        dir_ = (cache_base_dir or setting.appdir / "item_database") / f"v{version}"
+        if not dir_.is_dir():
+            raise ValueError(f"no cached database for version {version}")
+
+        for path in sorted(dir_.glob("*.pkl"), reverse=True):
+            try:
+                with path.open("rb") as f:
+                    payload = pickle.load(f)
+                stored_schema = payload.get("schema") if isinstance(payload, dict) else None
+                db = payload.get("db") if isinstance(payload, dict) else payload
+                if stored_schema != cls._schema_hash():
+                    _log.info("schema mismatch, invalidating %s", path)
+                    path.unlink(missing_ok=True)
+                    continue
+                if not isinstance(db, ItemDatabase) or db.version != version:
+                    continue
+                cls._mem[db._source_hash] = db
+                cls._latest_per_version[version] = db
+                _log.info("for_version(%d): loaded from %s", version, path.name)
+                return db
+            except Exception as e:
+                _log.error("corrupt cache %s: %s – removing", path, e)
+                path.unlink(missing_ok=True)
+
+        raise ValueError(f"no valid cached database for version {version}")
 
     @classmethod
-    def is_steam(cls, id: int) -> bool:
-        return item_database.get(id).item_type in (
-            ItemInfoType.STEAMPUNK,
-            ItemInfoType.STEAM_LAVA_IF_ON,
-            ItemInfoType.STEAM_ORGAN,
-        ) or id in (
-            items.STEAM_DOOR,
-            items.STEAM_LAUNCHER,
-            items.STEAM_PIPE,
-            items.SPIRIT_STORAGE_UNIT,
-            items.STEAM_SPIKES,
-            items.STEAM_LAMP,
-        )
+    def has_version(cls, version: int, cache_base_dir: Path | None = None) -> bool:
+        if version in cls._latest_per_version:
+            return True
 
-    @classmethod
-    def get_tex_stride(self, texture_type: ItemInfoTextureType) -> int:
-        match texture_type:
-            case ItemInfoTextureType.SINGLE_FRAME_ALONE:
-                return 0
-            case ItemInfoTextureType.SINGLE_FRAME:
-                return 0
-            case ItemInfoTextureType.SMART_EDGE:
-                return 8
-            case ItemInfoTextureType.SMART_EDGE_HORIZ:
-                return 8
-            case ItemInfoTextureType.SMART_CLING:
-                return 5
-            case ItemInfoTextureType.SMART_CLING2:
-                return 8
-            case ItemInfoTextureType.SMART_OUTER:
-                return 5
-            case ItemInfoTextureType.RANDOM:
-                return 4
-            case ItemInfoTextureType.SMART_EDGE_VERT:
-                return 10
-            case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
-                return 4
-            case ItemInfoTextureType.SMART_EDGE_DIAGON:
-                return 4
+        dir_ = (cache_base_dir or setting.appdir / "item_database") / f"v{version}"
+        return dir_.is_dir() and any(p.is_file() for p in dir_.iterdir())
+
+
+item_database = ItemDatabase.latest()

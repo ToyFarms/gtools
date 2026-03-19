@@ -7,7 +7,7 @@ import numpy as np
 from pyglm.glm import ivec2
 
 from gtools import setting
-from gtools.core.growtopia.items_dat import ItemInfoTextureType, item_database
+from gtools.core.growtopia.items_dat import ItemInfoTextureType, get_tex_stride, item_database
 from gtools.core.growtopia.world import DisplayBlockTile, Tile, TileFlags, VendingMachineTile, World
 
 from gtools.gui.camera import Camera2D
@@ -182,14 +182,14 @@ class TileRenderer(Renderer):
                     instances["fg"][chunk_key][tex_array].extend(data)
 
             if tile.flags & TileFlags.ON_FIRE:
-                stride = item_database.get_tex_stride(ItemInfoTextureType.SMART_EDGE)
+                stride = get_tex_stride(ItemInfoTextureType.SMART_EDGE)
                 tex_index = tile.overlay_tex_index
                 tex_pos = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
 
                 tex_array, data = self._tile_instance_data_raw(tile, "fire.rttex", tex_pos)
                 instances["fire"][chunk_key][tex_array].extend(data)
             elif tile.flags & TileFlags.IS_WET:
-                stride = item_database.get_tex_stride(ItemInfoTextureType.SMART_EDGE)
+                stride = get_tex_stride(ItemInfoTextureType.SMART_EDGE)
                 tex_index = tile.overlay_tex_index
                 tex_pos = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
 

@@ -1995,9 +1995,9 @@ class Tile:
         tile.fg_id = s.read_u16()
         tile.bg_id = s.read_u16()
         if strict:
-            if tile.fg_id > item_database.db().item_count:
+            if tile.fg_id > item_database.item_count:
                 raise ValueError(f"illegal foreground item: {tile.fg_id}")
-            if tile.bg_id > item_database.db().item_count:
+            if tile.bg_id > item_database.item_count:
                 raise ValueError(f"illegal background item: {tile.bg_id}")
 
         tile.parent_index = s.read_u16()
@@ -2395,7 +2395,7 @@ class World:
         if (tile := self.get_tile(pos)) is None:
             return
 
-        if item_database.is_background(id):
+        if item_database.get(id).is_background():
             tile.bg_id = id
         else:
             tile.fg_id = id
@@ -2813,7 +2813,7 @@ class World:
                     item.pos = vec2(s.read_f32(), s.read_f32())
                     item.id = s.read_u16()
 
-                    if item.id not in item_database.items():
+                    if item.id not in item_database.items:
                         break
 
                     # i don't know any item that can go past 200
@@ -2911,7 +2911,7 @@ def is_steam(a1: World, a2: int, a3: int, /) -> bool:
     if not v5:
         return False
     if ((v5.front == BLANK or v5.front & 1 != 0) or ((result := True), v5.flags & TileFlags.GLUED == 0)[-1],)[-1]:
-        if item_database.is_steam(v5.front):
+        if item_database.get(v5.front).is_steam():
             return v5.front != STEAM_LAUNCHER
         return False
     return result
@@ -3047,7 +3047,7 @@ def tile_should_connect(a1: World, x: int, y: int, id: int, flag: int, /) -> boo
                 if not __matched0 and __switch_on0 == STEAM_PIPE:
                     _switch_matched_any0 = True
                 __matched0 = True
-                if item_database.is_steam(v9.front):
+                if item_database.get(v9.front).is_steam():
                     __goto_return_value = True
                     return None
                 break

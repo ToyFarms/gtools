@@ -2,16 +2,16 @@ from pathlib import Path
 import click
 
 from gtools.core.c import IdentifierRegistry, to_c_ident
-from gtools.core.growtopia.items_dat import item_database
+from gtools.core.growtopia.items_dat import item_database, ItemDatabase
 
 
 @click.command()
 @click.option("--path", default=None, help="items.dat path")
 def bake(path: str | None) -> None:
     if path:
-        db = item_database.deserialize(path)
+        db = ItemDatabase.load(path)
     else:
-        db = item_database.db()
+        db = item_database
 
     p = Path("gtools/baked/items.py")
     p.parent.mkdir(parents=True, exist_ok=True)

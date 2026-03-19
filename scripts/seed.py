@@ -8,7 +8,7 @@ from gtools.core.growtopia.seed_renderer import SeedRenderer
 @click.command()
 @click.argument("id", type=int)
 def seed(id: int) -> None:
-    if not item_database.is_seed(id):
+    if not item_database.get(id).is_seed():
         id += 1
     item = item_database.get(id)
 

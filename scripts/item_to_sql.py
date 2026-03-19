@@ -65,7 +65,7 @@ def insert(
 @click.command()
 def items_to_sql() -> None:
     with sqlite3.connect("items.db") as conn:
-        items = item_database.items().items()
+        items = item_database.items.items()
         for i, (_, item) in enumerate(items):
             insert(conn, item)
             print(f"\r{i} / {len(items)}", end="")

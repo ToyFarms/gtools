@@ -245,7 +245,7 @@ class AutoBreakExtension(Extension):
         if not tile:
             return False
 
-        if item_database.is_background(id):
+        if item_database.get(id).is_background():
             return tile.bg_id == 0
 
         return tile.fg_id == 0
@@ -258,7 +258,7 @@ class AutoBreakExtension(Extension):
         if not tile:
             return False
 
-        if item_database.is_background(item_id):
+        if item_database.get(item_id).is_background():
             if tile.fg_id == BEDROCK:
                 return False
 
