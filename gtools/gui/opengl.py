@@ -199,8 +199,9 @@ class ShaderProgram:
     _SHADER: dict[str, "ShaderProgram"] = {}
     logger = logging.getLogger("shader-program")
 
-    def __init__(self, vs_src: str, fs_src: str) -> None:
-        self._id = self._link(vs_src, fs_src)
+    def __init__(self, vs_src: str, fs_src: str, id: str = "?") -> None:
+        self._gl_id = self._link(vs_src, fs_src)
+        self.id = id
 
     @staticmethod
     def get(id: str) -> "ShaderProgram":
@@ -215,16 +216,17 @@ class ShaderProgram:
     @classmethod
     def from_file(cls, vs_file: str | Path, fs_file: str | Path | None = None) -> "ShaderProgram":
         if vs_file and fs_file:
-            return cls(Path(vs_file).read_text(), Path(fs_file).read_text())
+            return cls(Path(vs_file).read_text(), Path(fs_file).read_text(), id=Path(vs_file).with_suffix("").name)
         name = Path(vs_file).with_suffix("").name
         base = Path(vs_file).parent
+
         return cls.from_file(base / f"{name}.vert", base / f"{name}.frag")
 
     def use(self) -> None:
-        glUseProgram(self._id)
+        glUseProgram(self._gl_id)
 
     def get_uniform(self, name: str) -> Uniform:
-        id = glGetUniformLocation(self._id, name)
+        id = glGetUniformLocation(self._gl_id, name)
         return Uniform(loc=id)
 
     @staticmethod
@@ -252,12 +254,12 @@ class ShaderProgram:
         return prog
 
     def delete(self) -> None:
-        glDeleteProgram(self._id)
+        self.logger.debug(f"deleting shader {self.id} (id={self._gl_id})")
+        glDeleteProgram(self._gl_id)
 
     @staticmethod
     def delete_all() -> None:
         for key, shader in ShaderProgram._SHADER.items():
-            ShaderProgram.logger.debug(f"deleting shader {key}")
             shader.delete()
 
 
