@@ -52,7 +52,7 @@ extension:
 
 extension is used to add more feature basically.
 its in a separate process talking through a broker (router) using zmq and protobuf.
-if you want to make your own extension, see the example in `gtools/proxy/extension/builtin/fast_drop.py`
+if you want to make your own extension, see the example in `extension/utils.py`
 
 to run the extension:
 simply run the script containing `Extension().start()` it will automatically register/wait to the proxy

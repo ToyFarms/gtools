@@ -11,14 +11,12 @@ from gtools.core.growtopia.world import Tile, TileFlags, World
 @click.command()
 @click.argument("id", type=int)
 def paint(id: int) -> None:
-
-    # TODO: fix this
-    world = World()
+    tiles: list[Tile] = []
     for i in range(1 << 3):
         pos = ivec2(i * 2 + 1, 1)
         tile = Tile(id, pos=ivec2(pos))
         tile.flags |= i << (TileFlags.PAINTED_RED.bit_length() - 1)
-        world.tiles.append(tile)
+        tiles.append(tile)
 
         PAINT_LOOKUP: dict[tuple[bool, bool, bool], int] = {
             (False, False, False): 0,
@@ -32,17 +30,17 @@ def paint(id: int) -> None:
         }
         pos.y += 1
         tile = Tile(PAINT_LOOKUP[tile.flags & TileFlags.PAINTED_RED != 0, tile.flags & TileFlags.PAINTED_GREEN != 0, tile.flags & TileFlags.PAINTED_BLUE != 0], pos=pos)
-        world.tiles.append(tile)
+        tiles.append(tile)
 
-    world.tiles.append(Tile(pos=ivec2((1 << 3) * 2, 2)))
+    tiles.append(Tile(pos=ivec2((1 << 3) * 2, 2)))
 
-    world.fix()
+    world = World.from_tiles(tiles)
     world.update_all_connection()
 
     mgr = RTTexManager()
 
     img = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
-    for tile in world.tiles:
+    for tile in world.tiles.values():
         if tile.fg_id:
             tex = tile.get_fg_texture(mgr)
 
