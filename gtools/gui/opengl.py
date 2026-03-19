@@ -1,9 +1,9 @@
-import atexit
 import ctypes
 import logging
 from pathlib import Path
 from typing import Sequence, cast
 
+import glfw
 from OpenGL.GL import (
     GL_ARRAY_BUFFER,
     GL_BYTE,
@@ -255,15 +255,13 @@ class ShaderProgram:
 
     def delete(self) -> None:
         self.logger.debug(f"deleting shader {self.id} (id={self._gl_id})")
-        glDeleteProgram(self._gl_id)
+        if glfw.get_current_context():
+            glDeleteProgram(self._gl_id)
 
     @staticmethod
     def delete_all() -> None:
         for key, shader in ShaderProgram._SHADER.items():
             shader.delete()
-
-
-atexit.register(lambda: ShaderProgram.delete_all())
 
 
 class Mesh:

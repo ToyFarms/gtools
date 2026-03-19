@@ -1,4 +1,3 @@
-import atexit
 import logging
 from pathlib import Path
 from OpenGL.GL import (
@@ -338,11 +337,6 @@ class GLTexManager:
                 logger.warning("failed to delete default TextureArray", exc_info=True)
         self._default_array = None
         self._default_tex = None
-
-
-atexit.register(lambda: GLTexManager().delete_all())
-
-
 def get_texture(file: str | Path, unit: int = 0, bind: bool = False) -> GLTex:
     key = str(file)
     manager = GLTexManager()

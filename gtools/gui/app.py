@@ -30,6 +30,8 @@ from gtools.core.highres_sleep import nanosleep
 from gtools.core.log import setup_logger
 from gtools.core.wsl import windows_home
 from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent
+from gtools.gui.opengl import ShaderProgram
+from gtools.gui.texture import GLTexManager
 from gtools.gui.panels.panel import DockspacePanel, Panel
 from gtools.gui.panels.proxy_panel import ProxyPanel
 from gtools.gui.panels.world_panel import WorldPanel
@@ -181,6 +183,9 @@ class App:
         logger.info("shutting down App")
         for panel in self.panels:
             panel.delete()
+
+        GLTexManager().delete_all()
+        ShaderProgram.delete_all()
 
         self.imgui_renderer.shutdown()
         glfw.terminate()
