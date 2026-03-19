@@ -8,6 +8,7 @@ import traceback
 from typing import Generator, NamedTuple, cast
 
 from gtools.core.eventbus import listen
+from gtools.core.growtopia.crypto import generate_klv
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
@@ -15,7 +16,7 @@ from gtools.core.block_sigint import block_sigint
 from gtools.protogen.extension_pb2 import DIRECTION_CLIENT_TO_SERVER, DIRECTION_SERVER_TO_CLIENT, Direction, Packet, StateResponse
 from gtools.proxy.accountmgr import AccountManager
 from gtools.proxy.enet import PyENetEvent
-from gtools.proxy.event import UpdateServerData
+from gtools.proxy.event import UpdateClientVersion, UpdateServerData
 from gtools.proxy.extension.server.broker import Broker, BrokerFunction, PacketCallback
 from gtools.proxy.proxy_client import ProxyClient
 from gtools.proxy.proxy_server import ProxyServer
@@ -40,6 +41,10 @@ class Proxy:
         self.logger.debug("proxy client initialized")
 
         self.server_data: UpdateServerData | None = None
+        listen(UpdateServerData)(lambda ch, ev: self._on_server_data(ch, ev))
+        self.client_version: UpdateClientVersion | None = None
+        listen(UpdateClientVersion)(lambda ch, ev: self._on_client_version(ch, ev))
+
         self.redirecting: bool = False
         self.running = True
 
@@ -70,8 +75,6 @@ class Proxy:
         self.from_client_packet = 0
         self.from_server_packet = 0
 
-        listen(UpdateServerData)(lambda ch, ev: self._on_server_data(ch, ev))
-
     def _state_request(self, _id: bytes, _pkt: Packet, fn: BrokerFunction) -> None:
         fn.reply(
             Packet(
@@ -83,6 +86,10 @@ class Proxy:
     def _on_server_data(self, _channel: str, event: UpdateServerData) -> None:
         self.logger.info(f"server_data: {event.server}:{event.port}")
         self.server_data = event
+
+    def _on_client_version(self, _channel: str, event: UpdateClientVersion) -> None:
+        self.logger.info(f"client version: version={event.version} protocol={event.protocol}")
+        self.client_version = event
 
     def _dump_packet(self, data: bytes) -> None:
         if self.logger.isEnabledFor(logging.DEBUG):
@@ -211,6 +218,17 @@ class Proxy:
 
                         self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
                         pkt.as_net.generic_text[field] = value
+
+                    if (rid := acc["ident"].get("rid")) is not None and self.client_version:
+                        field = b"klv"
+                        if field in pkt.as_net.generic_text:
+                            self.logger.info(f"computing klv with protocol={self.client_version.protocol} version={self.client_version.version} rid={rid}")
+                            value = generate_klv(str(self.client_version.protocol).encode(), self.client_version.version.encode(), rid.encode())
+
+                            self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
+                            pkt.as_net.generic_text[field] = value
+                        else:
+                            self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
 
                     self.logger.info(f"spoofed login: {pkt.as_net.generic_text}")
             elif pkt.as_net.type == NetType.GAME_MESSAGE:

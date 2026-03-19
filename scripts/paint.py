@@ -12,6 +12,7 @@ from gtools.core.growtopia.world import Tile, TileFlags, World
 @click.argument("id", type=int)
 def paint(id: int) -> None:
 
+    # TODO: fix this
     world = World()
     for i in range(1 << 3):
         pos = ivec2(i * 2 + 1, 1)

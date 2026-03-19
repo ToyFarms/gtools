@@ -7,3 +7,8 @@ from gtools.core.eventbus import EventMixin
 class UpdateServerData(EventMixin):
     server: str
     port: int
+
+@dataclass
+class UpdateClientVersion(EventMixin):
+    version: str
+    protocol: int

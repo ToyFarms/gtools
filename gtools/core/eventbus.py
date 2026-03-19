@@ -5,7 +5,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import time
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 
 class Event(Protocol):
@@ -67,7 +67,7 @@ _bus = EventBus()
 
 def listen[E](
     event_type: type[E], channel: str | None = None
-) -> Callable[[Callable[[str, E], None]], Callable[[str, E], None]]:
+) -> Callable[[Callable[[str, E], Any]], Callable[[str, E], Any]]:
     return _bus.register(event_type, channel)
 
 

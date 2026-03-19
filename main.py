@@ -253,7 +253,7 @@ if __name__ == "__main__":
 
     acc_sub.add_parser("list", parents=[global_parent], help="list accounts")
     acc_sub.add_parser("remove", parents=[global_parent, name_parent], help="remove account(s)")
-    acc_sub.add_parser("add", parents=[global_parent, name_parent], help="add account(s)")
+    acc_sub.add_parser("get", parents=[global_parent, name_parent], help="get/create account(s)")
     acc_sub.add_parser("renew", parents=[global_parent, name_parent], help="renew account(s)")
 
     args = parser.parse_args()
@@ -298,7 +298,7 @@ if __name__ == "__main__":
     elif args.cmd == "gui":
         app = App().run()
     elif args.cmd == "acc":
-        repr = lambda x: f"{x['name']}: {x['ident']}"
+        repr = lambda x: "".join([f"{x['name']} [v{x.get('_version', 0)}]:\n", "\n".join([f"    {k}={v}" for k, v in x["ident"].items()])])
         if args.acc_op == "list":
             for acc in AccountManager.get_all():
                 print(repr(acc))
@@ -309,13 +309,13 @@ if __name__ == "__main__":
                     print(f"removed {repr(removed)}")
                 except KeyError:
                     print(f"account {name} does not exists")
-        elif args.acc_op == "add":
+        elif args.acc_op == "get":
             for name in args.name:
-                try:
+                if not AccountManager.exists(name.encode()):
                     added = AccountManager.get(name.encode())
                     print(f"added {repr(added)}")
-                except KeyError:
-                    print(f"account {name} does not exists")
+                else:
+                    print(f"{repr(AccountManager.get(name.encode()))}")
         elif args.acc_op == "renew":
             for name in args.name:
                 if not AccountManager.exists(name.encode()):
@@ -323,7 +323,7 @@ if __name__ == "__main__":
                     continue
                 prev = AccountManager.get(name.encode())
                 new = AccountManager.renew(name.encode())
-                print(f"from {repr(prev)} -> {repr(new)}")
+                print(f"from {repr(prev)}\nto\n{repr(new)}")
     elif args.cmd == "setting":
         if args.setting_op == "list":
             for k, v in setting.to_dict().items():

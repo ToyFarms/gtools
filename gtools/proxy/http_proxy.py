@@ -10,7 +10,7 @@ import urllib.parse
 
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.network import resolve_doh
-from gtools.proxy.event import UpdateServerData
+from gtools.proxy.event import UpdateClientVersion, UpdateServerData
 from gtools import setting
 
 
@@ -34,6 +34,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.logger.info(f"\t{self.path=}")
         self.logger.info(f"\t{headers=}")
         self.logger.info(f"\t{body=}")
+
+        body_dict = urllib.parse.parse_qs(body.decode())
+        UpdateClientVersion(version=body_dict["version"][0], protocol=int(body_dict["protocol"][0])).send()
 
         context = ssl.create_default_context()
         context.check_hostname = False
