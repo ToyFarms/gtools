@@ -201,8 +201,6 @@ def _run(e: type[Extension], *args) -> None:
 
 
 if __name__ == "__main__":
-    _ = item_database.items()  # trigger cache
-
     global_parent = argparse.ArgumentParser(add_help=False)
     global_parent.add_argument("-v", "--verbose", default=argparse.SUPPRESS, action="store_true", help="verbose logging")
 
