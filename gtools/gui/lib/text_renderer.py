@@ -10,13 +10,33 @@ from gtools.gui.lib.font import FontManager
 class TextRenderer(Renderer):
     INSTANCE_LAYOUT = [2, 2, 2, 2, 1]
 
-    def __init__(self, font_path: str, size: int = 16) -> None:
-        self.font = FontManager(font_path, size)
+    def __init__(
+        self,
+        font_path: str,
+        size: int = 16,
+        sdf_pixel_range: float = 12.0,
+        raster_scale: int = 4,
+        atlas_min_size: int = 1024,
+        edge_softness: float = 0.1,
+        weight: float = 0.0,
+    ) -> None:
+        self.font = FontManager(
+            font_path,
+            size=size,
+            sdf_pixel_range=sdf_pixel_range,
+            raster_scale=raster_scale,
+            atlas_min_size=atlas_min_size,
+        )
+        self.edge_softness = edge_softness
+        self.weight = weight
         self.shader = ShaderProgram.get("shaders/text")
         self._mvp = self.shader.get_uniform("u_mvp")
         self._offset = self.shader.get_uniform("u_offset")
         self._tex = self.shader.get_uniform("u_texture")
         self._color = self.shader.get_uniform("u_textColor")
+        self._sdf_range = self.shader.get_uniform("u_sdfPxRange")
+        self._softness = self.shader.get_uniform("u_edgeSoftness")
+        self._weight = self.shader.get_uniform("u_weight")
 
         self.shader3d = ShaderProgram.from_file("shaders/text3d.vert", "shaders/text.frag")
         self._vp3d = self.shader3d.get_uniform("u_view_proj")
@@ -24,6 +44,9 @@ class TextRenderer(Renderer):
         self._tex3d = self.shader3d.get_uniform("u_texture")
         self._color3d = self.shader3d.get_uniform("u_textColor")
         self._spread3d = self.shader3d.get_uniform("u_layer_spread")
+        self._sdf_range3d = self.shader3d.get_uniform("u_sdfPxRange")
+        self._softness3d = self.shader3d.get_uniform("u_edgeSoftness")
+        self._weight3d = self.shader3d.get_uniform("u_weight")
 
         self._batch_data: list[float] = []
         self._shadow_batch_data: list[float] = []
@@ -101,6 +124,9 @@ class TextRenderer(Renderer):
 
         self.shader.use()
         self._mvp.set_mat4x4(camera.proj_as_numpy())
+        self._sdf_range.set_float(self.font.sdf_pixel_range)
+        self._softness.set_float(self.edge_softness)
+        self._weight.set_float(self.weight)
 
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self.font.atlas_tex)
@@ -129,6 +155,9 @@ class TextRenderer(Renderer):
         self.shader3d.use()
         self._vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
         self._spread3d.set_float(layer_spread)
+        self._sdf_range3d.set_float(self.font.sdf_pixel_range)
+        self._softness3d.set_float(self.edge_softness)
+        self._weight3d.set_float(self.weight)
 
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self.font.atlas_tex)

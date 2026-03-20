@@ -247,6 +247,7 @@ class ObjectRendererBase(Renderer, ABC):
         self,
         items: list[DroppedItem],
         tex_offset: ivec2 = ivec2(0, 0),
+        pos_offset: vec2 = vec2(0, 0),
         overlay_scale: float = 1,
         icon_scale: float = 1,
         flags: "ObjectRendererBase.Flags" = Flags(0),
@@ -255,8 +256,8 @@ class ObjectRendererBase(Renderer, ABC):
         bucketed: defaultdict[int, list[DroppedItem]] = defaultdict(list)
 
         for dropped in items:
-            tile_x = int(dropped.pos.x // 32)
-            tile_y = int(dropped.pos.y // 32)
+            tile_x = int((dropped.pos.x + pos_offset.x) // 32)
+            tile_y = int((dropped.pos.y + pos_offset.y) // 32)
             region = (tile_x // REGION_TILE_SIZE, tile_y // REGION_TILE_SIZE)
             local_index = region_counters[region]
             region_counters[region] += 1
@@ -278,8 +279,8 @@ class ObjectRendererBase(Renderer, ABC):
         for local_index, drops in bucketed.items():
             for dropped in drops:
                 item = item_database.get(dropped.id)
-                x = dropped.pos.x
-                y = dropped.pos.y
+                x = dropped.pos.x + pos_offset.x
+                y = dropped.pos.y + pos_offset.y
 
                 NON_SEED_ID = [
                     MUTATED_SEED,
@@ -287,11 +288,11 @@ class ObjectRendererBase(Renderer, ABC):
                 if item.is_seed() and item.id not in NON_SEED_ID:
                     seeds.append((dropped, self._get_object_z(local_index, SUBLAYER_ICON)))
                     if text_renderer is not None and dropped.amount > 1:
-                        self._build_text(text_renderer, dropped, local_index, x, y)
+                        self._build_text(vec2(16), text_renderer, dropped, local_index, x, y)
                     continue
 
-                if text_renderer is not None and dropped.amount > 1:
-                    self._build_text(text_renderer, dropped, local_index, x, y)
+                if item.id != GEMS and (text_renderer is not None and dropped.amount > 1):
+                    self._build_text(vec2(20 * overlay_scale), text_renderer, dropped, local_index, x, y)
 
                 if not no_icon:
                     if flags & ObjectRendererBase.Flags.USE_ORIGINAL_TEXTURE:
@@ -301,8 +302,13 @@ class ObjectRendererBase(Renderer, ABC):
 
                     tex = self._tex_mgr.load_texture(setting.asset_path / "game" / tex_file)
 
-                    tex_index = item.get_default_tex()
-                    stride = item.get_tex_stride()
+                    if item.id == GEMS:
+                        tex_index = {1: 0, 5: 1, 10: 2, 50: 3, 100: 4}[dropped.amount]
+                        stride = 5
+                    else:
+                        tex_index = item.get_default_tex()
+                        stride = item.get_tex_stride()
+
                     off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
                     tex_pos = ivec2(item.tex_coord_x, item.tex_coord_y) + off + tex_offset
 
@@ -365,7 +371,7 @@ class ObjectRendererBase(Renderer, ABC):
             pickup_overlay=self._make_meshes(overlay),
             icon_shadows=self._make_meshes(icon_shadows),
             overlay_shadows=self._make_meshes(overlay_shadows),
-            seed_mesh=self._seed_renderer.build(seeds) if seeds else None,
+            seed_mesh=self._seed_renderer.build(seeds, pos_offset) if seeds else None,
             text_renderer=text_renderer,
         )
 
@@ -428,17 +434,14 @@ class ObjectRendererBase(Renderer, ABC):
 
     def _build_text(
         self,
+        container: vec2,
         text_renderer: TextRenderer,
         dropped: DroppedItem,
         local_index: int,
         x: float,
         y: float,
     ) -> None:
-        # i don't know, need to recheck the text placement again
-        overlay_size = 20 * 1.2
-        vpadding = 2.0
-        hpadding = 2.0
-        text_width = overlay_size - hpadding * 4
+        text_width = 16
 
         ref_width, _ = text_renderer.get_text_size("000", scale=1.0)
         auto_scale = text_width / ref_width if ref_width > 0 else 0.25
@@ -446,12 +449,8 @@ class ObjectRendererBase(Renderer, ABC):
         text_str = str(dropped.amount)
         text_w, text_h = text_renderer.get_text_size(text_str, scale=auto_scale)
 
-        if len(text_str) == 3:
-            text_x = x - overlay_size / 2 + (overlay_size - text_w) / 2
-        else:
-            text_x = x + overlay_size / 2 - hpadding - text_w
-
-        text_y = y + overlay_size / 2 - vpadding - text_h + 8 - vpadding
+        text_x = x + container.x / 2 - text_w - 2
+        text_y = y + text_h
 
         text_renderer.build_text(
             text_str,

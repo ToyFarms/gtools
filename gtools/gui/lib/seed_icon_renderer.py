@@ -1,3 +1,4 @@
+from pyglm.glm import vec2
 from gtools import setting
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import DroppedItem
@@ -24,7 +25,7 @@ class SeedIconRenderer(Renderer):
         self.tex3d = self.shader3d.get_uniform("u_texture")
         self.spread3d = self.shader3d.get_uniform("u_layer_spread")
 
-    def build(self, items: list[tuple[DroppedItem, float]]) -> Mesh:
+    def build(self, items: list[tuple[DroppedItem, float]], pos_offset: vec2 = vec2(0, 0)) -> Mesh:
         self.tex = self.tex_mgr.load_texture(setting.asset_path / "game/seed.rttex")
 
         data_dtype = np.dtype(
@@ -48,7 +49,7 @@ class SeedIconRenderer(Renderer):
             overlay_b = (item.seed_color.b + item.seed_overlay_color.b) // 2
             overlay_color = (overlay_r << 16) | (overlay_g << 8) | overlay_b
 
-            data[i]["tilePos"] = [drop.pos.x, drop.pos.y, z]
+            data[i]["tilePos"] = [drop.pos.x + pos_offset.x, drop.pos.y + pos_offset.y, z]
             data[i]["baseColor"] = base_color
             data[i]["overlayColor"] = overlay_color
             data[i]["baseUV"] = item.seed_base.value * 16 / self.tex.width
