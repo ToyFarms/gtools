@@ -72,7 +72,7 @@ class TextRenderer(Renderer):
             if i == len(text) - 1:
                 width += (glyph.bearing[0] + glyph.size[0]) * scale
             else:
-                width += (glyph.advance >> 6) * scale
+                width += glyph.advance * scale
             max_height = max(max_height, glyph.size[1] * scale)
         return width, max_height
 
@@ -81,7 +81,7 @@ class TextRenderer(Renderer):
         for char in text:
             glyph = self.font.get_char(char)
             if glyph.size[0] == 0:
-                current_x += (glyph.advance >> 6) * scale
+                current_x += glyph.advance * scale
                 continue
 
             w = glyph.size[0] * scale
@@ -95,7 +95,7 @@ class TextRenderer(Renderer):
             if shadow_z is not None:
                 self._shadow_batch_data.extend([xpos, ypos, w, h, glyph.tex_offset[0], glyph.tex_offset[1], glyph.tex_size[0], glyph.tex_size[1], shadow_z])
 
-            current_x += (glyph.advance >> 6) * scale
+            current_x += glyph.advance * scale
 
     def build(self) -> None:
         if self._batch_data:

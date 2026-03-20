@@ -27,9 +27,9 @@ from OpenGL.GL import (
 
 @dataclass(slots=True)
 class Character:
-    size: tuple[int, int]
-    bearing: tuple[int, int]
-    advance: int
+    size: tuple[float, float]
+    bearing: tuple[float, float]
+    advance: float
     tex_offset: tuple[float, float]
     tex_size: tuple[float, float]
 
@@ -137,10 +137,14 @@ class FontManager:
 
             tex_offset = (x_offset / atlas_w, y_offset / atlas_h)
             tex_size = (packed_w / atlas_w, packed_h / atlas_h if atlas_h > 0 else 0.0)
+
+            bearing_y = (top + padding) / self.raster_scale
+            glyph_h = packed_h / self.raster_scale
+
             self.chars[char] = Character(
-                (int(round(glyph_w)), int(round(glyph_h))),
-                (int(round(bearing_x)), int(round(bearing_y))),
-                int(round(advance / self.raster_scale)),
+                (glyph_w, glyph_h),
+                (bearing_x, bearing_y),
+                (advance / 64.0) / self.raster_scale,
                 tex_offset,
                 tex_size,
             )
