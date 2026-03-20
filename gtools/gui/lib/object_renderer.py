@@ -9,7 +9,7 @@ from pyglm.glm import ivec2, vec2
 
 from gtools import setting
 from gtools.baked.items import GEMS, MUTATED_SEED
-from gtools.core.growtopia.items_dat import item_database
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoType, item_database
 from gtools.core.growtopia.world import DroppedItem
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
@@ -71,6 +71,17 @@ class IconInfo:
     world_pos: vec2
     tex_pos: ivec2
     z: float
+
+
+PICKUP_BOX_BLUE = 0
+PICKUP_BOX_YELLOW = 1
+PICKUP_BOX_RED = 2
+PICKUP_BOX_GREEN = 3
+PICKUP_BOX_GOLD = 4
+PICKUP_BOX_PURPLE = 5
+PICKUP_BOX_ORANGE = 6
+PICKUP_BOX_GRAY = 7
+PICKUP_BOX_WHITE = 8
 
 
 class ObjectRendererBase(Renderer, ABC):
@@ -334,6 +345,16 @@ class ObjectRendererBase(Renderer, ABC):
 
                 if not no_overlay and item.id != GEMS:
                     overlay_tex = self._tex_mgr.load_texture(setting.asset_path / "game/pickup_box.rttex")
+                    tex = PICKUP_BOX_BLUE
+                    if item.item_type == ItemInfoType.CONSUMABLE:
+                        tex = PICKUP_BOX_PURPLE
+                    elif item.item_type == ItemInfoType.LOCK:
+                        tex = PICKUP_BOX_ORANGE
+                    elif item.flags & ItemFlag.UNTRADEABLE:
+                        tex = PICKUP_BOX_WHITE
+
+                    uv_x = tex * 20 / overlay_tex.width
+
                     overlay[overlay_tex.array].extend(
                         [
                             x,

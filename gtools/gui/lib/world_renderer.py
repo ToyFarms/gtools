@@ -221,7 +221,12 @@ class WorldRenderer:
         flag = ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT
         if icons["easel"]:
             renderable.append(
-                ObjectRenderable(mesh=self._renderer_post_fg.build(icons["easel"], flags=flag, icon_scale=0.6), renderer=self._renderer_post_fg, rotation=0.2, pixel_scale=1.2)
+                ObjectRenderable(
+                    mesh=self._renderer_post_fg.build(icons["easel"], flags=flag, icon_scale=0.5, pos_offset=vec2(-2, 3)),
+                    renderer=self._renderer_post_fg,
+                    rotation=0.2,
+                    pixel_scale=1.2,
+                )
             )
             renderable.append(
                 ObjectRenderable(
