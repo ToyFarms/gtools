@@ -361,7 +361,7 @@ class ObjectRendererBase(Renderer, ABC):
                             y,
                             overlay_scale,
                             overlay_scale,
-                            0,
+                            uv_x,
                             0,
                             overlay_tex.layer,
                             self._get_object_z(local_index, SUBLAYER_OVERLAY),
