@@ -24,12 +24,13 @@ from OpenGL.GL import (
 )
 from imgui_bundle import imgui
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
-from pyglm.glm import vec2
+from pyglm.glm import ivec2, vec2
 
 from gtools import setting
+from gtools.baked.items import SIGN
 from gtools.core import ndialog
 from gtools.core.growtopia.items_dat import item_database
-from gtools.core.growtopia.world import World
+from gtools.core.growtopia.world import SignTile, Tile, TileFlags, World
 from gtools.core.highres_sleep import nanosleep
 from gtools.core.log import setup_logger
 from gtools.core.wsl import windows_home
@@ -97,15 +98,16 @@ class App:
 
     def _add_debug_world(self) -> None:
         size = math.ceil(math.sqrt(item_database.item_count))
-        w = World(width=size, height=size)
-        w.fix()
+        w = World(name=b"Debug World", width=size, height=size)
 
         for item in item_database.items.values():
             x = item.id % w.width * 32
             y = item.id // w.width * 32
+            w.tiles[item.id] = Tile(fg_id=SIGN, pos=ivec2(x / 32, y / 32), extra=SignTile(text=f"{item.name.decode()} ({item.id})".encode()), flags=TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE)
 
-            w.create_dropped(item.id, vec2(x, y), 1, 0)
+            w.create_dropped(item.id, vec2(x + 8, y + 8), 1, 0)
 
+        w.fix()
         self.add_panel(WorldPanel(w, self.dockspace.node_id))
 
     def add_panel(self, panel: Panel) -> None:
