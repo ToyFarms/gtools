@@ -1,5 +1,11 @@
+# native GUI using OpenGL
 ![gui](images/gui-v2.png)
+
+# render to image
 ![render](images/render.png)
+
+# debug world
+![debug](images/debug_world.png)
 
 ```
 prerequisites:
