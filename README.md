@@ -1,10 +1,10 @@
-# native GUI using OpenGL
+# Native GUI Using OpenGL
 ![gui](images/gui-v2.png)
 
-# render to image
+# Render to Image
 ![render](images/render.png)
 
-# debug world
+# Debug World
 ![debug](images/debug_world.png)
 
 ```
