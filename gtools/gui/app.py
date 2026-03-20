@@ -1,4 +1,5 @@
 import logging
+import math
 from pathlib import Path
 from sys import argv
 import time
@@ -23,9 +24,12 @@ from OpenGL.GL import (
 )
 from imgui_bundle import imgui
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
+from pyglm.glm import vec2
 
 from gtools import setting
 from gtools.core import ndialog
+from gtools.core.growtopia.items_dat import item_database
+from gtools.core.growtopia.world import World
 from gtools.core.highres_sleep import nanosleep
 from gtools.core.log import setup_logger
 from gtools.core.wsl import windows_home
@@ -61,7 +65,7 @@ class App:
 
         if world_path:
             logger.debug(f"app pre-loading world {world_path}")
-            self.add_panel(WorldPanel(self.dockspace.node_id, world_path))
+            self.add_panel(WorldPanel.load(world_path, self.dockspace.node_id))
 
         self.fps = 60
         self.prev = time.perf_counter()
@@ -74,7 +78,7 @@ class App:
         def _() -> None:
             world = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
             if isinstance(world, str):
-                self.add_panel(WorldPanel(self.dockspace.node_id, Path(world)))
+                self.add_panel(WorldPanel.load(Path(world), self.dockspace.node_id))
 
         @root.submenu("Search World")
         def _(sub: PaletteBuilder) -> None:
@@ -83,9 +87,26 @@ class App:
 
                 @sub.cmd(world.name)
                 def _(p=world) -> None:
-                    self.add_panel(WorldPanel(self.dockspace.node_id, p))
+                    self.add_panel(WorldPanel.load(p, self.dockspace.node_id))
+
+        @root.cmd("Debug World")
+        def _() -> None:
+            self._add_debug_world()
 
         return root
+
+    def _add_debug_world(self) -> None:
+        size = math.ceil(math.sqrt(item_database.item_count))
+        w = World(width=size, height=size)
+        w.fix()
+
+        for item in item_database.items.values():
+            x = item.id % w.width * 32
+            y = item.id // w.width * 32
+
+            w.create_dropped(item.id, vec2(x, y), 1, 0)
+
+        self.add_panel(WorldPanel(w, self.dockspace.node_id))
 
     def add_panel(self, panel: Panel) -> None:
         self.panels.append(panel)
@@ -174,9 +195,9 @@ class App:
         glEnable(GL_BLEND)
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
 
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LESS);
-        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST)
+        glDepthFunc(GL_LESS)
+        glDepthMask(GL_TRUE)
 
     def shutdown(self) -> None:
         self.event_router.delete()

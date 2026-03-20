@@ -1,11 +1,9 @@
-from collections import defaultdict
 import itertools
 import logging
 from pathlib import Path
 
 from imgui_bundle import imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
 
-from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.packet import NetPacket
 from gtools.core.growtopia.world import World
 from gtools.gui.event import Event
@@ -19,10 +17,9 @@ logger = logging.getLogger("gui-world-panel")
 class WorldPanel(Panel):
     _UNIQUE = itertools.count()
 
-    def __init__(self, dockspace_id: int, path: Path) -> None:
+    def __init__(self, world: World, dockspace_id: int) -> None:
         super().__init__()
-        pkt = NetPacket.deserialize(path.read_bytes())
-        world = World.from_tank(pkt.tank)
+        self._world = world
         self._name = f"{world.name.decode()}##{next(WorldPanel._UNIQUE)}"
 
         self._dockspace_id = dockspace_id
@@ -30,6 +27,13 @@ class WorldPanel(Panel):
         self._first_render = True
 
         self._world_renderer = WorldRenderer(world)
+
+    @classmethod
+    def load(cls, file: Path | str, dockspace_id: int) -> "WorldPanel":
+        pkt = NetPacket.deserialize(Path(file).read_bytes())
+        world = World.from_tank(pkt.tank)
+
+        return cls(world, dockspace_id)
 
     def delete(self) -> None:
         logger.info(f"deleting panel {self._name}")
@@ -65,7 +69,9 @@ class WorldPanel(Panel):
         sheet = self._world_renderer.sheet
         _, sheet.bpm = imgui_knobs.knob("BPM", sheet.bpm, 20.0, 200.0, format="%.0f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
         imgui.same_line()
-        _, self._world_renderer.mixer.master_gain = imgui_knobs.knob("GAIN", self._world_renderer.mixer.master_gain, 0.0, 1.0, format="%.2f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
+        _, self._world_renderer.mixer.master_gain = imgui_knobs.knob(
+            "GAIN", self._world_renderer.mixer.master_gain, 0.0, 1.0, format="%.2f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only
+        )
 
         imgui.separator()
 

@@ -2319,8 +2319,10 @@ class World:
         """adjust width, height, nb_tiles based on the tiles dict. also fills in any gap."""
         xs = [t.pos.x for t in self.tiles.values()]
         ys = [t.pos.y for t in self.tiles.values()]
-        self.width = max(xs) + 1
-        self.height = max(ys) + 1
+        if xs:
+            self.width = max(xs) + 1
+        if ys:
+            self.height = max(ys) + 1
 
         for y in range(self.height):
             for x in range(self.width):
