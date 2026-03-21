@@ -8,12 +8,13 @@ from pyglm.glm import ivec2
 
 from gtools import setting
 from gtools.core.growtopia.items_dat import ItemInfoTextureType, get_tex_stride, item_database
-from gtools.core.growtopia.world import DisplayBlockTile, Tile, TileFlags, VendingMachineTile, World
+from gtools.core.growtopia.world import DisplayBlockTile, SeedTile, Tile, TileFlags, VendingMachineTile, World
 
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib import layer
 from gtools.gui.lib.renderer import Renderer
+from gtools.gui.lib.tree_renderer import TreeRenderer
 from gtools.gui.opengl import Mesh, ShaderProgram, Uniform
 from gtools.gui.texture import GLTexManager, TextureArray
 
@@ -67,6 +68,8 @@ class TileRenderer(Renderer):
         self._spread3d = self._shader3d.get_uniform("u_layer_spread")
         self._opacity3d = self._shader3d.get_uniform("u_opacity")
 
+        self._tree_renderer = TreeRenderer()
+
     def load(self, world: World) -> None:
         self._build_meshes(world)
         self._tex_mgr.flush()
@@ -77,19 +80,25 @@ class TileRenderer(Renderer):
     def draw(self, camera: Camera2D) -> None:
         if not self.any():
             return
+
         self._shader.use()
         self._mvp.set_mat4x4(camera.proj_as_numpy())
         self._draw_layers(camera, self._tex, self._layer, self._opacity)
+        self._tree_renderer.draw(camera, self.tree_mesh)
 
     def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
         if not self.any():
             return
+
         self._shader3d.use()
         self._vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
         self._spread3d.set_float(layer_spread)
         self._draw_layers(None, self._tex3d, self._layer3d, self._opacity3d)
+        self._tree_renderer.draw_3d(camera3d, self.tree_mesh, layer_spread)
 
     def delete(self) -> None:
+        self.tree_mesh.delete()
+        self._tree_renderer.delete()
         for rl in self._layers.values():
             for chunk_list in rl.chunks.values():
                 for _, mesh in chunk_list:
@@ -123,6 +132,7 @@ class TileRenderer(Renderer):
         instances: dict[str, dict[tuple[int, int], dict[TextureArray, list[float]]]] = {
             key: defaultdict(lambda: defaultdict(list)) for key in self._layers
         }
+        trees: list[Tile] = []
 
         for tile in world.tiles.values():
             chunk_x = int(tile.pos.x // CHUNK_SIZE)
@@ -176,6 +186,9 @@ class TileRenderer(Renderer):
                             instances["fg_after"][chunk_key][tex_array].extend(data)
 
                         handled = True
+                    elif isinstance(tile.extra, SeedTile):
+                        trees.append(tile)
+                        handled = True
 
                 if not handled:
                     tex_array, data = self._tile_instance_data(tile, tile.fg_id, tile.fg_tex_index)
@@ -195,6 +208,8 @@ class TileRenderer(Renderer):
 
                 tex_array, data = self._tile_instance_data_raw(tile, "water.rttex", tex_pos)
                 instances["water"][chunk_key][tex_array].extend(data)
+
+        self.tree_mesh = self._tree_renderer.build(trees)
 
         for key, chunks_data in instances.items():
             rl = self._layers[key]

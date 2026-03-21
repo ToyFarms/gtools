@@ -19,11 +19,13 @@ class SeedIconRenderer(Renderer):
         self.shader = ShaderProgram.get("shaders/seed")
         self.texture = self.shader.get_uniform("u_texture")
         self.mvp = self.shader.get_uniform("u_mvp")
+        self.tile_size = self.shader.get_uniform("u_tileSize")
 
         self.shader3d = ShaderProgram.from_file("shaders/seed3d.vert", "shaders/seed.frag")
         self.vp3d = self.shader3d.get_uniform("u_view_proj")
         self.tex3d = self.shader3d.get_uniform("u_texture")
         self.spread3d = self.shader3d.get_uniform("u_layer_spread")
+        self.tile_size3d = self.shader3d.get_uniform("u_tileSize")
 
     def build(self, items: list[tuple[DroppedItem, float]], pos_offset: vec2 = vec2(0, 0)) -> Mesh:
         self.tex = self.tex_mgr.load_texture(setting.asset_path / "game/seed.rttex")
@@ -33,8 +35,8 @@ class SeedIconRenderer(Renderer):
                 ("tilePos", np.float32, 3),
                 ("baseColor", np.uint32),
                 ("overlayColor", np.uint32),
-                ("baseUV", np.float32),
-                ("overlayUV", np.float32),
+                ("baseUV", np.float32, 2),
+                ("overlayUV", np.float32, 2),
                 ("layer", np.float32),
             ]
         )
@@ -52,8 +54,8 @@ class SeedIconRenderer(Renderer):
             data[i]["tilePos"] = [drop.pos.x + pos_offset.x, drop.pos.y + pos_offset.y, z]
             data[i]["baseColor"] = base_color
             data[i]["overlayColor"] = overlay_color
-            data[i]["baseUV"] = item.seed_base.value * 16 / self.tex.width
-            data[i]["overlayUV"] = item.seed_overlay.value * 16 / self.tex.width
+            data[i]["baseUV"] = [item.seed_base.value * 16 / self.tex.width, 0 / self.tex.height]
+            data[i]["overlayUV"] = [item.seed_overlay.value * 16 / self.tex.width, 16 / self.tex.height]
             data[i]["layer"] = self.tex.layer
 
         self.tex_mgr.flush()
@@ -63,25 +65,27 @@ class SeedIconRenderer(Renderer):
             [2, 2],
             Mesh.RECT_INDICES,
             instance_data=data,
-            instance_layout=[3, (1, GL_UNSIGNED_INT), (1, GL_UNSIGNED_INT), 1, 1, 1],
+            instance_layout=[3, (1, GL_UNSIGNED_INT), (1, GL_UNSIGNED_INT), 2, 2, 1],
             instance_attrib_base=2,
         )
 
     def draw(self, camera: Camera2D, mesh: Mesh) -> None:
-        self.shader.use()
-        self.mvp.set_mat4x4(camera.proj_as_numpy())
-
         if self.tex:
+            self.shader.use()
+            self.mvp.set_mat4x4(camera.proj_as_numpy())
+            self.tile_size.set_float(16.0)
+
             self.tex.array.bind(unit=0)
             self.texture.set_int(0)
             mesh.draw_instanced()
 
     def draw_3d(self, camera3d: Camera3D, mesh: Mesh, layer_spread: float) -> None:
-        self.shader3d.use()
-        self.vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
-        self.spread3d.set_float(layer_spread)
-
         if self.tex:
+            self.shader3d.use()
+            self.vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
+            self.spread3d.set_float(layer_spread)
+            self.tile_size3d.set_float(16.0)
+
             self.tex.array.bind(unit=0)
             self.tex3d.set_int(0)
             mesh.draw_instanced()

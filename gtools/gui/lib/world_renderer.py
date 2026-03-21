@@ -11,7 +11,7 @@ from pyglm import glm
 from pyglm.glm import ivec2, vec2
 
 from gtools.baked.items import PAINTING_EASEL
-from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, ShelfTile, Tile, VendingMachineTile, World
+from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, SeedTile, ShelfTile, Tile, VendingMachineTile, World
 
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
