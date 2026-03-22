@@ -7,6 +7,7 @@ import numpy as np
 from pyglm.glm import ivec2
 
 from gtools import setting
+from gtools.baked.items import STEAM_TUBES
 from gtools.core.growtopia.items_dat import ItemInfoTextureType, get_tex_stride, item_database
 from gtools.core.growtopia.world import DisplayBlockTile, SeedTile, Tile, TileFlags, VendingMachineTile, World
 
@@ -189,6 +190,19 @@ class TileRenderer(Renderer):
                     elif isinstance(tile.extra, SeedTile):
                         trees.append(tile)
                         handled = True
+
+                if item.is_steam():
+                    anchor = item_database.get(STEAM_TUBES)
+                    tex_pos = ivec2(anchor.tex_coord_x + 1, anchor.tex_coord_y)
+                    stride = get_tex_stride(ItemInfoTextureType.SMART_EDGE)
+                    off = ivec2(tile.fg_tex_index % max(stride, 1), tile.fg_tex_index // stride if stride else 0)
+
+                    tex_array, data = self._tile_instance_data_raw(
+                        tile,
+                        anchor.texture_file.decode(),
+                        tex_pos + off
+                    )
+                    instances["fg_after"][chunk_key][tex_array].extend(data)
 
                 if not handled:
                     tex_array, data = self._tile_instance_data(tile, tile.fg_id, tile.fg_tex_index)
