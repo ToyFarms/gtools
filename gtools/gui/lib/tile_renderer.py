@@ -7,7 +7,7 @@ import numpy as np
 from pyglm.glm import ivec2
 
 from gtools import setting
-from gtools.baked.items import STEAM_TUBES
+from gtools.baked.items import STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.growtopia.items_dat import ItemInfoTextureType, get_tex_stride, item_database
 from gtools.core.growtopia.world import DisplayBlockTile, SeedTile, Tile, TileFlags, VendingMachineTile, World
 
@@ -201,6 +201,13 @@ class TileRenderer(Renderer):
                         tile,
                         anchor.texture_file.decode(),
                         tex_pos + off
+                    )
+                    instances["fg_after"][chunk_key][tex_array].extend(data)
+                elif tile.fg_id == STEAM_REVOLVER:
+                    tex_array, data = self._tile_instance_data_raw(
+                        tile,
+                        item.texture_file.decode(),
+                        ivec2(item.tex_coord_x, item.tex_coord_y + 1),
                     )
                     instances["fg_after"][chunk_key][tex_array].extend(data)
 
