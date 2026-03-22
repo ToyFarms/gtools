@@ -2554,11 +2554,19 @@ class World:
 
     def update_tile_connection(self, tile: Tile) -> None:
         item = item_database.get(tile.fg_id)
-        match item.texture_type:
+        texture_type = item.texture_type
+
+        if item.is_steam():
+            texture_type = ItemInfoTextureType.SMART_EDGE
+
+        match texture_type:
             case ItemInfoTextureType.SINGLE_FRAME_ALONE | ItemInfoTextureType.SINGLE_FRAME | ItemInfoTextureType.SMART_OUTER:
                 tile.fg_tex_index = 0
             case ItemInfoTextureType.SMART_EDGE:
-                tile.fg_tex_index = handle_smart_edge_connection(self, tile, 0)
+                if item.is_steam():
+                    tile.fg_tex_index = handle_smart_edge_connection(self, tile, 2)
+                else:
+                    tile.fg_tex_index = handle_smart_edge_connection(self, tile, 0)
             case ItemInfoTextureType.SMART_EDGE_HORIZ:
                 if item.is_seed():
                     tile.fg_tex_index = handle_smart_edge_horiz_seed_connection(self, tile, 0)
@@ -2900,7 +2908,7 @@ class World:
         )
 
 
-def is_steam(a1: World, a2: int, a3: int, /) -> bool:
+def steam_can_connect(a1: World, a2: int, a3: int, /) -> bool:
     width: int = 0
     v5: Tile | None = None
     result: bool = False
@@ -3371,15 +3379,15 @@ def handle_smart_edge_connection(world: World, a2: Tile | None, mode: int, /) ->
         x_plus_1 = x + 1
         x_plus_1_1 = x + 1
         if mode == 2:
-            should_connect = is_steam(world, x_plus_1, y)
-            v45 = is_steam(world, x_plus_1, y + 1)
-            v42 = is_steam(world, x, y + 1)
-            v40 = is_steam(world, x - 1, y + 1)
-            v12 = is_steam(world, x - 1, y)
+            should_connect = steam_can_connect(world, x_plus_1, y)
+            v45 = steam_can_connect(world, x_plus_1, y + 1)
+            v42 = steam_can_connect(world, x, y + 1)
+            v40 = steam_can_connect(world, x - 1, y + 1)
+            v12 = steam_can_connect(world, x - 1, y)
             y_min_1 = y - 1
-            v9 = is_steam(world, x - 1, y_min_1)
-            v10 = is_steam(world, x, y_min_1)
-            v13 = is_steam(world, x_plus_1_1, y_min_1)
+            v9 = steam_can_connect(world, x - 1, y_min_1)
+            v10 = steam_can_connect(world, x, y_min_1)
+            v13 = steam_can_connect(world, x_plus_1_1, y_min_1)
         elif mode == 3:
             flag = a2.flags & (TileFlags.ON_FIRE | TileFlags.IS_WET)
             overlay_flag = TileFlags.ON_FIRE if (flag & TileFlags.ON_FIRE) else TileFlags.IS_WET

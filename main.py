@@ -14,9 +14,10 @@ import numpy as np
 from pyglm.glm import ivec4, ivec2
 
 from gtools import flags
+from gtools.baked.items import STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.block_sigint import block_sigint
 from gtools.core.color import composite
-from gtools.core.growtopia.items_dat import ItemFlag, item_database
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoTextureType, get_tex_stride, item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.rttex import RTTexManager
 from gtools.core.growtopia.strkv import StrKV
@@ -458,7 +459,7 @@ if __name__ == "__main__":
 
         start = time.perf_counter()
 
-        def place(tex: np.ndarray, id: int, pos: ivec2, is_bg: bool) -> None:
+        def place(tex: np.ndarray, id: int, pos: ivec2, is_bg: bool, no_shadow: bool = False) -> None:
             if id <= 0:
                 return
 
@@ -471,7 +472,7 @@ if __name__ == "__main__":
             dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
 
             item = item_database.get(id)
-            if item.flags & ItemFlag.NO_SHADOW == 0:
+            if not no_shadow and item.flags & ItemFlag.NO_SHADOW == 0:
                 dst = ivec4(pos.x * 32, pos.y * 32, 32, 32)
                 alpha_mask = tex[:, :, 3] > 4
                 dst_slice = shadow_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
@@ -485,6 +486,19 @@ if __name__ == "__main__":
 
             place(tile.get_bg_texture(mgr), tile.bg_id, tile.pos, is_bg=True)
             place(tile.get_fg_texture(mgr), tile.fg_id, tile.pos, is_bg=False)
+
+            if item_database.get(tile.fg_id).is_steam():
+                anchor = item_database.get(STEAM_TUBES)
+                stride = get_tex_stride(ItemInfoTextureType.SMART_EDGE)
+                off = ivec2(tile.fg_tex_index % max(stride, 1), tile.fg_tex_index // stride if stride else 0)
+                tex_pos = (ivec2((anchor.tex_coord_x + 1), anchor.tex_coord_y) + off) * 32
+
+                place(mgr.get(setting.asset_path / "game" / anchor.texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32), tile.fg_id, tile.pos, is_bg=False, no_shadow=True)
+            if tile.fg_id == STEAM_REVOLVER:
+                tex_pos, _ = tile.tex_pos(tile.fg_id, 0)
+                tex_pos = (tex_pos + ivec2(0, 1)) * 32
+
+                place(mgr.get(setting.asset_path / "game" / item_database.get(tile.fg_id).texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32), tile.fg_id, tile.pos, is_bg=False, no_shadow=True)
 
         bg = composite(bg_layer, bg_shadow_layer, dx=-2, dy=2)
         fg = composite(fg_layer, fg_shadow_layer, dx=-2, dy=2)
