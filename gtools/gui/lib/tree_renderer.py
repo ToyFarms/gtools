@@ -16,12 +16,14 @@ import numpy as np
 
 @dataclass(slots=True)
 class TreeMesh:
-    tree: Mesh
-    object: ObjectRenderMesh
+    tree: Mesh | None
+    object: ObjectRenderMesh | None
 
     def delete(self) -> None:
-        self.tree.delete()
-        self.object.delete()
+        if self.tree:
+            self.tree.delete()
+        if self.object:
+            self.object.delete()
 
 
 # TODO: scale based on time left
@@ -124,8 +126,8 @@ class TreeRenderer(Renderer):
                 instance_data=data,
                 instance_layout=[3, (1, GL_UNSIGNED_INT), (1, GL_UNSIGNED_INT), 2, 2, 1],
                 instance_attrib_base=2,
-            ),
-            object=self._obj_renderer.build(items, flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT, icon_scale=0.25),
+            ) if items else None,
+            object=self._obj_renderer.build(items, flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT, icon_scale=0.25) if items else None,
         )
 
     def draw(self, camera: Camera2D, mesh: TreeMesh) -> None:
@@ -136,8 +138,10 @@ class TreeRenderer(Renderer):
             self.tex.array.bind(unit=0)
             self.texture.set_int(0)
 
-            mesh.tree.draw_instanced()
-            self._obj_renderer.draw(camera, mesh.object)
+            if mesh.tree:
+                mesh.tree.draw_instanced()
+            if mesh.object:
+                self._obj_renderer.draw(camera, mesh.object)
 
 
     def draw_3d(self, camera3d: Camera3D, mesh: TreeMesh, layer_spread: float) -> None:
@@ -149,8 +153,10 @@ class TreeRenderer(Renderer):
             self.tex.array.bind(unit=0)
             self.tex3d.set_int(0)
 
-            mesh.tree.draw_instanced()
-            self._obj_renderer.draw_3d(camera3d, mesh.object, layer_spread)
+            if mesh.tree:
+                mesh.tree.draw_instanced()
+            if mesh.object:
+                self._obj_renderer.draw_3d(camera3d, mesh.object, layer_spread)
 
     def delete(self) -> None:
         self._obj_renderer.delete()
