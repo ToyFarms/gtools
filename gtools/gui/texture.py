@@ -292,7 +292,7 @@ class GLTexManager:
 
     def delete_texture(self, key: str) -> None:
         if key not in self._textures:
-            logger.debug("delete texture '%s' not found, skipping", key)
+            logger.debug(f"delete texture '{key}' not found, skipping")
             return
 
         tex = self._textures.pop(key)
@@ -302,35 +302,35 @@ class GLTexManager:
             return
 
         if self._default_array is not None and array is self._default_array:
-            logger.debug("texture '%s' belongs to the default array, skipping deletion", key)
+            logger.debug(f"texture '{key}' belongs to the default array, skipping deletion")
             return
 
-        logger.debug("deleting texture '%s' (layer=%d, array=%dx%d)", key, tex.layer, array.width, array.height)
+        logger.debug(f"deleting texture '{key}' (layer={tex.layer}, array={array.width}x{array.height})")
 
         keys_referencing = [k for k, t in self._textures.items() if t.array is array]
         for k in keys_referencing:
-            logger.debug("evicting co-resident texture '%s' from array %dx%d", k, array.width, array.height)
+            logger.debug(f"evicting co-resident texture '{k}' from array {array.width}x{array.height}")
             self._textures.pop(k, None)
 
         if len(keys_referencing) <= 1:
-            logger.debug("delete_texture: destroying TextureArray %dx%d (tex_id=%d)", array.width, array.height, array.tex_id)
+            logger.debug(f"delete_texture: destroying TextureArray {array.width}x{array.height} (tex_id={array.tex_id})")
             array.delete()
             self._arrays.pop((array.width, array.height), None)
 
     def delete_all(self) -> None:
         texture_count = len(self._textures)
         array_count = len(self._arrays)
-        logger.debug("releasing %d texture(s) across %d array(s)", texture_count, array_count)
+        logger.debug(f"releasing {texture_count} texture(s) across {array_count} array(s)")
 
         for (w, h), array in self._arrays.items():
-            logger.debug("destroying TextureArray %dx%d (tex_id=%d)", w, h, array.tex_id)
+            logger.debug(f"destroying TextureArray {w}x{h} (tex_id={array.tex_id})")
             array.delete()
 
         self._arrays.clear()
         self._textures.clear()
 
         if self._default_array:
-            logger.debug("destroying default TextureArray (tex_id=%d)", self._default_array.tex_id)
+            logger.debug(f"destroying default TextureArray (tex_id={self._default_array.tex_id})")
             try:
                 self._default_array.delete()
             except Exception:
@@ -359,7 +359,7 @@ def get_texture(file: str | Path, unit: int = 0, bind: bool = False) -> GLTex:
 
         tex = manager._textures.get(key)
         if tex is None:
-            logger.error("failed to obtain texture for %s after flush, fallback to default texture", key)
+            logger.error(f"failed to obtain texture for {key} after flush, fallback to default texture")
             manager._ensure_default_texture()
             tex = manager._textures.get(_DEFAULT_TEXTURE_KEY)
             if tex is None:
@@ -371,7 +371,7 @@ def get_texture(file: str | Path, unit: int = 0, bind: bool = False) -> GLTex:
         return tex
 
     except Exception as exc:
-        logger.exception("get_texture failed for %s: %s", key, exc)
+        logger.exception(f"get_texture failed for {key}: {exc}")
         default = manager._textures.get(_DEFAULT_TEXTURE_KEY)
         if default is None:
             manager._ensure_default_texture()

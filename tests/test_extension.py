@@ -2075,22 +2075,22 @@ def compute_packet_timing_stats(received_packets: list[tuple[int, object]], delt
 
     if verbose:
         logger.info("packet timing statistics:")
-        logger.info("  intervals compared: %d", total)
-        logger.info("  within tolerance: %d / %d (%.1f%%) [tolerance = %.3f ms]", within_tolerance_count, total, percent_within_tolerance * 100.0, ns_to_ms(tolerance_ns))
-        logger.info("  late: %d (%.1f%%), Early: %d (%.1f%%), Exact: %d", late_count, percent_late * 100.0, early_count, percent_early * 100.0, exact_count)
-        logger.info("  mean absolute error: %.3f ms", ns_to_ms(mean_abs_error_ns))
-        logger.info("  mean signed error: %.3f ms (positive => slower/late)", ns_to_ms(mean_signed_error_ns))
-        logger.info("  median absolute error: %.3f ms", ns_to_ms(median_abs_error_ns))
-        logger.info("  rMS error: %.3f ms", ns_to_ms(rms_error_ns))
-        logger.info("  stddev of errors: %.3f ms", ns_to_ms(stdev_error_ns))
-        logger.info("  min error: %.3f ms, Max error: %.3f ms", ns_to_ms(min_error_ns), ns_to_ms(max_error_ns))
-        logger.info("  top %d worst absolute errors (interval_index, error_ms):", len(worst_abs))
+        logger.info(f"  intervals compared: {total}")
+        logger.info(f"  within tolerance: {within_tolerance_count} / {total} ({percent_within_tolerance * 100.0:.1f}%) [tolerance = {ns_to_ms(tolerance_ns):.3f} ms]")
+        logger.info(f"  late: {late_count} ({percent_late * 100.0:.1f}%), Early: {early_count} ({percent_early * 100.0:.1f}%), Exact: {exact_count}")
+        logger.info(f"  mean absolute error: {ns_to_ms(mean_abs_error_ns):.3f} ms")
+        logger.info(f"  mean signed error: {ns_to_ms(mean_signed_error_ns):.3f} ms (positive => slower/late)")
+        logger.info(f"  median absolute error: {ns_to_ms(median_abs_error_ns):.3f} ms")
+        logger.info(f"  rMS error: {ns_to_ms(rms_error_ns):.3f} ms")
+        logger.info(f"  stddev of errors: {ns_to_ms(stdev_error_ns):.3f} ms")
+        logger.info(f"  min error: {ns_to_ms(min_error_ns):.3f} ms, Max error: {ns_to_ms(max_error_ns):.3f} ms")
+        logger.info(f"  top {len(worst_abs)} worst absolute errors (interval_index, error_ms):")
         for idx, err in worst_abs:
-            logger.info("    interval %d: %.3f ms (signed)", idx, ns_to_ms(err))
+            logger.info(f"    interval {idx}: {ns_to_ms(err):.3f} ms (signed)")
 
         logger.debug("per-interval (index, expected_ms, actual_ms, error_ms):")
         for i, (exp_ns, act_ns, err_ns) in enumerate(zip(expected_intervals_ns, actual_intervals_ns, errors_ns), start=1):
-            logger.debug("  %3d: expected=%.3f ms, actual=%.3f ms, error=%.3f ms", i, ns_to_ms(exp_ns), ns_to_ms(act_ns), ns_to_ms(err_ns))
+            logger.debug(f"  {i:3d}: expected={ns_to_ms(exp_ns):.3f} ms, actual={ns_to_ms(act_ns):.3f} ms, error={ns_to_ms(err_ns):.3f} ms")
 
     return metrics
 

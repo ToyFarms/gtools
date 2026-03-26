@@ -88,7 +88,7 @@ def parse_compiler_flags_from_file(filepath: Path) -> dict[str, list[str]]:
                         if compiler_name:
                             flags.setdefault(compiler_name, []).extend(flag_list)
     except Exception as exc:
-        click.echo(f"warning: failed to parse flags from {filepath}: {exc}", err=True)
+        print(f"warning: failed to parse flags from {filepath}: {exc}", file=sys.stderr)
 
     return flags
 
@@ -171,7 +171,7 @@ def compile_in_directory(compiler_id: str, src_dir: Path, target_system: str | N
             extra_flags = collect_compiler_flags([src_path], compiler_id)
 
             if extra_flags:
-                click.echo(f"  found custom flags for {compiler_id} in {src_name}: {shlex.join(extra_flags)}")
+                print(f"  found custom flags for {compiler_id} in {src_name}: {shlex.join(extra_flags)}")
 
             out_name = make_output_name_for_source(src_path, system=target_system)
             out_path = src_dir / out_name
@@ -191,7 +191,7 @@ def compile_in_directory(compiler_id: str, src_dir: Path, target_system: str | N
                     extra_flags=extra_flags,
                 )
 
-            click.echo(f"compiling {src_name} for target={target_system or platform.system()} in {src_dir} with {cc_exe!s}: {shlex.join(cmd)}")
+            print(f"compiling {src_name} for target={target_system or platform.system()} in {src_dir} with {cc_exe!s}: {shlex.join(cmd)}")
             try:
                 call(cmd)
             except Exception as exc:
@@ -208,29 +208,29 @@ def compile_in_directory(compiler_id: str, src_dir: Path, target_system: str | N
 
 @click.command()
 def compile_cmod() -> None:
-    click.echo("compiling c module")
+    print("compiling c module")
 
     ROOT = "gtools"
     project_root = Path.cwd()
     src_root = project_root / ROOT
 
     if not src_root.exists() or not src_root.is_dir():
-        click.echo(f"{ROOT}/ directory not found", err=True)
+        print(f"{ROOT}/ directory not found", file=sys.stderr)
         sys.exit(1)
 
     compilers = detect_available_compilers()
     if not compilers:
-        click.echo("no supported C compiler found on PATH. please install gcc/clang or MSVC", err=True)
+        print("no supported C compiler found on PATH. please install gcc/clang or MSVC", file=sys.stderr)
         sys.exit(2)
 
-    click.echo(f"detected compilers: {compilers}")
+    print(f"detected compilers: {compilers}")
 
     targets_map: dict[str, list[str]] = {}
     for comp in compilers:
         for t in compiler_supported_targets(comp):
             targets_map.setdefault(t, []).append(comp)
 
-    click.echo(f"available target systems from installed compilers: {sorted(targets_map.keys())}")
+    print(f"available target systems from installed compilers: {sorted(targets_map.keys())}")
 
     dirs_with_c: dict[Path, list[Path]] = {}
     for c_path in src_root.rglob("*.c"):
@@ -238,37 +238,37 @@ def compile_cmod() -> None:
         dirs_with_c.setdefault(parent, []).append(c_path)
 
     if not dirs_with_c:
-        click.echo("no .c files found")
+        print("no .c files found")
         sys.exit(0)
 
     failed: list[tuple[Path, str, str]] = []
 
     for src_dir, files in sorted(dirs_with_c.items()):
-        click.echo(f"\npreparing to compile {len(files)} file(s) in {src_dir}")
+        print(f"\npreparing to compile {len(files)} file(s) in {src_dir}")
 
         for target_system, comp_list in sorted(targets_map.items()):
-            click.echo(f"  -> target: {target_system} (compilers: {comp_list})")
+            print(f"  -> target: {target_system} (compilers: {comp_list})")
             compiled_for_target = False
             last_err = ""
 
             for comp in comp_list:
-                click.echo(f"    trying compiler: {comp}")
+                print(f"    trying compiler: {comp}")
                 success, msg = compile_in_directory(comp, src_dir, target_system=target_system)
                 if success:
-                    click.echo(f"    success: {msg}")
+                    print(f"    success: {msg}")
                     compiled_for_target = True
                     break
                 else:
-                    click.echo(f"    failed with {comp}: {msg}")
+                    print(f"    failed with {comp}: {msg}")
                     last_err = msg
 
             if not compiled_for_target:
                 failed.append((src_dir, target_system, last_err))
 
     if failed:
-        click.echo("\nsome targets failed to compile:", err=True)
+        print("\nsome targets failed to compile:", file=sys.stderr)
         for d, target, err in failed:
-            click.echo(f" - {d} (target={target}): {err}", err=True)
+            print(f" - {d} (target={target}): {err}", file=sys.stderr)
         sys.exit(3)
 
-    click.echo("\nall compilation tasks finished successfully.")
+    print("\nall compilation tasks finished successfully.")

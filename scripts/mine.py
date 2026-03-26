@@ -657,15 +657,15 @@ def mine(old_dat: Path | None, new_dat: Path | None, no_color: bool, all: bool) 
     if all:
         dats = _get_all_item_database()
         if len(dats) < 2:
-            click.echo("need at least two archived .dat files for --all", err=True)
+            print("need at least two archived .dat files for --all", file=sys.stderr)
             sys.exit(1)
 
         pairs = list(reversed(list(zip(dats, dats[1:]))))
-        click.echo(f"found {len(dats)} archives -> running {len(pairs)} diff(s)  (oldest -> newest).\n", err=True)
+        print(f"found {len(dats)} archives -> running {len(pairs)} diff(s)  (oldest -> newest).\n", file=sys.stderr)
 
         all_results: list[DiffResult] = []
         for i, (newer, older) in enumerate(pairs, 1):
-            click.echo(f"[{i}/{len(pairs)}]  {older.name}  ->  {newer.name}", err=True)
+            print(f"[{i}/{len(pairs)}]  {older.name}  ->  {newer.name}", file=sys.stderr)
 
             new_db = ItemDatabase.load(newer)
             old_db = ItemDatabase.load(older)
@@ -705,10 +705,10 @@ def mine(old_dat: Path | None, new_dat: Path | None, no_color: bool, all: bool) 
     else:
         dats = _get_all_item_database()
         if len(dats) < 2:
-            click.echo("need at least two archived .dat files", err=True)
+            print("need at least two archived .dat files", file=sys.stderr)
             sys.exit(1)
 
-        click.echo(f"comparing:\n  NEW: {dats[0]}\n  OLD: {dats[1]}\n", err=True)
+        print(f"comparing:\n  NEW: {dats[0]}\n  OLD: {dats[1]}\n", file=sys.stderr)
         new_db = ItemDatabase.load(dats[0])
         old_db = ItemDatabase.load(dats[1])
         result = compute_diff(new_db, old_db, new_path=dats[0], old_path=dats[1])

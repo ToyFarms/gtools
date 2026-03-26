@@ -1115,9 +1115,9 @@ class ItemDatabase:
         filename = f"{datetime.now(timezone.utc).strftime(_CACHE_DATE_FMT)}" f"_{self._source_hash}.pkl"
         try:
             _atomic_write(dir_ / filename, {"schema": self._schema_hash(), "db": self})
-            _log.info("wrote cache %s  version=%d", filename, self.version)
+            _log.info(f"wrote cache {filename}  version={self.version}")
         except Exception as e:
-            _log.error("failed writing cache %s: %s", filename, e)
+            _log.error(f"failed writing cache {filename}: {e}")
 
     def archive_source(self, data: bytes, base_dir: Path | None = None) -> None:
         if not self._source_hash:
@@ -1132,9 +1132,9 @@ class ItemDatabase:
 
         try:
             _atomic_write_bytes(dir_ / filename, data)
-            _log.info("archived items.dat v%d → %s", self.version, filename)
+            _log.info(f"archived items.dat v{self.version} → {filename}")
         except Exception as e:
-            _log.error("archive failed %s: %s", filename, e)
+            _log.error(f"archive failed {filename}: {e}")
 
     @classmethod
     def _try_load_disk_cache(
@@ -1154,18 +1154,18 @@ class ItemDatabase:
                 stored_schema = payload.get("schema") if isinstance(payload, dict) else None
                 db = payload.get("db") if isinstance(payload, dict) else payload
                 if stored_schema != cls._schema_hash():
-                    _log.info("schema mismatch, invalidating %s", path)
+                    _log.info(f"schema mismatch, invalidating {path}")
                     path.unlink(missing_ok=True)
                     continue
                 if not isinstance(db, ItemDatabase) or db.version != version:
                     continue
                 cls._mem[source_hash] = db
                 cls._latest_per_version[version] = db
-                _log.info("loaded disk cache %s", path.name)
+                _log.info(f"loaded disk cache {path.name}")
 
                 return db
             except Exception as e:
-                _log.error("corrupt cache %s: %s – removing", path, e)
+                _log.error(f"corrupt cache {path}: {e}, removing")
                 path.unlink(missing_ok=True)
 
         return None
@@ -1222,10 +1222,10 @@ class ItemDatabase:
                 continue
             try:
                 db = cls.load(path, cached=True, cache_base_dir=cache_base_dir)
-                _log.info("latest: loaded from %s (v%d)", path, db.version)
+                _log.info(f"latest: loaded from {path} (v{db.version})")
                 return db
             except Exception as e:
-                _log.error("latest: failed loading %s: %s", path, e)
+                _log.error(f"latest: failed loading {path}: {e}")
 
         raise FileNotFoundError("no valid items.dat found. checked: " + ", ".join(str(p) for p in _ITEMS_DAT_CANDIDATES))
 
@@ -1249,17 +1249,17 @@ class ItemDatabase:
                 stored_schema = payload.get("schema") if isinstance(payload, dict) else None
                 db = payload.get("db") if isinstance(payload, dict) else payload
                 if stored_schema != cls._schema_hash():
-                    _log.info("schema mismatch, invalidating %s", path)
+                    _log.info(f"schema mismatch, invalidating {path}")
                     path.unlink(missing_ok=True)
                     continue
                 if not isinstance(db, ItemDatabase) or db.version != version:
                     continue
                 cls._mem[db._source_hash] = db
                 cls._latest_per_version[version] = db
-                _log.info("for_version(%d): loaded from %s", version, path.name)
+                _log.info(f"for_version({version}): loaded from {path.name}")
                 return db
             except Exception as e:
-                _log.error("corrupt cache %s: %s – removing", path, e)
+                _log.error(f"corrupt cache {path}: {e}, removing")
                 path.unlink(missing_ok=True)
 
         raise ValueError(f"no valid cached database for version {version}")

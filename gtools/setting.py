@@ -93,7 +93,7 @@ def _reload():
                 changes.append((name, old_val, new_val))
 
         if changes:
-            logger.info("setting reloaded with %d change(s):", len(changes))
+            logger.info(f"setting reloaded with {len(changes)} change(s):")
             for name, old_val, new_val in changes:
                 logger.info(f"  {name}: {old_val} -> {new_val}")
         else:
