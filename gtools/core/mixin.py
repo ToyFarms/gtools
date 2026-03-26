@@ -1,12 +1,9 @@
-from ast import List
-from ctypes import Union
-from dataclasses import dataclass, fields, is_dataclass, asdict
-from typing import Any, Callable, get_type_hints, get_origin, get_args
 import json
+from dataclasses import fields, is_dataclass, asdict, MISSING
+from typing import Any, Callable, get_type_hints, get_origin, get_args, Union
 from pathlib import Path
 from datetime import datetime, date
 from enum import Enum
-
 
 type Serializer = Callable[[Any], Any]
 type Deserializer = Callable[[Any], Any]
@@ -23,30 +20,14 @@ class JsonMixin:
             lambda d: d.isoformat(),
             lambda s: date.fromisoformat(s),
         ),
-        Enum: (
-            lambda e: e.value,
-            lambda v: v,
-        ),
         bytes: (
             lambda b: b.decode("utf-8"),
             lambda s: s.encode("utf-8"),
         ),
-        int: (
-            int,
-            lambda v: int(v) if not isinstance(v, bool) else v,
-        ),
-        float: (
-            float,
-            float,
-        ),
-        bool: (
-            bool,
-            bool,
-        ),
-        str: (
-            str,
-            str,
-        ),
+        int: (int, lambda v: int(v) if not isinstance(v, bool) else v),
+        float: (float, float),
+        bool: (bool, bool),
+        str: (str, str),
     }
 
     @staticmethod
@@ -65,15 +46,20 @@ class JsonMixin:
             return value
 
         # list[T]
-        if origin in (list, List) and isinstance(value, list):
-            (item_type,) = get_args(field_type)
-            return [JsonMixin._convert_by_type(item_type, v) for v in value]
+        if origin is list and isinstance(value, list):
+            args = get_args(field_type)
+            if args:
+                (item_type,) = args
+                return [JsonMixin._convert_by_type(item_type, v) for v in value]
+            return value
 
-        # nested
+        # nested dataclass
         if is_dataclass(field_type) and isinstance(value, dict):
             return field_type.from_dict(value)  # pyright: ignore
 
-        # registered codec
+        if isinstance(field_type, type) and issubclass(field_type, Enum):
+            return field_type(value)
+
         codec = JsonMixin._CODECS.get(field_type)
         if codec:
             _, deser = codec
@@ -85,7 +71,6 @@ class JsonMixin:
     def convert_field_value(cls, field_name: str, value: Any) -> Any:
         type_hints = get_type_hints(cls)
         field_type = type_hints.get(field_name)
-
         if field_type is None:
             return value
 
@@ -103,41 +88,45 @@ class JsonMixin:
             json.dump(self.to_dict(), f, indent=indent, default=self._json_serializer)
 
     @classmethod
-    def from_dict[T: JsonMixin](cls: type[T], data: dict[str, Any]) -> T:
+    def from_dict[T: "JsonMixin"](cls: type[T], data: dict[str, Any]) -> T:
         if not is_dataclass(cls):
             raise TypeError(f"{cls.__name__} must be a dataclass")
 
         field_values = {}
-
-        for field in fields(cls):
-            if field.name not in data:
-                if field.default is not field.default_factory:
-                    continue
-                if field.default_factory is not dataclass.MISSING:  # type: ignore
-                    continue
-                raise ValueError(f"missing required field: {field.name}")
-
-            value = cls.convert_field_value(field.name, data[field.name])
-            field_values[field.name] = value
+        for f in fields(cls):
+            if f.name not in data:
+                if f.default is not MISSING:
+                    field_values[f.name] = f.default
+                elif f.default_factory is not MISSING:
+                    field_values[f.name] = f.default_factory()
+                else:
+                    raise ValueError(f"missing required field: {f.name}")
+                continue
+            field_values[f.name] = cls.convert_field_value(f.name, data[f.name])
 
         return cls(**field_values)
 
     @classmethod
-    def from_json[T: JsonMixin](cls: type[T], json_str: str) -> T:
+    def from_json[T: "JsonMixin"](cls: type[T], json_str: str) -> T:
         data = json.loads(json_str)
+
         return cls.from_dict(data)
 
     @classmethod
-    def from_json_file[T: JsonMixin](cls: type[T], filepath: str | Path) -> T:
+    def from_json_file[T: "JsonMixin"](cls: type[T], filepath: str | Path) -> T:
         filepath = Path(filepath)
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
+
         return cls.from_dict(data)
 
     @staticmethod
     def _json_serializer(obj: Any) -> Any:
-        if is_dataclass(obj):
-            return asdict(obj)  # pyright: ignore[reportArgumentType]
+        if is_dataclass(obj) and not isinstance(obj, type):
+            return asdict(obj)
+
+        if isinstance(obj, Enum):
+            return obj.value
 
         for typ, (ser, _) in JsonMixin._CODECS.items():
             try:

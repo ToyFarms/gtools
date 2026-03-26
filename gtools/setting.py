@@ -1,4 +1,5 @@
 import atexit
+import json
 import logging
 import threading
 from dataclasses import dataclass, field, fields
@@ -35,6 +36,17 @@ class Setting(JsonMixin):
     heartbeat_threshold: float = field(default=5.0)
     panic_on_packet_error: bool = field(default=False)
 
+    """
+    growtopia real traffic always includes the so called "anomaly byte",
+    which is a stray bytes at the end of every packet, the value is completely
+    random (possibly out of bound memory read, or uninitialized memory)
+    if this setting is on, it will compensate for that (and simulating too while at it)
+    however, most 3rd party server (private server) usually doesnt have this kinda
+    behavior so the packet will actually be parsed wrong.
+    """
+    anomaly_byte_compensation: bool = field(default=True)
+
+
     def __getattribute__(self, name):
         with _setting_lock:
             return super().__getattribute__(name)
@@ -51,8 +63,24 @@ class Setting(JsonMixin):
     @staticmethod
     def load() -> "Setting":
         logging.info(f"loaded setting from {SETTING_FILE}")
-        return Setting.from_json_file(SETTING_FILE)
 
+        try:
+            raw_keys = set(json.loads(SETTING_FILE.read_text()).keys())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"could not preload setting file for migration check: {e}")
+            raw_keys = set()
+
+        loaded = Setting.from_json_file(SETTING_FILE)
+
+        missing_names = {f.name for f in fields(Setting)} - raw_keys
+        if missing_names:
+            logger.info(
+                f"setting migrated, added {len(missing_names)} new field(s): "
+                + ", ".join(sorted(missing_names))
+            )
+            loaded.save()
+
+        return loaded
 
 class _SettingFileHandler(FileSystemEventHandler):
     def on_modified(self, event: DirModifiedEvent | FileModifiedEvent) -> None:
@@ -75,16 +103,19 @@ class _SettingFileHandler(FileSystemEventHandler):
 def _reload():
     global _setting
     with _setting_lock:
-        old = _setting
-        new = Setting.load()
-        _setting = new
+        try:
+            old = _setting
+            new = Setting.load()
+            _setting = new
+        except Exception:
+            logger.exception("failed to reload setting, keeping previous")
+            return
 
         if old is None:
             logger.info("setting loaded")
             return
 
         changes: list[tuple[str, Any, Any]] = []
-
         for f in fields(Setting):
             name = f.name
             old_val = getattr(old, name)

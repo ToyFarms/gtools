@@ -4,6 +4,7 @@ import struct
 import time
 from typing import Literal, cast
 
+from gtools import setting
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.convertible import ConvertibleToFloat, ConvertibleToInt
@@ -300,6 +301,21 @@ class EmptyPacket(Serializable):
         return "<Empty>"
 
 
+class UnknownPacket(Serializable):
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "UnknownPacket":
+        return cls(data)
+
+    def serialize(self) -> bytes:
+        return self.data
+
+    def __repr__(self) -> str:
+        return f"{self.data!r}"
+
+
 class NetPacket(Serializable):
     def __init__(self, type: NetType, data: Serializable) -> None:
         self.type = type
@@ -312,7 +328,11 @@ class NetPacket(Serializable):
     def deserialize(cls, data: bytes, mode: Literal["strict", "relaxed"] = "relaxed") -> "NetPacket":
         type = NetType(struct.unpack("<I", data[:4])[0])
 
-        pkt = data[4:-1]
+        if setting.anomaly_byte_compensation:
+            pkt = data[4:-1]
+        else:
+            pkt = data[4:]
+
         match type:
             case NetType.UNKNOWN:
                 raise TypeError(f"got unknown type: {data}")
@@ -324,6 +344,8 @@ class NetPacket(Serializable):
                 pkt = StrKV.deserialize(pkt)
             case NetType.ERROR | NetType.CLIENT_LOG_REQUEST | NetType.CLIENT_LOG_RESPONSE:
                 pkt = EmptyPacket()
+            case NetType.SYNC_CLIENT_POSITION | NetType.WRITE_TO_RING_BUFFER:
+                pkt = UnknownPacket.deserialize(pkt)
 
         return cls(type, pkt)
 
