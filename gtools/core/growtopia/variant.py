@@ -1,7 +1,9 @@
+import logging
 from typing import Literal, cast, overload
 from gtools.core.buffer import Buffer
 from dataclasses import dataclass
 from enum import IntEnum
+import struct
 
 
 class Kind(IntEnum):
@@ -14,6 +16,8 @@ class Kind(IntEnum):
 
 
 class Variant:
+    logger = logging.getLogger("variant")
+
     @dataclass(frozen=True)
     class vfloat:
         value: float = 0.0
@@ -200,22 +204,81 @@ class Variant:
         s = Buffer(data, endian="<")
         count = s.read_u8()
         out: list[Variant.Type] = []
-        for _ in range(count):
+
+        for i in range(count):
+            if s.remaining() < 2:
+                Variant.logger.warning(
+                    f"buffer exhausted at element {i} " f"(count={count} declared, {len(out)} read), truncating",
+                    stacklevel=2,
+                )
+                break
+
             _ = s.read_u8()
             kind = Kind(s.read_u8())
 
             if kind == Kind.FLOAT:
+                if s.remaining() < 4:
+                    Variant.logger.warning(
+                        f"truncated FLOAT payload at element {i} " f"(count={count} declared, {len(out)} read), truncating",
+                        stacklevel=2,
+                    )
+                    break
                 out.append(Variant.vfloat(value=s.read_f32()))
+
             elif kind == Kind.STRING:
+                if s.remaining() < 4:
+                    Variant.logger.warning(
+                        f"truncated STRING length prefix at element {i} " f"(count={count} declared, {len(out)} read), truncating",
+                        stacklevel=2,
+                    )
+                    break
+                str_len = struct.unpack_from("<I", s.peek(4))[0]
+                if s.remaining() < 4 + str_len:
+                    Variant.logger.warning(
+                        f"truncated STRING payload at element {i} " f"(count={count} declared, {len(out)} read), truncating",
+                        stacklevel=2,
+                    )
+                    break
                 out.append(Variant.vstr(value=s.read_pascal_bytes("I")))
+
             elif kind == Kind.VEC2:
+                if s.remaining() < 8:
+                    Variant.logger.warning(
+                        f"truncated VEC2 payload at element {i} " f"(count={count} declared, {len(out)} read), truncating",
+                        stacklevel=2,
+                    )
+                    break
                 out.append(Variant.vvec2(value=(s.read_f32(), s.read_f32())))
+
             elif kind == Kind.VEC3:
+                if s.remaining() < 12:
+                    Variant.logger.warning(
+                        f"truncated VEC3 payload at element {i} " f"(count={count} declared, {len(out)} read), truncating",
+                        stacklevel=2,
+                    )
+                    break
                 out.append(Variant.vvec3(value=(s.read_f32(), s.read_f32(), s.read_f32())))
+
             elif kind == Kind.UNSIGNED:
+                if s.remaining() < 4:
+                    Variant.logger.warning(
+                        f"truncated UNSIGNED payload at element {i} " f"(count={count} declared, {len(out)} read), truncating",
+                        stacklevel=2,
+                    )
+                    break
                 out.append(Variant.vuint(value=s.read_u32()))
+
             elif kind == Kind.SIGNED:
+                if s.remaining() < 4:
+                    Variant.logger.warning(
+                        f"truncated SIGNED payload at element {i} " f"(count={count} declared, {len(out)} read), truncating",
+                        stacklevel=2,
+                    )
+                    break
                 out.append(Variant.vint(value=s.read_i32()))
+
+            else:
+                raise ValueError("invalid Kind")
 
         return cls(out)
 
@@ -230,26 +293,64 @@ class Variant:
             raise ValueError(f"invalid index: {idx} (len={count})")
 
         for i in range(count):
+            if s.remaining() < 2:
+                Variant.logger.warning(
+                    f"buffer exhausted at element {i} " f"(count={count} declared, target idx={idx}), aborting",
+                    stacklevel=2,
+                )
+                break
+
             _ = s.read_u8()
             kind = Kind(s.read_u8())
 
             if kind == Kind.FLOAT:
+                if s.remaining() < 4:
+                    Variant.logger.warning(
+                        f"truncated FLOAT payload at element {i} " f"(count={count} declared, target idx={idx}), aborting",
+                        stacklevel=2,
+                    )
+                    break
                 if i == idx:
                     return Variant.vfloat(value=s.read_f32())
                 s.read_f32()
 
             elif kind == Kind.STRING:
+                if s.remaining() < 4:
+                    Variant.logger.warning(
+                        f"truncated STRING length prefix at element {i} " f"(count={count} declared, target idx={idx}), aborting",
+                        stacklevel=2,
+                    )
+                    break
+                str_len = struct.unpack_from("<I", s.peek(4))[0]
+                if s.remaining() < 4 + str_len:
+                    Variant.logger.warning(
+                        f"truncated STRING payload at element {i} " f"(count={count} declared, target idx={idx}), aborting",
+                        stacklevel=2,
+                    )
+                    break
                 if i == idx:
                     return Variant.vstr(value=s.read_pascal_bytes("I"))
                 s.read_pascal_bytes("I")
 
             elif kind == Kind.VEC2:
+                if s.remaining() < 8:
+                    Variant.logger.warning(
+                        f"truncated VEC2 payload at element {i} " f"(count={count} declared, target idx={idx}), aborting",
+                        stacklevel=2,
+                    )
+                    break
                 if i == idx:
                     return Variant.vvec2(value=(s.read_f32(), s.read_f32()))
                 s.read_f32()
                 s.read_f32()
 
             elif kind == Kind.VEC3:
+                if s.remaining() < 12:
+                    Variant.logger.warning(
+                        f"truncated VEC3 payload at element {i} " f"(count={count} declared, target idx={idx}), aborting",
+                        stacklevel=2,
+                    )
+                    break
                 if i == idx:
                     return Variant.vvec3(value=(s.read_f32(), s.read_f32(), s.read_f32()))
                 s.read_f32()
@@ -257,11 +358,23 @@ class Variant:
                 s.read_f32()
 
             elif kind == Kind.UNSIGNED:
+                if s.remaining() < 4:
+                    Variant.logger.warning(
+                        f"truncated UNSIGNED payload at element {i} " f"(count={count} declared, target idx={idx}), aborting",
+                        stacklevel=2,
+                    )
+                    break
                 if i == idx:
                     return Variant.vuint(value=s.read_u32())
                 s.read_u32()
 
             elif kind == Kind.SIGNED:
+                if s.remaining() < 4:
+                    Variant.logger.warning(
+                        f"truncated SIGNED payload at element {i} " f"(count={count} declared, target idx={idx}), aborting",
+                        stacklevel=2,
+                    )
+                    break
                 if i == idx:
                     return Variant.vint(value=s.read_i32())
                 s.read_i32()

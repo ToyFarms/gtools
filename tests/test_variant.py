@@ -471,6 +471,7 @@ def test_very_large_vec_values() -> None:
 
 
 def test_deserialize_truncated_data() -> None:
+    # TODO: "fix" this test
     data = bytes([1, 0, Kind.FLOAT])
     with pytest.raises(Exception):
         Variant.deserialize(data)
@@ -489,6 +490,7 @@ def test_deserialize_empty_data() -> None:
 
 
 def test_deserialize_partial_string() -> None:
+    # TODO: "fix" this test
     v = Variant([Variant.vstr(b"hello")])
     data = bytearray(v.serialize())
 
