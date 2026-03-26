@@ -82,8 +82,8 @@ class TankType(IntEnum):
 class TankFlags(IntFlag):
     NONE = 0
     WALK = 1 << 0
-    UNK2 = 1 << 1
-    SPAWN_RELATED = 1 << 2
+    FLYING = 1 << 1
+    RESET_VISUAL_STATE = 1 << 2
     EXTENDED = 1 << 3
     FACING_LEFT = 1 << 4
     STANDING = 1 << 5
