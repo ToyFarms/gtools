@@ -901,9 +901,7 @@ def _atomic_write(path: Path, obj: Any) -> None:
             pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(tmp, str(path))
     finally:
-        with Path(tmp) as p:
-            if p.exists():
-                p.unlink(missing_ok=True)
+        Path(tmp).unlink(missing_ok=True)
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
@@ -914,9 +912,7 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
             f.write(data)
         os.replace(tmp, str(path))
     finally:
-        with Path(tmp) as p:
-            if p.exists():
-                p.unlink(missing_ok=True)
+        Path(tmp).unlink(missing_ok=True)
 
 
 _SCHEMA_CLASSES = [
