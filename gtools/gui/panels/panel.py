@@ -16,7 +16,7 @@ class Panel(ABC):
 
     @property
     def is_dirty(self) -> bool:
-        return True
+        return False
 
     def handle_event(self, event) -> bool:
         _ = event

@@ -1,6 +1,5 @@
 import logging
 import threading
-import time
 
 from imgui_bundle import imgui
 from imgui_bundle import imgui_toggle  # pyright: ignore[reportMissingModuleSource]
@@ -170,6 +169,13 @@ class ProxyPanel(Panel):
                 )
             )
             imgui.text(label)
+
+    @property
+    def is_dirty(self) -> bool:
+        if self.world_renderer:
+            return self.world_renderer.is_dirty
+
+        return False
 
     def update(self, dt: float) -> None:
         if self.world_renderer:
