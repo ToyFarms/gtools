@@ -87,9 +87,13 @@ class ProxyPanel(Panel):
             imgui.set_mouse_cursor(imgui.MouseCursor_.resize_ew)
 
     def _render_body(self) -> None:
-        # TODO: determine when the world is changed
-        if self.proxy and (not self.world_renderer and self.proxy.state.world):
-            self.world_renderer = WorldRenderer(self.proxy.state.world)
+        if self.proxy:
+            if not self.world_renderer and self.proxy.state.world:
+                self.world_renderer = WorldRenderer(self.proxy.state.world)
+            elif self.proxy.state.world and self.world_renderer and self.world_renderer._world.name != self.proxy.state.world.name:
+                self.world_renderer.delete()
+                self.world_renderer = WorldRenderer(self.proxy.state.world)
+
 
         changed, self.http_server_enabled = imgui_toggle.toggle("HTTP Server", self.http_server_enabled)
         if changed:
