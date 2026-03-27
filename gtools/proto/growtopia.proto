@@ -91,7 +91,7 @@ message Clothing {
     uint32 face = 5;
     uint32 hand = 6;
     uint32 back = 7;
-    uint32 head = 8;
+    uint32 hat = 8;
     uint32 neck = 9;
     uint32 artifacts = 10;
     uint32 skin_color = 11;

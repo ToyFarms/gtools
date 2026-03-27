@@ -477,19 +477,7 @@ class State:
                                     what=STATE_UPDATE_CLOTHING,
                                     update_clothing=UpdateClothing(
                                         net_id=pkt.tank.net_id,
-                                        clothing=growtopia_pb2.Clothing(
-                                            hair=int(v.as_vec3[0][0]),
-                                            shirt=int(v.as_vec3[0][1]),
-                                            pants=int(v.as_vec3[0][2]),
-                                            shoes=int(v.as_vec3[1][0]),
-                                            face=int(v.as_vec3[1][1]),
-                                            hand=int(v.as_vec3[1][2]),
-                                            back=int(v.as_vec3[2][0]),
-                                            head=int(v.as_vec3[2][1]),
-                                            neck=int(v.as_vec3[2][2]),
-                                            artifacts=int(v.as_vec3[5][0]),
-                                            skin_color=v.as_uint[4],
-                                        ),
+                                        clothing=Clothing.from_variant(v).to_proto(),
                                     ),
                                 ),
                             )

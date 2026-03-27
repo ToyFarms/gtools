@@ -423,7 +423,6 @@ class ItemInfoTextureType(IntEnum):
     SMART_EDGE_HORIZ_CAVE = 9
     SMART_EDGE_DIAGON = 10
 
-
     @classmethod
     def _missing_(cls, value: int) -> "ItemInfoTextureType":
         obj = int.__new__(cls, value)
@@ -458,9 +457,8 @@ class ItemInfoCollisionType(IntEnum):
         return obj
 
 
-
 class ItemInfoClothingType(IntEnum):
-    NONE = 0
+    HAT = 0
     SHIRT = 1
     PANTS = 2
     SHOES = 3
@@ -802,7 +800,7 @@ class Item:
     collision_type: ItemInfoCollisionType = ItemInfoCollisionType.NONE  # u8
     health: int = 0  # u8
     restore_time: int = 0  # u32
-    clothing_type: ItemInfoClothingType = ItemInfoClothingType.NONE  # u8
+    clothing_type: ItemInfoClothingType = ItemInfoClothingType.HAT  # u8
     rarity: int = 0  # u16
     max_amount: int = 0  # u8
     extra_file: bytes = b""  # str with 2 bytes size prefix

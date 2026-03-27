@@ -145,7 +145,7 @@ class Player(_message.Message):
     def __init__(self, spawn: _Optional[bytes] = ..., netID: _Optional[int] = ..., userID: _Optional[int] = ..., eid: _Optional[bytes] = ..., ip: _Optional[bytes] = ..., colrect: _Optional[_Union[Vec4I, _Mapping]] = ..., posXY: _Optional[_Union[Vec2F, _Mapping]] = ..., name: _Optional[bytes] = ..., titleIcon: _Optional[bytes] = ..., country: _Optional[bytes] = ..., invis: _Optional[int] = ..., mstate: _Optional[int] = ..., smstate: _Optional[int] = ..., onlineID: _Optional[bytes] = ..., flags: _Optional[int] = ..., state: _Optional[_Union[CharacterState, _Mapping]] = ..., clothing: _Optional[_Union[Clothing, _Mapping]] = ...) -> None: ...
 
 class Clothing(_message.Message):
-    __slots__ = ("hair", "shirt", "pants", "shoes", "face", "hand", "back", "head", "neck", "artifacts", "skin_color")
+    __slots__ = ("hair", "shirt", "pants", "shoes", "face", "hand", "back", "hat", "neck", "artifacts", "skin_color")
     HAIR_FIELD_NUMBER: _ClassVar[int]
     SHIRT_FIELD_NUMBER: _ClassVar[int]
     PANTS_FIELD_NUMBER: _ClassVar[int]
@@ -153,7 +153,7 @@ class Clothing(_message.Message):
     FACE_FIELD_NUMBER: _ClassVar[int]
     HAND_FIELD_NUMBER: _ClassVar[int]
     BACK_FIELD_NUMBER: _ClassVar[int]
-    HEAD_FIELD_NUMBER: _ClassVar[int]
+    HAT_FIELD_NUMBER: _ClassVar[int]
     NECK_FIELD_NUMBER: _ClassVar[int]
     ARTIFACTS_FIELD_NUMBER: _ClassVar[int]
     SKIN_COLOR_FIELD_NUMBER: _ClassVar[int]
@@ -164,11 +164,11 @@ class Clothing(_message.Message):
     face: int
     hand: int
     back: int
-    head: int
+    hat: int
     neck: int
     artifacts: int
     skin_color: int
-    def __init__(self, hair: _Optional[int] = ..., shirt: _Optional[int] = ..., pants: _Optional[int] = ..., shoes: _Optional[int] = ..., face: _Optional[int] = ..., hand: _Optional[int] = ..., back: _Optional[int] = ..., head: _Optional[int] = ..., neck: _Optional[int] = ..., artifacts: _Optional[int] = ..., skin_color: _Optional[int] = ...) -> None: ...
+    def __init__(self, hair: _Optional[int] = ..., shirt: _Optional[int] = ..., pants: _Optional[int] = ..., shoes: _Optional[int] = ..., face: _Optional[int] = ..., hand: _Optional[int] = ..., back: _Optional[int] = ..., hat: _Optional[int] = ..., neck: _Optional[int] = ..., artifacts: _Optional[int] = ..., skin_color: _Optional[int] = ...) -> None: ...
 
 class DroppedItem(_message.Message):
     __slots__ = ("id", "x", "y", "amount", "flags", "uid")

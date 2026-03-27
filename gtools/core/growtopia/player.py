@@ -1,10 +1,13 @@
 from dataclasses import dataclass, field
 from enum import IntFlag
+from typing import Iterator
 
 from pyglm.glm import vec2, vec4
 
 from gtools.core.color import Color
+from gtools.core.growtopia.items_dat import ItemInfoClothingType
 from gtools.core.growtopia.packet import TankFlags
+from gtools.core.growtopia.variant import Variant
 from gtools.protogen import growtopia_pb2
 
 
@@ -88,10 +91,38 @@ class Clothing:
     face: int = 0
     hand: int = 0
     back: int = 0
-    head: int = 0
+    hat: int = 0
     neck: int = 0
     artifacts: int = 0
     skin_color: Color = field(default_factory=Color)
+
+    def __iter__(self) -> Iterator[tuple[ItemInfoClothingType, int]]:
+        yield ItemInfoClothingType.HAIR, self.hair
+        yield ItemInfoClothingType.SHIRT, self.shirt
+        yield ItemInfoClothingType.PANTS, self.pants
+        yield ItemInfoClothingType.SHOES, self.shoes
+        yield ItemInfoClothingType.FACE, self.face
+        yield ItemInfoClothingType.HAND, self.hand
+        yield ItemInfoClothingType.BACK, self.back
+        yield ItemInfoClothingType.HAT, self.hat
+        yield ItemInfoClothingType.NECK, self.neck
+        yield ItemInfoClothingType.ARTIFACTS, self.artifacts
+
+    @classmethod
+    def from_variant(cls, var: Variant) -> "Clothing":
+        return cls(
+            hair=int(var.as_vec3[1][0]),
+            shirt=int(var.as_vec3[1][1]),
+            pants=int(var.as_vec3[1][2]),
+            shoes=int(var.as_vec3[2][0]),
+            face=int(var.as_vec3[2][1]),
+            hand=int(var.as_vec3[2][2]),
+            back=int(var.as_vec3[3][0]),
+            hat=int(var.as_vec3[3][1]),
+            neck=int(var.as_vec3[3][2]),
+            artifacts=int(var.as_vec3[5][0]),
+            skin_color=Color.from_int_be(var.as_uint[4]),
+        )
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Clothing) -> "Clothing":
@@ -103,7 +134,7 @@ class Clothing:
             face=proto.face,
             hand=proto.hand,
             back=proto.back,
-            head=proto.head,
+            hat=proto.hat,
             neck=proto.neck,
             artifacts=proto.artifacts,
             skin_color=Color.from_int_be(proto.skin_color),
@@ -118,7 +149,7 @@ class Clothing:
             face=self.face,
             hand=self.hand,
             back=self.back,
-            head=self.head,
+            hat=self.hat,
             neck=self.neck,
             artifacts=self.artifacts,
             skin_color=self.skin_color.to_int_be(),
