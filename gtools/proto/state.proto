@@ -24,6 +24,7 @@ enum StateUpdateWhat {
   STATE_UPDATE_TREE_STATE = 17;
   STATE_TILE_CHANGE_REQUEST = 18;
   STATE_NPC_UPDATE = 19;
+  STATE_UPDATE_CLOTHING = 20;
 }
 
 message StateUpdate {
@@ -46,7 +47,13 @@ message StateUpdate {
     UpdateTreeState update_tree_state = 16;
     TileChangeRequest tile_change_req = 17;
     NpcUpdate npc_update = 18;
+    UpdateClothing update_clothing = 19;
   }
+}
+
+message UpdateClothing {
+  int32 net_id = 1;
+  gtools.growtopia.Clothing clothing = 2;
 }
 
 message NpcResetByCond {

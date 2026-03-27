@@ -10,7 +10,7 @@ from gtools.core.buffer import Buffer
 from gtools.core.growtopia import world
 from gtools.core.growtopia.inventory import Inventory
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, TankType
-from gtools.core.growtopia.player import CharacterState, Player
+from gtools.core.growtopia.player import CharacterState, Clothing, Player
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.growtopia.world import LockTile, Npc, NpcEvent, NpcType, Tile, TileExtraType, TileFlags, World
@@ -32,6 +32,7 @@ from gtools.protogen.state_pb2 import (
     STATE_SET_MY_PLAYER,
     STATE_SET_MY_TELEMETRY,
     STATE_TILE_CHANGE_REQUEST,
+    STATE_UPDATE_CLOTHING,
     STATE_UPDATE_STATUS,
     STATE_UPDATE_TREE_STATE,
     EnterWorld,
@@ -47,6 +48,7 @@ from gtools.protogen.state_pb2 import (
     StateUpdate,
     StateUpdateWhat,
     TileChangeRequest,
+    UpdateClothing,
     UpdateTreeState,
 )
 from gtools.proxy.extension.server.broker import Broker
@@ -468,6 +470,29 @@ class State:
                                     player_leave=int(kv[b"netID", 1]),
                                 ),
                             )
+                        elif fn == b"OnSetClothing":
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_UPDATE_CLOTHING,
+                                    update_clothing=UpdateClothing(
+                                        net_id=pkt.tank.net_id,
+                                        clothing=growtopia_pb2.Clothing(
+                                            hair=int(v.as_vec3[0][0]),
+                                            shirt=int(v.as_vec3[0][1]),
+                                            pants=int(v.as_vec3[0][2]),
+                                            shoes=int(v.as_vec3[1][0]),
+                                            face=int(v.as_vec3[1][1]),
+                                            hand=int(v.as_vec3[1][2]),
+                                            back=int(v.as_vec3[2][0]),
+                                            head=int(v.as_vec3[2][1]),
+                                            neck=int(v.as_vec3[2][2]),
+                                            artifacts=int(v.as_vec3[5][0]),
+                                            skin_color=v.as_uint[4],
+                                        ),
+                                    ),
+                                ),
+                            )
                     case TankType.ITEM_CHANGE_OBJECT:
                         if pkt.tank.net_id == -1:  # add new
                             self.send_state_update(
@@ -648,6 +673,16 @@ class State:
                     return
 
                 self.world.remove_player_by_id(upd.player_leave)
+            case StateUpdateWhat.STATE_UPDATE_CLOTHING:
+                if not self.world:
+                    self.logger.warning("player update clothing, but world is not initialized")
+                    return
+
+                if (player := self.world.get_player(upd.update_clothing.net_id)) is None:
+                    self.logger.warning(f"player update clothing, player with net id {upd.update_clothing.net_id} not found")
+                    return
+
+                player.clothing = Clothing.from_proto(upd.update_clothing.clothing)
             case StateUpdateWhat.STATE_UPDATE_STATUS:
                 self.status = Status(upd.update_status)
             case StateUpdateWhat.STATE_SEND_LOCK:

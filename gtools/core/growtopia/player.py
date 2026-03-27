@@ -3,6 +3,7 @@ from enum import IntFlag
 
 from pyglm.glm import vec2, vec4
 
+from gtools.core.color import Color
 from gtools.core.growtopia.packet import TankFlags
 from gtools.protogen import growtopia_pb2
 
@@ -79,6 +80,52 @@ class CharacterState:
 
 
 @dataclass(slots=True)
+class Clothing:
+    hair: int = 0
+    shirt: int = 0
+    pants: int = 0
+    shoes: int = 0
+    face: int = 0
+    hand: int = 0
+    back: int = 0
+    head: int = 0
+    neck: int = 0
+    artifacts: int = 0
+    skin_color: Color = field(default_factory=Color)
+
+    @classmethod
+    def from_proto(cls, proto: growtopia_pb2.Clothing) -> "Clothing":
+        return cls(
+            hair=proto.hair,
+            shirt=proto.shirt,
+            pants=proto.pants,
+            shoes=proto.shoes,
+            face=proto.face,
+            hand=proto.hand,
+            back=proto.back,
+            head=proto.head,
+            neck=proto.neck,
+            artifacts=proto.artifacts,
+            skin_color=Color.from_int_be(proto.skin_color),
+        )
+
+    def to_proto(self) -> growtopia_pb2.Clothing:
+        return growtopia_pb2.Clothing(
+            hair=self.hair,
+            shirt=self.shirt,
+            pants=self.pants,
+            shoes=self.shoes,
+            face=self.face,
+            hand=self.hand,
+            back=self.back,
+            head=self.head,
+            neck=self.neck,
+            artifacts=self.artifacts,
+            skin_color=self.skin_color.to_int_be(),
+        )
+
+
+@dataclass(slots=True)
 class Player:
     net_id: int = 0
     user_id: int = 0
@@ -95,6 +142,7 @@ class Player:
     online_id: bytes = b""
     flags: TankFlags = TankFlags.NONE
     state: CharacterState = field(default_factory=CharacterState)
+    clothing: Clothing = field(default_factory=Clothing)
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Player) -> "Player":
@@ -119,6 +167,7 @@ class Player:
             online_id=proto.onlineID,
             flags=TankFlags(proto.flags),
             state=CharacterState.from_proto(proto.state),
+            clothing=Clothing.from_proto(proto.clothing),
         )
 
     def to_proto(self) -> growtopia_pb2.Player:
@@ -146,4 +195,5 @@ class Player:
             onlineID=self.online_id,
             flags=self.flags,
             state=self.state.to_proto(),
+            clothing=self.clothing.to_proto(),
         )

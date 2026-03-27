@@ -80,3 +80,37 @@ def composite(top: np.ndarray, bottom: np.ndarray, dx=0, dy=0) -> np.ndarray:
     canvas.paste(bot_im, (dx, dy), bot_im)
     result = Image.alpha_composite(canvas, top_im)
     return np.array(result)
+
+
+class Color:
+    __slots__ = ("r", "g", "b", "a")
+
+    def __init__(self, r: int = 0, g: int = 0, b: int = 0, a: int = 0) -> None:
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = a
+
+    @classmethod
+    def from_int_le(cls, x: int) -> "Color":
+        b = x & 0xFF
+        g = (x >> 8) & 0xFF
+        r = (x >> 16) & 0xFF
+        a = (x >> 24) & 0xFF
+
+        return cls(r, g, b, a)
+
+    @classmethod
+    def from_int_be(cls, x: int) -> "Color":
+        a = (x >> 24) & 0xFF
+        r = (x >> 16) & 0xFF
+        g = (x >> 8) & 0xFF
+        b = x & 0xFF
+
+        return cls(r, g, b, a)
+
+    def to_int_le(self) -> int:
+        return (self.a << 24) | (self.r << 16) | (self.g << 8) | self.b
+
+    def to_int_be(self) -> int:
+        return (self.a << 24) | (self.r << 16) | (self.g << 8) | self.b
