@@ -761,7 +761,7 @@ def get_default_tex(texture_type: ItemInfoTextureType) -> int:
         case ItemInfoTextureType.SINGLE_FRAME:
             return 0
         case ItemInfoTextureType.SMART_EDGE:
-            return 0
+            return 12
         case ItemInfoTextureType.SMART_EDGE_HORIZ:
             return 0
         case ItemInfoTextureType.SMART_CLING:
