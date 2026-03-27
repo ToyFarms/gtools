@@ -21,7 +21,7 @@ from gtools.gui.lib.text_renderer import TextRenderer
 import numpy as np
 
 REGION_TILE_SIZE = 3
-MAX_PER_REGION = 1024
+MAX_PER_REGION = 64
 
 SHADOW_SUBLAYER_OVERLAY = 0
 SHADOW_SUBLAYER_ICON = 1
@@ -34,6 +34,8 @@ SUBLAYER_TEXT_SHADOW = 2
 SUBLAYER_TEXT = 3
 LAYER_STRIDE = 4
 MAX_LAYER = MAX_PER_REGION * LAYER_STRIDE
+
+GEMS_TO_TEX_OFFSET = {1: 0, 5: 1, 10: 2, 50: 3, 100: 4}
 
 
 @dataclass(slots=True)
@@ -97,6 +99,9 @@ class ObjectRendererBase(Renderer, ABC):
         # if texture has _icon variant, it will choose that instead
         # this flag disables that behaviour and uses the original texture
         USE_ORIGINAL_TEXTURE = auto()
+
+        # will order such that the frontmost object is the highest uid
+        ORDER_BY_UID = auto()
 
     def __init__(self, z_start: float, z_end: float) -> None:
         self._tex_mgr = GLTexManager()
@@ -266,6 +271,9 @@ class ObjectRendererBase(Renderer, ABC):
         region_counters: dict[tuple[int, int], int] = defaultdict(int)
         bucketed: defaultdict[int, list[DroppedItem]] = defaultdict(list)
 
+        if flags & ObjectRendererBase.Flags.ORDER_BY_UID:
+            items = sorted(items, key=lambda x: x.uid)
+
         for dropped in items:
             tile_x = int((dropped.pos.x + pos_offset.x) // 32)
             tile_y = int((dropped.pos.y + pos_offset.y) // 32)
@@ -314,7 +322,7 @@ class ObjectRendererBase(Renderer, ABC):
                     tex = self._tex_mgr.load_texture(setting.asset_path / "game" / tex_file)
 
                     if item.id == GEMS:
-                        tex_index = {1: 0, 5: 1, 10: 2, 50: 3, 100: 4}[dropped.amount]
+                        tex_index = GEMS_TO_TEX_OFFSET[dropped.amount]
                         stride = 5
                     else:
                         tex_index = item.get_default_tex()

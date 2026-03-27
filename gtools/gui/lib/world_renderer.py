@@ -223,7 +223,13 @@ class WorldRenderer:
         if self._world.dropped.items:
             renderable.append(
                 ObjectRenderable(
-                    mesh=self._renderer_post_fg.build(self._world.dropped.items, icon_scale=0.67, overlay_scale=1.2, pos_offset=vec2(-8, -8)),
+                    mesh=self._renderer_post_fg.build(
+                        self._world.dropped.items,
+                        icon_scale=0.67,
+                        overlay_scale=1.2,
+                        pos_offset=vec2(-8, -8),
+                        flags=ObjectRenderer.Flags.ORDER_BY_UID,
+                    ),
                     renderer=self._renderer_post_fg,
                 )
             )
