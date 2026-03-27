@@ -2619,8 +2619,6 @@ class World:
                 tile.fg_tex_index = handle_smart_edge_vert_connection(self, tile, 0)
             case ItemInfoTextureType.SMART_EDGE_DIAGON:
                 tile.fg_tex_index = handle_smart_edge_diagon_connection(self, tile, 0)
-            case _:
-                self.logger.warning(f"texture {item.texture_type.name} not handled")
 
         item = item_database.get(tile.bg_id)
         match item.texture_type:
@@ -2643,8 +2641,6 @@ class World:
                 tile.bg_tex_index = handle_smart_edge_vert_connection(self, tile, 1)
             case ItemInfoTextureType.SMART_EDGE_DIAGON:
                 tile.bg_tex_index = handle_smart_edge_horiz_seed_connection(self, tile, 1)
-            case _:
-                self.logger.warning(f"texture {item.texture_type.name} not handled")
 
         if tile.flags & (TileFlags.ON_FIRE | TileFlags.IS_WET):
             tile.overlay_tex_index = handle_smart_edge_connection(self, tile, 3)
@@ -2705,12 +2701,13 @@ class World:
                 tile.lock_index = 0
                 yield tile
 
-    def plant(self, tile: Tile, id: int, tree_item_id: int = 0, splice: bool = False) -> None:
+    def plant(self, tile: Tile, id: int, item_on_tree: int, splice: bool) -> None:
         if splice:
             tile.flags |= TileFlags.WILL_SPAWN_SEEDS_TOO
+
         self.place_fg(tile, id)
         assert tile.extra
-        tile.extra.expect(SeedTile).item_on_tree = tree_item_id
+        tile.extra.expect(SeedTile).item_on_tree = item_on_tree
 
     def tile_change(
         self,
@@ -2721,7 +2718,7 @@ class World:
         net_id: int,
         splice: bool = False,
         should_take_item: bool = True,
-        seed_id: int = 0,
+        item_on_tree: int = 0,
     ) -> None:
         item = item_database.get(id)
 
@@ -2730,7 +2727,7 @@ class World:
 
         if item.item_type == ItemInfoType.SEED:
             if tile.fg_id == 0:
-                self.plant(tile, id)
+                self.plant(tile, id, item_on_tree, splice)
             return
 
         if item.is_background():
@@ -2754,7 +2751,7 @@ class World:
                 else:
                     tile.flags &= ~TileFlags.WILL_SPAWN_SEEDS_TOO
                 tile.flags |= TileFlags.IS_SEEDLING
-                tile.extra.expect(SeedTile).item_on_tree = seed_id
+                tile.extra.expect(SeedTile).item_on_tree = item_on_tree
 
         if item.flags2 & ItemFlag.FLIPPABLE != 0:
             if flags & TankFlags.FACING_LEFT:
@@ -4096,3 +4093,10 @@ def handle_smart_cling_connection(world: World, tile: Tile, _a3: int) -> int:
             return texture
 
     return 4
+
+
+# 20:26:49 [INFO    ] proxy proxy.py:194: from client (TANK_PACKET) TankPacket(type=TILE_CHANGE_REQUEST, value=3, vector_x=2228.0, vector_y=770.0, int_x=68, int_y=24)
+# 20:26:49 [INFO    ] proxy proxy.py:194: from client (TANK_PACKET) TankPacket(type=STATE, flags=<TankFlags.STANDING|PLACE|TILE_CHANGE: 3104>, value=3, vector_x=2228.0, vector_y=770.0, int_x=68, int_y=24)
+# 20:26:50 [INFO    ] proxy proxy.py:194: from client (TANK_PACKET) TankPacket(type=STATE, flags=<TankFlags.STANDING: 32>, vector_x=2228.0, vector_y=770.0, int_x=-1, int_y=-1)
+# 20:26:50 [INFO    ] proxy proxy.py:194: from client (TANK_PACKET) TankPacket(type=STATE, flags=<TankFlags.STANDING: 32>, vector_x=2228.0, vector_y=770.0, int_x=-1, int_y=-1)
+# 20:26:50 [INFO    ] proxy proxy.py:194: from server (TANK_PACKET) TankPacket(type=TILE_CHANGE_REQUEST, animation_type=3, net_id=1, value=3, vector_x=2228.0, vector_y=770.0, int_x=68, int_y=24)

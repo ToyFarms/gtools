@@ -208,7 +208,7 @@ class State:
                                         flags=pkt.tank.flags,
                                         splice=pkt.tank.jump_count == 1,
                                         should_take_item=pkt.tank.particle_rotation == 0.0,
-                                        seed_id=pkt.tank.animation_type,
+                                        tree_item_amount=pkt.tank.animation_type,
                                     ),
                                 ),
                             )
@@ -702,7 +702,7 @@ class State:
                         net_id=upd.tile_change_req.net_id,
                         splice=upd.tile_change_req.splice,
                         should_take_item=upd.tile_change_req.should_take_item,
-                        seed_id=upd.tile_change_req.seed_id,
+                        item_on_tree=upd.tile_change_req.tree_item_amount,
                     )
             case StateUpdateWhat.STATE_NPC_UPDATE:
                 if not self.world:

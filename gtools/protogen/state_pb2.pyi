@@ -144,7 +144,7 @@ class NpcUpdate(_message.Message):
     def __init__(self, op: _Optional[_Union[NpcUpdate.Op, str]] = ..., npc: _Optional[_Union[_growtopia_pb2.Npc, _Mapping]] = ..., id: _Optional[int] = ..., update_pos: _Optional[_Union[NpcUpdatePos, _Mapping]] = ..., reset_by_cond: _Optional[_Union[NpcResetByCond, _Mapping]] = ...) -> None: ...
 
 class TileChangeRequest(_message.Message):
-    __slots__ = ("x", "y", "id", "net_id", "flags", "splice", "should_take_item", "seed_id")
+    __slots__ = ("x", "y", "id", "net_id", "flags", "splice", "should_take_item", "tree_item_amount")
     X_FIELD_NUMBER: _ClassVar[int]
     Y_FIELD_NUMBER: _ClassVar[int]
     ID_FIELD_NUMBER: _ClassVar[int]
@@ -152,7 +152,7 @@ class TileChangeRequest(_message.Message):
     FLAGS_FIELD_NUMBER: _ClassVar[int]
     SPLICE_FIELD_NUMBER: _ClassVar[int]
     SHOULD_TAKE_ITEM_FIELD_NUMBER: _ClassVar[int]
-    SEED_ID_FIELD_NUMBER: _ClassVar[int]
+    TREE_ITEM_AMOUNT_FIELD_NUMBER: _ClassVar[int]
     x: int
     y: int
     id: int
@@ -160,8 +160,8 @@ class TileChangeRequest(_message.Message):
     flags: int
     splice: bool
     should_take_item: bool
-    seed_id: int
-    def __init__(self, x: _Optional[int] = ..., y: _Optional[int] = ..., id: _Optional[int] = ..., net_id: _Optional[int] = ..., flags: _Optional[int] = ..., splice: _Optional[bool] = ..., should_take_item: _Optional[bool] = ..., seed_id: _Optional[int] = ...) -> None: ...
+    tree_item_amount: int
+    def __init__(self, x: _Optional[int] = ..., y: _Optional[int] = ..., id: _Optional[int] = ..., net_id: _Optional[int] = ..., flags: _Optional[int] = ..., splice: _Optional[bool] = ..., should_take_item: _Optional[bool] = ..., tree_item_amount: _Optional[int] = ...) -> None: ...
 
 class UpdateTreeState(_message.Message):
     __slots__ = ("x", "y", "item_id", "harvest", "add_spawn_seeds_flag", "add_seedling_flag")

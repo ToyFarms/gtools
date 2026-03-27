@@ -91,7 +91,7 @@ message TileChangeRequest {
   uint32 flags = 4;
   bool splice = 6;
   bool should_take_item = 7;
-  uint32 seed_id = 5;
+  uint32 tree_item_amount = 5;
 }
 
 message UpdateTreeState {
