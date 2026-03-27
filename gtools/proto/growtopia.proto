@@ -9,7 +9,10 @@ message State {
   Inventory inventory = 5;
 }
 
-message Inventory { repeated Item items = 1; }
+message Inventory {
+  uint32 max_slot = 2;
+  repeated Item items = 1;
+}
 
 message CharacterState {
   uint32 net_id = 9;

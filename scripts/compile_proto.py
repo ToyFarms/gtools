@@ -21,8 +21,6 @@ def compile_proto() -> None:
     src = Path("gtools/proto")
     pyi_out = Path("gtools/protogen")
     pyi_out.mkdir(exist_ok=True)
-    ts_out = Path("extension/gtools-gui/protogen")
-    ts_out.mkdir(exist_ok=True)
 
     files = list(src.glob("*.proto"))
     print(f"sources: ")

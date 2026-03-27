@@ -19,10 +19,12 @@ class State(_message.Message):
     def __init__(self, world: _Optional[_Union[World, _Mapping]] = ..., me: _Optional[_Union[Me, _Mapping]] = ..., status: _Optional[int] = ..., inventory: _Optional[_Union[Inventory, _Mapping]] = ...) -> None: ...
 
 class Inventory(_message.Message):
-    __slots__ = ("items",)
+    __slots__ = ("max_slot", "items")
+    MAX_SLOT_FIELD_NUMBER: _ClassVar[int]
     ITEMS_FIELD_NUMBER: _ClassVar[int]
+    max_slot: int
     items: _containers.RepeatedCompositeFieldContainer[Item]
-    def __init__(self, items: _Optional[_Iterable[_Union[Item, _Mapping]]] = ...) -> None: ...
+    def __init__(self, max_slot: _Optional[int] = ..., items: _Optional[_Iterable[_Union[Item, _Mapping]]] = ...) -> None: ...
 
 class CharacterState(_message.Message):
     __slots__ = ("net_id", "build_range", "punch_range", "flags", "gravity", "velocity", "acceleration", "velocity_in_water", "jump_strength")

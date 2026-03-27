@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from enum import IntFlag
 import struct
 from typing import Iterator, OrderedDict
 
@@ -8,11 +9,16 @@ from gtools.core.protocol import Serializable
 from gtools.protogen import growtopia_pb2
 
 
+class ItemFlags(IntFlag):
+    NONE = 1 << 0
+    ACTIVE = 1 << 1
+
+
 @dataclass(slots=True)
 class Item(Serializable):
     id: int = 0
     amount: int = 0
-    flags: int = 0
+    flags: ItemFlags = ItemFlags.NONE
 
     @classmethod
     def deserialize(cls, data: bytes) -> "Item":
@@ -30,35 +36,38 @@ class Item(Serializable):
         return cls(
             id=proto.id,
             amount=proto.amount,
-            flags=proto.flags,
+            flags=ItemFlags(proto.flags),
         )
 
     def to_proto(self) -> growtopia_pb2.Item:
         return growtopia_pb2.Item(
             id=self.id,
             amount=self.amount,
-            flags=self.flags,
+            flags=int(self.flags),
         )
 
 
 @dataclass(slots=True)
 class Inventory(Serializable):
-    _items_map: OrderedDict[int, Item] = field(default_factory=OrderedDict)
+    max_slot: int = 0
+    items_map: OrderedDict[int, Item] = field(default_factory=OrderedDict)
 
-    def __init__(self, items: Iterator[Item] | None = None) -> None:
-        object.__setattr__(
-            self,
-            "_items_map",
-            OrderedDict((x.id, x) for x in (items or iter(()))),
-        )
+    @classmethod
+    def from_iter(cls, max_slot: int, items: Iterator[Item]) -> "Inventory":
+        return cls(max_slot=max_slot, items_map=OrderedDict((x.id, x) for x in (items or iter(()))))
 
     @classmethod
     def deserialize(cls, data: bytes) -> "Inventory":
         buf = Buffer(data)
-        buf.rpos += 5
+        buf.rpos += 1
 
+        max_slot = buf.read_u32()
         count = buf.read_u16()
-        return cls(Item(id=buf.read_u16(), amount=buf.read_u8(), flags=buf.read_u8()) for _ in range(count))
+
+        return Inventory.from_iter(
+            max_slot=max_slot,
+            items=(Item(id=buf.read_u16(), amount=buf.read_u8(), flags=ItemFlags(buf.read_u8())) for _ in range(count)),
+        )
 
     def serialize(self) -> bytes:
         buf = Buffer()
@@ -73,49 +82,55 @@ class Inventory(Serializable):
 
     @property
     def items(self) -> Iterator[Item]:
-        return iter(self._items_map.values())
+        return iter(self.items_map.values())
 
     def __len__(self) -> int:
-        return len(self._items_map)
+        return len(self.items_map)
 
     def __iter__(self) -> Iterator[Item]:
-        return iter(self._items_map.values())
+        return iter(self.items_map.values())
 
     def __contains__(self, id: int) -> bool:
-        return id in self._items_map
+        return id in self.items_map
 
     def __getitem__(self, id: int) -> Item:
-        return self._items_map[id]
+        return self.items_map[id]
 
     def remove(self, id: int) -> Item:
-        return self._items_map.pop(id)
+        return self.items_map.pop(id)
 
     def set_item(self, item: Item) -> None:
-        self._items_map[item.id] = item
+        self.items_map[item.id] = item
 
     def _is_ghost_item(self, id: int) -> bool:
         return id in (WORLD_KEY, MAGPLANT_5000_REMOTE)
 
     def add(self, id: int, to_add: int) -> Item:
-        item = self._items_map.get(id)
+        item = self.items_map.get(id)
         if item is None:
             item = Item(id=id)
-            self._items_map[id] = item
+            self.items_map[id] = item
 
         if item.add(to_add) == 0:
-            self._items_map.pop(id, None)
+            self.items_map.pop(id, None)
 
         return item
 
     def get(self, id: int, default: Item | None = None) -> Item | None:
-        return self._items_map.get(id, default)
+        return self.items_map.get(id, default)
 
     def clear_ghost_item(self) -> None:
-        self._items_map = OrderedDict((k, v) for k, v in self._items_map.items() if self._is_ghost_item(v.id))
+        self.items_map = OrderedDict((k, v) for k, v in self.items_map.items() if not self._is_ghost_item(v.id))
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Inventory) -> "Inventory":
-        return cls(items=(Item.from_proto(x) for x in proto.items))
+        return cls.from_iter(
+            max_slot=proto.max_slot,
+            items=(Item.from_proto(x) for x in proto.items),
+        )
 
     def to_proto(self) -> growtopia_pb2.Inventory:
-        return growtopia_pb2.Inventory(items=[x.to_proto() for x in self.items])
+        return growtopia_pb2.Inventory(
+            max_slot=self.max_slot,
+            items=[x.to_proto() for x in self.items],
+        )
