@@ -202,9 +202,10 @@ class Proxy:
                     and (b"mac" in pkt.as_net.generic_text or b"hash" in pkt.as_net.generic_text or b"hash2" in pkt.as_net.generic_text or b"wk" in pkt.as_net.generic_text)
                 ):
                     orig = pkt.as_net.generic_text.copy()
+                    acc = None
                     try:
-                        name = bytes(orig["tankIDName", 1])
-                        acc = AccountManager.get(name) if name else AccountManager.last()
+                        name = orig.get("tankIDName", 1)
+                        acc = AccountManager.get(bytes(name)) if name else AccountManager.last()
                     except KeyError:
                         pass
 
