@@ -2203,6 +2203,23 @@ class World:
     npcs: list[Npc] = field(default_factory=list)
     sheet: Sheet | None = None
 
+    _tile_listeners: list[Callable[[int, int], None]] = field(default_factory=list, init=False, repr=False)
+    _dropped_listeners: list[Callable[[], None]] = field(default_factory=list, init=False, repr=False)
+
+    def on_tile_update(self, callback: Callable[[int, int], None]) -> None:
+        self._tile_listeners.append(callback)
+
+    def on_dropped_update(self, callback: Callable[[], None]) -> None:
+        self._dropped_listeners.append(callback)
+
+    def _emit_tile_update(self, x: int, y: int) -> None:
+        for cb in self._tile_listeners:
+            cb(x, y)
+
+    def _emit_dropped_update(self) -> None:
+        for cb in self._dropped_listeners:
+            cb()
+
     def get_notes(self) -> list[Note]:
         ret: list[Note] = []
 
@@ -2393,6 +2410,8 @@ class World:
         else:
             tile.bg_id = 0
 
+        self._emit_tile_update(pos.x, pos.y)
+
     def place_tile(self, id: int, pos: ivec2) -> None:
         if (tile := self.get_tile(pos)) is None:
             return
@@ -2404,11 +2423,14 @@ class World:
             if id % 2 != 0:
                 tile.extra = SeedTile()
 
+        self._emit_tile_update(pos.x, pos.y)
+
     def replace_whole_tile(self, tile: Tile) -> None:
         idx = self.index_tile(tile.pos)
         if idx is not None:
             tile.index = idx
             self.tiles[idx] = tile
+            self._emit_tile_update(tile.pos.x, tile.pos.y)
 
     def place_fg(self, tile: Tile, fg: int, connection: int = 0, a5: bool = False) -> None:
         item = item_database.get(fg)
@@ -2418,6 +2440,8 @@ class World:
             tile.extra = None
         tile.fg_id = fg
         tile.fg_tex_index = connection
+
+        self._emit_tile_update(tile.pos.x, tile.pos.y)
 
         if tile.fg_id == 0:
             tile.flags &= ~(TileFlags.WAS_SPLICED | TileFlags.IS_ON | TileFlags.IS_OPEN_TO_PUBLIC | TileFlags.FG_ALT_MODE)
@@ -2552,6 +2576,8 @@ class World:
             tile.bg_id = bg
         tile.bg_tex_index = connection
 
+        self._emit_tile_update(tile.pos.x, tile.pos.y)
+
     def update_tile_connection(self, tile: Tile) -> None:
         item = item_database.get(tile.fg_id)
         texture_type = item.texture_type
@@ -2633,6 +2659,7 @@ class World:
             for x in range(-1, 2):
                 if n := self.get_tile(tile.pos + ivec2(x, y)):
                     self.update_tile_connection(n)
+                    self._emit_tile_update(n.pos.x, n.pos.y)
 
     def update_tree(self, tile: Tile, item_id: int, harvest: bool, spawn_seed_flag: bool, seedling_flag: bool) -> None:
         if not tile.extra or tile.extra.type != TileExtraType.SEED_TILE:
@@ -2654,6 +2681,8 @@ class World:
                 tile.flags |= TileFlags.IS_SEEDLING
             else:
                 tile.flags &= ~TileFlags.IS_SEEDLING
+
+            self._emit_tile_update(tile.pos.x, tile.pos.y)
 
             # TODO: set current time here
             # TODO: store somewhere the seed placed time
@@ -2738,6 +2767,7 @@ class World:
         self.dropped.last_uid += 1
         self.dropped.items.append(dropped)
         self.dropped.nb_items += 1
+        self._emit_dropped_update()
 
     def remove_dropped(self, uid: int) -> DroppedItem | None:
         for i, item in enumerate(self.dropped.items):
@@ -2746,6 +2776,7 @@ class World:
 
             self.dropped.items.pop(i)
             self.dropped.nb_items -= 1
+            self._emit_dropped_update()
             return item
 
     def set_dropped(self, uid: int, amount: int) -> None:
@@ -2754,6 +2785,7 @@ class World:
                 continue
 
             item.amount = amount
+            self._emit_dropped_update()
 
     @classmethod
     def from_tank(cls, tank: TankPacket | bytes) -> "World":

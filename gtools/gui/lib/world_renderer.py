@@ -11,7 +11,7 @@ from pyglm import glm
 from pyglm.glm import ivec2, vec2
 
 from gtools.baked.items import PAINTING_EASEL
-from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, SeedTile, ShelfTile, Tile, VendingMachineTile, World
+from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, ShelfTile, Tile, VendingMachineTile, World
 
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
@@ -101,7 +101,13 @@ class WorldRenderer:
         self._last_right_click_pos = (0.0, 0.0)
 
         self._render_order = RenderOrder()
+        self._obj_meshes: list[ObjectRenderMesh] = []
+        self._needs_obj_rebuild = False
+
         self._init_render_order()
+
+        self._world.on_tile_update(self._on_tile_update)
+        self._world.on_dropped_update(self._on_dropped_update)
 
     @property
     def hovered_tile(self) -> Tile | None:
@@ -209,6 +215,7 @@ class WorldRenderer:
                     renderer=self._renderer_pre_fg,
                 )
             )
+            self._obj_meshes.append(renderable[-1].mesh)
 
         if self._world.dropped.items:
             renderable.append(
@@ -217,6 +224,7 @@ class WorldRenderer:
                     renderer=self._renderer_post_fg,
                 )
             )
+            self._obj_meshes.append(renderable[-1].mesh)
 
         flag = ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT
         if icons["easel"]:
@@ -228,6 +236,7 @@ class WorldRenderer:
                     pixel_scale=1.2,
                 )
             )
+            self._obj_meshes.append(renderable[-1].mesh)
             renderable.append(
                 ObjectRenderable(
                     mesh=self._renderer_post_fg.build(icons["easel_mark"], flags=flag, icon_scale=1.1, tex_offset=ivec2(0, 1)),
@@ -237,17 +246,24 @@ class WorldRenderer:
                     z_offset=0.001,
                 )
             )
+            self._obj_meshes.append(renderable[-1].mesh)
 
         if icons["vending"]:
             renderable.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["vending"], flags=flag, icon_scale=0.5), renderer=self._renderer_post_fg))
+            self._obj_meshes.append(renderable[-1].mesh)
 
         if icons["shelf"]:
             renderable.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["shelf"], flags=flag, icon_scale=0.3), renderer=self._renderer_post_fg))
+            self._obj_meshes.append(renderable[-1].mesh)
 
         return renderable
 
     def _init_render_order(self) -> None:
         self._render_order.clear()
+        for mesh in self._obj_meshes:
+            mesh.delete()
+        self._obj_meshes.clear()
+
         obj_renderable = self._build_object_renderable()
 
         self._render_order.add(
@@ -302,10 +318,21 @@ class WorldRenderer:
         for task in tasks:
             task.renderer.draw_3d(camera3d, task.mesh, layer_spread, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
 
+    def _on_tile_update(self, x: int, y: int) -> None:
+        self._tile_renderer.update_tile(x, y, self._world)
+        self._dirty = True
+
+    def _on_dropped_update(self) -> None:
+        self._needs_obj_rebuild = True
+        self._dirty = True
+
     def delete(self) -> None:
         self._mixer.stop()
 
         self._tile_renderer.delete()
+        for mesh in self._obj_meshes:
+            mesh.delete()
+        self._obj_meshes.clear()
 
         self._render_order.clear()
 
@@ -384,6 +411,10 @@ class WorldRenderer:
             self._camera.resize(cw, ch)
             self._camera3d.resize(cw, ch)
             self._dirty = True
+
+        if self._needs_obj_rebuild:
+            self._init_render_order()
+            self._needs_obj_rebuild = False
 
         if self._dirty:
             self._render_to_fbo()
