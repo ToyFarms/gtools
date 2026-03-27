@@ -172,7 +172,8 @@ class ProxyPanel(Panel):
             imgui.text(label)
 
     def update(self, dt: float) -> None:
-        pass
+        if self.world_renderer:
+            self.world_renderer.update(dt)
 
     def render(self) -> None:
         opened, self._open = self._imgui_begin()
