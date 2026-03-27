@@ -82,24 +82,30 @@ class TileRenderer(Renderer):
     def any(self) -> bool:
         return any(rl.chunks for rl in self._layers.values())
 
-    def draw(self, camera: Camera2D) -> None:
+    def draw(self, camera: Camera2D, layer: str | None = None) -> None:
         if not self.any():
             return
 
         self._shader.use()
         self._mvp.set_mat4x4(camera.proj_as_numpy())
-        self._draw_layers(camera, self._tex, self._layer, self._opacity)
+        if layer:
+            self.draw_layer(layer, camera, self._tex, self._layer, self._opacity)
+        else:
+            self._draw_layers(camera, self._tex, self._layer, self._opacity)
         if self.tree_mesh:
             self._tree_renderer.draw(camera, self.tree_mesh)
 
-    def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+    def draw_3d(self, camera3d: Camera3D, layer_spread: float, layer: str | None = None) -> None:
         if not self.any():
             return
 
         self._shader3d.use()
         self._vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
         self._spread3d.set_float(layer_spread)
-        self._draw_layers(None, self._tex3d, self._layer3d, self._opacity3d)
+        if layer:
+            self.draw_layer(layer, None, self._tex3d, self._layer3d, self._opacity3d)
+        else:
+            self._draw_layers(None, self._tex3d, self._layer3d, self._opacity3d)
         if self.tree_mesh:
             self._tree_renderer.draw_3d(camera3d, self.tree_mesh, layer_spread)
 
@@ -136,6 +142,27 @@ class TileRenderer(Renderer):
 
             if not rl.depth_write:
                 glDepthMask(GL_TRUE)
+
+    def draw_layer(self, layer: str, camera: Camera2D | None, tex_uniform: Uniform, layer_uniform: Uniform, opacity: Uniform) -> None:
+        rl = self._layers[layer]
+        if not (self.flags & rl.render_flag) or not rl.chunks:
+            return
+
+        if not rl.depth_write:
+            glDepthMask(GL_FALSE)
+
+        opacity.set_float(rl.opacity)
+        layer_uniform.set_float(rl.depth)
+
+        for tex_array, chunk_list in rl.chunks.items():
+            tex_array.bind(unit=0)
+            tex_uniform.set_int(0)
+            for bounds, mesh in chunk_list:
+                if camera is None or camera.is_visible(*bounds):
+                    mesh.draw_instanced()
+
+        if not rl.depth_write:
+            glDepthMask(GL_TRUE)
 
     def delete_chunk(self, chunk_key: tuple[int, int]) -> None:
         if chunk_key not in self._chunk_meshes:

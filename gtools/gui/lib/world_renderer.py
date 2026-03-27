@@ -280,21 +280,42 @@ class WorldRenderer:
             lambda cam3d, s: self._draw_obj_group_shadows_3d(cam3d, s, obj_renderable),
         )
 
+        self._render_order.add(
+            lambda camera: self._tile_renderer.draw(camera, "bg"),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "bg"),
+        )
+        self._render_order.add(
+            lambda camera: self._tile_renderer.draw(camera, "fg_before"),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_before"),
+        )
+        self._render_order.add(
+            lambda camera: self._tile_renderer.draw(camera, "fg"),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg"),
+        )
+        self._render_order.add(
+            lambda camera: self._tile_renderer.draw(camera, "fg_after"),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_after"),
+        )
+
         pre_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_pre_fg]
         self._render_order.add(
             lambda cam: self._draw_obj_group_main_2d(cam, pre_fg_tasks),
             lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, pre_fg_tasks),
         )
 
-        self._render_order.add(
-            lambda camera: self._tile_renderer.draw(camera),
-            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread),
-        )
-
         post_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_post_fg]
         self._render_order.add(
             lambda cam: self._draw_obj_group_main_2d(cam, post_fg_tasks),
             lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, post_fg_tasks),
+        )
+
+        self._render_order.add(
+            lambda camera: self._tile_renderer.draw(camera, "fire"),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fire"),
+        )
+        self._render_order.add(
+            lambda camera: self._tile_renderer.draw(camera, "water"),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "water"),
         )
 
         self._render_order.add(
