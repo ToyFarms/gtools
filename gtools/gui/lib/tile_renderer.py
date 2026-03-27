@@ -137,28 +137,6 @@ class TileRenderer(Renderer):
             if not rl.depth_write:
                 glDepthMask(GL_TRUE)
 
-    def update_tile(self, x: int, y: int, world: World) -> None:
-        chunk_x = x // self.CHUNK_SIZE
-        chunk_y = y // self.CHUNK_SIZE
-        chunk_key = (chunk_x, chunk_y)
-
-        self.delete_chunk(chunk_key)
-        self._build_chunk(world, chunk_x, chunk_y)
-
-        # check for trees in the area
-        # TODO: optimize this to only rebuild trees in the chunk
-        # but trees are complex because they span multiple tiles (visually) 
-        # and TreeRenderer currently rebuilds everything.
-        trees = []
-        for tile in world.tiles.values():
-            if tile.fg_id and tile.extra and isinstance(tile.extra, SeedTile):
-                trees.append(tile)
-
-        if self.tree_mesh:
-            self.tree_mesh.delete()
-        self.tree_mesh = self._tree_renderer.build(trees)
-        self._tex_mgr.flush()
-
     def delete_chunk(self, chunk_key: tuple[int, int]) -> None:
         if chunk_key not in self._chunk_meshes:
             return

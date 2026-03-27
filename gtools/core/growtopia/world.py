@@ -2212,6 +2212,14 @@ class World:
     def on_dropped_update(self, callback: Callable[[], None]) -> None:
         self._dropped_listeners.append(callback)
 
+    def remove_tile_update(self, callback: Callable[[int, int], None]) -> None:
+        if callback in self._tile_listeners:
+            self._tile_listeners.remove(callback)
+
+    def remove_dropped_update(self, callback: Callable[[], None]) -> None:
+        if callback in self._dropped_listeners:
+            self._dropped_listeners.remove(callback)
+
     def _emit_tile_update(self, x: int, y: int) -> None:
         for cb in self._tile_listeners:
             cb(x, y)

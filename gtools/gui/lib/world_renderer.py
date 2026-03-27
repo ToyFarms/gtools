@@ -1,6 +1,7 @@
 from collections import defaultdict, deque
 import math
 from dataclasses import dataclass
+import threading
 import time
 from typing import Any, Callable
 from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_FALSE, GL_FILL, GL_FRONT_AND_BACK, GL_LINE, GL_TRUE, glClear, glClearColor, glDepthMask, glPolygonMode
@@ -11,7 +12,7 @@ from pyglm import glm
 from pyglm.glm import ivec2, vec2
 
 from gtools.baked.items import PAINTING_EASEL
-from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, ShelfTile, Tile, VendingMachineTile, World
+from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, SeedTile, ShelfTile, Tile, VendingMachineTile, World
 
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
@@ -103,6 +104,8 @@ class WorldRenderer:
         self._render_order = RenderOrder()
         self._obj_meshes: list[ObjectRenderMesh] = []
         self._needs_obj_rebuild = False
+        self._tile_updates: set[tuple[int, int]] = set()
+        self._tile_update_lock = threading.Lock()
 
         self._init_render_order()
 
@@ -319,14 +322,17 @@ class WorldRenderer:
             task.renderer.draw_3d(camera3d, task.mesh, layer_spread, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
 
     def _on_tile_update(self, x: int, y: int) -> None:
-        self._tile_renderer.update_tile(x, y, self._world)
-        self._dirty = True
+        with self._tile_update_lock:
+            self._tile_updates.add((x, y))
 
     def _on_dropped_update(self) -> None:
         self._needs_obj_rebuild = True
         self._dirty = True
 
     def delete(self) -> None:
+        self._world.remove_tile_update(self._on_tile_update)
+        self._world.remove_dropped_update(self._on_dropped_update)
+
         self._mixer.stop()
 
         self._tile_renderer.delete()
@@ -399,6 +405,26 @@ class WorldRenderer:
 
                     self._camera.pan_by_screen(-dx * speed, -dy * speed)
                     self._dirty = True
+
+        with self._tile_update_lock:
+            if self._tile_updates:
+                affected_chunks = set()
+                for x, y in self._tile_updates:
+                    affected_chunks.add((x // self._tile_renderer.CHUNK_SIZE, y // self._tile_renderer.CHUNK_SIZE))
+
+                for cx, cy in affected_chunks:
+                    self._tile_renderer.delete_chunk((cx, cy))
+                    self._tile_renderer._build_chunk(self._world, cx, cy)
+
+                trees = [t for t in self._world.tiles.values() if t.fg_id and t.extra and isinstance(t.extra, SeedTile)]
+                if self._tile_renderer.tree_mesh:
+                    self._tile_renderer.tree_mesh.delete()
+
+                self._tile_renderer.tree_mesh = self._tile_renderer._tree_renderer.build(trees)
+                self._tile_renderer._tex_mgr.flush()
+
+                self._tile_updates.clear()
+                self._dirty = True
 
     def render(self) -> None:
         cw, ch = imgui.get_content_region_avail()
