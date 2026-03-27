@@ -91,8 +91,10 @@ class ProxyPanel(Panel):
     def _render_body(self) -> None:
         if self.proxy:
             if not self.world_renderer and self.proxy.state.world:
+                self.proxy.state.world.fix()
                 self.world_renderer = WorldRenderer(self.proxy.state.world)
             elif self.proxy.state.world and self.world_renderer and self.world_renderer._world.name != self.proxy.state.world.name:
+                self.proxy.state.world.fix()
                 self.world_renderer.delete()
                 self.world_renderer = WorldRenderer(self.proxy.state.world)
 
