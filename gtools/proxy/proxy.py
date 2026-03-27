@@ -75,6 +75,8 @@ class Proxy:
         self.from_client_packet = 0
         self.from_server_packet = 0
 
+        self.account_name: bytes | None = None
+
     def _state_request(self, _id: bytes, _pkt: Packet, fn: BrokerFunction) -> None:
         fn.reply(
             Packet(
@@ -111,6 +113,7 @@ class Proxy:
                     if fn == b"OnSendToServer":
                         port = v.as_int[1]
                         server_data = StrKV.deserialize(v.as_string[4])
+                        self.account_name = v.as_string[6]
 
                         self.server_data = UpdateServerData(
                             server=server_data[0, 0].decode(),
@@ -205,7 +208,14 @@ class Proxy:
                     acc = None
                     try:
                         name = orig.get("tankIDName", 1)
-                        acc = AccountManager.get(bytes(name)) if name else AccountManager.last()
+                        if name:
+                            acc = AccountManager.get(bytes(name))
+                        elif self.account_name:
+                            # from OnSendToServer
+                            acc = AccountManager.get(self.account_name)
+                        else:
+                            # absolute last resort, use last if exists or default account
+                            acc = AccountManager.last()
                     except KeyError:
                         pass
 
