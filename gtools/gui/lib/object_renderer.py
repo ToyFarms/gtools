@@ -21,7 +21,7 @@ from gtools.gui.lib.text_renderer import TextRenderer
 import numpy as np
 
 REGION_TILE_SIZE = 3
-MAX_PER_REGION = 64
+MAX_PER_REGION = 1024
 
 SHADOW_SUBLAYER_OVERLAY = 0
 SHADOW_SUBLAYER_ICON = 1
@@ -275,8 +275,8 @@ class ObjectRendererBase(Renderer, ABC):
             items = sorted(items, key=lambda x: x.uid)
 
         for dropped in items:
-            tile_x = int((dropped.pos.x + pos_offset.x) // 32)
-            tile_y = int((dropped.pos.y + pos_offset.y) // 32)
+            tile_x = int(dropped.pos.x // 32)
+            tile_y = int(dropped.pos.y // 32)
             region = (tile_x // REGION_TILE_SIZE, tile_y // REGION_TILE_SIZE)
             local_index = region_counters[region]
             region_counters[region] += 1
