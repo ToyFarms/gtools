@@ -37,7 +37,7 @@ class Buffer:
 
     def _read_raw(self, n: int) -> bytes:
         if self.rpos + n > len(self.buffer):
-            raise EOFError(f"Attempt to read {n} bytes beyond end (rpos={self.rpos}, len={len(self.buffer)})")
+            raise EOFError(f"attempt to read {n} bytes beyond end (rpos={self.rpos}, len={len(self.buffer)})")
 
         data = bytes(self.buffer[self.rpos : self.rpos + n])
         self.rpos += n

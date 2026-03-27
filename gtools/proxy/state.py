@@ -226,6 +226,7 @@ class State:
                             ),
                         )
                     case TankType.NPC:
+                        # TODO: just send the packet here, will switch on the receiving end instead
                         match pkt.tank.animation_type:
                             case NpcEvent.FULL_STATE:
                                 buf = Buffer(pkt.tank.extended_data)

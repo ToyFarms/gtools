@@ -2808,45 +2808,49 @@ class World:
         if failed:
             # if we fail, then we cannot parse dropped item, but we can take advantage of the fact that it always placed at the end
             # meaning we can parse it reversed from the end until it failed or found some impossible value
-            with s.reversed(keep=False):
-                world.unk9 = s.read_u32()
-                world.unk8 = s.read_u16()
-                world.active_weather = WeatherType(s.read_u16())
-                world.terraform = TerraformType(s.read_u16())
-                world.default_weather = WeatherType(s.read_u16())
+            try:
+                with s.reversed(keep=False):
+                    world.unk9 = s.read_u32()
+                    world.unk8 = s.read_u16()
+                    world.active_weather = WeatherType(s.read_u16())
+                    world.terraform = TerraformType(s.read_u16())
+                    world.default_weather = WeatherType(s.read_u16())
 
-                while True:
-                    item = DroppedItem()
-                    item.uid = s.read_u32()
-                    item.flags = s.read_u8()
-                    item.amount = s.read_u8()
-                    item.pos = vec2(s.read_f32(), s.read_f32())
-                    item.id = s.read_u16()
+                    while True:
+                        item = DroppedItem()
+                        item.uid = s.read_u32()
+                        item.flags = s.read_u8()
+                        item.amount = s.read_u8()
+                        item.pos = vec2(s.read_f32(), s.read_f32())
+                        item.id = s.read_u16()
 
-                    if item.id not in item_database.items:
-                        break
-
-                    # i don't know any item that can go past 200
-                    if item.amount > 200:
-                        break
-
-                    # check for out of bound position
-                    margin = 32  # a tile margin
-                    if not (-margin < item.pos.x < world.width * 32 + margin) or not (-margin < item.pos.y < world.height * 32 + margin):
-                        break
-
-                    world.dropped.items.append(item)
-                    world.dropped.nb_items += 1
-
-                    with s.temp():
-                        maybe_last_uid = s.read_u32()
-                        maybe_nb_items = s.read_u32()
-                        if maybe_nb_items == world.dropped.nb_items or item.uid == 1:
-                            world.dropped.last_uid = maybe_last_uid
+                        if item.id not in item_database.items:
                             break
 
-                world.unk4 = s.read_bytes(12)
-            world.dropped.items.reverse()
+                        # i don't know any item that can go past 200
+                        if item.amount > 200:
+                            break
+
+                        # check for out of bound position
+                        margin = 32  # a tile margin
+                        if not (-margin < item.pos.x < world.width * 32 + margin) or not (-margin < item.pos.y < world.height * 32 + margin):
+                            break
+
+                        world.dropped.items.append(item)
+                        world.dropped.nb_items += 1
+
+                        with s.temp():
+                            maybe_last_uid = s.read_u32()
+                            maybe_nb_items = s.read_u32()
+                            if maybe_nb_items == world.dropped.nb_items or item.uid == 1:
+                                world.dropped.last_uid = maybe_last_uid
+                                break
+
+                    world.unk4 = s.read_bytes(12)
+                world.dropped.items.reverse()
+            except Exception as e:
+                # failed to parse dropped for some reason, whatever
+                cls.logger.warning(f"failed to parse dropped item from the back: {e}")
 
             return world
 
