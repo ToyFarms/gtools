@@ -425,7 +425,7 @@ class State:
                                     broker,
                                     StateUpdate(
                                         what=STATE_SET_MY_PLAYER,
-                                        set_my_player=int(kv[b"netID", 1]),
+                                        set_my_player=int(kv.get(b"netID", 1, default=0)),
                                     ),
                                 )
 
@@ -434,27 +434,27 @@ class State:
                                 StateUpdate(
                                     what=STATE_PLAYER_JOIN,
                                     player_join=growtopia_pb2.Player(
-                                        netID=int(kv[b"netID", 1]),
-                                        userID=int(kv[b"userID", 1]),
-                                        eid=b"|".join(kv[b"eid", 1:]),
-                                        ip=bytes(kv[b"ip", 1]),
+                                        netID=int(kv.get(b"netID", 1, default=0)),
+                                        userID=int(kv.get(b"userID", 1, default=0)),
+                                        eid=b"|".join(kv.get(b"eid", slice(1, None), default=[])),
+                                        ip=bytes(kv.get(b"ip", 1, default=b"")),
                                         colrect=growtopia_pb2.Vec4I(
-                                            x=int(kv[b"colrect", 1]),
-                                            y=int(kv[b"colrect", 2]),
-                                            w=int(kv[b"colrect", 3]),
-                                            h=int(kv[b"colrect", 4]),
+                                            x=int(kv.get(b"colrect", 1, default=0)),
+                                            y=int(kv.get(b"colrect", 2, default=0)),
+                                            w=int(kv.get(b"colrect", 3, default=0)),
+                                            h=int(kv.get(b"colrect", 4, default=0)),
                                         ),
                                         posXY=growtopia_pb2.Vec2F(
-                                            x=float(kv[b"posXY", 1]),
-                                            y=float(kv[b"posXY", 2]),
+                                            x=float(kv.get(b"posXY", 1, default=0)),
+                                            y=float(kv.get(b"posXY", 2, default=0)),
                                         ),
-                                        name=bytes(kv[b"name", 1]),
-                                        titleIcon=bytes(kv[b"titleIcon", 1]),
-                                        country=b"|".join(kv[b"country", 1:]),
-                                        invis=int(kv[b"invis", 1]),
-                                        mstate=int(kv[b"mstate", 1]),
-                                        smstate=int(kv[b"smstate", 1]),
-                                        onlineID=bytes(kv[b"onlineID", 1]),
+                                        name=bytes(kv.get(b"name", 1, default=b"")),
+                                        titleIcon=bytes(kv.get(b"titleIcon", 1, default=b"")),
+                                        country=b"|".join(kv.get(b"country", slice(1, None), default=[])),
+                                        invis=int(kv.get(b"invis", 1, default=0)),
+                                        mstate=int(kv.get(b"mstate", 1, default=0)),
+                                        smstate=int(kv.get(b"smstate", 1, default=0)),
+                                        onlineID=bytes(kv.get(b"onlineID", 1, default=b"")),
                                     ),
                                 ),
                             )
