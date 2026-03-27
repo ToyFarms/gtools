@@ -113,7 +113,8 @@ class Proxy:
                     if fn == b"OnSendToServer":
                         port = v.as_int[1]
                         server_data = StrKV.deserialize(v.as_string[4])
-                        self.account_name = v.as_string[6]
+                        if len(v) > 6:
+                            self.account_name = v.as_string[6]
 
                         self.server_data = UpdateServerData(
                             server=server_data[0, 0].decode(),
