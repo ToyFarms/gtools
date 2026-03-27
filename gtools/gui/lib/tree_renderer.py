@@ -130,7 +130,7 @@ class TreeRenderer(Renderer):
             object=self._obj_renderer.build(items, flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT, icon_scale=0.25) if items else None,
         )
 
-    def draw(self, camera: Camera2D, mesh: TreeMesh) -> None:
+    def draw(self, camera: Camera2D, mesh: TreeMesh, culling_camera: Camera2D | None = None) -> None:
         if self.tex:
             self.shader.use()
             self.mvp.set_mat4x4(camera.proj_as_numpy())

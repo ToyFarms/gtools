@@ -112,6 +112,14 @@ class WorldPanel(Panel):
         _, wireframe = imgui.checkbox("Wireframe", self._world_renderer.wireframe)
         self._world_renderer.wireframe = wireframe
 
+        imgui.separator()
+
+        imgui.set_next_item_width(sidebar_w - 16)
+        changed, debug_zoom = imgui.slider_float("##debug_zoom", self._world_renderer.culling_debug_zoom, 1.0, 10.0)
+        if changed:
+            self._world_renderer.culling_debug_zoom = debug_zoom
+        imgui.text("Culling Debug")
+
         imgui.end_child()
 
     def render(self, control: bool = True) -> None:

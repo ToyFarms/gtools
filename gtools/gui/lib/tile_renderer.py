@@ -82,18 +82,18 @@ class TileRenderer(Renderer):
     def any(self) -> bool:
         return any(rl.chunks for rl in self._layers.values())
 
-    def draw(self, camera: Camera2D, layer: str | None = None) -> None:
+    def draw(self, camera: Camera2D, layer: str | None = None, culling_camera: Camera2D | None = None) -> None:
         if not self.any():
             return
 
         self._shader.use()
         self._mvp.set_mat4x4(camera.proj_as_numpy())
         if layer:
-            self.draw_layer(layer, camera, self._tex, self._layer, self._opacity)
+            self.draw_layer(layer, camera, self._tex, self._layer, self._opacity, culling_camera=culling_camera)
         else:
-            self._draw_layers(camera, self._tex, self._layer, self._opacity)
+            self._draw_layers(camera, self._tex, self._layer, self._opacity, culling_camera=culling_camera)
         if self.tree_mesh:
-            self._tree_renderer.draw(camera, self.tree_mesh)
+            self._tree_renderer.draw(camera, self.tree_mesh, culling_camera=culling_camera)
 
     def draw_3d(self, camera3d: Camera3D, layer_spread: float, layer: str | None = None) -> None:
         if not self.any():
@@ -122,7 +122,7 @@ class TileRenderer(Renderer):
         for rl in self._layers.values():
             rl.chunks.clear()
 
-    def _draw_layers(self, camera: Camera2D | None, tex_uniform: Uniform, layer_uniform: Uniform, opacity: Uniform) -> None:
+    def _draw_layers(self, camera: Camera2D | None, tex_uniform: Uniform, layer_uniform: Uniform, opacity: Uniform, culling_camera: Camera2D | None = None) -> None:
         for rl in self._layers.values():
             if not (self.flags & rl.render_flag) or not rl.chunks:
                 continue
@@ -133,17 +133,18 @@ class TileRenderer(Renderer):
             opacity.set_float(rl.opacity)
             layer_uniform.set_float(rl.depth)
 
+            cull = culling_camera or camera
             for tex_array, chunk_list in rl.chunks.items():
                 tex_array.bind(unit=0)
                 tex_uniform.set_int(0)
                 for bounds, mesh in chunk_list:
-                    if camera is None or camera.is_visible(*bounds):
+                    if cull is None or cull.is_visible(*bounds):
                         mesh.draw_instanced()
 
             if not rl.depth_write:
                 glDepthMask(GL_TRUE)
 
-    def draw_layer(self, layer: str, camera: Camera2D | None, tex_uniform: Uniform, layer_uniform: Uniform, opacity: Uniform) -> None:
+    def draw_layer(self, layer: str, camera: Camera2D | None, tex_uniform: Uniform, layer_uniform: Uniform, opacity: Uniform, culling_camera: Camera2D | None = None) -> None:
         rl = self._layers[layer]
         if not (self.flags & rl.render_flag) or not rl.chunks:
             return
@@ -154,11 +155,12 @@ class TileRenderer(Renderer):
         opacity.set_float(rl.opacity)
         layer_uniform.set_float(rl.depth)
 
+        cull = culling_camera or camera
         for tex_array, chunk_list in rl.chunks.items():
             tex_array.bind(unit=0)
             tex_uniform.set_int(0)
             for bounds, mesh in chunk_list:
-                if camera is None or camera.is_visible(*bounds):
+                if cull is None or cull.is_visible(*bounds):
                     mesh.draw_instanced()
 
         if not rl.depth_write:

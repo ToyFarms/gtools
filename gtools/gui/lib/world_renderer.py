@@ -46,9 +46,9 @@ class RenderOrder:
     def clear(self) -> None:
         self._renderer.clear()
 
-    def draw_2d(self, camera: Camera2D) -> None:
+    def draw_2d(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
         for draw_2d, _ in self._renderer:
-            draw_2d(camera)
+            draw_2d(camera, culling_camera)
 
     def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
         for _, draw_3d in self._renderer:
@@ -105,6 +105,7 @@ class WorldRenderer:
         self._obj_meshes: list[ObjectRenderMesh] = []
         self._needs_obj_rebuild = False
         self._tile_updates: set[tuple[int, int]] = set()
+        self._culling_debug_zoom: float = 1.0
         self._tile_update_lock = threading.Lock()
 
         self._init_render_order()
@@ -162,6 +163,16 @@ class WorldRenderer:
     def wireframe(self, value: bool) -> None:
         if self._wireframe != value:
             self._wireframe = value
+            self._dirty = True
+
+    @property
+    def culling_debug_zoom(self) -> float:
+        return self._culling_debug_zoom
+
+    @culling_debug_zoom.setter
+    def culling_debug_zoom(self, value: float) -> None:
+        if self._culling_debug_zoom != value:
+            self._culling_debug_zoom = value
             self._dirty = True
 
     @property
@@ -276,59 +287,59 @@ class WorldRenderer:
         obj_renderable = self._build_object_renderable()
 
         self._render_order.add(
-            lambda cam: self._draw_obj_group_shadows_2d(cam, obj_renderable),
+            lambda cam, cull: self._draw_obj_group_shadows_2d(cam, obj_renderable, culling_camera=cull),
             lambda cam3d, s: self._draw_obj_group_shadows_3d(cam3d, s, obj_renderable),
         )
 
         self._render_order.add(
-            lambda camera: self._tile_renderer.draw(camera, "bg"),
+            lambda camera, cull: self._tile_renderer.draw(camera, "bg", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "bg"),
         )
         self._render_order.add(
-            lambda camera: self._tile_renderer.draw(camera, "fg_before"),
+            lambda camera, cull: self._tile_renderer.draw(camera, "fg_before", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_before"),
         )
         self._render_order.add(
-            lambda camera: self._tile_renderer.draw(camera, "fg"),
+            lambda camera, cull: self._tile_renderer.draw(camera, "fg", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg"),
         )
         self._render_order.add(
-            lambda camera: self._tile_renderer.draw(camera, "fg_after"),
+            lambda camera, cull: self._tile_renderer.draw(camera, "fg_after", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_after"),
         )
 
         pre_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_pre_fg]
         self._render_order.add(
-            lambda cam: self._draw_obj_group_main_2d(cam, pre_fg_tasks),
+            lambda cam, cull: self._draw_obj_group_main_2d(cam, pre_fg_tasks),
             lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, pre_fg_tasks),
         )
 
         post_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_post_fg]
         self._render_order.add(
-            lambda cam: self._draw_obj_group_main_2d(cam, post_fg_tasks),
+            lambda cam, cull: self._draw_obj_group_main_2d(cam, post_fg_tasks),
             lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, post_fg_tasks),
         )
 
         self._render_order.add(
-            lambda camera: self._tile_renderer.draw(camera, "fire"),
+            lambda camera, cull: self._tile_renderer.draw(camera, "fire", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fire"),
         )
         self._render_order.add(
-            lambda camera: self._tile_renderer.draw(camera, "water"),
+            lambda camera, cull: self._tile_renderer.draw(camera, "water", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "water"),
         )
 
         self._render_order.add(
-            lambda camera: self._highlight_renderer.draw_hover(camera, vec2(self._hovered_tile.pos)) if self._hovered_tile else None,
+            lambda camera, cull: self._highlight_renderer.draw_hover(camera, vec2(self._hovered_tile.pos)) if self._hovered_tile else None,
             lambda camera3d, layer_spread: self._highlight_renderer.draw_hover_3d(camera3d, vec2(self._hovered_tile.pos), layer_spread) if self._hovered_tile else None,
         )
 
         self._render_order.add(
-            lambda camera: self._highlight_renderer.draw_playhead(camera, self._sheet, self._world.width),
+            lambda camera, cull: self._highlight_renderer.draw_playhead(camera, self._sheet, self._world.width),
             lambda camera3d, layer_spread: self._highlight_renderer.draw_playhead_3d(camera3d, self._sheet, self._world.width, layer_spread),
         )
 
-    def _draw_obj_group_shadows_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
+    def _draw_obj_group_shadows_2d(self, camera: Camera2D, tasks: list[ObjectRenderable], culling_camera: Camera2D | None = None) -> None:
         glDepthMask(GL_FALSE)
         for task in tasks:
             task.renderer.draw_shadow(camera, task.mesh, z_offset=task.z_offset)
@@ -340,7 +351,7 @@ class WorldRenderer:
             task.renderer.draw_shadow_3d(camera3d, task.mesh, layer_spread, z_offset=task.z_offset)
         glDepthMask(GL_TRUE)
 
-    def _draw_obj_group_main_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
+    def _draw_obj_group_main_2d(self, camera: Camera2D, tasks: list[ObjectRenderable], culling_camera: Camera2D | None = None) -> None:
         for task in tasks:
             task.renderer.draw(camera, task.mesh, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
 
@@ -785,9 +796,17 @@ class WorldRenderer:
             self._gui_menu_renderer.draw_3d(self._camera3d, str(self._hovered_tile.extra), vec2(self._hovered_tile.pos) * 32, self._layer_spread)
 
     def _render_to_fbo_2d(self) -> None:
-        self._render_order.draw_2d(self._camera)
-        if self._hovered_tile and self._hovered_tile.extra:
-            self._gui_menu_renderer.draw(self._camera, str(self._hovered_tile.extra), vec2(self._hovered_tile.pos) * 32)
+        if self._culling_debug_zoom > 1.0:
+            visual_camera = Camera2D(self._camera.width, self._camera.height)
+            visual_camera.pos = vec2(self._camera.pos)
+            visual_camera.zoom = self._camera.zoom / self._culling_debug_zoom
+            self._render_order.draw_2d(visual_camera, culling_camera=self._camera)
+            if self._hovered_tile and self._hovered_tile.extra:
+                self._gui_menu_renderer.draw(visual_camera, str(self._hovered_tile.extra), vec2(self._hovered_tile.pos) * 32)
+        else:
+            self._render_order.draw_2d(self._camera)
+            if self._hovered_tile and self._hovered_tile.extra:
+                self._gui_menu_renderer.draw(self._camera, str(self._hovered_tile.extra), vec2(self._hovered_tile.pos) * 32)
 
     def _update_hover(self) -> None:
         if not self._hovered:
