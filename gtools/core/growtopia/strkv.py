@@ -97,7 +97,6 @@ import itertools
 from typing import Any, Iterator, overload
 from collections.abc import Iterable, Sequence
 
-
 KeyType = int | str | bytes
 ValueType = str | int | float | bytes | Sequence[str | int | float | bytes]
 
@@ -211,6 +210,35 @@ class _FindProxy:
         return None
 
     @overload
+    def get[T](self, value: Any, /, *, default: T = None) -> _RowView | T: ...
+    @overload
+    def get[T](self, value: Any, index: int, /, *, default: T = None) -> bytes | T: ...
+    @overload
+    def get[T](self, value: Any, index: slice, /, *, default: T = None) -> list[bytes] | T: ...
+
+    def get(self, value: Any, index: int | slice | None = None, /, *, default: Any = None) -> Any:
+        pos = self._find_cell(value)
+        if pos is None:
+            return default
+
+        row_idx, col_idx = pos
+        row = self._parent._data[row_idx]
+
+        if index is None:
+            return _RowView(self._parent, row_idx)
+
+        if isinstance(index, slice):
+            start = col_idx if index.start is None else col_idx + index.start
+            stop = None if index.stop is None else col_idx + index.stop + 1
+            return row[start : stop : index.step]
+
+        target_col = col_idx + index
+        if not 0 <= target_col < len(row):
+            return default
+
+        return row[target_col]
+
+    @overload
     def __getitem__(self, key: Any) -> _RowView: ...
 
     @overload
@@ -320,6 +348,20 @@ class _RelativeProxy:
 
         return self._parent._data[row_idx][target_col]
 
+    def get[T](self, key: Any, offset: int, /, *, default: T = None) -> bytes | T:
+        pos = self._find_cell(key)
+        if pos is None:
+            return default
+
+        row_idx, col_idx = pos
+        target_col = col_idx + offset
+        row = self._parent._data[row_idx]
+
+        if not 0 <= target_col < len(row):
+            return default
+
+        return row[target_col]
+
     def __setitem__(self, key: object, value: Any) -> None:
         if not isinstance(key, tuple):
             raise TypeError("relative access requires tuple (value, offset)")
@@ -389,6 +431,39 @@ class StrKV:
         self._data.append([key_bytes])
         self._key_map[key_bytes] = idx
         return idx
+
+    def _row_idx_or_none(self, key: KeyType) -> int | None:
+        if isinstance(key, int):
+            idx = key if key >= 0 else len(self._data) + key
+            return idx if 0 <= idx < len(self._data) else None
+
+        return self._key_map.get(_to_bytes(key))
+
+    @overload
+    def get[T](self, key: KeyType, /, *, default: T = None) -> _RowView | T: ...
+    @overload
+    def get[T](self, key: KeyType, col_key: int, /, *, default: T = None) -> _CellView | T: ...
+    @overload
+    def get[T](self, key: KeyType, col_key: slice, /, *, default: T = None) -> list[bytes] | T: ...
+
+    def get(self, key: KeyType, col_key: int | slice | None = None, /, *, default: Any = None) -> Any:
+        row_idx = self._row_idx_or_none(key)
+        if row_idx is None:
+            return default
+
+        if col_key is None:
+            return _RowView(self, row_idx)
+
+        row = self._data[row_idx]
+
+        if isinstance(col_key, slice):
+            stop = None if col_key.stop is None else col_key.stop + 1
+            return row[col_key.start : stop : col_key.step]
+
+        if not 0 <= col_key < len(row):
+            return default
+
+        return _CellView(self, row_idx, col_key)
 
     @overload
     def __getitem__(self, key: KeyType) -> _RowView: ...

@@ -1,4 +1,3 @@
-import copy
 import pytest
 
 from gtools.core.growtopia.strkv import StrKV
@@ -942,3 +941,124 @@ def test_copy_is_independent():
 
     kv2["action"] = "something"
     assert bytes(kv2["action", 1]) != bytes(kv["action", 1])
+
+
+def test_get_row_existing() -> None:
+    kv = StrKV([[b"key1", b"val1"], [b"key2", b"val2"]])
+
+    row = kv.get("key1", default=None)
+
+    assert row is not None
+    assert list(row) == [b"key1", b"val1"]
+    verify([r.decode() for r in row])
+
+
+def test_get_cell_existing() -> None:
+    kv = StrKV([[b"key1", b"val1", b"val2"]])
+
+    cell = kv.get("key1", 2, default=None)
+
+    assert cell == b"val2"
+    verify(cell.decode())
+
+
+def test_get_slice_existing() -> None:
+    kv = StrKV([[b"key1", b"val1", b"val2", b"val3"]])
+
+    result = kv.get("key1", slice(1, 2), default=None)
+
+    assert isinstance(result, list) and result == [b"val1", b"val2"]
+    verify([r.decode() for r in result])
+
+
+def test_get_missing_row_returns_default() -> None:
+    kv = StrKV([[b"key1", b"val1"]])
+
+    sentinel = object()
+    result = kv.get("missing", default=sentinel)
+
+    assert result is sentinel
+
+
+def test_get_missing_cell_returns_default() -> None:
+    kv = StrKV([[b"key1", b"val1"]])
+
+    sentinel = object()
+    result = kv.get("key1", 99, default=sentinel)
+
+    assert result is sentinel
+
+
+def test_get_missing_row_negative_index_returns_default() -> None:
+    kv = StrKV([[b"key1", b"val1"]])
+
+    sentinel = object()
+    result = kv.get(-2, default=sentinel)
+
+    assert result is sentinel
+
+
+def test_get_find_row_existing() -> None:
+    kv = StrKV()
+    kv["row"] = ["a", "b", "target", "c"]
+
+    row = kv.find.get("target", default=None)
+
+    assert row is not None
+    assert list(row) == [b"row", b"a", b"b", b"target", b"c"]
+    verify([r.decode() for r in row])
+
+
+def test_get_find_cell_existing() -> None:
+    kv = StrKV()
+    kv["row"] = ["a", "b", "target", "c"]
+
+    cell = kv.find.get("target", 1, default=None)
+
+    assert cell == b"c"
+    verify(cell.decode())
+
+
+def test_get_find_slice_existing() -> None:
+    kv = StrKV()
+    kv["row"] = ["a", "b", "target", "c", "d"]
+
+    result = kv.find.get("target", slice(-1, 1), default=None)
+
+    assert isinstance(result, list) and result == [b"b", b"target", b"c"]
+    verify([r.decode() for r in result])
+
+
+def test_get_find_missing_returns_default() -> None:
+    kv = StrKV([[b"key1", b"val1"]])
+
+    sentinel = object()
+    result = kv.find.get("missing", default=sentinel)
+
+    assert result is sentinel
+
+
+def test_get_relative_existing() -> None:
+    kv = StrKV()
+    kv["list"] = ["key", "1", "key2", "2", "key3", "3"]
+
+    assert kv.relative.get("key3", 0, default=None) == b"key3"
+    assert kv.relative.get("key3", 1, default=None) == b"3"
+    assert kv.relative.get("key3", -1, default=None) == b"2"
+
+
+def test_get_relative_missing_returns_default() -> None:
+    kv = StrKV([[b"key1", b"val1"]])
+
+    sentinel = object()
+    result = kv.relative.get("missing", 1, default=sentinel)
+
+    assert result is sentinel
+
+
+def test_get_does_not_raise_on_out_of_range() -> None:
+    kv = StrKV([[b"key1", b"val1"]])
+
+    assert kv.get("key1", 99, default=b"fallback") == b"fallback"
+    assert kv.find.get("key1", 99, default=b"fallback") == b"fallback"
+    assert kv.relative.get("val1", 99, default=b"fallback") == b"fallback"
