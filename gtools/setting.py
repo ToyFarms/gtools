@@ -46,6 +46,8 @@ class Setting(JsonMixin):
     """
     anomaly_byte_compensation: bool = field(default=True)
 
+    opengl_error_checking: bool = field(default=False)
+
 
     def __getattribute__(self, name):
         with _setting_lock:

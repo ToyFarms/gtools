@@ -1,3 +1,7 @@
+import OpenGL
+from gtools import setting
+OpenGL.ERROR_CHECKING = setting.opengl_error_checking
+
 import logging
 import math
 from pathlib import Path
@@ -26,7 +30,6 @@ from imgui_bundle import imgui
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 from pyglm.glm import ivec2, vec2
 
-from gtools import setting
 from gtools.baked.items import SIGN
 from gtools.core import ndialog
 from gtools.core.growtopia.items_dat import item_database
