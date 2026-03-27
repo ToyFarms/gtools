@@ -13,8 +13,6 @@ class Item(Serializable):
     id: int = 0
     amount: int = 0
     flags: int = 0
-    # NOTE: i just made this up, but some items like magplant remote is a ghost item for example (gets destroyed when leaving the world)
-    is_ghost = False
 
     @classmethod
     def deserialize(cls, data: bytes) -> "Item":
@@ -102,11 +100,7 @@ class Inventory(Serializable):
         item = self._items_map.get(id)
         if item is None:
             item = Item(id=id)
-            item.is_ghost = self._is_ghost_item(id)
             self._items_map[id] = item
-
-            if item.is_ghost:
-                return item
 
         if item.add(to_add) == 0:
             self._items_map.pop(id, None)
@@ -117,7 +111,7 @@ class Inventory(Serializable):
         return self._items_map.get(id, default)
 
     def clear_ghost_item(self) -> None:
-        self._items_map = OrderedDict((k, v) for k, v in self._items_map.items() if not v.is_ghost)
+        self._items_map = OrderedDict((k, v) for k, v in self._items_map.items() if self._is_ghost_item(v.id))
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Inventory) -> "Inventory":

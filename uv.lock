@@ -269,7 +269,6 @@ dependencies = [
     { name = "pytest" },
     { name = "pytest-forked" },
     { name = "rapidfuzz" },
-    { name = "scipy-stubs" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "soxr" },
@@ -287,6 +286,7 @@ gui = [
     { name = "keyboard" },
     { name = "pyopengl" },
     { name = "scipy" },
+    { name = "scipy-stubs" },
 ]
 
 [package.metadata]
@@ -309,7 +309,7 @@ requires-dist = [
     { name = "pytest-forked", specifier = ">=1.6.0" },
     { name = "rapidfuzz", specifier = ">=3.14.3" },
     { name = "scipy", marker = "extra == 'gui'", specifier = ">=1.17.1" },
-    { name = "scipy-stubs", specifier = ">=1.17.1.2" },
+    { name = "scipy-stubs", marker = "extra == 'gui'", specifier = ">=1.17.1.2" },
     { name = "sounddevice", specifier = ">=0.5.5" },
     { name = "soundfile", specifier = ">=0.13.1" },
     { name = "soxr", specifier = ">=1.0.0" },
