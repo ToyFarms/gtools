@@ -11,6 +11,8 @@ from gtools.proxy.http_proxy import ThreadedHTTPServer, setup_server
 from gtools.proxy.proxy import Proxy
 from humanfriendly import format_timespan
 
+from gtools.proxy.state import Status
+
 logger = logging.getLogger("gui-proxy-panel")
 
 
@@ -94,7 +96,6 @@ class ProxyPanel(Panel):
                 self.world_renderer.delete()
                 self.world_renderer = WorldRenderer(self.proxy.state.world)
 
-
         changed, self.http_server_enabled = imgui_toggle.toggle("HTTP Server", self.http_server_enabled)
         if changed:
             if not self.http_server_enabled or (self.http_server_enabled and self.server):
@@ -128,6 +129,8 @@ class ProxyPanel(Panel):
             state = self.proxy.state
 
             imgui.text(f"status={state.status.name}")
+            if state.status == Status.IN_WORLD and state.world:
+                imgui.text(f"world={state.world.name}")
 
             imgui.text(f"server ping={state.telemetry.server_ping} pkt={self.proxy.from_server_packet}")
             imgui.same_line()
