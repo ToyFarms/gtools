@@ -164,14 +164,12 @@ class TileRenderer(Renderer):
 
     def _build_chunk(self, world: World, chunk_x: int, chunk_y: int) -> None:
         # layer -> tex_array -> list[float]
-        instances: dict[str, dict[TextureArray, list[float]]] = {
-            key: defaultdict(list) for key in self._layers
-        }
+        instances: dict[str, dict[TextureArray, list[float]]] = {key: defaultdict(list) for key in self._layers}
 
         start_x = chunk_x * self.CHUNK_SIZE
         start_y = chunk_y * self.CHUNK_SIZE
-        end_x = start_x + self.CHUNK_SIZE
-        end_y = start_y + self.CHUNK_SIZE
+        end_x = min(start_x + self.CHUNK_SIZE, world.width)
+        end_y = min(start_y + self.CHUNK_SIZE, world.height)
 
         for y in range(start_y, end_y):
             for x in range(start_x, end_x):
@@ -235,11 +233,7 @@ class TileRenderer(Renderer):
                         stride = get_tex_stride(ItemInfoTextureType.SMART_EDGE)
                         off = ivec2(tile.fg_tex_index % max(stride, 1), tile.fg_tex_index // stride if stride else 0)
 
-                        tex_array, data = self._tile_instance_data_raw(
-                            tile,
-                            anchor.texture_file.decode(),
-                            tex_pos + off
-                        )
+                        tex_array, data = self._tile_instance_data_raw(tile, anchor.texture_file.decode(), tex_pos + off)
                         instances["fg_after"][tex_array].extend(data)
                     elif tile.fg_id == STEAM_REVOLVER:
                         tex_array, data = self._tile_instance_data_raw(
