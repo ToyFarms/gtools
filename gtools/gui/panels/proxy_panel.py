@@ -141,13 +141,8 @@ class ProxyPanel(Panel):
             self.client_last_packet_count = self.proxy.from_client_packet
             imgui.text_colored((c, c, c, 1), "[*]")
 
-            now = time.time()
-            if state.telemetry.logged_in_time != 0.0:
-                imgui.text(f"uptime={format_timespan(now - state.telemetry.logged_in_time)}")
-                imgui.text(f"in_world={format_timespan(now - state.telemetry.enter_world_time)}")
-            else:
-                imgui.text("uptime=0")
-                imgui.text("in_world=0")
+            imgui.text(f"uptime={format_timespan(state.me.time_since_login)}")
+            imgui.text(f"in_world={format_timespan(state.me.time_in_world)}")
 
         imgui.end()
         self._render_splitter(origin_x, origin_y, avail_h)
