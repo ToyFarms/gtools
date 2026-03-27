@@ -131,13 +131,13 @@ class ProxyPanel(Panel):
 
             imgui.text(f"server ping={state.telemetry.server_ping} pkt={self.proxy.from_server_packet}")
             imgui.same_line()
-            c = max(0.2, min(1.0, (self.proxy.from_server_packet - self.server_last_packet_count) / 10))
+            c = max(0.2, min(1.0, (self.proxy.from_server_packet - self.server_last_packet_count) / 4))
             self.server_last_packet_count = self.proxy.from_server_packet
             imgui.text_colored((c, c, c, 1), "[*]")
 
             imgui.text(f"client ping={state.telemetry.client_ping} pkt={self.proxy.from_client_packet}")
             imgui.same_line()
-            c = max(0.2, min(1.0, (self.proxy.from_client_packet - self.client_last_packet_count) / 10))
+            c = max(0.2, min(1.0, (self.proxy.from_client_packet - self.client_last_packet_count) / 4))
             self.client_last_packet_count = self.proxy.from_client_packet
             imgui.text_colored((c, c, c, 1), "[*]")
 
