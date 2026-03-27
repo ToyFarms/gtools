@@ -150,6 +150,14 @@ class TerraformType(IntEnum):
     PLAYER_FIREST_WORLD = 32
     CANDY_LAND = 33
 
+    @classmethod
+    def _missing_(cls, value: int) -> "TerraformType":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+
+        return obj
+
 
 class ItemFlag(IntFlag):
     NONE = 0
@@ -338,6 +346,7 @@ class ItemInfoMaterialType(IntEnum):
         obj = int.__new__(cls, value)
         obj._name_ = f"UNKNOWN_{value}"
         obj._value_ = value
+
         return obj
 
 
@@ -392,6 +401,14 @@ class ItemInfoVisualEffect(IntEnum):
     VERYLOWHAIR = 47
     VERYLOWHAIR_MASK = 48
 
+    @classmethod
+    def _missing_(cls, value: int) -> "ItemInfoVisualEffect":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+
+        return obj
+
 
 class ItemInfoTextureType(IntEnum):
     SINGLE_FRAME_ALONE = 0
@@ -405,6 +422,15 @@ class ItemInfoTextureType(IntEnum):
     SMART_EDGE_VERT = 8
     SMART_EDGE_HORIZ_CAVE = 9
     SMART_EDGE_DIAGON = 10
+
+
+    @classmethod
+    def _missing_(cls, value: int) -> "ItemInfoTextureType":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+
+        return obj
 
 
 class ItemInfoCollisionType(IntEnum):
@@ -423,6 +449,15 @@ class ItemInfoCollisionType(IntEnum):
     CLOUD = 12
     FRIEND_ENTRANCE = 13
 
+    @classmethod
+    def _missing_(cls, value: int) -> "ItemInfoCollisionType":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+
+        return obj
+
+
 
 class ItemInfoClothingType(IntEnum):
     NONE = 0
@@ -435,6 +470,14 @@ class ItemInfoClothingType(IntEnum):
     HAIR = 7
     NECK = 8
     ARTIFACTS = 9
+
+    @classmethod
+    def _missing_(cls, value: int) -> "ItemInfoClothingType":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+
+        return obj
 
 
 class ItemInfoSeedBase(IntEnum):
@@ -455,6 +498,14 @@ class ItemInfoSeedBase(IntEnum):
     EMPTY4 = 14
     CRACKED = 15
 
+    @classmethod
+    def _missing_(cls, value: int) -> "ItemInfoSeedBase":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+
+        return obj
+
 
 class ItemInfoSeedOverlay(IntEnum):
     LINES = 0
@@ -465,6 +516,14 @@ class ItemInfoSeedOverlay(IntEnum):
     JAGGED_LINE = 10
     WAVEY_LINES = 12
     DIAGONAL_LINES = 14
+
+    @classmethod
+    def _missing_(cls, value: int) -> "ItemInfoSeedOverlay":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+
+        return obj
 
 
 class ItemInfoTreeBase(IntEnum):
@@ -477,12 +536,28 @@ class ItemInfoTreeBase(IntEnum):
     BENT_SLIGHTLY = 6
     VINE_LIKE_PLANT = 7
 
+    @classmethod
+    def _missing_(cls, value: int) -> "ItemInfoTreeBase":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+
+        return obj
+
 
 class ItemInfoTreeLeaves(IntEnum):
     FLAT_LEAVES = 0
     BIG_TRIANGULAR_LEAVES = 2
     BIG_CIRCLE_LEAVES = 4
     CIRCULAR_LEAVES = 6
+
+    @classmethod
+    def _missing_(cls, value: int) -> "ItemInfoTreeLeaves":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+
+        return obj
 
 
 @dataclass(slots=True, init=False)
