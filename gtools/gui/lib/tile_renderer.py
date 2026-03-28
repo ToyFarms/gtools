@@ -230,7 +230,7 @@ class TileRenderer(Renderer):
 
                         elif isinstance(tile.extra, VendingMachineTile):
                             tex = 0
-                            if tile.extra.price == 0 and tile.extra.item_id == 0:
+                            if tile.extra.item_id == 0:
                                 tex = 1
 
                             tex_array, data = self._tile_instance_data_raw(
@@ -240,7 +240,8 @@ class TileRenderer(Renderer):
                             )
                             instances["fg"][tex_array].extend(data)
 
-                            if tile.flags & TileFlags.FG_ALT_MODE:  # has wl inside
+                            if tile.flags & TileFlags.FG_ALT_MODE:
+                                # has wl inside
                                 tex_array, data = self._tile_instance_data_raw(
                                     tile,
                                     item.texture_file.decode(),
@@ -249,6 +250,7 @@ class TileRenderer(Renderer):
                                 instances["fg_after"][tex_array].extend(data)
 
                             if tile.extra.price == 0 or tile.extra.item_id == 0:
+                                # warning sign
                                 tex_array, data = self._tile_instance_data_raw(
                                     tile,
                                     item.texture_file.decode(),

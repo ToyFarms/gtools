@@ -216,7 +216,7 @@ class WorldRenderer:
 
             if isinstance(tile.extra, DisplayBlockTile) and tile.extra.item_id != 0:
                 icons["display"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
-            elif isinstance(tile.extra, VendingMachineTile) and tile.extra.item_id != 0:
+            elif isinstance(tile.extra, VendingMachineTile) and tile.extra.item_id != 0 and tile.extra.price != 0:
                 icons["vending"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(-2, -3), id=tile.extra.item_id))
             elif isinstance(tile.extra, PaintingEaselTile) and tile.extra.item_id != 0:
                 icons["easel"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(2, -6), id=tile.extra.item_id))
