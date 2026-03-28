@@ -3,12 +3,12 @@ import threading
 
 from imgui_bundle import imgui
 from imgui_bundle import imgui_toggle  # pyright: ignore[reportMissingModuleSource]
+from gtools.core.format import format_timespan
 from gtools.gui.event import Event
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
 from gtools.proxy.http_proxy import ThreadedHTTPServer, setup_server
 from gtools.proxy.proxy import Proxy
-from humanfriendly import format_timespan
 
 from gtools.proxy.state import Status
 
