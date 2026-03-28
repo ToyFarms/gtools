@@ -19,6 +19,11 @@ _SPLITTER_THICKNESS = 10.0
 _SIDEBAR_MIN_W = 80.0
 _SIDEBAR_MAX_RATIO = 0.8
 
+_BLINK_DOT_RADIUS = 4.5
+_BLINK_DOT_PAD = 8.0
+_BLINK_DOT_RIGHT_MARGIN = 6.0
+_BLINK_DECAY_RATE = 3.5
+
 
 class ProxyPanel(Panel):
     def __init__(self, outer_dockspace_id: int) -> None:
@@ -35,6 +40,8 @@ class ProxyPanel(Panel):
 
         self.server_last_packet_count = 0
         self.client_last_packet_count = 0
+        self._server_blink_t: float = 0.0
+        self._client_blink_t: float = 0.0
 
         self.world_renderer: WorldRenderer | None = None
         self._sidebar_w: float = 250.0
@@ -64,6 +71,49 @@ class ProxyPanel(Panel):
         self.delete_http_server()
         self.delete_proxy()
 
+    def _label_value_row(self, label: str, value: str) -> None:
+        avail_x = imgui.get_content_region_avail().x
+        cursor_x = imgui.get_cursor_pos_x()
+        value_w = imgui.calc_text_size(value).x
+
+        imgui.text_unformatted(label)
+        imgui.same_line()
+        imgui.set_cursor_pos_x(cursor_x + max(0.0, avail_x - value_w))
+        imgui.text_unformatted(value)
+
+    def _render_packet_row(self, label: str, ping: int, pkt: int, blink_t: float) -> None:
+        dl = imgui.get_window_draw_list()
+        line_h = imgui.get_text_line_height()
+        avail_x = imgui.get_content_region_avail().x
+        cursor_x = imgui.get_cursor_pos_x()
+        cursor_screen = imgui.get_cursor_screen_pos()
+
+        dot_slot = _BLINK_DOT_RADIUS * 2.0 + _BLINK_DOT_PAD + _BLINK_DOT_RIGHT_MARGIN
+
+        value = f"{ping}ms  {pkt:,}pkt"
+        value_w = imgui.calc_text_size(value).x
+
+        imgui.text_unformatted(label)
+
+        imgui.same_line()
+        imgui.set_cursor_pos_x(cursor_x + max(0.0, avail_x - dot_slot - value_w))
+        imgui.text_unformatted(value)
+
+        t = blink_t
+        r = 0.15 + 0.60 * t
+        g = 0.55 + 0.45 * t
+        b = 0.15 + 0.30 * t
+        dot_alpha = 0.35 + 0.65 * t
+
+        dot_cx = cursor_screen.x + avail_x - _BLINK_DOT_RIGHT_MARGIN - _BLINK_DOT_RADIUS
+        dot_cy = cursor_screen.y + line_h * 0.5
+
+        fill_col = imgui.get_color_u32((r, g, b, dot_alpha))
+        rim_col  = imgui.get_color_u32((r * 1.3, g * 1.1, b, min(1.0, dot_alpha * 1.4)))
+
+        dl.add_circle_filled((dot_cx, dot_cy), _BLINK_DOT_RADIUS, fill_col)
+        dl.add_circle((dot_cx, dot_cy), _BLINK_DOT_RADIUS, rim_col, num_segments=0, thickness=1.2)
+
     def _render_splitter(self, origin_x: float, origin_y: float, h: float) -> None:
         imgui.set_cursor_screen_pos((origin_x + self._sidebar_w, origin_y))
         imgui.push_style_color(imgui.Col_.button, (0.25, 0.25, 0.25, 0.6))
@@ -91,7 +141,11 @@ class ProxyPanel(Panel):
         if self.proxy:
             if not self.world_renderer and self.proxy.state.world:
                 self.world_renderer = WorldRenderer(self.proxy.state.world)
-            elif self.proxy.state.world and self.world_renderer and self.world_renderer._world.name != self.proxy.state.world.name:
+            elif (
+                self.proxy.state.world
+                and self.world_renderer
+                and self.world_renderer._world.name != self.proxy.state.world.name
+            ):
                 self.world_renderer.delete()
                 self.world_renderer = WorldRenderer(self.proxy.state.world)
 
@@ -99,7 +153,6 @@ class ProxyPanel(Panel):
         if changed:
             if not self.http_server_enabled or (self.http_server_enabled and self.server):
                 self.delete_http_server()
-
             if self.http_server_enabled:
                 self.setup_http_server()
 
@@ -109,7 +162,6 @@ class ProxyPanel(Panel):
         if changed:
             if not self.proxy_enabled or (self.proxy_enabled and self.server):
                 self.delete_proxy()
-
             if self.proxy_enabled:
                 self.setup_proxy()
 
@@ -121,30 +173,41 @@ class ProxyPanel(Panel):
         imgui.set_next_window_size((self._sidebar_w, avail_h))
         imgui.begin(
             "##info",
-            flags=(imgui.WindowFlags_.no_docking | imgui.WindowFlags_.no_move | imgui.WindowFlags_.no_decoration | imgui.WindowFlags_.no_resize),
+            flags=(
+                imgui.WindowFlags_.no_docking
+                | imgui.WindowFlags_.no_move
+                | imgui.WindowFlags_.no_decoration
+                | imgui.WindowFlags_.no_resize
+            ),
         )
 
         if self.proxy:
             state = self.proxy.state
 
-            imgui.text(f"status={state.status.name}")
+            self._label_value_row("status", state.status.name)
+
             if state.status == Status.IN_WORLD and state.world:
-                imgui.text(f"world={state.world.name}")
+                self._label_value_row("world", state.world.name.decode())
 
-            imgui.text(f"server ping={state.telemetry.server_ping} pkt={self.proxy.from_server_packet}")
-            imgui.same_line()
-            c = max(0.2, min(1.0, (self.proxy.from_server_packet - self.server_last_packet_count) / 4))
-            self.server_last_packet_count = self.proxy.from_server_packet
-            imgui.text_colored((c, c, c, 1), "[*]")
+            imgui.spacing()
 
-            imgui.text(f"client ping={state.telemetry.client_ping} pkt={self.proxy.from_client_packet}")
-            imgui.same_line()
-            c = max(0.2, min(1.0, (self.proxy.from_client_packet - self.client_last_packet_count) / 4))
-            self.client_last_packet_count = self.proxy.from_client_packet
-            imgui.text_colored((c, c, c, 1), "[*]")
+            self._render_packet_row(
+                "server",
+                state.telemetry.server_ping,
+                self.proxy.from_server_packet,
+                self._server_blink_t,
+            )
+            self._render_packet_row(
+                "client",
+                state.telemetry.client_ping,
+                self.proxy.from_client_packet,
+                self._client_blink_t,
+            )
 
-            imgui.text(f"uptime={format_timespan(state.me.time_since_login)}")
-            imgui.text(f"in_world={format_timespan(state.me.time_in_world)}")
+            imgui.spacing()
+
+            self._label_value_row("uptime", format_timespan(state.me.time_since_login))
+            self._label_value_row("in world", format_timespan(state.me.time_in_world))
 
         imgui.end()
         self._render_splitter(origin_x, origin_y, avail_h)
@@ -174,10 +237,23 @@ class ProxyPanel(Panel):
     def is_dirty(self) -> bool:
         if self.world_renderer:
             return self.world_renderer.is_dirty
-
         return False
 
     def update(self, dt: float) -> None:
+        if self.proxy:
+            new_server = self.proxy.from_server_packet
+            if new_server != self.server_last_packet_count:
+                self._server_blink_t = 1.0
+                self.server_last_packet_count = new_server
+
+            new_client = self.proxy.from_client_packet
+            if new_client != self.client_last_packet_count:
+                self._client_blink_t = 1.0
+                self.client_last_packet_count = new_client
+
+        self._server_blink_t = max(0.0, self._server_blink_t - dt * _BLINK_DECAY_RATE)
+        self._client_blink_t = max(0.0, self._client_blink_t - dt * _BLINK_DECAY_RATE)
+
         if self.world_renderer:
             self.world_renderer.update(dt)
 
@@ -190,7 +266,6 @@ class ProxyPanel(Panel):
     def handle_event(self, event: Event) -> bool:
         if self.world_renderer:
             return self.world_renderer.handle_event(event)
-
         return False
 
     def _imgui_begin(self) -> tuple[bool, bool]:
