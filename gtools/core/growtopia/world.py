@@ -176,16 +176,18 @@ class StorageBlockItemInfo:
         return t
 
 
+# TODO: figure out why some item_id have abnormally high value
 @dataclass(slots=True)
 class CookingOvenIngredientInfo:
-    item_id: int = 0  # u32
-    amount: int = 0  # u32
+    item_id: int = 0  # u16
+    amount: int = 0  # u16
 
     @classmethod
     def deserialize(cls, s: Buffer) -> "CookingOvenIngredientInfo":
         t = CookingOvenIngredientInfo()
-        t.item_id = s.read_u32()
-        t.amount = s.read_u32()
+        t.item_id = s.read_u16()
+        t.amount = s.read_u16()
+
         return t
 
 
@@ -1278,7 +1280,7 @@ class CookingOvenTile(TileExtra):
     temperature_level: int = 0  # u32
     ingredients: list[CookingOvenIngredientInfo] = field(default_factory=list)
     unk1: int = 0  # u32
-    # unk2: int = 0  # u64
+    unk2: int = 0  # u64
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "CookingOvenTile":
@@ -1290,23 +1292,8 @@ class CookingOvenTile(TileExtra):
 
         t.unk1 = s.read_u32()
 
-
-        # TODO: the following will actually make the code crash, even though it exists in the binary, figure out why
-        """
-        if ( world->version >= 0xEu )
-        {
-          if ( worldRaw )
-          {
-            if ( isSerializing )
-              *(_QWORD *)&worldRaw[v29] = tileExtra->bedrockUnk;
-            else
-              tileExtra->bedrockUnk = *(_QWORD *)&worldRaw[v29];
-          }
-          *offset += 8;                         // 20
-        }
-        """
-        # if format_version >= 14:
-        #     t.unk2 = s.read_u64()
+        if format_version >= 14:
+            t.unk2 = s.read_u64()
 
         return t
 
