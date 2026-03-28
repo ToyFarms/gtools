@@ -14,7 +14,7 @@ import numpy as np
 from pyglm.glm import ivec4, ivec2
 
 from gtools import flags
-from gtools.baked.items import STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
+from gtools.baked.items import COPPER_PLUMBING, STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.block_sigint import block_sigint
 from gtools.core.color import color_tint, composite
 from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoTextureType, get_tex_stride, item_database
@@ -465,9 +465,9 @@ if __name__ == "__main__":
 
             item = item_database.get(id)
 
-            if id == STEAM_PIPE:
+            if id in (STEAM_PIPE, COPPER_PLUMBING):
                 seed = item_database.get(id + 1)
-                tex = color_tint(tex, np.array([seed.seed_overlay_color.r, seed.seed_overlay_color.g, seed.seed_overlay_color.b, seed.seed_overlay_color.a]))
+                tex = color_tint(tex, np.array([seed.seed_overlay_color.r, seed.seed_overlay_color.g, seed.seed_overlay_color.b, 255]))
 
             base_layer = bg_layer if is_bg else fg_layer
             shadow_layer = bg_shadow_layer if is_bg else fg_shadow_layer

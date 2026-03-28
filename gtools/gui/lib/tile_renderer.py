@@ -2,13 +2,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import IntFlag, auto
 import logging
-import struct
 from OpenGL.GL import GL_FALSE, GL_TRUE, GL_UNSIGNED_INT, glDepthMask
 import numpy as np
 from pyglm.glm import ivec2
 
 from gtools import setting
-from gtools.baked.items import STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
+from gtools.baked.items import COPPER_PLUMBING, STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.color import pack_color
 from gtools.core.growtopia.items_dat import ItemInfoTextureType, get_tex_stride, item_database
 from gtools.core.growtopia.world import DisplayBlockTile, SeedTile, Tile, TileFlags, VendingMachineTile, World
@@ -337,7 +336,7 @@ class TileRenderer(Renderer):
             u0, u1 = u1, u0
 
         tint = _WHITE_TINT
-        if item_id in (STEAM_PIPE,):
+        if item_id in (STEAM_PIPE, COPPER_PLUMBING):
             seed = item_database.get(item_id + 1)
             c = seed.seed_overlay_color
             tint = pack_color(c.to_rgba())
