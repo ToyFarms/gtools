@@ -426,6 +426,16 @@ class TileExtra:
         if item.id == DATA_STARSHIP_HULL and format_version > 4:
             print(StarshipHullData.deserialize(s, format_version))
 
+        if type != TileExtraType.GUILD_ITEM_TILE:
+            if item.flags2 & ItemInfoFlag2.GUILD_ITEM != 0:
+                # TODO: store this
+                GuildItemTile.deserialize(s, fg, bg, format_version)
+
+        # TODO: there is a special tile extra such as data starship, bedrock data, guild data
+        # these are handled specially, and are executed for all tile extra, because the tile can have
+        # multiple extra data, such as guild lock, which contains LockTile and GuildItemData
+        # verify it, if i have the sample
+
         return extra
 
     @classmethod
@@ -1409,12 +1419,13 @@ class GuildItemTile(TileExtra):
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "GuildItemTile":
         t = cls()
-        if id != GUILD_LOCK:
+        if fg_id != GUILD_LOCK:
             t.unk1 = s.read_u8()
         t.unk2 = s.read_u32()
         t.unk3 = s.read_u32()
         t.unk4 = s.read_u32()
         t.unk5 = s.read_u32()
+
         return t
 
 

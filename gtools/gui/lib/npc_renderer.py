@@ -22,18 +22,18 @@ class NpcRenderer(Renderer):
         self.u_spread3d = self.shader3d.get_uniform("u_layer_spread")
 
         body_vertices = np.array([
-            -0.5, -0.5, 1.0, 1.0, 1.0, 0.3,
-            0.5,  -0.5, 1.0, 1.0, 1.0, 0.3,
-            0.5,  0.5,  1.0, 1.0, 1.0, 0.3,
-            -0.5, 0.5,  1.0, 1.0, 1.0, 0.3,
+            -0.5, -0.5, 1.0, 0.0, 0.0, 1.0,
+            0.5,  -0.5, 1.0, 0.0, 0.0, 1.0,
+            0.5,  0.5,  1.0, 0.0, 0.0, 1.0,
+            -0.5, 0.5,  1.0, 0.0, 0.0, 1.0,
         ], dtype=np.float32)
         self.body_mesh = Mesh(body_vertices, [2, 4], Mesh.RECT_INDICES)
 
         line_vertices = np.array([
-            -0.5, -0.5, 1.0, 0.0, 0.0, 0.5,
-            0.5,  -0.5, 1.0, 0.0, 0.0, 0.5,
-            0.5,  0.5,  1.0, 0.0, 0.0, 0.5,
-            -0.5, 0.5,  1.0, 0.0, 0.0, 0.5,
+            -0.5, -0.5, 1.0, 0.0, 0.0, 1.0,
+            0.5,  -0.5, 1.0, 0.0, 0.0, 1.0,
+            0.5,  0.5,  1.0, 0.0, 0.0, 1.0,
+            -0.5, 0.5,  1.0, 0.0, 0.0, 1.0,
         ], dtype=np.float32)
         self.line_mesh = Mesh(line_vertices, [2, 4], Mesh.RECT_INDICES)
 

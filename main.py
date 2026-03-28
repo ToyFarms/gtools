@@ -507,6 +507,7 @@ if __name__ == "__main__":
         print(f"rendering took {time.perf_counter() - start:.3f}s")
 
         Image.fromarray(img).show()
+        time.sleep(1)
     elif args.cmd == "music":
         world = World.from_tank(Path(args.world).read_bytes())
         mixer = AudioMixer()
@@ -527,10 +528,7 @@ if __name__ == "__main__":
         finally:
             mixer.stop()
 
-# TODO: render tree
 # TODO: fix ui (its so ugly!!)
 # TODO: implement shadow in world viewer
 # TODO: fix PortraitTile for the world START (prob bcs old world version)
 # TODO: implement override callback for connect, disconnect, destroy for extension sdk
-
-# TODO: fix shader lifecycle
