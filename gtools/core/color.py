@@ -1,3 +1,4 @@
+import struct
 from PIL import Image
 import numpy as np
 
@@ -126,3 +127,7 @@ class Color:
 
     def to_tuple(self) -> tuple[int, int, int, int]:
         return (self.r, self.g, self.b, self.a)
+
+
+def pack_color(col: int) -> float:
+    return struct.unpack("f", struct.pack("I", col))[0]

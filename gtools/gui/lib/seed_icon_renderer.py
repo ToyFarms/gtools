@@ -44,15 +44,13 @@ class SeedIconRenderer(Renderer):
         for i, (drop, z) in enumerate(items):
             item = item_database.get(drop.id)
 
-            base_color = (item.seed_color.r << 16) | (item.seed_color.g << 8) | item.seed_color.b
-
             overlay_r = (item.seed_color.r + item.seed_overlay_color.r) // 2
             overlay_g = (item.seed_color.g + item.seed_overlay_color.g) // 2
             overlay_b = (item.seed_color.b + item.seed_overlay_color.b) // 2
-            overlay_color = (overlay_r << 16) | (overlay_g << 8) | overlay_b
+            overlay_color = (overlay_r << 24) | (overlay_g << 16) | (overlay_b << 8)
 
             data[i]["tilePos"] = [drop.pos.x + pos_offset.x, drop.pos.y + pos_offset.y, z]
-            data[i]["baseColor"] = base_color
+            data[i]["baseColor"] = item.seed_color.to_rgba()
             data[i]["overlayColor"] = overlay_color
             data[i]["baseUV"] = [item.seed_base.value * 16 / self.tex.width, 0 / self.tex.height]
             data[i]["overlayUV"] = [item.seed_overlay.value * 16 / self.tex.width, 16 / self.tex.height]

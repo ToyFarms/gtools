@@ -558,6 +558,7 @@ class ItemInfoTreeLeaves(IntEnum):
         return obj
 
 
+# NOTE: growtopia store this in BGRA, thus it de/serialize into BGRA
 @dataclass(slots=True, init=False)
 class ItemInfoColor:
     a: int = 0
@@ -573,6 +574,9 @@ class ItemInfoColor:
 
     def __int__(self) -> int:
         return ((self.b & 0xFF) << 24) | ((self.g & 0xFF) << 16) | ((self.r & 0xFF) << 8) | (self.a & 0xFF)
+
+    def to_rgba(self) -> int:
+        return ((self.r & 0xFF) << 24) | ((self.g & 0xFF) << 16) | ((self.b & 0xFF) << 8) | (self.a & 0xFF)
 
 
 class FXFlags(IntFlag):

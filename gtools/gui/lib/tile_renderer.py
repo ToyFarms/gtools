@@ -2,12 +2,14 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import IntFlag, auto
 import logging
-from OpenGL.GL import GL_FALSE, GL_TRUE, glDepthMask
+import struct
+from OpenGL.GL import GL_FALSE, GL_TRUE, GL_UNSIGNED_INT, glDepthMask
 import numpy as np
 from pyglm.glm import ivec2
 
 from gtools import setting
-from gtools.baked.items import STEAM_REVOLVER, STEAM_TUBES
+from gtools.baked.items import STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
+from gtools.core.color import pack_color
 from gtools.core.growtopia.items_dat import ItemInfoTextureType, get_tex_stride, item_database
 from gtools.core.growtopia.world import DisplayBlockTile, SeedTile, Tile, TileFlags, VendingMachineTile, World
 
@@ -32,9 +34,12 @@ class _RenderLayer:
     opacity: float = 1.0
 
 
+_WHITE_TINT = pack_color(0xFFFFFFFF)
+
+
 class TileRenderer(Renderer):
     LAYOUT = [2, 2]
-    INSTANCE_LAYOUT = [2, 4, 1, 1]
+    INSTANCE_LAYOUT = [2, 4, 1, 1, (1, GL_UNSIGNED_INT)]
     TILE_SIZE = 32
 
     class Flags(IntFlag):
@@ -52,8 +57,8 @@ class TileRenderer(Renderer):
             "fg_before": _RenderLayer(layer.WORLD_PRE_FOREGROUND, F.RENDER_FG),
             "fg": _RenderLayer(layer.WORLD_FOREGROUND, F.RENDER_FG),
             "fg_after": _RenderLayer(layer.WORLD_POST_FOREGROUND, F.RENDER_FG, depth_write=False),
-            "fire": _RenderLayer(layer.WORLD_FIRE, F.RENDER_FG, opacity=0.75),
-            "water": _RenderLayer(layer.WORLD_WATER, F.RENDER_FG, opacity=0.75),
+            "fire": _RenderLayer(layer.WORLD_FIRE, F.RENDER_FG, opacity=0.6),
+            "water": _RenderLayer(layer.WORLD_WATER, F.RENDER_FG, opacity=0.6),
         }
 
         self._shader = ShaderProgram.get("shaders/world")
@@ -62,7 +67,7 @@ class TileRenderer(Renderer):
         self._layer = self._shader.get_uniform("u_layer")
         self._opacity = self._shader.get_uniform("u_opacity")
 
-        self._shader3d = ShaderProgram.get("shaders/world3d")
+        self._shader3d = ShaderProgram.from_file("shaders/world3d.vert", "shaders/world.frag")
         self._vp3d = self._shader3d.get_uniform("u_view_proj")
         self._tex3d = self._shader3d.get_uniform("texArray")
         self._layer3d = self._shader3d.get_uniform("u_layer")
@@ -331,6 +336,12 @@ class TileRenderer(Renderer):
         if is_flipped:
             u0, u1 = u1, u0
 
+        tint = _WHITE_TINT
+        if item_id in (STEAM_PIPE,):
+            seed = item_database.get(item_id + 1)
+            c = seed.seed_overlay_color
+            tint = pack_color(c.to_rgba())
+
         return tex.array, [
             tile.pos.x * self.TILE_SIZE,
             tile.pos.y * self.TILE_SIZE,
@@ -340,6 +351,7 @@ class TileRenderer(Renderer):
             v1,
             float(tex.layer),
             float(tile.get_paint_index()),
+            tint,
         ]
 
     def _tile_instance_data_raw(self, tile: Tile, texture_file: str, tex_pos: ivec2) -> tuple[TextureArray, list[float]]:
@@ -358,4 +370,5 @@ class TileRenderer(Renderer):
             v1,
             float(tex.layer),
             float(tile.get_paint_index()),
+            _WHITE_TINT,
         ]

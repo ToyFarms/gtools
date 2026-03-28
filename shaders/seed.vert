@@ -20,11 +20,12 @@ uniform mat4 u_mvp;
 uniform sampler2DArray u_texture;
 uniform float u_tileSize;
 
-vec3 unpackColor(uint c) {
-    return vec3(
-        float((c >> 16) & 0xFFu) / 255.0,
-        float((c >> 8) & 0xFFu) / 255.0,
-        float(c & 0xFFu) / 255.0
+vec4 unpackColor(uint c) {
+    return vec4(
+        float((c >> 24) & 0xFFu) / 255.0,  // R
+        float((c >> 16) & 0xFFu) / 255.0,  // G
+        float((c >>  8) & 0xFFu) / 255.0,  // B
+        float((c >>  0) & 0xFFu) / 255.0   // A
     );
 }
 
@@ -35,8 +36,8 @@ void main() {
     baseTexCoord = in_baseUV + in_texCoord * uvStep;
     overlayTexCoord = in_overlayUV + in_texCoord * uvStep;
 
-    baseTint = unpackColor(in_baseColor);
-    overlayTint = unpackColor(in_overlayColor);
+    baseTint = unpackColor(in_baseColor).rgb;
+    overlayTint = unpackColor(in_overlayColor).rgb;
 
     vec2 worldPos = in_pos * u_tileSize + in_tilePos.xy;
     gl_Position = u_mvp * vec4(worldPos, in_tilePos.z, 1.0);

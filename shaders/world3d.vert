@@ -7,10 +7,12 @@ layout (location = 3) in vec2 in_tilePos;
 layout (location = 4) in vec4 in_texCoords;
 layout (location = 5) in float in_layer;
 layout (location = 6) in float in_paintIndex;
+layout (location = 7) in uint in_tint;
 
 out vec2 texCoord;
 flat out float layer;
 flat out float paintIndex;
+flat out uint tileTint;
 
 uniform mat4 u_view_proj;
 uniform float u_layer;
@@ -29,4 +31,5 @@ void main() {
     );
     layer = in_layer;
     paintIndex = in_paintIndex;
+    tileTint = in_tint;
 }

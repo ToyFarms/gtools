@@ -90,17 +90,16 @@ class TreeRenderer(Renderer):
 
             item = item_database.get(tile.fg_id)
 
-            base_color = (item.seed_color.r << 16) | (item.seed_color.g << 8) | item.seed_color.b
             overlay_r = item.seed_overlay_color.r
             overlay_g = item.seed_overlay_color.g
             overlay_b = item.seed_overlay_color.b
-            overlay_color = (overlay_r << 16) | (overlay_g << 8) | overlay_b
+            overlay_color = (overlay_r << 24) | (overlay_g << 16) | (overlay_b << 8)
 
             trunk = item.seed_base.value % 8
             leaf = item.seed_overlay.value % 8
 
             data[i]["tilePos"] = [tile.pos.x * 32, tile.pos.y * 32, WORLD_FOREGROUND]
-            data[i]["baseColor"] = base_color
+            data[i]["baseColor"] = item.seed_color.to_rgba()
             data[i]["overlayColor"] = overlay_color
             data[i]["baseTexCoord"] = [trunk * 32 / tex_w, 19 * 32 / tex_h]
             data[i]["overlayTexCoord"] = [leaf * 32 / tex_w, 18 * 32 / tex_h]
