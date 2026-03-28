@@ -38,9 +38,9 @@ class ObjectRenderable:
 
 class RenderOrder:
     def __init__(self) -> None:
-        self._renderer: list[tuple[Callable[[Camera2D], Any], Callable[[Camera3D, float], Any]]] = []
+        self._renderer: list[tuple[Callable[[Camera2D, Camera2D | None], Any], Callable[[Camera3D, float], Any]]] = []
 
-    def add(self, draw_2d: Callable[[Camera2D], Any], draw_3d: Callable[[Camera3D, float], Any]) -> None:
+    def add(self, draw_2d: Callable[[Camera2D, Camera2D | None], Any], draw_3d: Callable[[Camera3D, float], Any]) -> None:
         self._renderer.append((draw_2d, draw_3d))
 
     def clear(self) -> None:
@@ -287,7 +287,7 @@ class WorldRenderer:
         obj_renderable = self._build_object_renderable()
 
         self._render_order.add(
-            lambda cam, cull: self._draw_obj_group_shadows_2d(cam, obj_renderable, culling_camera=cull),
+            lambda cam, cull: self._draw_obj_group_shadows_2d(cam, obj_renderable),
             lambda cam3d, s: self._draw_obj_group_shadows_3d(cam3d, s, obj_renderable),
         )
 
@@ -339,7 +339,7 @@ class WorldRenderer:
             lambda camera3d, layer_spread: self._highlight_renderer.draw_playhead_3d(camera3d, self._sheet, self._world.width, layer_spread),
         )
 
-    def _draw_obj_group_shadows_2d(self, camera: Camera2D, tasks: list[ObjectRenderable], culling_camera: Camera2D | None = None) -> None:
+    def _draw_obj_group_shadows_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
         glDepthMask(GL_FALSE)
         for task in tasks:
             task.renderer.draw_shadow(camera, task.mesh, z_offset=task.z_offset)
@@ -351,7 +351,7 @@ class WorldRenderer:
             task.renderer.draw_shadow_3d(camera3d, task.mesh, layer_spread, z_offset=task.z_offset)
         glDepthMask(GL_TRUE)
 
-    def _draw_obj_group_main_2d(self, camera: Camera2D, tasks: list[ObjectRenderable], culling_camera: Camera2D | None = None) -> None:
+    def _draw_obj_group_main_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
         for task in tasks:
             task.renderer.draw(camera, task.mesh, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
 
@@ -598,7 +598,7 @@ class WorldRenderer:
                 elif event.action == glfw.RELEASE and self._drag.get("active"):
                     self._drag["active"] = False
                     return True
-            elif event.button == glfw.MOUSE_BUTTON_RIGHT:
+            elif event.button == glfw.MOUSE_BUTTON_MIDDLE:
                 if event.action == glfw.PRESS and self._hovered:
                     lx, ly = self._to_local(event.screen_x, event.screen_y)
                     now = time.monotonic()
@@ -694,7 +694,7 @@ class WorldRenderer:
                 elif event.action == glfw.RELEASE and self._drag.get("active"):
                     self._drag["active"] = False
                     return True
-            elif event.button == glfw.MOUSE_BUTTON_RIGHT:
+            elif event.button == glfw.MOUSE_BUTTON_MIDDLE:
                 if event.action == glfw.PRESS and self._hovered:
                     lx, ly = self._to_local(event.screen_x, event.screen_y)
                     now = time.monotonic()
