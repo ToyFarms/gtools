@@ -424,12 +424,15 @@ class TileExtra:
 
         item = item_database.get(fg or bg)
         if item.id == DATA_STARSHIP_HULL and format_version > 4:
+            # TODO: store this
             print(StarshipHullData.deserialize(s, format_version))
 
+        # NOTE: we need to check if we are not already a GUILD_ITEM_TILE extra, as to not parse it 2x
+        # the original didn't have this because all the GUILD_ITEM_TILE fallthrough to default (not handled specifically)
         if type != TileExtraType.GUILD_ITEM_TILE:
             if item.flags2 & ItemInfoFlag2.GUILD_ITEM != 0:
                 # TODO: store this
-                GuildItemTile.deserialize(s, fg, bg, format_version)
+                print(GuildItemTile.deserialize(s, fg, bg, format_version))
 
         # TODO: there is a special tile extra such as data starship, bedrock data, guild data
         # these are handled specially, and are executed for all tile extra, because the tile can have
@@ -665,6 +668,7 @@ class StuffForToysTile(TileExtra):
         return t
 
 
+# TODO: this clothing order is probably wrong
 @dataclass(slots=True)
 class MannequinTile(TileExtra):
     text: bytes = b""
@@ -745,6 +749,7 @@ class XenoniteCrystalTile(TileExtra):
         return t
 
 
+# TODO: this clothing order is probably wrong
 @dataclass(slots=True)
 class PhoneBoothTile(TileExtra):
     shirt: int = 0  # u16
@@ -1174,21 +1179,21 @@ class PortraitTile(TileExtra):
         t = cls()
 
         t.label = s.read_pascal_bytes("H")
-        t.unk1 = s.read_u32()  # 4
-        t.unk2 = s.read_u32()  # 8
-        t.unk3 = s.read_u32()  # 12
-        t.unk4 = s.read_u32()  # 16
+        t.unk1 = s.read_u32()
+        t.unk2 = s.read_u32()
+        t.unk3 = s.read_u32()
+        t.unk4 = s.read_u32()
 
-        t.face = s.read_u16()  # 18
-        t.hat = s.read_u16()  # 20
-        t.hair = s.read_u16()  # 22
+        t.face = s.read_u16()
+        t.hat = s.read_u16()
+        t.hair = s.read_u16()
 
         if format_version >= 4 and any(x in (WILL_OF_THE_WILD, GOLEM_S_GIFT) for x in (t.face, t.hat, t.hair)):
-            t.unk8 = s.read_u32()  # 4
-            t.unk9 = s.read_u32()  # 4
+            t.unk8 = s.read_u32()
+            t.unk9 = s.read_u32()
 
         if format_version >= 9:
-            t.unk10 = s.read_u32()  # 28
+            t.unk10 = s.read_u32()
 
         if format_version >= 23 and t.hat == INFINITY_CROWN:
             t.unk11 = s.read_pascal_bytes("H")
@@ -1273,23 +1278,37 @@ class CookingOvenTile(TileExtra):
     temperature_level: int = 0  # u32
     ingredients: list[CookingOvenIngredientInfo] = field(default_factory=list)
     unk1: int = 0  # u32
-    unk2: int = 0  # u32
-    unk3: int = 0  # u32
+    # unk2: int = 0  # u64
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "CookingOvenTile":
         t = cls()
-        t.temperature_level = s.read_u32()
 
+        t.temperature_level = s.read_u32()
         for _ in range(s.read_u32()):
             t.ingredients.append(CookingOvenIngredientInfo.deserialize(s))
 
         t.unk1 = s.read_u32()
-        t.unk2 = s.read_u32()
-        t.unk3 = s.read_u32()
+
+
+        # TODO: the following will actually make the code crash, even though it exists in the binary, figure out why
+        """
+        if ( world->version >= 0xEu )
+        {
+          if ( worldRaw )
+          {
+            if ( isSerializing )
+              *(_QWORD *)&worldRaw[v29] = tileExtra->bedrockUnk;
+            else
+              tileExtra->bedrockUnk = *(_QWORD *)&worldRaw[v29];
+          }
+          *offset += 8;                         // 20
+        }
+        """
+        # if format_version >= 14:
+        #     t.unk2 = s.read_u64()
 
         return t
-
 
 @dataclass(slots=True)
 class AudioRackTile(TileExtra):
