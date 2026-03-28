@@ -24,6 +24,8 @@ from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEve
 from gtools.gui.lib.tile_renderer import TileRenderer
 from gtools.gui.lib.highlight_renderer import HighlightRenderer
 from gtools.gui.lib.gui_menu_renderer import GuiMenuRenderer
+from gtools.gui.lib.player_renderer import PlayerRenderer
+from gtools.gui.lib.npc_renderer import NpcRenderer
 
 
 @dataclass(slots=True)
@@ -78,6 +80,8 @@ class WorldRenderer:
 
         self._highlight_renderer = HighlightRenderer()
         self._gui_menu_renderer = GuiMenuRenderer()
+        self._player_renderer = PlayerRenderer()
+        self._npc_renderer = NpcRenderer()
         self._playing = True
         self._seek = 0
         self._hovered_tile: Tile | None = None
@@ -173,6 +177,16 @@ class WorldRenderer:
     def culling_debug_zoom(self, value: float) -> None:
         if self._culling_debug_zoom != value:
             self._culling_debug_zoom = value
+            self._dirty = True
+
+    @property
+    def npc_debug_line(self) -> bool:
+        return self._npc_renderer.debug_line
+
+    @npc_debug_line.setter
+    def npc_debug_line(self, value: bool) -> None:
+        if self._npc_renderer.debug_line != value:
+            self._npc_renderer.debug_line = value
             self._dirty = True
 
     @property
@@ -321,6 +335,16 @@ class WorldRenderer:
         )
 
         self._render_order.add(
+            lambda camera, cull: self._player_renderer.draw(camera, list(self._world.player)),
+            lambda camera3d, layer_spread: self._player_renderer.draw_3d(camera3d, layer_spread, list(self._world.player)),
+        )
+
+        self._render_order.add(
+            lambda camera, cull: self._npc_renderer.draw(camera, self._world.npcs),
+            lambda camera3d, layer_spread: self._npc_renderer.draw_3d(camera3d, layer_spread, self._world.npcs),
+        )
+
+        self._render_order.add(
             lambda camera, cull: self._tile_renderer.draw(camera, "fire", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fire"),
         )
@@ -386,6 +410,8 @@ class WorldRenderer:
         self._fbo.delete()
         self._highlight_renderer.delete()
         self._gui_menu_renderer.delete()
+        self._player_renderer.delete()
+        self._npc_renderer.delete()
 
     @property
     def is_dirty(self) -> bool:

@@ -113,6 +113,11 @@ class WorldPanel(Panel):
 
         imgui.separator()
 
+        _, npc_debug_line = imgui.checkbox("NPC Debug Line", self._world_renderer.npc_debug_line)
+        self._world_renderer.npc_debug_line = npc_debug_line
+
+        imgui.separator()
+
         imgui.set_next_item_width(sidebar_w - 16)
         changed, debug_zoom = imgui.slider_float("##debug_zoom", self._world_renderer.culling_debug_zoom, 1.0, 10.0)
         if changed:
