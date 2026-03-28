@@ -14,9 +14,9 @@ import numpy as np
 from pyglm.glm import ivec4, ivec2
 
 from gtools import flags
-from gtools.baked.items import STEAM_REVOLVER, STEAM_TUBES
+from gtools.baked.items import STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.block_sigint import block_sigint
-from gtools.core.color import composite
+from gtools.core.color import color_tint, composite
 from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoTextureType, get_tex_stride, item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.rttex import RTTexManager
@@ -463,6 +463,12 @@ if __name__ == "__main__":
             if id <= 0:
                 return
 
+            item = item_database.get(id)
+
+            if id == STEAM_PIPE:
+                seed = item_database.get(id + 1)
+                tex = color_tint(tex, np.array([seed.seed_overlay_color.r, seed.seed_overlay_color.g, seed.seed_overlay_color.b, seed.seed_overlay_color.a]))
+
             base_layer = bg_layer if is_bg else fg_layer
             shadow_layer = bg_shadow_layer if is_bg else fg_shadow_layer
 
@@ -471,7 +477,6 @@ if __name__ == "__main__":
             dst_slice = base_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
             dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
 
-            item = item_database.get(id)
             if not no_shadow and item.flags & ItemFlag.NO_SHADOW == 0:
                 dst = ivec4(pos.x * 32, pos.y * 32, 32, 32)
                 alpha_mask = tex[:, :, 3] > 4
@@ -498,7 +503,13 @@ if __name__ == "__main__":
                 tex_pos, _ = tile.tex_pos(tile.fg_id, 0)
                 tex_pos = (tex_pos + ivec2(0, 1)) * 32
 
-                place(mgr.get(setting.asset_path / "game" / item_database.get(tile.fg_id).texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32), tile.fg_id, tile.pos, is_bg=False, no_shadow=True)
+                place(
+                    mgr.get(setting.asset_path / "game" / item_database.get(tile.fg_id).texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32),
+                    tile.fg_id,
+                    tile.pos,
+                    is_bg=False,
+                    no_shadow=True,
+                )
 
         bg = composite(bg_layer, bg_shadow_layer, dx=-2, dy=2)
         fg = composite(fg_layer, fg_shadow_layer, dx=-2, dy=2)
