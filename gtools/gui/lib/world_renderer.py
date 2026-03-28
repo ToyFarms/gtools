@@ -7,7 +7,7 @@ from typing import Any, Callable
 from OpenGL.GL import GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_FALSE, GL_FILL, GL_FRONT_AND_BACK, GL_LINE, GL_TRUE, glClear, glClearColor, glDepthMask, glPolygonMode
 
 import glfw
-from imgui_bundle import imgui
+from imgui_bundle import imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
 from pyglm import glm
 from pyglm.glm import ivec2, vec2
 
@@ -111,6 +111,9 @@ class WorldRenderer:
         self._tile_updates: set[tuple[int, int]] = set()
         self._culling_debug_zoom: float = 1.0
         self._tile_update_lock = threading.Lock()
+
+        self._show_settings = False
+        self._settings_width = 250.0
 
         self._init_render_order()
 
@@ -415,6 +418,82 @@ class WorldRenderer:
         self._player_renderer.delete()
         self._npc_renderer.delete()
 
+    def _render_settings(self) -> None:
+        imgui.text("World Settings")
+        imgui.separator()
+
+        hovered = self._hovered_tile
+        if hovered:
+            if hovered.extra:
+                imgui.text_wrapped(f"{hovered.extra}")
+            else:
+                imgui.text("-")
+        else:
+            imgui.text("-")
+
+        imgui.separator()
+
+        sheet = self._sheet
+        _, sheet.bpm = imgui_knobs.knob(
+            "BPM", sheet.bpm, 20.0, 200.0, format="%.0f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only
+        )
+        imgui.same_line()
+        _, self._mixer.master_gain = imgui_knobs.knob(
+            "GAIN", self._mixer.master_gain, 0.0, 1.0, format="%.2f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only
+        )
+
+        imgui.separator()
+
+        _, playing = imgui.checkbox("Play", self._playing)
+        self.playing = playing
+
+        imgui.separator()
+
+        FLAGS: list[tuple[str, TileRenderer.Flags]] = [
+            ("FG", TileRenderer.Flags.RENDER_FG),
+            ("BG", TileRenderer.Flags.RENDER_BG),
+        ]
+        for label, flag in FLAGS:
+            flags = self.tile_flags
+            changed, is_set = imgui.checkbox(label, flags & flag != 0)
+            if changed:
+                if is_set:
+                    flags |= flag
+                else:
+                    flags &= ~flag
+                self.tile_flags = flags
+
+        imgui.separator()
+
+        _, mode_3d = imgui.checkbox("3D", self._mode_3d)
+        self.mode_3d = mode_3d
+
+        if self._mode_3d:
+            imgui.set_next_item_width(self._settings_width - 16)
+            changed, spread = imgui.slider_float("##spread", self._layer_spread, 10.0, 1000.0)
+            if changed:
+                self.layer_spread = spread
+            imgui.text("Spread")
+            imgui.text(f"Spd: {self.camera3d_speed:.0f}")
+
+        imgui.separator()
+
+        _, wireframe = imgui.checkbox("Wireframe", self._wireframe)
+        self.wireframe = wireframe
+
+        imgui.separator()
+
+        _, npc_debug_line = imgui.checkbox("NPC Debug Line", self.npc_debug_line)
+        self.npc_debug_line = npc_debug_line
+
+        imgui.separator()
+
+        imgui.set_next_item_width(self._settings_width - 16)
+        changed, debug_zoom = imgui.slider_float("##debug_zoom", self._culling_debug_zoom, 1.0, 10.0)
+        if changed:
+            self.culling_debug_zoom = debug_zoom
+        imgui.text("Culling Debug")
+
     @property
     def is_dirty(self) -> bool:
         return self._dirty or self._playing
@@ -493,52 +572,71 @@ class WorldRenderer:
                 self._dirty = True
 
     def render(self) -> None:
-        cw, ch = imgui.get_content_region_avail()
-        cw, ch = int(cw), int(ch)
-        if cw <= 0 or ch <= 0:
-            return
+        total_w, total_h = imgui.get_content_region_avail()
+        spacing = imgui.get_style().item_spacing.x
 
-        if self._fbo.width != cw or self._fbo.height != ch:
-            self._fbo.resize(cw, ch)
-            self._camera.resize(cw, ch)
-            self._camera3d.resize(cw, ch)
-            self._dirty = True
+        main_w = total_w
+        if self._show_settings:
+            main_w = total_w - self._settings_width - spacing
 
-        if self._needs_obj_rebuild:
-            self._init_render_order()
-            self._needs_obj_rebuild = False
+        imgui.begin_group()
 
-        if self._dirty:
-            self._render_to_fbo()
-            self._dirty = False
+        cw, ch = int(main_w), int(total_h)
+        if cw > 0 and ch > 0:
+            if self._fbo.width != cw or self._fbo.height != ch:
+                self._fbo.resize(cw, ch)
+                self._camera.resize(cw, ch)
+                self._camera3d.resize(cw, ch)
+                self._dirty = True
 
-        imgui.image(
-            imgui.ImTextureRef(self._fbo.color_tex),
-            (cw, ch),
-            uv0=(0, 1),
-            uv1=(1, 0),
-        )
-        self._hovered = imgui.is_item_hovered()
-        rect_min = imgui.get_item_rect_min()
-        self._image_origin = (rect_min.x, rect_min.y)
-        self._update_hover()
+            if self._needs_obj_rebuild:
+                self._init_render_order()
+                self._needs_obj_rebuild = False
 
-        if self._selection_drag["active"]:
-            draw_list = imgui.get_window_draw_list()
-            ox, oy = self._image_origin
-            s = self._selection_drag["start"]
-            c = self._selection_drag["current"]
-            draw_list.add_rect(
-                imgui.ImVec2(ox + s[0], oy + s[1]),
-                imgui.ImVec2(ox + c[0], oy + c[1]),
-                imgui.get_color_u32(imgui.Col_.text, 1.0),
-                thickness=2.0,
+            if self._dirty:
+                self._render_to_fbo()
+                self._dirty = False
+
+            imgui.image(
+                imgui.ImTextureRef(self._fbo.color_tex),
+                (cw, ch),
+                uv0=(0, 1),
+                uv1=(1, 0),
             )
-            draw_list.add_rect_filled(
-                imgui.ImVec2(ox + s[0], oy + s[1]),
-                imgui.ImVec2(ox + c[0], oy + c[1]),
-                imgui.get_color_u32(imgui.Col_.text, 0.2),
-            )
+            self._hovered = imgui.is_item_hovered()
+            rect_min = imgui.get_item_rect_min()
+            self._image_origin = (rect_min.x, rect_min.y)
+            self._update_hover()
+
+            # Toggle button overlay
+            imgui.set_cursor_screen_pos(imgui.ImVec2(rect_min.x + cw - 80, rect_min.y + 10))
+            if imgui.button("Settings" if not self._show_settings else "Close", (70, 25)):
+                self._show_settings = not self._show_settings
+
+            if self._selection_drag["active"]:
+                draw_list = imgui.get_window_draw_list()
+                ox, oy = self._image_origin
+                s = self._selection_drag["start"]
+                c = self._selection_drag["current"]
+                draw_list.add_rect(
+                    imgui.ImVec2(ox + s[0], oy + s[1]),
+                    imgui.ImVec2(ox + c[0], oy + c[1]),
+                    imgui.get_color_u32(imgui.Col_.text, 1.0),
+                    thickness=2.0,
+                )
+                draw_list.add_rect_filled(
+                    imgui.ImVec2(ox + s[0], oy + s[1]),
+                    imgui.ImVec2(ox + c[0], oy + c[1]),
+                    imgui.get_color_u32(imgui.Col_.text, 0.2),
+                )
+
+        imgui.end_group()
+
+        if self._show_settings:
+            imgui.same_line()
+            imgui.begin_child("##settings", (self._settings_width, total_h), child_flags=imgui.ChildFlags_.borders)
+            self._render_settings()
+            imgui.end_child()
 
     def handle_event(self, event: Event) -> bool:
         if isinstance(event, KeyEvent):
@@ -584,6 +682,9 @@ class WorldRenderer:
                     else:
                         self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
                     self._dirty = True
+                    return True
+                elif event.key == glfw.KEY_TAB:
+                    self._show_settings = not self._show_settings
                     return True
                 elif event.key == glfw.KEY_SPACE and not self._mode_3d:
                     self._playing = not self._playing
