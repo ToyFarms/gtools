@@ -313,6 +313,14 @@ class WorldRenderer:
             lambda camera, cull: self._tile_renderer.draw(camera, "fg_before", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_before"),
         )
+
+
+        pre_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_pre_fg]
+        self._render_order.add(
+            lambda cam, cull: self._draw_obj_group_main_2d(cam, pre_fg_tasks),
+            lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, pre_fg_tasks),
+        )
+
         self._render_order.add(
             lambda camera, cull: self._tile_renderer.draw(camera, "fg", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg"),
@@ -320,12 +328,6 @@ class WorldRenderer:
         self._render_order.add(
             lambda camera, cull: self._tile_renderer.draw(camera, "fg_after", culling_camera=cull),
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_after"),
-        )
-
-        pre_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_pre_fg]
-        self._render_order.add(
-            lambda cam, cull: self._draw_obj_group_main_2d(cam, pre_fg_tasks),
-            lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, pre_fg_tasks),
         )
 
         post_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_post_fg]
