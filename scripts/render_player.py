@@ -11,41 +11,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.player import Clothing, Player
 from gtools.core.growtopia.rttex import RTTexManager
 from gtools.core.growtopia.variant import Variant
-
-
-def _blend_rgba_over_bg(rgba: np.ndarray, bg=(0, 0, 0)) -> np.ndarray:
-    rgba = rgba.astype(np.float32)
-    rgb = rgba[..., :3]
-    a = rgba[..., 3:4] / 255.0
-    bg = np.array(bg, dtype=np.float32)
-    out = rgb * a + bg * (1.0 - a)
-    return np.clip(out + 0.5, 0, 255).astype(np.uint8)
-
-
-def image_show_ansi(img: np.ndarray, bg=(0, 0, 0), file=sys.stdout) -> None:
-    if img.ndim != 3 or img.shape[-1] != 4:
-        raise ValueError("Expected an array of shape (H, W, 4)")
-
-    h, w, _ = img.shape
-
-    rgb = _blend_rgba_over_bg(img, bg=bg)
-
-    if h % 2 == 1:
-        pad = np.full((1, w, 3), np.array(bg, dtype=np.uint8), dtype=np.uint8)
-        rgb = np.concatenate([rgb, pad], axis=0)
-        h += 1
-
-    for y in range(0, h, 2):
-        top = rgb[y]
-        bottom = rgb[y + 1]
-
-        parts = []
-        for x in range(w):
-            tr, tg, tb = top[x]
-            br, bg_, bb = bottom[x]
-            parts.append(f"\x1b[38;2;{tr};{tg};{tb}m" f"\x1b[48;2;{br};{bg_};{bb}m▀")
-        parts.append("\x1b[0m")
-        file.write("".join(parts) + "\n")
+from scripts.utils import image_show_ansi
 
 
 @click.command()

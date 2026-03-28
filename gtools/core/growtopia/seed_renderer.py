@@ -1,5 +1,5 @@
 from gtools import setting
-from gtools.core.color import color_tint, color_mix, composite
+from gtools.core.color import color_tint, composite
 from gtools.core.growtopia.items_dat import ItemInfoColor, ItemInfoSeedBase, ItemInfoSeedOverlay
 from gtools.core.growtopia.rttex import RTTex
 import numpy as np
@@ -13,9 +13,14 @@ class SeedRenderer:
         overlay = SeedRenderer._TEXTURE.crop(int(overlay_type) * 16, 16, 16, 16)
 
         base_col = np.array([base_color.r, base_color.g, base_color.b, base_color.a], dtype=np.uint8)
-        overlay_col = np.array([overlay_color.r, overlay_color.g, overlay_color.b, overlay_color.a], dtype=np.uint8)
+        overlay_col = np.array([
+            (int(base_color.r) + int(overlay_color.r)) // 2,
+            (int(base_color.g) + int(overlay_color.g)) // 2,
+            (int(base_color.b) + int(overlay_color.b)) // 2,
+            255,
+        ], dtype=np.uint8)
 
         base_tinted = color_tint(base, base_col)
-        overlay_tinted = color_tint(overlay, color_mix(base_col, overlay_col, 0.5))
+        overlay_tinted = color_tint(overlay, overlay_col)
 
         return composite(overlay_tinted, base_tinted)

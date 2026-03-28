@@ -3,6 +3,7 @@ import click
 
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.seed_renderer import SeedRenderer
+from scripts.utils import image_show_ansi
 
 
 @click.command()
@@ -14,4 +15,5 @@ def seed(id: int) -> None:
 
     r = SeedRenderer()
     tex = r.get(item.seed_base, item.seed_color, item.seed_overlay, item.seed_overlay_color)
-    Image.fromarray(tex).show()
+    # Image.fromarray(tex).show()
+    image_show_ansi(tex)
