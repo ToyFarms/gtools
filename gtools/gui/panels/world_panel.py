@@ -17,23 +17,22 @@ logger = logging.getLogger("gui-world-panel")
 class WorldPanel(Panel):
     _UNIQUE = itertools.count()
 
-    def __init__(self, world: World, dockspace_id: int) -> None:
-        super().__init__()
+    def __init__(self, world: World, dock_id: int) -> None:
+        super().__init__(dock_id)
         self._world = world
         self._name = f"{world.name.decode()}##{next(WorldPanel._UNIQUE)}"
-
-        self._dockspace_id = dockspace_id
         self._open = True
+        self._is_docked = False
         self._first_render = True
 
         self._world_renderer = WorldRenderer(world)
 
     @classmethod
-    def load(cls, file: Path | str, dockspace_id: int) -> "WorldPanel":
+    def load(cls, file: Path | str, dock_id: int) -> "WorldPanel":
         pkt = NetPacket.deserialize(Path(file).read_bytes())
         world = World.from_tank(pkt.tank)
 
-        return cls(world, dockspace_id)
+        return cls(world, dock_id)
 
     def delete(self) -> None:
         logger.info(f"deleting panel {self._name}")
@@ -123,10 +122,13 @@ class WorldPanel(Panel):
         imgui.end_child()
 
     def render(self, control: bool = True) -> None:
-        if self._first_render and self._dockspace_id:
-            imgui.set_next_window_dock_id(self._dockspace_id)
+        if not self._is_docked and self.dock_id:
+            imgui.set_next_window_dock_id(self.dock_id)
 
         opened, self._open = imgui.begin(self._name, self._open)
+        if not self._is_docked and imgui.is_window_docked():
+            self._is_docked = True
+
         if self._first_render:
             imgui.set_window_focus()
             self._first_render = False

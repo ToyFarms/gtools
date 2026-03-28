@@ -26,9 +26,9 @@ _BLINK_DECAY_RATE = 3.5
 
 
 class ProxyPanel(Panel):
-    def __init__(self, outer_dockspace_id: int) -> None:
-        super().__init__()
-        self._outer_dockspace_id = outer_dockspace_id
+    def __init__(self, dock_id: int) -> None:
+        super().__init__(dock_id)
+        self._is_docked = False
         self._first_render = True
 
         self.http_server_enabled = False
@@ -269,10 +269,17 @@ class ProxyPanel(Panel):
         return False
 
     def _imgui_begin(self) -> tuple[bool, bool]:
-        if self._first_render and self._outer_dockspace_id:
-            imgui.set_next_window_dock_id(self._outer_dockspace_id)
-            self._first_render = False
+        if not self._is_docked and self.dock_id:
+            imgui.set_next_window_dock_id(self.dock_id)
+
         x, y = imgui.begin("Proxy", self._open)
+
+        if not self._is_docked and imgui.is_window_docked():
+            self._is_docked = True
+
+        if self._first_render:
+            self._first_render = False
+
         return x, bool(y)
 
     def _imgui_end(self) -> None:

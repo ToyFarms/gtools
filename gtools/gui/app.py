@@ -114,6 +114,8 @@ class App:
         self.add_panel(WorldPanel(w, self.dockspace.node_id))
 
     def add_panel(self, panel: Panel) -> None:
+        if panel.dock_id == 0:
+            panel.dock_id = self.dockspace.node_id
         self.panels.append(panel)
 
     def remove_panel(self, panel: Panel) -> None:
@@ -148,6 +150,9 @@ class App:
             for panel in self.panels:
                 if not panel.is_open:
                     to_remove.append(panel)
+
+                if panel.dock_id == 0:
+                    panel.dock_id = self.dockspace.node_id
 
                 panel.update(dt)
                 panel.render()

@@ -7,8 +7,17 @@ logger = logging.getLogger("gui-panels")
 
 
 class Panel(ABC):
-    def __init__(self) -> None:
+    def __init__(self, dock_id: int = 0) -> None:
         self._open = True
+        self._dock_id = dock_id
+
+    @property
+    def dock_id(self) -> int:
+        return self._dock_id
+
+    @dock_id.setter
+    def dock_id(self, value: int) -> None:
+        self._dock_id = value
 
     @property
     def is_open(self) -> bool:
