@@ -82,6 +82,17 @@ def composite(top: np.ndarray, bottom: np.ndarray, dx=0, dy=0) -> np.ndarray:
     return np.array(result)
 
 
+def composite_onto(base: np.ndarray, layer: np.ndarray, dx=0, dy=0) -> np.ndarray:
+    base_im = Image.fromarray(base, "RGBA")
+    layer_im = Image.fromarray(layer, "RGBA")
+
+    temp = Image.new("RGBA", base_im.size, (0, 0, 0, 0))
+    temp.paste(layer_im, (dx, dy))
+
+    result = Image.alpha_composite(base_im, temp)
+    return np.array(result)
+
+
 class Color:
     __slots__ = ("r", "g", "b", "a")
 
@@ -93,24 +104,25 @@ class Color:
 
     @classmethod
     def from_int_le(cls, x: int) -> "Color":
-        b = x & 0xFF
+        r = x & 0xFF
         g = (x >> 8) & 0xFF
-        r = (x >> 16) & 0xFF
+        b = (x >> 16) & 0xFF
         a = (x >> 24) & 0xFF
-
         return cls(r, g, b, a)
 
     @classmethod
     def from_int_be(cls, x: int) -> "Color":
-        a = (x >> 24) & 0xFF
-        r = (x >> 16) & 0xFF
-        g = (x >> 8) & 0xFF
-        b = x & 0xFF
-
+        r = (x >> 24) & 0xFF
+        g = (x >> 16) & 0xFF
+        b = (x >> 8) & 0xFF
+        a = x & 0xFF
         return cls(r, g, b, a)
 
     def to_int_le(self) -> int:
-        return (self.a << 24) | (self.r << 16) | (self.g << 8) | self.b
+        return (self.a << 24) | (self.b << 16) | (self.g << 8) | self.r
 
     def to_int_be(self) -> int:
-        return (self.a << 24) | (self.r << 16) | (self.g << 8) | self.b
+        return (self.r << 24) | (self.g << 16) | (self.b << 8) | self.a
+
+    def to_tuple(self) -> tuple[int, int, int, int]:
+        return (self.r, self.g, self.b, self.a)
