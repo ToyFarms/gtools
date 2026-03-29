@@ -228,16 +228,21 @@ class Sheet:
             self._activated_repeats.clear()
             self._pending_backtrack = None
 
-    def update(self, dt: float) -> None:
+    def update(self, dt: float) -> bool:
         if not self.any:
-            return
+            return False
 
         self._can_go.wait()
         tick_duration = 1.0 / self.bps
         self._accum += min(dt, tick_duration)
+
+        any_change = False
         while self._accum >= tick_duration:
             self.advance_playhead()
             self._accum -= tick_duration
+            any_change = True
+
+        return any_change
 
 
 CODE_TO_INSTRUMENT_SET = {

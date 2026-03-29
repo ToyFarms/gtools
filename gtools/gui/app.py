@@ -7,6 +7,7 @@ import logging
 import math
 from pathlib import Path
 from sys import argv
+import threading
 import time
 
 import glfw
@@ -50,7 +51,6 @@ from gtools.gui.widgets.command_palette import CommandPalette, PaletteBuilder
 
 logger = logging.getLogger("gui")
 
-
 class App:
     def __init__(self, world_path: Path | None = None, width: int = 800, height: int = 600) -> None:
         logger.info(f"initializing App with world_path={world_path}, width={width}, height={height}")
@@ -72,6 +72,10 @@ class App:
             PerfOverlayPanel(self.perf_stats),
         ]
 
+        self._panels_lock = threading.RLock()
+        self._stop_event = threading.Event()
+        self._last_update_ms: float = 0.0
+
         self._cmd = CommandPalette()
         self._cmd_builder = self._setup_cmd_palette()
 
@@ -80,8 +84,38 @@ class App:
             self.add_panel(WorldPanel.load(world_path, self.dockspace.node_id))
 
         self.fps = 60
+        self.idle_fps = 10
+        self.update_fps = 60
         self.prev = time.perf_counter()
         self.worlds: list[Path] = []
+
+        self._update_thread = threading.Thread(
+            target=self._update_loop, name="update", daemon=True
+        )
+        self._update_thread.start()
+
+    def _update_loop(self) -> None:
+        logger.info("update thread started")
+        prev = time.perf_counter()
+
+        while not self._stop_event.is_set():
+            loop_start = time.perf_counter()
+            now = loop_start
+            dt = now - prev
+            prev = now
+
+            with self._panels_lock:
+                for panel in self.panels:
+                    panel.update(dt)
+
+            elapsed = time.perf_counter() - loop_start
+            self._last_update_ms = elapsed * 1000.0
+
+            sleep_time = 1 / self.update_fps - elapsed - 0.002
+            if sleep_time > 0:
+                nanosleep(sleep_time * 1e9)
+
+        logger.info("update thread exiting")
 
     def _setup_cmd_palette(self) -> PaletteBuilder:
         root = PaletteBuilder("Command palette")
@@ -127,27 +161,27 @@ class App:
         self.add_panel(WorldPanel(w, self.dockspace.node_id))
 
     def add_panel(self, panel: Panel) -> None:
-        if panel.dock_id == 0:
-            panel.dock_id = self.dockspace.node_id
-        self.panels.append(panel)
+        with self._panels_lock:
+            if panel.dock_id == 0:
+                panel.dock_id = self.dockspace.node_id
+            self.panels.append(panel)
 
     def remove_panel(self, panel: Panel) -> None:
-        panel.delete()
-        self.panels.remove(panel)
+        with self._panels_lock:
+            panel.delete()
+            self.panels.remove(panel)
 
     def run(self) -> None:
-        logger.info("starting App.run main loop")
+        logger.info("starting App.run render loop")
         while not glfw.window_should_close(self.window):
             frame_start = time.perf_counter()
 
-            now = time.perf_counter()
-            dt = now - self.prev
-            self.prev = now
+            with self._panels_lock:
+                any_dirty = any(p.is_dirty for p in self.panels)
 
-            any_dirty = any(p.is_dirty for p in self.panels)
             event_start = time.perf_counter()
             if not any_dirty:
-                glfw.wait_events_timeout(0.1)
+                glfw.wait_events_timeout(1.0 / self.idle_fps)
             else:
                 glfw.poll_events()
             event_time_ms = (time.perf_counter() - event_start) * 1000.0
@@ -162,30 +196,25 @@ class App:
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # pyright: ignore[reportOperatorIssue]
 
             to_remove: list[Panel] = []
-
-            panel_update_start = time.perf_counter()
-            for panel in self.panels:
-                if not panel.is_open:
-                    to_remove.append(panel)
-
-                if panel.dock_id == 0:
-                    panel.dock_id = self.dockspace.node_id
-
-                panel.update(dt)
-            panel_update_ms = (time.perf_counter() - panel_update_start) * 1000.0
-
             panel_perf: dict[str, float] = {}
 
             panel_render_start = time.perf_counter()
-            for panel in self.panels:
-                panel.render()
-                panel.get_perf(panel_perf)
+            with self._panels_lock:
+                for panel in self.panels:
+                    if not panel.is_open:
+                        to_remove.append(panel)
+
+                    if panel.dock_id == 0:
+                        panel.dock_id = self.dockspace.node_id
+
+                    panel.render()
+                    panel.get_perf(panel_perf)
+            panel_render_ms = (time.perf_counter() - panel_render_start) * 1000.0
 
             for panel in to_remove:
                 self.remove_panel(panel)
 
             self._cmd.render()
-            panel_render_ms = (time.perf_counter() - panel_render_start) * 1000.0
 
             imgui.render()
 
@@ -201,12 +230,14 @@ class App:
             self.perf_stats.record_frame(
                 frame=frame_ms,
                 events=event_time_ms,
-                panel_update=panel_update_ms,
+                panel_update=self._last_update_ms,
                 panel_render=panel_render_ms,
                 drawlist=drawlist_ms,
                 **panel_perf,
             )
-            sleep_time = 1 / self.fps - elapsed - 0.002
+
+            target_fps = self.fps if any_dirty else self.idle_fps
+            sleep_time = 1 / target_fps - elapsed - 0.002
             if sleep_time > 0:
                 nanosleep(sleep_time * 1e9)
 
@@ -221,7 +252,10 @@ class App:
             glViewport(0, 0, e.width, e.height)
             return
 
-        for panel in reversed(self.panels):
+        with self._panels_lock:
+            panels_snapshot = list(self.panels)
+
+        for panel in reversed(panels_snapshot):
             if panel.handle_event(e):
                 break
 
@@ -249,10 +283,14 @@ class App:
         glDepthMask(GL_TRUE)
 
     def shutdown(self) -> None:
-        self.event_router.delete()
         logger.info("shutting down App")
-        for panel in self.panels:
-            panel.delete()
+        self._stop_event.set()
+        self._update_thread.join(timeout=2.0)
+
+        self.event_router.delete()
+        with self._panels_lock:
+            for panel in self.panels:
+                panel.delete()
 
         GLTexManager().delete_all()
         ShaderProgram.delete_all()

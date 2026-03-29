@@ -602,12 +602,12 @@ class WorldRenderer:
 
     @property
     def is_dirty(self) -> bool:
-        return self._dirty or self._playing
+        return self._dirty
 
     def update(self, dt: float) -> None:
         if self._playing:
-            self._sheet.update(dt)
-            self._dirty = True
+            if self._sheet.update(dt):
+                self._dirty = True
 
         if self._seek != 0:
             self._sheet.seek(self._seek)
