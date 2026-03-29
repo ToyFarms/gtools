@@ -186,7 +186,7 @@ class WorldRenderer:
         self._show_settings = False
         self._settings_width = 250.0
 
-        self._frame_times: deque[float] = deque(maxlen=200)
+        self._frame_times: deque[float] = deque(maxlen=50)
         self._last_frame_start = time.perf_counter_ns()
         self._peak_l, self._peak_r = 0.0, 0.0
         self._rms_l, self._rms_r = 0.0, 0.0
@@ -858,7 +858,7 @@ class WorldRenderer:
 
         imgui.text_colored((1.0, 1.0, 1.0, 0.8), "gtools")
 
-        imgui.text(f"{_fps:.1f} FPS ({_avg_frame:.2f} ms)")
+        imgui.text(f"I={1000.0 / self._frame_times[-1]:.1f} A={_fps:.1f} FPS")
         imgui.spacing()
         imgui.text(f"World: {self._world.name}")
         imgui.text(f"Dimension: {'3D' if self._mode_3d else '2D'}")
