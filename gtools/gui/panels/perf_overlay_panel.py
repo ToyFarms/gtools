@@ -155,6 +155,14 @@ class PerfOverlayPanel(Panel):
         graphs_x0 = 100
         graphs_y0 = vh - total_graphs_h - 20
 
+        if self._stats.idle:
+            draw_list.add_text((graphs_x0, graphs_y0 - 24), imgui.get_color_u32((1.0, 0.0, 0.0, 1.0)), "idle")
+        else:
+            if self._stats.idle_timer:
+                draw_list.add_text((graphs_x0, graphs_y0 - 24), imgui.get_color_u32((0.0, 1.0, 0.0, 1.0)), f"active -{self._stats.idle_timer:.2f}")
+            else:
+                draw_list.add_text((graphs_x0, graphs_y0 - 24), imgui.get_color_u32((0.0, 1.0, 0.0, 1.0)), "active")
+
         available_w = vw - graphs_x0 - 10
         graph_w = max(80.0, (available_w - graph_gap * 2.0) / graph_columns)
 

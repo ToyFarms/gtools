@@ -892,7 +892,6 @@ class WorldRenderer:
         imgui.text(f"GPU: {self._gl_vendor}")
         imgui.text(f"Renderer: {self._gl_renderer}")
         imgui.text(f"GL: {self._gl_version}")
-
         imgui.text(f"Display: {int(vw)}x{int(vh)}")
 
         imgui.spacing()

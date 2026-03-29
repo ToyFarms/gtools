@@ -84,9 +84,12 @@ class App:
             self.add_panel(WorldPanel.load(world_path, self.dockspace.node_id))
 
         self.fps = 60
-        self.idle_fps = 10
         self.update_fps = 60
+        self.idle_fps = 10
+        self.idle_transition = 5
+
         self.prev = time.perf_counter()
+        self.last_dirty_time: float = time.perf_counter()
         self.worlds: list[Path] = []
 
         self._update_thread = threading.Thread(
@@ -179,8 +182,15 @@ class App:
             with self._panels_lock:
                 any_dirty = any(p.is_dirty for p in self.panels)
 
+            if any_dirty:
+                self._last_dirty_time = time.perf_counter()
+
+            time_since_dirty = time.perf_counter() - self._last_dirty_time
+            self.perf_stats.idle_timer = self.idle_transition - time_since_dirty
+            idle = time_since_dirty > self.idle_transition
+
             event_start = time.perf_counter()
-            if not any_dirty:
+            if idle:
                 glfw.wait_events_timeout(1.0 / self.idle_fps)
             else:
                 glfw.poll_events()
@@ -235,8 +245,9 @@ class App:
                 drawlist=drawlist_ms,
                 **panel_perf,
             )
+            self.perf_stats.idle = idle
 
-            target_fps = self.fps if any_dirty else self.idle_fps
+            target_fps = self.idle_fps if idle else self.fps
             sleep_time = 1 / target_fps - elapsed - 0.002
             if sleep_time > 0:
                 nanosleep(sleep_time * 1e9)
