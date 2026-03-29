@@ -183,9 +183,9 @@ class App:
                 any_dirty = any(p.is_dirty for p in self.panels)
 
             if any_dirty:
-                self._last_dirty_time = time.perf_counter()
+                self.last_dirty_time = time.perf_counter()
 
-            time_since_dirty = time.perf_counter() - self._last_dirty_time
+            time_since_dirty = time.perf_counter() - self.last_dirty_time
             self.perf_stats.idle_timer = self.idle_transition - time_since_dirty
             idle = time_since_dirty > self.idle_transition
 
