@@ -166,7 +166,6 @@ class PerfOverlayPanel(Panel):
 
             _draw_time_graph(draw_list, gx, gy, graph_w, graph_h, tlist, _maxlen, glabel, None, None)
 
-            # Keep cursor stable; this dummy is only to avoid weird internal spacing.
             imgui.dummy(ImVec2(graph_w, graph_h))
 
         imgui.end()

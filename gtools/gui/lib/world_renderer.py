@@ -67,14 +67,10 @@ class RenderOrder:
     def __init__(self) -> None:
         self._renderer: list[tuple[str, RenderOrder2D, RenderOrder3D]] = []
         self._last_times: dict[str, float] = {}
-        self._smooth_windows: defaultdict[str, deque[float]] = defaultdict(
-            lambda: deque(maxlen=self._SMOOTH_WINDOW)
-        )
+        self._smooth_windows: defaultdict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self._SMOOTH_WINDOW))
 
         self._last_overall_times: dict[str, float] = {}
-        self._overall_smooth_windows: defaultdict[str, deque[float]] = defaultdict(
-            lambda: deque(maxlen=self._SMOOTH_WINDOW)
-        )
+        self._overall_smooth_windows: defaultdict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self._SMOOTH_WINDOW))
 
     def add(self, name: str, draw_2d: RenderOrder2D, draw_3d: RenderOrder3D) -> None:
         self._renderer.append((name, draw_2d, draw_3d))
@@ -92,11 +88,7 @@ class RenderOrder:
 
     @property
     def smoothed_times(self) -> dict[str, float]:
-        return {
-            name: sum(window) / len(window)
-            for name, window in self._smooth_windows.items()
-            if window
-        }
+        return {name: sum(window) / len(window) for name, window in self._smooth_windows.items() if window}
 
     @property
     def last_overall_times(self) -> dict[str, float]:
@@ -104,11 +96,7 @@ class RenderOrder:
 
     @property
     def smoothed_overall_times(self) -> dict[str, float]:
-        return {
-            name: sum(window) / len(window)
-            for name, window in self._overall_smooth_windows.items()
-            if window
-        }
+        return {name: sum(window) / len(window) for name, window in self._overall_smooth_windows.items() if window}
 
     def _record(self, name: str, elapsed_ms: float) -> None:
         self._last_times[name] = elapsed_ms
@@ -701,6 +689,7 @@ class WorldRenderer:
             self._peak_l = max(self._peak_l, mixer_peaks[0])
             self._peak_r = max(self._peak_r, mixer_peaks[1])
             self._rms_l = max(self._rms_l, mixer_rms[0])
+            self._rms_r = max(self._rms_r, mixer_rms[1])
 
     def render(self) -> None:
         frame_start = time.perf_counter_ns()
@@ -989,21 +978,13 @@ class WorldRenderer:
 
         imgui.end_group()
 
-        # World-local VU meter (audio peaks/RMS). Time graphs are now drawn globally by App.
         vu_w, vu_h, vu_spacing = 20.0, 200.0, 15.0
         imgui.set_cursor_pos((10.0, vh - vu_h - 20.0))
 
         imgui.begin_group()
         vu_start_pos = imgui.get_cursor_screen_pos()
         self._draw_vu_meter(draw_list, vu_start_pos, ImVec2(vu_w, vu_h), self._peak_l, self._rms_l, "L")
-        self._draw_vu_meter(
-            draw_list,
-            ImVec2(vu_start_pos.x + vu_w + vu_spacing, vu_start_pos.y),
-            ImVec2(vu_w, vu_h),
-            self._peak_r,
-            self._rms_r,
-            "R",
-        )
+        self._draw_vu_meter(draw_list, ImVec2(vu_start_pos.x + vu_w + vu_spacing, vu_start_pos.y), ImVec2(vu_w, vu_h), self._peak_r, self._rms_r, "R")
         imgui.end_group()
 
         min_p = imgui.get_item_rect_min()

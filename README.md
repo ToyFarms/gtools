@@ -1,14 +1,25 @@
-<p align="center">Native GUI Using OpenGL</p>
-
-![gui](images/gui-v2.png)
-
-<p align="center">Render to Image</p>
-
-![render](images/render.png)
-
-<p align="center">Debug World</p>
-
-![debug](images/debug_world.png)
+<table align="center">
+  <tr>
+    <td align="center">
+      <p><b>Native GUI Using OpenGL</b></p>
+      <img src="images/gui-v2.png" width="300"/>
+    </td>
+    <td align="center">
+      <p><b>Render to Image</b></p>
+      <img src="images/render.png" width="300"/>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <p><b>Debug World</b></p>
+      <img src="images/debug_world.png" width="300"/>
+    </td>
+    <td align="center">
+      <p><b>Debug UI</b></p>
+      <img src="images/debug_ui.png" width="300"/>
+    </td>
+  </tr>
+</table>
 
 ```
 prerequisites:
