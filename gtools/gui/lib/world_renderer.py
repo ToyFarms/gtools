@@ -844,7 +844,7 @@ class WorldRenderer:
 
         imgui.set_next_window_pos(imgui.ImVec2(ox, oy))
         imgui.set_next_window_size(imgui.ImVec2(vw, vh))
-        imgui.begin("##debug_overlay", flags=imgui.WindowFlags_.no_decoration | imgui.WindowFlags_.no_background | imgui.WindowFlags_.no_inputs)
+        imgui.begin("##debug_overlay", flags=imgui.WindowFlags_.no_decoration | imgui.WindowFlags_.no_background | imgui.WindowFlags_.no_inputs | imgui.WindowFlags_.tooltip)
 
         draw_list = imgui.get_window_draw_list()
         padding = 5
