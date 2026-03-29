@@ -37,6 +37,9 @@ class Panel(ABC):
     def update(self, dt: float) -> None:
         pass
 
+    def get_perf(self, out: dict[str, float]) -> None:
+        pass
+
     def delete(self) -> None: ...
 
 

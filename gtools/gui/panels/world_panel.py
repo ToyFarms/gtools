@@ -45,6 +45,9 @@ class WorldPanel(Panel):
     def is_dirty(self) -> bool:
         return self._world_renderer.is_dirty
 
+    def get_perf(self, out: dict[str, float]) -> None:
+        return self._world_renderer.get_perf(out)
+
     def update(self, dt: float) -> None:
         self._world_renderer.update(dt)
 

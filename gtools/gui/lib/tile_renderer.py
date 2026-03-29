@@ -86,6 +86,10 @@ class TileRenderer(Renderer):
     def any(self) -> bool:
         return any(rl.chunks for rl in self._layers.values())
 
+    @property
+    def texture_count(self) -> int:
+        return self._tex_mgr.texture_count
+
     def draw(self, camera: Camera2D, layer: str | None = None, culling_camera: Camera2D | None = None) -> None:
         if not self.any():
             return

@@ -223,6 +223,10 @@ class GLTexManager:
         self._default_tex: GLTex | None = None
         self._initialized = True
 
+    @property
+    def texture_count(self) -> int:
+        return len(self._textures)
+
     def _get_or_create_array(self, width: int, height: int) -> TextureArray:
         key = (width, height)
 

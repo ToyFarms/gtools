@@ -84,7 +84,25 @@ class AudioMixer:
             callback=self._callback,
         )
         self.master_gain = 1.0
+        self._peaks = np.zeros(CHANNELS, dtype=np.float32)
+        self._rms = np.zeros(CHANNELS, dtype=np.float32)
         self.stream.start()
+
+    @property
+    def peaks(self) -> np.ndarray:
+        return self._peaks
+
+    @property
+    def rms(self) -> np.ndarray:
+        return self._rms
+
+    @property
+    def active_streams(self) -> int:
+        return len(self._streams)
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._pending)
 
     def play(self, sound: Sound, gain: float = 1.0) -> None:
         self._pending.appendleft(sound.get_handle(gain))
@@ -120,4 +138,7 @@ class AudioMixer:
                 survivors.append(s)
 
         self._streams = survivors
-        outdata[:] = mixed * _perceptual_to_linear(self.master_gain)
+        mixed *= _perceptual_to_linear(self.master_gain)
+        self._peaks = np.max(np.abs(mixed), axis=0)
+        self._rms = np.sqrt(np.mean(mixed**2, axis=0))
+        outdata[:] = mixed

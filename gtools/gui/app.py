@@ -1,5 +1,6 @@
 import OpenGL
 from gtools import setting
+
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking
 
 import logging
@@ -43,6 +44,8 @@ from gtools.gui.texture import GLTexManager
 from gtools.gui.panels.panel import DockspacePanel, Panel
 from gtools.gui.panels.proxy_panel import ProxyPanel
 from gtools.gui.panels.world_panel import WorldPanel
+from gtools.gui.panels.perf_overlay_panel import PerfOverlayPanel
+from gtools.gui.lib.perf_stats import PerfStats
 from gtools.gui.widgets.command_palette import CommandPalette, PaletteBuilder
 
 logger = logging.getLogger("gui")
@@ -62,7 +65,12 @@ class App:
         self.event_router = EventRouter(self.window)
 
         self.dockspace = DockspacePanel()
-        self.panels: list[Panel] = [self.dockspace, ProxyPanel(self.dockspace.node_id)]
+        self.perf_stats = PerfStats()
+        self.panels: list[Panel] = [
+            self.dockspace,
+            ProxyPanel(self.dockspace.node_id),
+            PerfOverlayPanel(self.perf_stats),
+        ]
 
         self._cmd = CommandPalette()
         self._cmd_builder = self._setup_cmd_palette()
@@ -106,7 +114,12 @@ class App:
         for item in item_database.items.values():
             x = item.id % w.width * 32
             y = item.id // w.width * 32
-            w.tiles[item.id] = Tile(fg_id=SIGN, pos=ivec2(x / 32, y / 32), extra=SignTile(text=f"{item.name.decode()} ({item.id})".encode()), flags=TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE)
+            w.tiles[item.id] = Tile(
+                fg_id=SIGN,
+                pos=ivec2(x / 32, y / 32),
+                extra=SignTile(text=f"{item.name.decode()} ({item.id})".encode()),
+                flags=TileFlags.PAINTED_RED | TileFlags.PAINTED_GREEN | TileFlags.PAINTED_BLUE,
+            )
 
             w.create_dropped(item.id, vec2(x + 8, y + 8), 1, 0)
 
@@ -132,10 +145,12 @@ class App:
             self.prev = now
 
             any_dirty = any(p.is_dirty for p in self.panels)
+            event_start = time.perf_counter()
             if not any_dirty:
                 glfw.wait_events_timeout(0.1)
             else:
                 glfw.poll_events()
+            event_time_ms = (time.perf_counter() - event_start) * 1000.0
 
             self.imgui_renderer.process_inputs()
             imgui.new_frame()
@@ -147,6 +162,8 @@ class App:
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # pyright: ignore[reportOperatorIssue]
 
             to_remove: list[Panel] = []
+
+            panel_update_start = time.perf_counter()
             for panel in self.panels:
                 if not panel.is_open:
                     to_remove.append(panel)
@@ -155,18 +172,40 @@ class App:
                     panel.dock_id = self.dockspace.node_id
 
                 panel.update(dt)
+            panel_update_ms = (time.perf_counter() - panel_update_start) * 1000.0
+
+            panel_perf: dict[str, float] = {}
+
+            panel_render_start = time.perf_counter()
+            for panel in self.panels:
                 panel.render()
+                panel.get_perf(panel_perf)
 
             for panel in to_remove:
                 self.remove_panel(panel)
 
             self._cmd.render()
+            panel_render_ms = (time.perf_counter() - panel_render_start) * 1000.0
 
             imgui.render()
+
+            drawlist_start = time.perf_counter()
             self.imgui_renderer.render(imgui.get_draw_data())
+            drawlist_ms = (time.perf_counter() - drawlist_start) * 1000.0
+
             glfw.swap_buffers(self.window)
 
             elapsed = time.perf_counter() - frame_start
+            frame_ms = elapsed * 1000.0
+
+            self.perf_stats.record_frame(
+                frame=frame_ms,
+                events=event_time_ms,
+                panel_update=panel_update_ms,
+                panel_render=panel_render_ms,
+                drawlist=drawlist_ms,
+                **panel_perf,
+            )
             sleep_time = 1 / self.fps - elapsed - 0.002
             if sleep_time > 0:
                 nanosleep(sleep_time * 1e9)

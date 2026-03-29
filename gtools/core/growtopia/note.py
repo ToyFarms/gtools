@@ -139,6 +139,10 @@ class Sheet:
         # TODO: configurable volume, make this dynamic (so it can react to world changes)
 
     @property
+    def total_notes(self) -> int:
+        return sum(len(n) for n in self.notes.values())
+
+    @property
     def bpm(self) -> int:
         return self._bpm
 
