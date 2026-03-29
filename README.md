@@ -1,25 +1,26 @@
-<table align="center">
+<table align="center" width="100%">
   <tr>
-    <td align="center">
+    <td align="center" width="50%">
       <p><b>Native GUI Using OpenGL</b></p>
-      <img src="images/gui-v2.png" width="300"/>
+      <img src="images/gui-v2.png" width="100%"/>
     </td>
-    <td align="center">
+    <td align="center" width="50%">
       <p><b>Render to Image</b></p>
-      <img src="images/render.png" width="300"/>
+      <img src="images/render.png" width="100%"/>
     </td>
   </tr>
   <tr>
-    <td align="center">
+    <td align="center" width="50%">
       <p><b>Debug World</b></p>
-      <img src="images/debug_world.png" width="300"/>
+      <img src="images/debug_world.png" width="100%"/>
     </td>
-    <td align="center">
+    <td align="center" width="50%">
       <p><b>Debug UI</b></p>
-      <img src="images/debug_ui.png" width="300"/>
+      <img src="images/debug_ui.png" width="100%"/>
     </td>
   </tr>
 </table>
+
 
 ```
 prerequisites:
