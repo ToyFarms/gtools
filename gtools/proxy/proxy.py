@@ -7,7 +7,7 @@ import time
 import traceback
 from typing import Generator, NamedTuple, cast
 
-from gtools.core.eventbus import listen
+from gtools.core.eventbus import subscribe
 from gtools.core.growtopia.crypto import generate_klv
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
@@ -41,9 +41,11 @@ class Proxy:
         self.logger.debug("proxy client initialized")
 
         self.server_data: UpdateServerData | None = None
-        listen(UpdateServerData)(lambda ch, ev: self._on_server_data(ch, ev))
         self.client_version: UpdateClientVersion | None = None
-        listen(UpdateClientVersion)(lambda ch, ev: self._on_client_version(ch, ev))
+        self._unsubs = [
+            subscribe(UpdateServerData, self._on_server_data),
+            subscribe(UpdateClientVersion, self._on_client_version),
+        ]
 
         self.redirecting: bool = False
         self.running = True
@@ -374,6 +376,12 @@ class Proxy:
     def stop(self) -> None:
         if not self.running:
             return
+
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs.clear()
+        self.server_data = None
+        self.client_version = None
 
         self.running = False
 

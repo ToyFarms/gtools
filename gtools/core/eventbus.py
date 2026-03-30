@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -21,32 +19,38 @@ class _Handler[E]:
 
 
 class EventBus:
-    def __init__(self, max_workers: int = 10):
+    def __init__(self, max_workers: int = 10) -> None:
         self._handlers: dict[type, list[_Handler]] = defaultdict(list)
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
-    def register[E](
-        self, event_type: type[E], channel: str | None = None
-    ) -> Callable[[Callable[[str, E], None]], Callable[[str, E], None]]:
+    def register[E](self, event_type: type[E], channel: str | None = None) -> Callable[[Callable[[str, E], None]], Callable[[str, E], None]]:
         def decorator(func: Callable[[str, E], None]) -> Callable[[str, E], None]:
             with self._lock:
-                self._handlers[event_type].append(
-                    _Handler(func=func, channel=channel, event_type=event_type)
-                )
+                self._handlers[event_type].append(_Handler(func=func, channel=channel, event_type=event_type))
             return func
 
         return decorator
+
+    def subscribe[E](self, event_type: type[E], func: Callable[[str, E], None], channel: str | None = None) -> Callable[[], None]:
+        handler = _Handler(func=func, channel=channel, event_type=event_type)
+        with self._lock:
+            self._handlers[event_type].append(handler)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                try:
+                    self._handlers[event_type].remove(handler)
+                except ValueError:
+                    pass
+
+        return unsubscribe
 
     def emit(self, event: object, channel: str, wait: bool = False) -> None:
         event_type = type(event)
 
         with self._lock:
-            handlers = [
-                h
-                for h in self._handlers.get(event_type, [])
-                if h.channel is None or h.channel == channel
-            ]
+            handlers = [h for h in self._handlers.get(event_type, []) if h.channel is None or h.channel == channel]
 
         if not handlers:
             return
@@ -65,10 +69,14 @@ class EventBus:
 _bus = EventBus()
 
 
-def listen[E](
-    event_type: type[E], channel: str | None = None
-) -> Callable[[Callable[[str, E], Any]], Callable[[str, E], Any]]:
+def listen[E](event_type: type[E], channel: str | None = None) -> Callable[[Callable[[str, E], Any]], Callable[[str, E], Any]]:
+    """lives the entire program lifetime"""
     return _bus.register(event_type, channel)
+
+
+def subscribe[E](event_type: type[E], func: Callable[[str, E], Any], channel: str | None = None) -> Callable[[], None]:
+    """returns unsubscribe() function"""
+    return _bus.subscribe(event_type, func, channel)
 
 
 class EventMixin:
@@ -84,16 +92,17 @@ def shutdown_event_bus() -> None:
 
 
 if __name__ == "__main__":
+
     @dataclass
     class SomeEvent(EventMixin):
         value: int
 
     @listen(SomeEvent)
     def on_change_global(channel: str, event: SomeEvent) -> None:
-        print(f"Global: {channel} - {event.value}")
+        print(f"global: {channel} - {event.value}")
 
     def on_change_specific(channel: str, event: SomeEvent) -> None:
-        print(f"Specific: {channel} - {event.value}")
+        print(f"specific: {channel} - {event.value}")
         time.sleep(1)
 
     listen(SomeEvent, channel="specific")(on_change_specific)
