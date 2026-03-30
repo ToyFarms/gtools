@@ -236,8 +236,13 @@ class ProxyPanel(Panel):
     @property
     def is_dirty(self) -> bool:
         if self.world_renderer:
-            return self.world_renderer.is_dirty
+            return self.world_renderer._dirty
         return False
+
+    @is_dirty.setter
+    def is_dirty(self, x: bool) -> None:
+        if self.world_renderer:
+            self.world_renderer._dirty = x
 
     def update(self, dt: float) -> None:
         if self.proxy:

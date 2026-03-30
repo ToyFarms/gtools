@@ -51,6 +51,7 @@ from gtools.gui.widgets.command_palette import CommandPalette, PaletteBuilder
 
 logger = logging.getLogger("gui")
 
+
 class App:
     def __init__(self, world_path: Path | None = None, width: int = 800, height: int = 600) -> None:
         logger.info(f"initializing App with world_path={world_path}, width={width}, height={height}")
@@ -92,9 +93,7 @@ class App:
         self.last_dirty_time: float = time.perf_counter()
         self.worlds: list[Path] = []
 
-        self._update_thread = threading.Thread(
-            target=self._update_loop, name="update", daemon=True
-        )
+        self._update_thread = threading.Thread(target=self._update_loop, name="update", daemon=True)
         self._update_thread.start()
 
     def _update_loop(self) -> None:
@@ -184,6 +183,8 @@ class App:
 
             if any_dirty:
                 self.last_dirty_time = time.perf_counter()
+                for panel in self.panels:
+                    panel.is_dirty = False
 
             time_since_dirty = time.perf_counter() - self.last_dirty_time
             self.perf_stats.idle_timer = self.idle_transition - time_since_dirty

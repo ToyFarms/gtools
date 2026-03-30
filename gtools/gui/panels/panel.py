@@ -10,6 +10,7 @@ class Panel(ABC):
     def __init__(self, dock_id: int = 0) -> None:
         self._open = True
         self._dock_id = dock_id
+        self._dirty = False
 
     @property
     def dock_id(self) -> int:
@@ -25,7 +26,11 @@ class Panel(ABC):
 
     @property
     def is_dirty(self) -> bool:
-        return False
+        return self._dirty
+
+    @is_dirty.setter
+    def is_dirty(self, x: bool) -> None:
+        self._dirty = x
 
     def handle_event(self, event) -> bool:
         _ = event

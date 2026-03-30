@@ -55,7 +55,7 @@ class Camera3D:
 
         view = glm.lookAt(eye, target, vec3(0, 1, 0))
 
-        return proj * view
+        return proj * view  # pyright: ignore[reportReturnType]
 
     def view_proj_as_numpy(self) -> npt.NDArray[np.float32]:
         m = self.view_proj()

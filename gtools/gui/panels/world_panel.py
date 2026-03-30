@@ -43,7 +43,11 @@ class WorldPanel(Panel):
 
     @property
     def is_dirty(self) -> bool:
-        return self._world_renderer.is_dirty
+        return self._world_renderer._dirty
+
+    @is_dirty.setter
+    def is_dirty(self, x: bool) -> None:
+        self._world_renderer._dirty = x
 
     def get_perf(self, out: dict[str, float]) -> None:
         return self._world_renderer.get_perf(out)

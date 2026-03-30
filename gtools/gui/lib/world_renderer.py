@@ -717,9 +717,10 @@ class WorldRenderer:
                 self._init_render_order()
                 self._needs_obj_rebuild = False
 
+            self._update_hover()
+
             if self._dirty:
                 self._render_to_fbo()
-                self._dirty = False
 
             imgui.image(
                 imgui.ImTextureRef(self._fbo.color_tex),
@@ -731,7 +732,6 @@ class WorldRenderer:
             rect_min = imgui.get_item_rect_min()
             self._image_origin = (rect_min.x, rect_min.y)
             self._viewport_size = (cw, ch)
-            self._update_hover()
 
             imgui.set_cursor_screen_pos(imgui.ImVec2(rect_min.x + cw - 40, rect_min.y + 10))
             if imgui.button("<" if not self._show_settings else "x", (30, 25)):

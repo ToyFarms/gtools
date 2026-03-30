@@ -14,7 +14,7 @@ class ProxyClient(ENetPeerBase):
     def __init__(self) -> None:
         self.addr = None
         self.peer = None
-        self.host = enet_host_create(POINTER(ENetAddress)(), 1, 2, 0, 0)
+        self.host = enet_host_create(POINTER(ENetAddress)(), 1, 2, 0, 0)  # pyright: ignore[reportArgumentType]
         if not self.host:
             raise RuntimeError("host is null")
         enet_host_compress_with_range_coder(self.host)
