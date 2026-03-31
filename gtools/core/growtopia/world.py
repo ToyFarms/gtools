@@ -1,7 +1,8 @@
+from collections import defaultdict
 from dataclasses import dataclass, field
-from enum import IntFlag, IntEnum
+from enum import Enum, IntFlag, IntEnum, auto
 import logging
-from typing import Callable, Iterator, Type, overload
+from typing import Any, Callable, Iterator, Literal, Type, overload
 
 from pyglm.glm import ivec2, vec2
 from gtools.baked.items import (
@@ -13,6 +14,7 @@ from gtools.baked.items import (
     BATTLE_PET_CAGE,
     BEDROCK,
     BEDROCK_CANDY,
+    BIG_LOCK,
     BLANK,
     BONE_CHECKPOINT,
     BOUNTIFUL_BAMBOO_BACKGROUND_ROOTS,
@@ -31,6 +33,7 @@ from gtools.baked.items import (
     BOUNTIFUL_LATTICE_FENCE_ROOTS,
     BOUNTIFUL_MONKSHOOD_ROOTS,
     BOUNTIFUL_WHITE_DOLL_S_EYES_ROOTS,
+    BUILDER_S_LOCK,
     CAVE_COLUMN,
     CAVE_DIRT,
     CAVE_PLATFORM,
@@ -57,6 +60,7 @@ from gtools.baked.items import (
     GUILD_FLAG_TATTERS,
     GUILD_LOCK,
     HAUNTED_HOUSE,
+    HUGE_LOCK,
     INFINITY_CROWN,
     INFINITY_WEATHER_MACHINE,
     KRANKEN_S_GALACTIC_BLOCK,
@@ -76,6 +80,7 @@ from gtools.baked.items import (
     PURPLE_CAVE_CRYSTAL,
     REGAL_BANNISTER,
     REGAL_STAIRS,
+    SMALL_LOCK,
     STALACTITE,
     STALAGMITE,
     STEAM_LAUNCHER,
@@ -1297,6 +1302,7 @@ class CookingOvenTile(TileExtra):
 
         return t
 
+
 @dataclass(slots=True)
 class AudioRackTile(TileExtra):
     note: bytes = b""
@@ -2190,8 +2196,12 @@ class Npc:
             facing_left=self.facing_left,
         )
 
-    def reset_type(self) -> None:
-        self.type = NpcType.NONE
+
+class WorldEvent(Enum):
+    TILE_UPDATE = auto()
+    DROPPED_UPDATE = auto()
+    PLAYER_UPDATE = auto()
+    NPC_UPDATE = auto()
 
 
 @dataclass(slots=True)
@@ -2214,36 +2224,34 @@ class World:
     unk9: int = 0  # u32
 
     # state (not in data)
-    player: list[Player] = field(default_factory=list)
+    players: dict[int, Player] = field(default_factory=dict)
     garbage_start: int = -1
     logger = logging.getLogger("world")
-    npcs: list[Npc] = field(default_factory=list)
+    npcs: dict[int, Npc] = field(default_factory=dict)
     sheet: Sheet | None = None
 
-    _tile_listeners: list[Callable[[int, int], None]] = field(default_factory=list, init=False, repr=False)
-    _dropped_listeners: list[Callable[[], None]] = field(default_factory=list, init=False, repr=False)
+    _listeners: defaultdict[WorldEvent, list[Callable]] = field(default_factory=lambda: defaultdict(list), init=False, repr=False)
 
-    def on_tile_update(self, callback: Callable[[int, int], None]) -> None:
-        self._tile_listeners.append(callback)
+    @overload
+    def subscribe(self, event: Literal[WorldEvent.DROPPED_UPDATE], callback: Callable[[], None]) -> None: ...
+    @overload
+    def subscribe(self, event: Literal[WorldEvent.TILE_UPDATE], callback: Callable[[int, int], None]) -> None: ...
+    @overload
+    def subscribe(self, event: Literal[WorldEvent.PLAYER_UPDATE], callback: Callable[[], None]) -> None: ...
+    @overload
+    def subscribe(self, event: Literal[WorldEvent.NPC_UPDATE], callback: Callable[[], None]) -> None: ...
+    def subscribe(self, event: WorldEvent, callback: Callable) -> None:
+        self._listeners[event].append(callback)
 
-    def on_dropped_update(self, callback: Callable[[], None]) -> None:
-        self._dropped_listeners.append(callback)
+    def unsubscribe(self, event: WorldEvent, callback: Callable) -> None:
+        try:
+            self._listeners[event].remove(callback)
+        except ValueError:
+            pass
 
-    def remove_tile_update(self, callback: Callable[[int, int], None]) -> None:
-        if callback in self._tile_listeners:
-            self._tile_listeners.remove(callback)
-
-    def remove_dropped_update(self, callback: Callable[[], None]) -> None:
-        if callback in self._dropped_listeners:
-            self._dropped_listeners.remove(callback)
-
-    def _emit_tile_update(self, x: int, y: int) -> None:
-        for cb in self._tile_listeners:
-            cb(x, y)
-
-    def _emit_dropped_update(self) -> None:
-        for cb in self._dropped_listeners:
-            cb()
+    def broadcast(self, event: WorldEvent, *args: Any) -> None:
+        for cb in self._listeners[event]:
+            cb(*args)
 
     def get_notes(self) -> list[Note]:
         ret: list[Note] = []
@@ -2313,35 +2321,42 @@ class World:
         return self.sheet
 
     def get_npc(self, id: int) -> Npc | None:
-        for npc in self.npcs:
-            if npc.id == id:
-                return npc
+        npc = self.npcs.get(id)
+        if not npc:
+            self.logger.warning(f"no npc with id {id} on {self.name}")
 
-        self.logger.warning(f"no npc with id {id} on {self.name}")
+        return npc
 
     def add_npc(self, npc: Npc) -> None:
-        self.npcs.append(npc)
+        self.npcs[npc.id] = npc
+        self.broadcast(WorldEvent.NPC_UPDATE)
 
     def remove_npc(self, npc: Npc) -> None:
-        self.npcs.remove(npc)
+        self.npcs.pop(npc.id, None)
+        self.broadcast(WorldEvent.NPC_UPDATE)
 
     def remove_npc_by_id(self, id: int) -> None:
-        self.npcs = [x for x in self.npcs if x.id != id]
+        self.npcs.pop(id)
+        self.broadcast(WorldEvent.NPC_UPDATE)
 
     def get_player(self, net_id: int) -> Player | None:
-        for p in self.player:
-            if p.net_id == net_id:
-                return p
-        self.logger.warning(f"player with net_id={net_id} does not exists in world {self.name}")
+        player = self.players.get(net_id)
+        if not player:
+            self.logger.warning(f"player with net_id={net_id} does not exists in world {self.name}")
+
+        return player
 
     def add_player(self, player: Player) -> None:
-        self.player.append(player)
+        self.players[player.net_id] = player
+        self.broadcast(WorldEvent.PLAYER_UPDATE)
 
     def remove_player(self, player: Player) -> None:
-        self.player.remove(player)
+        self.players.pop(player.net_id, None)
+        self.broadcast(WorldEvent.PLAYER_UPDATE)
 
     def remove_player_by_id(self, net_id: int) -> None:
-        self.player = [p for p in self.player if p.net_id != net_id]
+        self.players.pop(net_id, None)
+        self.broadcast(WorldEvent.PLAYER_UPDATE)
 
     @classmethod
     def from_tiles(cls, tiles: list[Tile]) -> "World":
@@ -2434,7 +2449,7 @@ class World:
         else:
             tile.bg_id = 0
 
-        self._emit_tile_update(pos.x, pos.y)
+        self.broadcast(WorldEvent.TILE_UPDATE, pos.x, pos.y)
 
     def place_tile(self, id: int, pos: ivec2) -> None:
         if (tile := self.get_tile(pos)) is None:
@@ -2447,14 +2462,14 @@ class World:
             if id % 2 != 0:
                 tile.extra = SeedTile()
 
-        self._emit_tile_update(pos.x, pos.y)
+        self.broadcast(WorldEvent.TILE_UPDATE, pos.x, pos.y)
 
     def replace_whole_tile(self, tile: Tile) -> None:
         idx = self.index_tile(tile.pos)
         if idx is not None:
             tile.index = idx
             self.tiles[idx] = tile
-            self._emit_tile_update(tile.pos.x, tile.pos.y)
+            self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
     def place_fg(self, tile: Tile, fg: int, connection: int = 0, a5: bool = False) -> None:
         item = item_database.get(fg)
@@ -2465,7 +2480,7 @@ class World:
         tile.fg_id = fg
         tile.fg_tex_index = connection
 
-        self._emit_tile_update(tile.pos.x, tile.pos.y)
+        self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
         if tile.fg_id == 0:
             tile.flags &= ~(TileFlags.WAS_SPLICED | TileFlags.IS_ON | TileFlags.IS_OPEN_TO_PUBLIC | TileFlags.FG_ALT_MODE)
@@ -2600,7 +2615,7 @@ class World:
             tile.bg_id = bg
         tile.bg_tex_index = connection
 
-        self._emit_tile_update(tile.pos.x, tile.pos.y)
+        self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
     def update_tile_connection(self, tile: Tile) -> None:
         item = item_database.get(tile.fg_id)
@@ -2663,6 +2678,8 @@ class World:
         else:
             tile.overlay_tex_index = 0
 
+        self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
+
     def update_all_connection(self) -> None:
         for tile in self.tiles.values():
             self.update_tile_connection(tile)
@@ -2679,7 +2696,6 @@ class World:
             for x in range(-1, 2):
                 if n := self.get_tile(tile.pos + ivec2(x, y)):
                     self.update_tile_connection(n)
-                    self._emit_tile_update(n.pos.x, n.pos.y)
 
     def update_tree(self, tile: Tile, item_id: int, harvest: bool, spawn_seed_flag: bool, seedling_flag: bool) -> None:
         if not tile.extra or tile.extra.type != TileExtraType.SEED_TILE:
@@ -2702,7 +2718,7 @@ class World:
             else:
                 tile.flags &= ~TileFlags.IS_SEEDLING
 
-            self._emit_tile_update(tile.pos.x, tile.pos.y)
+            self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
             # TODO: set current time here
             # TODO: store somewhere the seed placed time
@@ -2788,7 +2804,8 @@ class World:
         self.dropped.last_uid += 1
         self.dropped.items.append(dropped)
         self.dropped.nb_items += 1
-        self._emit_dropped_update()
+
+        self.broadcast(WorldEvent.DROPPED_UPDATE)
 
     def remove_dropped(self, uid: int) -> DroppedItem | None:
         for i, item in enumerate(self.dropped.items):
@@ -2797,7 +2814,7 @@ class World:
 
             self.dropped.items.pop(i)
             self.dropped.nb_items -= 1
-            self._emit_dropped_update()
+            self.broadcast(WorldEvent.DROPPED_UPDATE)
             return item
 
     def set_dropped(self, uid: int, amount: int) -> None:
@@ -2806,7 +2823,7 @@ class World:
                 continue
 
             item.amount = amount
-            self._emit_dropped_update()
+            self.broadcast(WorldEvent.DROPPED_UPDATE)
 
     @classmethod
     def from_tank(cls, tank: TankPacket | bytes) -> "World":
@@ -2945,8 +2962,8 @@ class World:
             tiles=tiles,
             dropped=Dropped.from_proto(proto.inner.dropped),
             garbage_start=proto.inner.garbage_start,
-            player=[Player.from_proto(x) for x in proto.player],
-            npcs=[Npc.from_proto(x) for x in proto.npcs],
+            players={p.net_id: p for p in (Player.from_proto(x) for x in proto.player)},
+            npcs={npc.id: npc for npc in (Npc.from_proto(x) for x in proto.npcs)},
         )
 
     def to_proto(self) -> growtopia_pb2.World:
@@ -2960,8 +2977,8 @@ class World:
                 dropped=self.dropped.to_proto(),
                 garbage_start=self.garbage_start,
             ),
-            player=[x.to_proto() for x in self.player],
-            npcs=[x.to_proto() for x in self.npcs],
+            player=[x.to_proto() for x in self.players.values()],
+            npcs=[x.to_proto() for x in self.npcs.values()],
         )
 
 

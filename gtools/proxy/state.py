@@ -13,7 +13,7 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, Tan
 from gtools.core.growtopia.player import CharacterState, Clothing, Player
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
-from gtools.core.growtopia.world import LockTile, Npc, NpcEvent, NpcType, Tile, TileExtraType, TileFlags, World
+from gtools.core.growtopia.world import LockTile, Npc, NpcEvent, NpcType, Tile, TileExtraType, TileFlags, World, WorldEvent
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
@@ -228,7 +228,6 @@ class State:
                             ),
                         )
                     case TankType.NPC:
-                        # TODO: just send the packet here, will switch on the receiving end instead
                         match pkt.tank.animation_type:
                             case NpcEvent.FULL_STATE:
                                 buf = Buffer(pkt.tank.extended_data)
@@ -250,7 +249,7 @@ class State:
                                     StateUpdate(
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
-                                            op=NpcUpdate.OP_RESET_TYPE,
+                                            op=NpcUpdate.OP_REMOVE,
                                             id=pkt.tank.jump_count,
                                         ),
                                     ),
@@ -299,8 +298,8 @@ class State:
                                     StateUpdate(
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
-                                            op=NpcUpdate.OP_RESET_BY_COND,
-                                            reset_by_cond=NpcResetByCond(
+                                            op=NpcUpdate.OP_REMOVE_BY_COND,
+                                            remove_by_cond=NpcResetByCond(
                                                 id=pkt.tank.jump_count,
                                                 id_non_normal=pkt.tank.object_type,
                                             ),
@@ -349,7 +348,7 @@ class State:
                                     StateUpdate(
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
-                                            op=NpcUpdate.OP_RESET_TYPE,
+                                            op=NpcUpdate.OP_REMOVE,
                                             id=pkt.tank.jump_count,
                                         ),
                                     ),
@@ -598,16 +597,16 @@ class State:
                 if player := self.world.get_player(net_id):
                     player.pos = pos
                     player.flags = TankFlags(upd.player_update.flags)
+
+                self.world.broadcast(WorldEvent.PLAYER_UPDATE)
             case StateUpdateWhat.STATE_MODIFY_WORLD:
                 if not self.world:
                     self.logger.warning("modify world, but world is not initialized")
                     return
 
                 pos = ivec2(upd.modify_world.tile.x, upd.modify_world.tile.y)
-                # TODO: we should use place_fg and place_bg here (re incoming)
                 match upd.modify_world.op:
                     case ModifyWorld.OP_PLACE:
-                        # place_tile doesn't care whether its fg or bg, we just use fg_id arbitrarily
                         self.world.place_tile(upd.modify_world.tile.fg_id, pos)
                     case ModifyWorld.OP_DESTROY:
                         self.world.destroy_tile(pos)
@@ -671,6 +670,7 @@ class State:
                     return
 
                 player.clothing = Clothing.from_proto(upd.update_clothing.clothing)
+                self.world.broadcast(WorldEvent.PLAYER_UPDATE)
             case StateUpdateWhat.STATE_UPDATE_STATUS:
                 self.status = Status(upd.update_status)
             case StateUpdateWhat.STATE_SEND_LOCK:
@@ -737,17 +737,13 @@ class State:
                         self.world.add_npc(Npc.from_proto(upd.npc_update.npc))
                     case NpcUpdate.OP_REMOVE:
                         self.world.remove_npc_by_id(upd.npc_update.id)
-                    case NpcUpdate.OP_RESET_TYPE:
-                        if npc := self.world.get_npc(upd.npc_update.id):
-                            npc.reset_type()
-                    case NpcUpdate.OP_RESET_BY_COND:
-                        for npc in self.world.npcs:
-                            if (npc.id == upd.npc_update.reset_by_cond.id and npc.type == NpcType.BOSS_GHOST) or npc.id == upd.npc_update.reset_by_cond.id_non_normal:
-                                npc.reset_type()
+                    case NpcUpdate.OP_REMOVE_BY_COND:
+                        for npc in self.world.npcs.values():
+                            if (npc.id == upd.npc_update.remove_by_cond.id and npc.type == NpcType.BOSS_GHOST) or npc.id == upd.npc_update.remove_by_cond.id_non_normal:
+                                self.world.remove_npc_by_id(npc.id)
                     case NpcUpdate.OP_UPDATE_TARGET:
                         tgt = upd.npc_update.update_pos
                         if npc := self.world.get_npc(tgt.id):
-                            # TODO: don't treat 0 as "no change", use a bitmask
                             if tgt.param1 != 0:
                                 npc.param1 = tgt.param1
                             if tgt.param2 != 0:
@@ -755,6 +751,9 @@ class State:
                             if tgt.param3 != 0.0:
                                 npc.param3 = tgt.param3
                             npc.target_pos = vec2(tgt.x, tgt.y)
+                            # TODO: need to figure out a way to detect changes in npc inside the world itself
+                            # so we don't broadcast anywhere outside the world class
+                            self.world.broadcast(WorldEvent.NPC_UPDATE)
                     case NpcUpdate.OP_UPDATE_POS:
                         tgt = upd.npc_update.update_pos
                         if npc := self.world.get_npc(tgt.id):
@@ -765,3 +764,4 @@ class State:
                             if tgt.param3 != 0.0:
                                 npc.param3 = tgt.param3
                             npc.pos = vec2(tgt.x, tgt.y)
+                            self.world.broadcast(WorldEvent.NPC_UPDATE)

@@ -54,18 +54,22 @@ class PlayerRenderer(Renderer):
             if player.colrect.z > 0 and player.colrect.w > 0:
                 w, h = float(player.colrect.z), float(player.colrect.w)
 
+            x = player.pos.x - w/2 + 8
+            y = player.pos.y - h/2 + 8
+
             model = mat4x4(1.0)
-            model = glm.translate(model, vec3(player.pos.x - w/2, player.pos.y - h/2, 0.0))
+            model = glm.translate(model, vec3(x, y, 0.0))
             model = glm.scale(model, vec3(w, h, 1.0))
             self.u_model.set_mat4x4(glm.value_ptr(model))
             self.body_mesh.draw()
 
+            # TODO: check this
             eye_y = player.pos.y + h * 0.25
             line_w = 10.0
             line_h = 2.0
             facing_left = (player.flags & TankFlags.FACING_LEFT) != 0
 
-            line_x = player.pos.x - w/2 + w/2 + (-line_w/2 if facing_left else line_w/2)
+            line_x = x + w/2 + (-line_w/2 if facing_left else line_w/2)
 
             line_model = mat4x4(1.0)
             line_model = glm.translate(line_model, vec3(line_x, eye_y, 0.0))
@@ -75,7 +79,7 @@ class PlayerRenderer(Renderer):
 
             name_str = player.name.decode(errors="ignore")
             name_w, _ = self.text_renderer.get_text_size(name_str)
-            self.text_renderer.build_text(name_str, player.pos.x - w/2 - name_w/2 + w/2, player.pos.y - h/2 - 5, layer.PLAYER)
+            self.text_renderer.build_text(name_str, x - name_w/2 + w/2, y - 5, layer.PLAYER)
 
         self.text_renderer.build()
         self.text_renderer.draw(camera, color=(1.0, 1.0, 1.0))

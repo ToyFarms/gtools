@@ -446,14 +446,14 @@ class WorldRenderer:
 
         self._render_order.add(
             "Players",
-            lambda camera, cull: self._player_renderer.draw(camera, list(self._world.player)),
-            lambda camera3d, layer_spread: self._player_renderer.draw_3d(camera3d, layer_spread, list(self._world.player)),
+            lambda camera, cull: self._player_renderer.draw(camera, list(self._world.players.values())),
+            lambda camera3d, layer_spread: self._player_renderer.draw_3d(camera3d, layer_spread, list(self._world.players.values())),
         )
 
         self._render_order.add(
             "NPCs",
-            lambda camera, cull: self._npc_renderer.draw(camera, self._world.npcs),
-            lambda camera3d, layer_spread: self._npc_renderer.draw_3d(camera3d, layer_spread, self._world.npcs),
+            lambda camera, cull: self._npc_renderer.draw(camera, list(self._world.npcs.values())),
+            lambda camera3d, layer_spread: self._npc_renderer.draw_3d(camera3d, layer_spread, list(self._world.npcs.values())),
         )
 
         self._render_order.add(

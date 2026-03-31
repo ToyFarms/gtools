@@ -56,7 +56,7 @@ message UpdateClothing {
   gtools.growtopia.Clothing clothing = 2;
 }
 
-message NpcResetByCond {
+message NpcRemoveByCond {
   uint32 id = 1;
   uint32 id_non_normal = 2;
 }
@@ -75,10 +75,9 @@ message NpcUpdate {
     OP_UNSPECIFIED = 0;
     OP_ADD = 1;
     OP_REMOVE = 3;
-    OP_RESET_TYPE = 2;
+    OP_REMOVE_BY_COND = 6;
     OP_UPDATE_TARGET = 4;
     OP_UPDATE_POS = 5;
-    OP_RESET_BY_COND = 6;
   }
 
   Op op = 1;
@@ -86,7 +85,7 @@ message NpcUpdate {
     gtools.growtopia.Npc npc = 2;
     uint32 id = 3;
     NpcUpdatePos update_pos = 5;
-    NpcResetByCond reset_by_cond = 6;
+    NpcRemoveByCond remove_by_cond = 6;
   }
 }
 
