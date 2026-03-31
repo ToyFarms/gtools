@@ -234,7 +234,7 @@ class TileRenderer(Renderer):
 
                         elif isinstance(tile.extra, VendingMachineTile):
                             tex = 0
-                            if tile.extra.item_id == 0:
+                            if tile.extra.price == 0:
                                 tex = 1
 
                             tex_array, data = self._tile_instance_data_raw(
