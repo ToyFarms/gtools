@@ -39,7 +39,7 @@ from gtools.protogen.state_pb2 import (
     ModifyInventory,
     ModifyItem,
     ModifyWorld,
-    NpcResetByCond,
+    NpcRemoveByCond,
     NpcUpdate,
     NpcUpdatePos,
     PlayerUpdate,
@@ -299,7 +299,7 @@ class State:
                                         what=STATE_NPC_UPDATE,
                                         npc_update=NpcUpdate(
                                             op=NpcUpdate.OP_REMOVE_BY_COND,
-                                            remove_by_cond=NpcResetByCond(
+                                            remove_by_cond=NpcRemoveByCond(
                                                 id=pkt.tank.jump_count,
                                                 id_non_normal=pkt.tank.object_type,
                                             ),
