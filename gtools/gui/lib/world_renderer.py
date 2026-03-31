@@ -31,7 +31,7 @@ import colorsys
 
 from gtools.baked.items import PAINTING_EASEL
 from gtools.core.growtopia.items_dat import item_database
-from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, SeedTile, ShelfTile, Tile, VendingMachineTile, World
+from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, SeedTile, ShelfTile, Tile, VendingMachineTile, World, WorldEvent
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
@@ -206,8 +206,10 @@ class WorldRenderer:
         self.tile_objects = 0
         self._init_render_order()
 
-        self._world.on_tile_update(self._on_tile_update)
-        self._world.on_dropped_update(self._on_dropped_update)
+        self._world.subscribe(WorldEvent.TILE_UPDATE, self._on_tile_update)
+        self._world.subscribe(WorldEvent.DROPPED_UPDATE, self._on_dropped_update)
+        self._world.subscribe(WorldEvent.PLAYER_UPDATE, self._on_player_update)
+        self._world.subscribe(WorldEvent.NPC_UPDATE, self._on_npc_update)
 
     @property
     def hovered_tile(self) -> Tile | None:
@@ -507,9 +509,17 @@ class WorldRenderer:
         self._needs_obj_rebuild = True
         self._dirty = True
 
+    def _on_player_update(self) -> None:
+        self._dirty = True
+
+    def _on_npc_update(self) -> None:
+        self._dirty = True
+
     def delete(self) -> None:
-        self._world.remove_tile_update(self._on_tile_update)
-        self._world.remove_dropped_update(self._on_dropped_update)
+        self._world.unsubscribe(WorldEvent.TILE_UPDATE, self._on_tile_update)
+        self._world.unsubscribe(WorldEvent.DROPPED_UPDATE, self._on_dropped_update)
+        self._world.unsubscribe(WorldEvent.PLAYER_UPDATE, self._on_player_update)
+        self._world.unsubscribe(WorldEvent.NPC_UPDATE, self._on_npc_update)
 
         self._mixer.stop()
 
