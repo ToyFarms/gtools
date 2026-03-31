@@ -1,5 +1,7 @@
 #version 450 core
 in vec2 v_tex;
+in vec3 v_color;
+
 out vec4 f_color;
 
 uniform sampler2D u_texture;
@@ -16,5 +18,6 @@ void main() {
     float screenPxRange = max(0.5 * dot(unitRange, screenTexSize), 1.0);
     float alpha = smoothstep(-u_edgeSoftness, u_edgeSoftness, signedDistance * screenPxRange);
     if (alpha < 0.01) discard;
-    f_color = vec4(u_textColor * alpha, alpha);
+    vec3 rgb = u_textColor * v_color;
+    f_color = vec4(rgb * alpha, alpha);
 }

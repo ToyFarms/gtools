@@ -6,9 +6,64 @@ from gtools.gui.lib.renderer import Renderer
 from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.lib.font import FontManager
 
+_COLOR_MAP: dict[str, tuple[float, float, float]] = {
+    "0": (1.000, 1.000, 1.000),  # white / default
+    "1": (0.678, 0.957, 1.000),  # light cyan
+    "2": (0.286, 0.988, 0.000),  # green
+    "3": (0.749, 0.855, 1.000),  # light blue
+    "4": (1.000, 0.153, 0.114),  # crazy red
+    "5": (0.922, 0.718, 1.000),  # pinky purple
+    "6": (1.000, 0.792, 0.435),  # brown
+    "7": (0.902, 0.902, 0.902),  # light gray
+    "8": (1.000, 0.580, 0.271),  # crazy orange
+    "9": (1.000, 0.933, 0.490),  # yellow
+    "!": (0.820, 1.000, 0.976),  # bright cyan
+    "@": (1.000, 0.804, 0.788),  # bright red/pink
+    "#": (1.000, 0.561, 0.953),  # bright purple
+    "$": (1.000, 0.988, 0.773),  # pale yellow
+    "^": (0.710, 1.000, 0.592),  # light green
+    "&": (0.996, 0.922, 1.000),  # very pale pink
+    "w": (1.000, 1.000, 1.000),  # white
+    "o": (0.988, 0.902, 0.729),  # dreamsicle
+    "b": (0.000, 0.000, 0.000),  # black
+    "p": (1.000, 0.875, 0.945),  # pink
+    "q": (0.047, 0.376, 0.643),  # dark blue
+    "e": (0.098, 0.725, 1.000),  # medium blue
+    "r": (0.435, 0.827, 0.341),  # pale green
+    "t": (0.184, 0.514, 0.051),  # medium green
+    "a": (0.318, 0.318, 0.318),  # dark grey
+    "s": (0.620, 0.620, 0.620),  # med grey
+    "c": (0.314, 1.000, 1.000),  # vibrant cyan
+}
+_DEFAULT_COLOR: tuple[float, float, float] = (1.0, 1.0, 1.0)
+_WHITE = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+
+
+def _parse_colored_text(text: str) -> list[tuple[str, tuple[float, float, float]]]:
+    result: list[tuple[str, tuple[float, float, float]]] = []
+    color = _DEFAULT_COLOR
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "`":
+            next_ch = text[i + 1] if i + 1 < len(text) else ""
+            if next_ch == "`":
+                color = _DEFAULT_COLOR
+                i += 2
+            elif next_ch in _COLOR_MAP:
+                color = _COLOR_MAP[next_ch]
+                i += 2
+            else:
+                result.append((ch, color))
+                i += 1
+        else:
+            result.append((ch, color))
+            i += 1
+    return result
+
 
 class TextRenderer(Renderer):
-    INSTANCE_LAYOUT = [2, 2, 2, 2, 1]
+    INSTANCE_LAYOUT = [2, 2, 2, 2, 1, 3]
 
     def __init__(
         self,
@@ -65,20 +120,30 @@ class TextRenderer(Renderer):
             self._shadow_mesh = None
 
     def get_text_size(self, text: str, scale: float = 1.0) -> tuple[float, float]:
+        parsed = _parse_colored_text(text)
         width = 0.0
         max_height = 0.0
-        for i, char in enumerate(text):
+        for i, (char, _) in enumerate(parsed):
             glyph = self.font.get_char(char)
-            if i == len(text) - 1:
+            if i == len(parsed) - 1:
                 width += (glyph.bearing[0] + glyph.size[0]) * scale
             else:
                 width += glyph.advance * scale
             max_height = max(max_height, glyph.size[1] * scale)
+
         return width, max_height
 
-    def build_text(self, text: str, x: float, y: float, z: float, scale: float = 1.0, shadow_z: float | None = None) -> None:
+    def build_text(
+        self,
+        text: str,
+        x: float,
+        y: float,
+        z: float,
+        scale: float = 1.0,
+        shadow_z: float | None = None,
+    ) -> None:
         current_x = x
-        for char in text:
+        for char, color in _parse_colored_text(text):
             glyph = self.font.get_char(char)
             if glyph.size[0] == 0:
                 current_x += glyph.advance * scale
@@ -86,14 +151,25 @@ class TextRenderer(Renderer):
 
             w = glyph.size[0] * scale
             h = glyph.size[1] * scale
-
             xpos = current_x + glyph.bearing[0] * scale
             ypos = y - glyph.bearing[1] * scale
 
-            self._batch_data.extend([xpos, ypos, w, h, glyph.tex_offset[0], glyph.tex_offset[1], glyph.tex_size[0], glyph.tex_size[1], z])
+            self._batch_data.extend([
+                xpos, ypos, w, h,
+                glyph.tex_offset[0], glyph.tex_offset[1],
+                glyph.tex_size[0], glyph.tex_size[1],
+                z,
+                color[0], color[1], color[2],
+            ])
 
             if shadow_z is not None:
-                self._shadow_batch_data.extend([xpos, ypos, w, h, glyph.tex_offset[0], glyph.tex_offset[1], glyph.tex_size[0], glyph.tex_size[1], shadow_z])
+                self._shadow_batch_data.extend([
+                    xpos, ypos, w, h,
+                    glyph.tex_offset[0], glyph.tex_offset[1],
+                    glyph.tex_size[0], glyph.tex_size[1],
+                    shadow_z,
+                    1.0, 1.0, 1.0,
+                ])
 
             current_x += glyph.advance * scale
 
@@ -101,15 +177,26 @@ class TextRenderer(Renderer):
         if self._batch_data:
             if self._mesh:
                 self._mesh.delete()
+
             instance_data = np.array(self._batch_data, dtype=np.float32)
-            self._mesh = Mesh(Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES, instance_data=instance_data, instance_layout=self.INSTANCE_LAYOUT, instance_attrib_base=2)
+            self._mesh = Mesh(
+                Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES,
+                instance_data=instance_data,
+                instance_layout=self.INSTANCE_LAYOUT,
+                instance_attrib_base=2,
+            )
             self._batch_data.clear()
 
         if self._shadow_batch_data:
             if self._shadow_mesh:
                 self._shadow_mesh.delete()
             shadow_instance_data = np.array(self._shadow_batch_data, dtype=np.float32)
-            self._shadow_mesh = Mesh(Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES, instance_data=shadow_instance_data, instance_layout=self.INSTANCE_LAYOUT, instance_attrib_base=2)
+            self._shadow_mesh = Mesh(
+                Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES,
+                instance_data=shadow_instance_data,
+                instance_layout=self.INSTANCE_LAYOUT,
+                instance_attrib_base=2,
+            )
             self._shadow_batch_data.clear()
 
     def draw(
