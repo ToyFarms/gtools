@@ -1385,7 +1385,7 @@ class TrainingPortTile(TileExtra):
 
 @dataclass(slots=True)
 class ItemSuckerTile(TileExtra):
-    item_id_to_suck: int = 0  # u32
+    item_id: int = 0  # u32
     item_amount: int = 0  # u32
     flags: int = 0  # u16
     limit: int = 0  # u32
@@ -1393,7 +1393,7 @@ class ItemSuckerTile(TileExtra):
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "ItemSuckerTile":
         t = cls()
-        t.item_id_to_suck = s.read_u32()
+        t.item_id = s.read_u32()
         t.item_amount = s.read_u32()
         t.flags = s.read_u16()
         t.limit = s.read_u32()
@@ -1526,7 +1526,7 @@ class HeartOfGaiaTile(TileExtra):
 class TechnoOrganicEngineTile(TileExtra):
     unk1: int = 0  # u32
     unk2: int = 0  # u32
-    unk3: int = 0  # u32
+    item_id: int = 0  # u32
     unk4: int = 0  # u32
     unk5: int = 0  # u32
     unk6: int = 0  # u32
@@ -1540,7 +1540,7 @@ class TechnoOrganicEngineTile(TileExtra):
         t = cls()
         t.unk1 = s.read_u32()
         t.unk2 = s.read_u32()
-        t.unk3 = s.read_u32()
+        t.item_id = s.read_u32()
         if format_version > 8:
             t.unk4 = s.read_u32()
         t.unk5 = s.read_u32()

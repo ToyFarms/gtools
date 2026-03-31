@@ -279,7 +279,7 @@ class AutoBreakExtension(Extension):
                 assert sucker.extra
                 extra = sucker.extra.expect(ItemSuckerTile)
 
-                self.console_log(f"{item_database.get(extra.item_id_to_suck).name.decode()}: {extra.item_amount} (of {extra.limit})")
+                self.console_log(f"{item_database.get(extra.item_id).name.decode()}: {extra.item_amount} (of {extra.limit})")
 
         return self.cancel()
 

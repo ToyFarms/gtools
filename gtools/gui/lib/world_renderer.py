@@ -31,7 +31,21 @@ import colorsys
 
 from gtools.baked.items import PAINTING_EASEL
 from gtools.core.growtopia.items_dat import item_database
-from gtools.core.growtopia.world import DisplayBlockTile, DroppedItem, PaintingEaselTile, SeedTile, ShelfTile, Tile, VendingMachineTile, World, WorldEvent
+from gtools.core.growtopia.world import (
+    DisplayBlockTile,
+    DroppedItem,
+    HeartOfGaiaTile,
+    ItemSuckerTile,
+    PaintingEaselTile,
+    SeedTile,
+    ShelfTile,
+    TechnoOrganicEngineTile,
+    TesseractManipulatorTile,
+    Tile,
+    VendingMachineTile,
+    World,
+    WorldEvent,
+)
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
@@ -334,11 +348,31 @@ class WorldRenderer:
                 ):
                     if id != 0:
                         icons["shelf"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(pos), id=id))
+            elif isinstance(tile.extra, ItemSuckerTile):
+                icons["sucker"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
+            elif isinstance(tile.extra, (TesseractManipulatorTile, HeartOfGaiaTile)):
+                icons["sucker"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
+            elif isinstance(tile.extra, TechnoOrganicEngineTile):
+                icons["sucker"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
 
         for obj in icons.values():
             self.tile_objects += len(obj)
 
         renderable: list[ObjectRenderable] = []
+
+        if icons["sucker"]:
+            renderable.append(
+                ObjectRenderable(
+                    mesh=self._renderer_pre_fg.build(
+                        icons["sucker"],
+                        flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
+                        icon_scale=0.5,
+                    ),
+                    renderer=self._renderer_pre_fg,
+                )
+            )
+            self._obj_meshes.append(renderable[-1].mesh)
+
         if icons["display"]:
             renderable.append(
                 ObjectRenderable(
