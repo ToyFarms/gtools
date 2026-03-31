@@ -667,28 +667,6 @@ class WorldRenderer:
                     self._camera.pan_by_screen(-dx * speed, -dy * speed)
                     self._dirty = True
 
-        with self._tile_update_lock:
-            if self._tile_updates:
-                affected_chunks = set()
-                for x, y in self._tile_updates:
-                    affected_chunks.add((x // self._tile_renderer.CHUNK_SIZE, y // self._tile_renderer.CHUNK_SIZE))
-
-                for cx, cy in affected_chunks:
-                    self._tile_renderer.delete_chunk((cx, cy))
-                    self._tile_renderer._build_chunk(self._world, cx, cy)
-
-                trees = [t for t in self._world.tiles.values() if t.fg_id and t.extra and isinstance(t.extra, SeedTile)]
-                if self._tile_renderer.tree_mesh:
-                    self._tile_renderer.tree_mesh.delete()
-
-                self._tile_renderer.tree_mesh = self._tile_renderer._tree_renderer.build(trees)
-                self._tile_renderer._tex_mgr.flush()
-
-                self._tile_updates.clear()
-                self._dirty = True
-
-                self._dirty = True
-
         if perf_stats.SHOW_DEBUG_OVERLAY:
             self._peak_l *= 0.95
             self._peak_r *= 0.95
@@ -712,6 +690,26 @@ class WorldRenderer:
         main_w = total_w
         if self._show_settings:
             main_w = total_w - self._settings_width - spacing
+
+        with self._tile_update_lock:
+            if self._tile_updates:
+                affected_chunks = set()
+                for x, y in self._tile_updates:
+                    affected_chunks.add((x // self._tile_renderer.CHUNK_SIZE, y // self._tile_renderer.CHUNK_SIZE))
+
+                for cx, cy in affected_chunks:
+                    self._tile_renderer.delete_chunk((cx, cy))
+                    self._tile_renderer._build_chunk(self._world, cx, cy)
+
+                trees = [t for t in self._world.tiles.values() if t.fg_id and t.extra and isinstance(t.extra, SeedTile)]
+                if self._tile_renderer.tree_mesh:
+                    self._tile_renderer.tree_mesh.delete()
+
+                self._tile_renderer.tree_mesh = self._tile_renderer._tree_renderer.build(trees)
+                self._tile_renderer._tex_mgr.flush()
+
+                self._tile_updates.clear()
+                self._dirty = True
 
         imgui.begin_group()
 
