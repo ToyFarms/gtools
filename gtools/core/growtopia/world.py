@@ -4,6 +4,7 @@ from enum import Enum, IntFlag, IntEnum, auto
 import logging
 from typing import Any, Callable, Iterator, Literal, Type, overload
 
+from pyglm import glm
 from pyglm.glm import ivec2, vec2
 from gtools.baked.items import (
     ANCIENT_BLOCK,
@@ -2338,6 +2339,21 @@ class World:
     def remove_npc_by_id(self, id: int) -> None:
         self.npcs.pop(id)
         self.broadcast(WorldEvent.NPC_UPDATE)
+
+    def update_npc(self, dt: float) -> None:
+        for npc in self.npcs.values():
+            delta = npc.target_pos - npc.pos
+            distance = glm.length(delta)
+
+            if distance > 0:
+                npc.facing_left = delta.x < 0
+
+                step = npc.param3 * dt
+                if step >= distance:
+                    npc.pos = vec2(npc.target_pos.x, npc.target_pos.y)
+                else:
+                    direction = delta / distance
+                    npc.pos += direction * step
 
     def get_player(self, net_id: int) -> Player | None:
         player = self.players.get(net_id)

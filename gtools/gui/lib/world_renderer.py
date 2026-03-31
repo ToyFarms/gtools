@@ -178,10 +178,7 @@ class WorldRenderer:
 
         self._render_order = RenderOrder()
         self._obj_meshes: list[ObjectRenderMesh] = []
-        self._needs_obj_rebuild = False
-        self._tile_updates: set[tuple[int, int]] = set()
         self._culling_debug_zoom: float = 1.0
-        self._tile_update_lock = threading.Lock()
 
         self._show_settings = False
         self._settings_width = 250.0
@@ -205,6 +202,12 @@ class WorldRenderer:
 
         self.tile_objects = 0
         self._init_render_order()
+
+        self._needs_obj_rebuild = False
+        self._tile_updates: set[tuple[int, int]] = set()
+        self._tile_update_lock = threading.Lock()
+        self._entity_update: bool = False
+        self._entity_update_lock = threading.Lock()
 
         self._world.subscribe(WorldEvent.TILE_UPDATE, self._on_tile_update)
         self._world.subscribe(WorldEvent.DROPPED_UPDATE, self._on_dropped_update)
@@ -510,10 +513,12 @@ class WorldRenderer:
         self._dirty = True
 
     def _on_player_update(self) -> None:
-        self._dirty = True
+        with self._entity_update_lock:
+            self._entity_update = True
 
     def _on_npc_update(self) -> None:
-        self._dirty = True
+        with self._entity_update_lock:
+            self._entity_update = True
 
     def delete(self) -> None:
         self._world.unsubscribe(WorldEvent.TILE_UPDATE, self._on_tile_update)
@@ -679,6 +684,8 @@ class WorldRenderer:
             self._rms_l = max(self._rms_l, mixer_rms[0])
             self._rms_r = max(self._rms_r, mixer_rms[1])
 
+        self._world.update_npc(dt)
+
     def render(self) -> None:
         frame_start = time.perf_counter_ns()
         self._frame_times.append((frame_start - self._last_frame_start) / 1_000_000.0)
@@ -710,6 +717,11 @@ class WorldRenderer:
 
                 self._tile_updates.clear()
                 self._dirty = True
+
+        with self._entity_update_lock:
+            if self._entity_update:
+                self._dirty = True
+                self._entity_update = False
 
         imgui.begin_group()
 

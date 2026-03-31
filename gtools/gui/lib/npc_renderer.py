@@ -37,7 +37,7 @@ class NpcRenderer(Renderer):
         ], dtype=np.float32)
         self.line_mesh = Mesh(line_vertices, [2, 4], Mesh.RECT_INDICES)
 
-        self.debug_line = False
+        self.debug_line = True
 
     def draw(self, camera: Camera2D, npcs: list[Npc]) -> None:
         if not npcs:
