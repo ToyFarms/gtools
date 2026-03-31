@@ -25,6 +25,7 @@ enum StateUpdateWhat {
   STATE_TILE_CHANGE_REQUEST = 18;
   STATE_NPC_UPDATE = 19;
   STATE_UPDATE_CLOTHING = 20;
+  STATE_RELOAD_ITEMS_DATABASE = 21;
 }
 
 message StateUpdate {
@@ -48,7 +49,12 @@ message StateUpdate {
     TileChangeRequest tile_change_req = 17;
     NpcUpdate npc_update = 18;
     UpdateClothing update_clothing = 19;
+    ReloadItemsDatabase reload_items_database = 20;
   }
+}
+
+message ReloadItemsDatabase {
+  bytes data = 1;
 }
 
 message UpdateClothing {

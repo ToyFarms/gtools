@@ -9,6 +9,7 @@ from typing import Generator, NamedTuple, cast
 
 from gtools.core.eventbus import subscribe
 from gtools.core.growtopia.crypto import generate_klv
+from gtools.core.growtopia.items_dat import reload_item_database
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
@@ -141,6 +142,8 @@ class Proxy:
                     elif fn == b"OnSuperMainStartAcceptLogonHrdxs47254722215a":
                         self.redirecting = False
                         self.state.update_status(self.broker, Status.LOGGED_IN)
+                elif pkt.as_net.tank.type == TankType.SEND_ITEM_DATABASE_DATA:
+                    reload_item_database(pkt.as_net.tank.extended_data)
         except:
             self.logger.exception("error handling server_to_client")
             if setting.panic_on_packet_error:

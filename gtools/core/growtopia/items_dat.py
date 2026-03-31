@@ -952,7 +952,7 @@ class Item:
 
 
 _CACHE_DATE_FMT = "%Y%m%d_%H%M%S"
-_log = logging.getLogger("ItemDatabase")
+logger = logging.getLogger("ItemDatabase")
 
 
 def _atomic_write(path: Path, obj: Any) -> None:
@@ -1165,21 +1165,21 @@ class ItemDatabase:
 
     def save_cache(self, base_dir: Path | None = None) -> None:
         if not self._source_hash:
-            _log.warning("save_cache: no source hash, skipping")
+            logger.warning("save_cache: no source hash, skipping")
             return
 
         dir_ = self._cache_dir(base_dir)
         dir_.mkdir(parents=True, exist_ok=True)
         if next(dir_.glob(f"*_{self._source_hash}.pkl"), None):
-            _log.debug("cache already present, skipping write")
+            logger.debug("cache already present, skipping write")
             return
 
         filename = f"{datetime.now(timezone.utc).strftime(_CACHE_DATE_FMT)}" f"_{self._source_hash}.pkl"
         try:
             _atomic_write(dir_ / filename, {"schema": self._schema_hash(), "db": self})
-            _log.info(f"wrote cache {filename}  version={self.version}")
+            logger.info(f"wrote cache {filename}  version={self.version}")
         except Exception as e:
-            _log.error(f"failed writing cache {filename}: {e}")
+            logger.error(f"failed writing cache {filename}: {e}")
 
     def archive_source(self, data: bytes, base_dir: Path | None = None) -> None:
         if not self._source_hash:
@@ -1194,9 +1194,9 @@ class ItemDatabase:
 
         try:
             _atomic_write_bytes(dir_ / filename, data)
-            _log.info(f"archived items.dat v{self.version} → {filename}")
+            logger.info(f"archived items.dat v{self.version} → {filename}")
         except Exception as e:
-            _log.error(f"archive failed {filename}: {e}")
+            logger.error(f"archive failed {filename}: {e}")
 
     @classmethod
     def _try_load_disk_cache(
@@ -1216,18 +1216,18 @@ class ItemDatabase:
                 stored_schema = payload.get("schema") if isinstance(payload, dict) else None
                 db = payload.get("db") if isinstance(payload, dict) else payload
                 if stored_schema != cls._schema_hash():
-                    _log.info(f"schema mismatch, invalidating {path}")
+                    logger.info(f"schema mismatch, invalidating {path}")
                     path.unlink(missing_ok=True)
                     continue
                 if not isinstance(db, ItemDatabase) or db.version != version:
                     continue
                 cls._mem[source_hash] = db
                 cls._latest_per_version[version] = db
-                _log.info(f"loaded disk cache {path.name}")
+                logger.info(f"loaded disk cache {path.name}")
 
                 return db
             except Exception as e:
-                _log.error(f"corrupt cache {path}: {e}, removing")
+                logger.error(f"corrupt cache {path}: {e}, removing")
                 path.unlink(missing_ok=True)
 
         return None
@@ -1284,10 +1284,10 @@ class ItemDatabase:
                 continue
             try:
                 db = cls.load(path, cached=True, cache_base_dir=cache_base_dir)
-                _log.info(f"latest: loaded from {path} (v{db.version})")
+                logger.info(f"latest: loaded from {path} (v{db.version})")
                 return db
             except Exception as e:
-                _log.error(f"latest: failed loading {path}: {e}")
+                logger.error(f"latest: failed loading {path}: {e}")
 
         raise FileNotFoundError("no valid items.dat found. checked: " + ", ".join(str(p) for p in _ITEMS_DAT_CANDIDATES))
 
@@ -1311,17 +1311,17 @@ class ItemDatabase:
                 stored_schema = payload.get("schema") if isinstance(payload, dict) else None
                 db = payload.get("db") if isinstance(payload, dict) else payload
                 if stored_schema != cls._schema_hash():
-                    _log.info(f"schema mismatch, invalidating {path}")
+                    logger.info(f"schema mismatch, invalidating {path}")
                     path.unlink(missing_ok=True)
                     continue
                 if not isinstance(db, ItemDatabase) or db.version != version:
                     continue
                 cls._mem[db._source_hash] = db
                 cls._latest_per_version[version] = db
-                _log.info(f"for_version({version}): loaded from {path.name}")
+                logger.info(f"for_version({version}): loaded from {path.name}")
                 return db
             except Exception as e:
-                _log.error(f"corrupt cache {path}: {e}, removing")
+                logger.error(f"corrupt cache {path}: {e}, removing")
                 path.unlink(missing_ok=True)
 
         raise ValueError(f"no valid cached database for version {version}")
@@ -1336,3 +1336,17 @@ class ItemDatabase:
 
 
 item_database = ItemDatabase.latest()
+
+
+def reload_item_database(data: bytes | None = None) -> ItemDatabase:
+    global item_database
+    v0, count0 = item_database.version, item_database.item_count
+    if data:
+        item_database = ItemDatabase.load(data, cached=True)
+    else:
+        item_database = ItemDatabase.latest()
+    v1, count1 = item_database.version, item_database.item_count
+
+    logger.info(f"reloaded item_databse from v{v0} ({count0} items) -> v{v1} ({count1} items)")
+
+    return item_database

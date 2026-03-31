@@ -9,6 +9,7 @@ from gtools.core.async_writer import write_async
 from gtools.core.buffer import Buffer
 from gtools.core.growtopia import world
 from gtools.core.growtopia.inventory import Inventory
+from gtools.core.growtopia.items_dat import reload_item_database
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, TankType
 from gtools.core.growtopia.player import CharacterState, Clothing, Player
 from gtools.core.growtopia.strkv import StrKV
@@ -26,6 +27,7 @@ from gtools.protogen.state_pb2 import (
     STATE_PLAYER_JOIN,
     STATE_PLAYER_LEAVE,
     STATE_PLAYER_UPDATE,
+    STATE_RELOAD_ITEMS_DATABASE,
     STATE_SEND_INVENTORY,
     STATE_SEND_LOCK,
     STATE_SET_CHARACTER_STATE,
@@ -43,6 +45,7 @@ from gtools.protogen.state_pb2 import (
     NpcUpdate,
     NpcUpdatePos,
     PlayerUpdate,
+    ReloadItemsDatabase,
     SendLock,
     SetMyTelemetry,
     StateUpdate,
@@ -572,6 +575,16 @@ class State:
                             ),
                         )
                         self.update_status(broker, Status.IN_WORLD)
+                    case TankType.SEND_ITEM_DATABASE_DATA:
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_RELOAD_ITEMS_DATABASE,
+                                reload_items_database=ReloadItemsDatabase(
+                                    data=pkt.tank.extended_data,
+                                ),
+                            ),
+                        )
 
     # TODO: make this code hot reload-able
     def update(self, upd: StateUpdate) -> None:
@@ -765,3 +778,5 @@ class State:
                                 npc.param3 = tgt.param3
                             npc.pos = vec2(tgt.x, tgt.y)
                             self.world.broadcast(WorldEvent.NPC_UPDATE)
+            case StateUpdateWhat.STATE_RELOAD_ITEMS_DATABASE:
+                reload_item_database(upd.reload_items_database.data)
