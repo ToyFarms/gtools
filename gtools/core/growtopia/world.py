@@ -2497,8 +2497,6 @@ class World:
         tile.fg_id = fg
         tile.fg_tex_index = connection
 
-        self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
-
         if tile.fg_id == 0:
             tile.flags &= ~(TileFlags.WAS_SPLICED | TileFlags.IS_ON | TileFlags.IS_OPEN_TO_PUBLIC | TileFlags.FG_ALT_MODE)
 
@@ -2623,6 +2621,8 @@ class World:
         if item.flags2 & ItemInfoFlag2.GUILD_ITEM != 0 and not tile.extra:
             tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
             tile.flags |= TileFlags.HAS_EXTRA_DATA
+
+        self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
     def place_bg(self, tile: Tile, bg: int, connection: int = 0) -> None:
         if bg == TRANSDIMENSIONAL_VAPORIZER_RAY:
