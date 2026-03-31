@@ -143,9 +143,6 @@ class Proxy:
                     elif fn == b"OnSuperMainStartAcceptLogonHrdxs47254722215a":
                         self.redirecting = False
                         self.state.update_status(self.broker, Status.LOGGED_IN)
-                elif pkt.as_net.tank.type == TankType.SEND_ITEM_DATABASE_DATA:
-                    data = zlib.decompress(pkt.as_net.tank.extended_data)
-                    reload_item_database(data)
         except:
             self.logger.exception("error handling server_to_client")
             if setting.panic_on_packet_error:
