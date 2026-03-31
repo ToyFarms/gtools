@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum, auto
 import logging
 import time
+import zlib
 from pyglm.glm import ivec2, vec2
 
 from gtools import setting
@@ -779,4 +780,5 @@ class State:
                             npc.pos = vec2(tgt.x, tgt.y)
                             self.world.broadcast(WorldEvent.NPC_UPDATE)
             case StateUpdateWhat.STATE_RELOAD_ITEMS_DATABASE:
-                reload_item_database(upd.reload_items_database.data)
+                data = zlib.decompress(upd.reload_items_database.data)
+                reload_item_database(data)

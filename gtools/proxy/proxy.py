@@ -6,6 +6,7 @@ import threading
 import time
 import traceback
 from typing import Generator, NamedTuple, cast
+import zlib
 
 from gtools.core.eventbus import subscribe
 from gtools.core.growtopia.crypto import generate_klv
@@ -143,7 +144,8 @@ class Proxy:
                         self.redirecting = False
                         self.state.update_status(self.broker, Status.LOGGED_IN)
                 elif pkt.as_net.tank.type == TankType.SEND_ITEM_DATABASE_DATA:
-                    reload_item_database(pkt.as_net.tank.extended_data)
+                    data = zlib.decompress(pkt.as_net.tank.extended_data)
+                    reload_item_database(data)
         except:
             self.logger.exception("error handling server_to_client")
             if setting.panic_on_packet_error:
