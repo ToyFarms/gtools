@@ -1096,9 +1096,6 @@ class WorldRenderer:
                 elif event.key == glfw.KEY_TAB:
                     self._show_settings = not self._show_settings
                     return True
-                elif event.key == glfw.KEY_F3:
-                    perf_stats.SHOW_DEBUG_OVERLAY = not perf_stats.SHOW_DEBUG_OVERLAY
-                    return True
                 elif event.key == glfw.KEY_SPACE and not self._mode_3d:
                     self._playing = not self._playing
                     self._dirty = True

@@ -1,5 +1,6 @@
 import OpenGL
 from gtools import setting
+from gtools.gui.lib import perf_stats
 
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking
 
@@ -183,8 +184,6 @@ class App:
 
             if any_dirty:
                 self.last_dirty_time = time.perf_counter()
-                for panel in self.panels:
-                    panel.is_dirty = False
 
             time_since_dirty = time.perf_counter() - self.last_dirty_time
             self.perf_stats.idle_timer = self.idle_transition - time_since_dirty
@@ -225,6 +224,11 @@ class App:
             for panel in to_remove:
                 self.remove_panel(panel)
 
+            if any_dirty:
+                with self._panels_lock:
+                    for panel in self.panels:
+                        panel.is_dirty = False
+
             self._cmd.render()
 
             imgui.render()
@@ -260,6 +264,8 @@ class App:
             if e.action == glfw.PRESS:
                 if e.key == glfw.KEY_P and e.mods & glfw.MOD_CONTROL:
                     self._cmd.open(self._cmd_builder.build())
+                elif e.key == glfw.KEY_F3:
+                    perf_stats.SHOW_DEBUG_OVERLAY = not perf_stats.SHOW_DEBUG_OVERLAY
         elif isinstance(e, ResizeEvent):
             glViewport(0, 0, e.width, e.height)
             return
