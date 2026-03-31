@@ -730,56 +730,41 @@ def is_background(item_type: ItemInfoType) -> bool:
     )
 
 
+TEXTURE_STRIDE = {
+    ItemInfoTextureType.SINGLE_FRAME_ALONE: 0,
+    ItemInfoTextureType.SINGLE_FRAME: 0,
+    ItemInfoTextureType.SMART_EDGE: 8,
+    ItemInfoTextureType.SMART_EDGE_HORIZ: 8,
+    ItemInfoTextureType.SMART_CLING: 5,
+    ItemInfoTextureType.SMART_CLING2: 8,
+    ItemInfoTextureType.SMART_OUTER: 5,
+    ItemInfoTextureType.RANDOM: 4,
+    ItemInfoTextureType.SMART_EDGE_VERT: 10,
+    ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE: 4,
+    ItemInfoTextureType.SMART_EDGE_DIAGON: 4,
+}
+
+TEXTURE_DEFAULT = {
+    ItemInfoTextureType.SINGLE_FRAME_ALONE: 0,
+    ItemInfoTextureType.SINGLE_FRAME: 0,
+    ItemInfoTextureType.SMART_EDGE: 12,
+    ItemInfoTextureType.SMART_EDGE_HORIZ: 3,
+    ItemInfoTextureType.SMART_CLING: 3,
+    ItemInfoTextureType.SMART_CLING2: 12,
+    ItemInfoTextureType.SMART_OUTER: 0,
+    ItemInfoTextureType.RANDOM: 0,
+    ItemInfoTextureType.SMART_EDGE_VERT: 0,
+    ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE: 3,
+    ItemInfoTextureType.SMART_EDGE_DIAGON: 0,
+}
+
+
 def get_tex_stride(texture_type: ItemInfoTextureType) -> int:
-    match texture_type:
-        case ItemInfoTextureType.SINGLE_FRAME_ALONE:
-            return 0
-        case ItemInfoTextureType.SINGLE_FRAME:
-            return 0
-        case ItemInfoTextureType.SMART_EDGE:
-            return 8
-        case ItemInfoTextureType.SMART_EDGE_HORIZ:
-            return 8
-        case ItemInfoTextureType.SMART_CLING:
-            return 5
-        case ItemInfoTextureType.SMART_CLING2:
-            return 8
-        case ItemInfoTextureType.SMART_OUTER:
-            return 5
-        case ItemInfoTextureType.RANDOM:
-            return 4
-        case ItemInfoTextureType.SMART_EDGE_VERT:
-            return 10
-        case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
-            return 4
-        case ItemInfoTextureType.SMART_EDGE_DIAGON:
-            return 4
+    return TEXTURE_STRIDE[texture_type]
 
 
 def get_default_tex(texture_type: ItemInfoTextureType) -> int:
-    match texture_type:
-        case ItemInfoTextureType.SINGLE_FRAME_ALONE:
-            return 0
-        case ItemInfoTextureType.SINGLE_FRAME:
-            return 0
-        case ItemInfoTextureType.SMART_EDGE:
-            return 12
-        case ItemInfoTextureType.SMART_EDGE_HORIZ:
-            return 3
-        case ItemInfoTextureType.SMART_CLING:
-            return 3
-        case ItemInfoTextureType.SMART_CLING2:
-            return 12
-        case ItemInfoTextureType.SMART_OUTER:
-            return 0
-        case ItemInfoTextureType.RANDOM:
-            return 0
-        case ItemInfoTextureType.SMART_EDGE_VERT:
-            return 0
-        case ItemInfoTextureType.SMART_EDGE_HORIZ_CAVE:
-            return 3
-        case ItemInfoTextureType.SMART_EDGE_DIAGON:
-            return 0
+    return TEXTURE_DEFAULT[texture_type]
 
 
 def get_icon_texture(texture_file: bytes) -> str | None:
