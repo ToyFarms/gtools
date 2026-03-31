@@ -2,6 +2,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag, IntEnum, auto
 import logging
+from pathlib import Path
 from typing import Any, Callable, Iterator, Literal, Type, overload
 
 from pyglm import glm
@@ -1970,6 +1971,7 @@ class Tile:
             pos=ivec2(proto.x, proto.y),
             fg_tex_index=proto.fg_tex_index,
             bg_tex_index=proto.bg_tex_index,
+            overlay_tex_index=proto.overlay_tex_index,
             json_data=cbor2.loads(proto.json_data),
         )
 
@@ -1986,6 +1988,7 @@ class Tile:
             y=self.pos.y,
             fg_tex_index=self.fg_tex_index,
             bg_tex_index=self.bg_tex_index,
+            overlay_tex_index=self.overlay_tex_index,
             json_data=cbor2.dumps(self.json_data),
         )
 
@@ -2851,6 +2854,10 @@ class World:
     @classmethod
     def from_extended(cls, extended: bytes) -> "World":
         return cls.deserialize(Buffer(extended))
+
+    @classmethod
+    def from_file(cls, file: Path | str) -> "World":
+        return cls.from_tank(Path(file).read_bytes())
 
     def serialize(self) -> bytes:
         # TODO:

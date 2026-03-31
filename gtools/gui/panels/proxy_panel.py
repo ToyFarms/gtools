@@ -44,6 +44,7 @@ class ProxyPanel(Panel):
         self._client_blink_t: float = 0.0
 
         self.world_renderer: WorldRenderer | None = None
+        self.reload_next_world: bool = True
         self._sidebar_w: float = 250.0
 
     def setup_http_server(self) -> None:
@@ -109,7 +110,7 @@ class ProxyPanel(Panel):
         dot_cy = cursor_screen.y + line_h * 0.5
 
         fill_col = imgui.get_color_u32((r, g, b, dot_alpha))
-        rim_col  = imgui.get_color_u32((r * 1.3, g * 1.1, b, min(1.0, dot_alpha * 1.4)))
+        rim_col = imgui.get_color_u32((r * 1.3, g * 1.1, b, min(1.0, dot_alpha * 1.4)))
 
         dl.add_circle_filled((dot_cx, dot_cy), _BLINK_DOT_RADIUS, fill_col)
         dl.add_circle((dot_cx, dot_cy), _BLINK_DOT_RADIUS, rim_col, num_segments=0, thickness=1.2)
@@ -139,15 +140,15 @@ class ProxyPanel(Panel):
 
     def _render_body(self) -> None:
         if self.proxy:
-            if not self.world_renderer and self.proxy.state.world:
+            if not self.proxy.state.world:
+                self.reload_next_world = True
+
+            if self.reload_next_world and self.proxy.state.world:
+                if self.world_renderer:
+                    self.world_renderer.delete()
+
                 self.world_renderer = WorldRenderer(self.proxy.state.world)
-            elif (
-                self.proxy.state.world
-                and self.world_renderer
-                and self.world_renderer._world.name != self.proxy.state.world.name
-            ):
-                self.world_renderer.delete()
-                self.world_renderer = WorldRenderer(self.proxy.state.world)
+                self.reload_next_world = False
 
         changed, self.http_server_enabled = imgui_toggle.toggle("HTTP Server", self.http_server_enabled)
         if changed:
@@ -173,12 +174,7 @@ class ProxyPanel(Panel):
         imgui.set_next_window_size((self._sidebar_w, avail_h))
         imgui.begin(
             "##info",
-            flags=(
-                imgui.WindowFlags_.no_docking
-                | imgui.WindowFlags_.no_move
-                | imgui.WindowFlags_.no_decoration
-                | imgui.WindowFlags_.no_resize
-            ),
+            flags=(imgui.WindowFlags_.no_docking | imgui.WindowFlags_.no_move | imgui.WindowFlags_.no_decoration | imgui.WindowFlags_.no_resize),
         )
 
         if self.proxy:

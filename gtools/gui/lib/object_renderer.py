@@ -9,7 +9,7 @@ from pyglm.glm import ivec2, vec2
 
 from gtools import setting
 from gtools.baked.items import GEMS, MUTATED_SEED
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoType, item_database
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoFlag2, ItemInfoType, item_database
 from gtools.core.growtopia.world import DroppedItem
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D

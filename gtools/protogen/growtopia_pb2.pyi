@@ -197,7 +197,7 @@ class Dropped(_message.Message):
     def __init__(self, nb_items: _Optional[int] = ..., last_uid: _Optional[int] = ..., items: _Optional[_Iterable[_Union[DroppedItem, _Mapping]]] = ...) -> None: ...
 
 class Tile(_message.Message):
-    __slots__ = ("fg_id", "bg_id", "lock_index", "parent_index", "flags", "extra", "index", "x", "y", "fg_tex_index", "bg_tex_index", "json_data")
+    __slots__ = ("fg_id", "bg_id", "lock_index", "parent_index", "flags", "extra", "index", "x", "y", "fg_tex_index", "bg_tex_index", "overlay_tex_index", "json_data")
     FG_ID_FIELD_NUMBER: _ClassVar[int]
     BG_ID_FIELD_NUMBER: _ClassVar[int]
     LOCK_INDEX_FIELD_NUMBER: _ClassVar[int]
@@ -209,6 +209,7 @@ class Tile(_message.Message):
     Y_FIELD_NUMBER: _ClassVar[int]
     FG_TEX_INDEX_FIELD_NUMBER: _ClassVar[int]
     BG_TEX_INDEX_FIELD_NUMBER: _ClassVar[int]
+    OVERLAY_TEX_INDEX_FIELD_NUMBER: _ClassVar[int]
     JSON_DATA_FIELD_NUMBER: _ClassVar[int]
     fg_id: int
     bg_id: int
@@ -221,8 +222,9 @@ class Tile(_message.Message):
     y: int
     fg_tex_index: int
     bg_tex_index: int
+    overlay_tex_index: int
     json_data: bytes
-    def __init__(self, fg_id: _Optional[int] = ..., bg_id: _Optional[int] = ..., lock_index: _Optional[int] = ..., parent_index: _Optional[int] = ..., flags: _Optional[int] = ..., extra: _Optional[bytes] = ..., index: _Optional[int] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., fg_tex_index: _Optional[int] = ..., bg_tex_index: _Optional[int] = ..., json_data: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, fg_id: _Optional[int] = ..., bg_id: _Optional[int] = ..., lock_index: _Optional[int] = ..., parent_index: _Optional[int] = ..., flags: _Optional[int] = ..., extra: _Optional[bytes] = ..., index: _Optional[int] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., fg_tex_index: _Optional[int] = ..., bg_tex_index: _Optional[int] = ..., overlay_tex_index: _Optional[int] = ..., json_data: _Optional[bytes] = ...) -> None: ...
 
 class WorldInner(_message.Message):
     __slots__ = ("name", "width", "height", "nb_tiles", "tiles", "dropped", "garbage_start")

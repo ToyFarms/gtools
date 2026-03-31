@@ -124,6 +124,7 @@ message Tile {
   uint32 y = 7;
   uint32 fg_tex_index = 12;
   uint32 bg_tex_index = 13;
+  uint32 overlay_tex_index = 14;
   bytes json_data = 9;
 }
 
