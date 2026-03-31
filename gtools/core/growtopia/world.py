@@ -677,21 +677,20 @@ class StuffForToysTile(TileExtra):
         return t
 
 
-# TODO: this clothing order is probably wrong
 @dataclass(slots=True)
 class MannequinTile(TileExtra):
     text: bytes = b""
     unk1: int = 0  # u8
     unk2: int = 0  # u32
+    hair: int = 0  # u16
     shirt: int = 0  # u16
     pants: int = 0  # u16
     shoes: int = 0  # u16
     face: int = 0  # u16
     hand: int = 0  # u16
     back: int = 0  # u16
-    hair: int = 0  # u16
+    hat: int = 0  # u16
     neck: int = 0  # u16
-    artifacts: int = 0  # u16
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "MannequinTile":
@@ -699,15 +698,15 @@ class MannequinTile(TileExtra):
         t.text = s.read_pascal_bytes("H")
         t.unk1 = s.read_u8()
         t.unk2 = s.read_u32()
+        t.hair = s.read_u16()
         t.shirt = s.read_u16()
         t.pants = s.read_u16()
         t.shoes = s.read_u16()
         t.face = s.read_u16()
         t.hand = s.read_u16()
         t.back = s.read_u16()
-        t.hair = s.read_u16()
+        t.hat = s.read_u16()
         t.neck = s.read_u16()
-        t.artifacts = s.read_u16()
 
         return t
 
@@ -758,31 +757,30 @@ class XenoniteCrystalTile(TileExtra):
         return t
 
 
-# TODO: this clothing order is probably wrong
 @dataclass(slots=True)
 class PhoneBoothTile(TileExtra):
+    hair: int = 0  # u16
     shirt: int = 0  # u16
     pants: int = 0  # u16
     shoes: int = 0  # u16
     face: int = 0  # u16
     hand: int = 0  # u16
     back: int = 0  # u16
-    hair: int = 0  # u16
+    hat: int = 0  # u16
     neck: int = 0  # u16
-    artifacts: int = 0  # u16
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "PhoneBoothTile":
         t = cls()
+        t.hair = s.read_u16()
         t.shirt = s.read_u16()
         t.pants = s.read_u16()
         t.shoes = s.read_u16()
         t.face = s.read_u16()
         t.hand = s.read_u16()
         t.back = s.read_u16()
-        t.hair = s.read_u16()
+        t.hat = s.read_u16()
         t.neck = s.read_u16()
-        t.artifacts = s.read_u16()
 
         return t
 
