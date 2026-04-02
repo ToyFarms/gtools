@@ -692,26 +692,12 @@ class State:
                     self.logger.warning("send lock, but world is not initialized")
                     return
 
-                if lock_tile := self.world.get_tile(ivec2(upd.send_lock.x, upd.send_lock.y)):
-                    # place lock if it doesn't exists
-                    if (
-                        (lock_tile.extra and lock_tile.extra.type != TileExtraType.LOCK_TILE)
-                        or lock_tile.extra is None
-                        or lock_tile.extra.expect(LockTile).owner_uid != upd.send_lock.lock_owner_id
-                    ):
-                        self.world.place_fg(lock_tile, upd.send_lock.lock_item_id)
-                        assert lock_tile.extra
-                        lock_tile.extra.expect(LockTile).owner_uid = upd.send_lock.lock_owner_id
-
-                    self.world.remove_locked(lock_tile)
-
-                    for tile in upd.send_lock.tiles_affected:
-                        target_tile = self.world.get_tile(tile)
-                        if not target_tile:
-                            raise ValueError(f"send_lock: tile at {tile=} should exists, but it doesn't")
-
-                        target_tile.flags |= TileFlags.LOCKED
-                        target_tile.lock_index = lock_tile.index
+                self.world.update_lock(
+                    pos=ivec2(upd.send_lock.x, upd.send_lock.y),
+                    lock_owner_id=upd.send_lock.lock_owner_id,
+                    lock_item_id=upd.send_lock.lock_item_id,
+                    tiles_affected=(x for x in upd.send_lock.tiles_affected),
+                )
             case StateUpdateWhat.STATE_UPDATE_TREE_STATE:
                 if not self.world:
                     self.logger.warning("update tree state, but world is not initialized")

@@ -2146,13 +2146,13 @@ class NpcEvent(IntEnum):
 
 @dataclass(slots=True)
 class Npc:
-    id: int = 0
-    type: NpcType = NpcType.NONE
-    pos: vec2 = field(default_factory=vec2)
-    target_pos: vec2 = field(default_factory=vec2)
-    param1: int = 0  # next state, scale
-    param2: int = 0  # orbit radius
-    param3: float = 0.0  # speed, orbit radius
+    type: NpcType = NpcType.NONE  # u8
+    id: int = 0  # u8
+    pos: vec2 = field(default_factory=vec2)  # f32 * 2
+    target_pos: vec2 = field(default_factory=vec2)  # f32 * 2
+    param1: int = 0  # next state, scale  i32
+    param2: int = 0  # orbit radius  i32
+    param3: float = 0.0  # speed, orbit radius  f32
     facing_left: bool = False
 
     @classmethod
@@ -2488,7 +2488,7 @@ class World:
             self.tiles[idx] = tile
             self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
-    def place_fg(self, tile: Tile, fg: int, connection: int = 0, a5: bool = False) -> None:
+    def place_fg(self, tile: Tile, fg: int, connection: int = 0, a5: bool = False, broadcast: bool = True) -> None:
         item = item_database.get(fg)
         if tile.extra:
             if tile.extra.type == TileExtraType.LOCK_TILE and tile.fg_id != fg:
@@ -2622,7 +2622,8 @@ class World:
             tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
             tile.flags |= TileFlags.HAS_EXTRA_DATA
 
-        self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
+        if broadcast:
+            self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
     def place_bg(self, tile: Tile, bg: int, connection: int = 0) -> None:
         if bg == TRANSDIMENSIONAL_VAPORIZER_RAY:
@@ -2748,6 +2749,7 @@ class World:
             if tile.lock_index == locked.index:
                 tile.flags &= ~TileFlags.LOCKED
                 tile.lock_index = 0
+                self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
                 yield tile
 
     def plant(self, tile: Tile, id: int, item_on_tree: int, splice: bool) -> None:
@@ -2809,6 +2811,28 @@ class World:
                 tile.flags &= ~TileFlags.FLIPPED_X
 
         self.update_3x3_connection(tile)
+
+    def update_lock(self, pos: ivec2, lock_owner_id: int, lock_item_id: int, tiles_affected: Iterator[int]) -> None:
+        if lock_tile := self.get_tile(pos):
+            # place lock if it doesn't exists
+            if (lock_tile.extra and lock_tile.extra.type != TileExtraType.LOCK_TILE) or lock_tile.extra is None or lock_tile.extra.expect(LockTile).owner_uid != lock_owner_id:
+                self.place_fg(lock_tile, lock_item_id, broadcast=False)
+                assert lock_tile.extra
+                lock_tile.extra.expect(LockTile).owner_uid = lock_owner_id
+                self.broadcast(WorldEvent.TILE_UPDATE, lock_tile.pos.x, lock_tile.pos.y)
+
+            self.remove_locked(lock_tile)
+
+            for tile in tiles_affected:
+                target_tile = self.get_tile(tile)
+                if not target_tile:
+                    raise ValueError(f"update_lock: tile at {tile=} should exists, but it doesn't")
+
+                target_tile.flags |= TileFlags.LOCKED
+                target_tile.lock_index = lock_tile.index
+
+                # self.update_tile_connection(target_tile)
+                self.broadcast(WorldEvent.TILE_UPDATE, target_tile.pos.x, target_tile.pos.y)
 
     def create_dropped(self, id: int, pos: vec2, amount: int, flags: int) -> None:
         dropped = DroppedItem(
