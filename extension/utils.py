@@ -84,8 +84,8 @@ class UtilityExtension(Extension):
             )
         )
 
-    @dispatch(s.command_toggle("/nowrap", s.auto))
-    def _toggle_nowrap(self, _event: PendingPacket) -> PendingPacket | None:
+    @dispatch(s.command_toggle("/nowarp", s.auto))
+    def _toggle_nowarp(self, _event: PendingPacket) -> PendingPacket | None:
         self.intercept_warp = not self.intercept_warp
         self.console_log(f"simulate warp: {self.intercept_warp}")
 
@@ -255,7 +255,14 @@ class UtilityExtension(Extension):
             if id:
                 self.console_log(f"{self.state.world.dropped.get_total(int(id))}")
             else:
-                self.console_log(f"{self.state.world.dropped}")
+                x: set[int] = set()
+                for item in self.state.world.dropped.items:
+                    x.add(item.id)
+
+                out: list[str] = []
+                for id in x:
+                    out.append(f"{item_database.get(id).name.decode()}: {self.state.world.dropped.get_total(id)}")
+                self.console_log(" ".join(out))
 
         return self.cancel()
 
