@@ -391,8 +391,8 @@ class WorldRenderer:
                 ObjectRenderable(
                     mesh=self._renderer_post_fg.build(
                         self._world.dropped.items,
-                        icon_scale=0.67,
-                        overlay_scale=1.2,
+                        icon_scale=0.5,
+                        overlay_scale=1,
                         pos_offset=vec2(-8, -8),
                         flags=ObjectRenderer.Flags.ORDER_BY_UID,
                     ),
