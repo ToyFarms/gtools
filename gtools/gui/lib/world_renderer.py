@@ -1397,7 +1397,7 @@ class WorldRenderer:
 
     def _render_to_fbo_2d(self) -> None:
         if self._culling_debug_zoom > 1.0:
-            visual_camera = Camera2D(self._camera.width, self._camera.height)
+            visual_camera = Camera2D(self._camera.width, self._camera.height, self._camera.depth_range)
             visual_camera.pos = vec2(self._camera.pos)
             visual_camera.zoom = self._camera.zoom / self._culling_debug_zoom
             self._render_order.draw_2d(visual_camera, culling_camera=self._camera)
