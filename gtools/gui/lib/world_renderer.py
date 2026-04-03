@@ -144,7 +144,7 @@ class RenderOrder:
 class WorldRenderer:
     def __init__(self, world: World) -> None:
         self._world = world
-        self._camera = Camera2D(800, 600)
+        self._camera = Camera2D(800, 600, 100)
         self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
         self._fbo = Framebuffer(800, 600)
 

@@ -6,18 +6,19 @@ import ctypes
 
 
 class Camera2D:
-    def __init__(self, width: int, height: int) -> None:
+    def __init__(self, width: int, height: int, depth_range: int = 1) -> None:
         self.pos = vec2(0.0, 0.0)
         self.zoom = 1.0
         self.width = width
         self.height = height
         self.min_zoom = 0.05
         self.max_zoom = 10.0
+        self.depth_range = depth_range
 
     def proj(self) -> mat4x4:
         hw = self.width / (2.0 * self.zoom)
         hh = self.height / (2.0 * self.zoom)
-        return glm.ortho(self.pos.x - hw, self.pos.x + hw, self.pos.y + hh, self.pos.y - hh, -1.0, 1.0)
+        return glm.ortho(self.pos.x - hw, self.pos.x + hw, self.pos.y + hh, self.pos.y - hh, -self.depth_range, self.depth_range)
 
     def proj_as_numpy(self) -> npt.NDArray[np.float32]:
         m = self.proj()
