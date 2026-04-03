@@ -782,6 +782,67 @@ class WorldRenderer:
                 uv0=(0, 1),
                 uv1=(1, 0),
             )
+
+            if imgui.begin_popup_context_item("world_context_menu"):
+                if self._hovered_tile:
+                    imgui.text_disabled(f"Tile: {self._hovered_tile.pos.x}, {self._hovered_tile.pos.y}")
+                    imgui.separator()
+
+                    fg_item = item_database.get(self._hovered_tile.fg_id)
+                    bg_item = item_database.get(self._hovered_tile.bg_id)
+
+                    imgui.text(f"FG: {fg_item.name.decode()} ({fg_item.id})")
+                    imgui.text(f"BG: {bg_item.name.decode()} ({bg_item.id})")
+
+                    imgui.separator()
+                    if imgui.begin_menu("Copy"):
+                        if imgui.menu_item("Position", "", False)[0]:
+                            imgui.set_clipboard_text(f"{self._hovered_tile.pos.x}, {self._hovered_tile.pos.y}")
+                        if imgui.menu_item(f"FG ID ({self._hovered_tile.fg_id})", "", False)[0]:
+                            imgui.set_clipboard_text(str(self._hovered_tile.fg_id))
+                        if imgui.menu_item(f"BG ID ({self._hovered_tile.bg_id})", "", False)[0]:
+                            imgui.set_clipboard_text(str(self._hovered_tile.bg_id))
+                        imgui.end_menu()
+
+                    imgui.separator()
+
+                has_history = len(self._history_3d if self._mode_3d else self._history_2d) > 0
+                if imgui.menu_item("Undo Zoom", "Middle Click", False, has_history)[0]:
+                    if self._mode_3d:
+                        if self._history_3d:
+                            pos, yaw, pitch = self._history_3d.pop()
+                            self._camera3d.pos, self._camera3d.yaw, self._camera3d.pitch = pos, yaw, pitch
+                            self._dirty = True
+                    else:
+                        if self._history_2d:
+                            pos, zoom = self._history_2d.pop()
+                            self._camera.pos, self._camera.zoom = pos, zoom
+                            self._dirty = True
+
+                if imgui.menu_item("Reset Camera", "R", False)[0]:
+                    if self._mode_3d:
+                        self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
+                    else:
+                        self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
+                    self._dirty = True
+
+                imgui.separator()
+
+                changed, self.mode_3d = imgui.menu_item("3D Mode", "3", self._mode_3d)
+                if changed:
+                    self._dirty = True
+
+                changed, self.wireframe = imgui.menu_item("Wireframe", "", self._wireframe)
+                if changed:
+                    self._dirty = True
+
+                changed, self._show_settings = imgui.menu_item("Show Settings", "Tab", self._show_settings)
+
+                if imgui.menu_item("Debug Overlay", "F3", perf_stats.SHOW_DEBUG_OVERLAY)[0]:
+                    perf_stats.SHOW_DEBUG_OVERLAY = not perf_stats.SHOW_DEBUG_OVERLAY
+
+                imgui.end_popup()
+
             self._hovered = imgui.is_item_hovered()
             rect_min = imgui.get_item_rect_min()
             self._image_origin = (rect_min.x, rect_min.y)
@@ -1348,6 +1409,9 @@ class WorldRenderer:
                 self._gui_menu_renderer.draw(self._camera, str(self._hovered_tile.extra), vec2(self._hovered_tile.pos) * 32)
 
     def _update_hover(self) -> None:
+        if imgui.is_popup_open("world_context_menu"):
+            return
+
         if not self._hovered:
             if self._hovered_tile is not None:
                 self._hovered_tile = None
