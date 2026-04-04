@@ -1738,14 +1738,14 @@ class KrankenGalaticBlockTile(TileExtra):
 
 @dataclass(slots=True)
 class FriendsEntranceTile(TileExtra):
-    owner_user_id: int = 0  # u32
+    owner_uid: int = 0  # u32
     unk1: int = 0  # u16
     unk2: int = 0  # u16
 
     @classmethod
     def deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "FriendsEntranceTile":
         t = cls()
-        t.owner_user_id = s.read_u32()
+        t.owner_uid = s.read_u32()
         t.unk1 = s.read_u16()
         t.unk2 = s.read_u16()
         return t

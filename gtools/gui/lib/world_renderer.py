@@ -51,7 +51,8 @@ from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib.layer import OBJECT_PRE_FOREGROUND_END, OBJECT_PRE_FOREGROUND_START, OBJECT_DROPPED_END, OBJECT_POST_FOREGROUND_START, WORLD_POST_FOREGROUND
 from gtools.gui.lib.object_renderer import ObjectRenderMesh, ObjectRenderer
-from gtools.gui.opengl import Framebuffer
+from gtools.gui.lib.tile_overlay_renderer import TileOverlayRenderer
+from gtools.gui.opengl import Framebuffer, Mesh
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
 from gtools.gui.lib.tile_renderer import TileRenderer
 from gtools.gui.lib.highlight_renderer import HighlightRenderer
@@ -167,6 +168,11 @@ class WorldRenderer:
         self._gui_menu_renderer = GuiMenuRenderer()
         self._player_renderer = PlayerRenderer()
         self._npc_renderer = NpcRenderer()
+
+        self._tile_overlay_renderer = TileOverlayRenderer()
+        self._tile_overlay_mesh: Mesh | None = None
+        self._render_tile_overlay = False
+
         self._playing = True
         self._seek = 0
         self._hovered_tile: Tile | None = None
@@ -174,7 +180,7 @@ class WorldRenderer:
         self._mode_3d = False
         self._camera3d = Camera3D(800, 600)
         self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
-        self._layer_spread: float = 200.0
+        self._layer_spread: float = 10.0
 
         self._keys_held: set[int] = set()
         self._wireframe = False
@@ -518,6 +524,13 @@ class WorldRenderer:
             lambda camera3d, layer_spread: self._highlight_renderer.draw_playhead_3d(camera3d, self._sheet, self._world.width, layer_spread),
         )
 
+        self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
+        self._render_order.add(
+            "Tile Overlay",
+            lambda camera, cull: self._render_tile_overlay and self._tile_overlay_mesh and self._tile_overlay_renderer.draw(camera, self._tile_overlay_mesh),
+            lambda camera3d, layer_spread: self._render_tile_overlay and self._tile_overlay_mesh and self._tile_overlay_renderer.draw_3d(camera3d, layer_spread, self._tile_overlay_mesh),
+        )
+
     def _draw_obj_group_shadows_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
         glDepthMask(GL_FALSE)
         for task in tasks:
@@ -541,6 +554,9 @@ class WorldRenderer:
     def _on_tile_update(self, x: int, y: int) -> None:
         with self._tile_update_lock:
             self._tile_updates.add((x, y))
+
+        # TODO: also build in chunks
+        self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
 
     def _on_dropped_update(self) -> None:
         self._needs_obj_rebuild = True
@@ -577,6 +593,9 @@ class WorldRenderer:
         self._gui_menu_renderer.delete()
         self._player_renderer.delete()
         self._npc_renderer.delete()
+        self._tile_overlay_renderer.delete()
+        if self._tile_overlay_mesh:
+            self._tile_overlay_mesh.delete()
 
     def _render_settings(self) -> None:
         imgui.text("World Settings")
@@ -609,7 +628,9 @@ class WorldRenderer:
             ("FG", TileRenderer.Flags.RENDER_FG),
             ("BG", TileRenderer.Flags.RENDER_BG),
         ]
-        for label, flag in FLAGS:
+        for i, (label, flag) in enumerate(FLAGS):
+            if i != 0:
+                imgui.same_line()
             flags = self.tile_flags
             changed, is_set = imgui.checkbox(label, flags & flag != 0)
             if changed:
@@ -618,6 +639,12 @@ class WorldRenderer:
                 else:
                     flags &= ~flag
                 self.tile_flags = flags
+
+        imgui.same_line()
+        changed, is_set = imgui.checkbox("Overlay", self._render_tile_overlay)
+        if changed:
+            self._render_tile_overlay = is_set
+            self._dirty = True
 
         imgui.separator()
 
@@ -828,7 +855,7 @@ class WorldRenderer:
 
                 imgui.separator()
 
-                changed, self.mode_3d = imgui.menu_item("3D Mode", "3", self._mode_3d)
+                changed, self.mode_3d = imgui.menu_item("3D Mode", "Z", self._mode_3d)
                 if changed:
                     self._dirty = True
 
@@ -1115,7 +1142,7 @@ class WorldRenderer:
                 return False
             if event.action == glfw.PRESS:
                 self._keys_held.add(event.key)
-                if event.key == glfw.KEY_3:
+                if event.key == glfw.KEY_Z:
                     self._mode_3d = not self._mode_3d
                     self._dirty = True
                     return True
@@ -1129,6 +1156,10 @@ class WorldRenderer:
                     return True
                 elif event.key == glfw.KEY_2:
                     self._tile_renderer.flags ^= TileRenderer.Flags.RENDER_BG
+                    self._dirty = True
+                    return True
+                elif event.key == glfw.KEY_3:
+                    self._render_tile_overlay = not self._render_tile_overlay
                     self._dirty = True
                     return True
                 elif event.key == glfw.KEY_LEFT:

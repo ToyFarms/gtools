@@ -266,8 +266,8 @@ class Proxy:
             elif pkt.as_net.type == NetType.GENERIC_TEXT and b"action" in pkt.as_net.generic_text and pkt.as_net.generic_text[b"action"] == b"dialog_return":
                 self.logger.debug("dialog exit")
                 self._in_dialog = False
-        except:
-            self.logger.exception("something failed")
+        except Exception as e:
+            self.logger.exception(f"something failed: {e}")
             if setting.panic_on_packet_error:
                 raise
 
