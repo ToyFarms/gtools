@@ -434,17 +434,17 @@ class Proxy:
             self.logger.info("all connected! now polling for events")
             self.state.update_status(self.broker, Status.CONNECTED)
 
-            MAX_POLL_MS = 100
-
             self._worker_should_process.set()
             while self.running:
-                start = time.perf_counter()
-                while (event := self.proxy_server.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                    self._event_queue.put((ProxyEvent(event, DIRECTION_CLIENT_TO_SERVER), self._packet_version))
+                handled = False
 
-                start = time.perf_counter()
-                while (event := self.proxy_client.poll()) and ((time.perf_counter() - start) * 1000.0 < MAX_POLL_MS):
-                    self._event_queue.put((ProxyEvent(event, DIRECTION_SERVER_TO_CLIENT), self._packet_version))
+                for proxy, direction in (
+                    (self.proxy_server, DIRECTION_CLIENT_TO_SERVER),
+                    (self.proxy_client, DIRECTION_SERVER_TO_CLIENT),
+                ):
+                    if event := proxy.poll():
+                        self._event_queue.put((ProxyEvent(event, direction), self._packet_version))
+                        handled = True
 
                 if time.time() - self._last_telemetry_update > self._telemetry_update_interval:
                     self.state.telemetry.server_ping = ctypes.cast(self.proxy_client.peer, ctypes.POINTER(ENetPeer)).contents.roundTripTime if self.proxy_client.peer else 0
@@ -458,6 +458,9 @@ class Proxy:
                     with self.broker.suppressed_log():
                         self.state.emit_telemetry(self.broker)
                     break
+
+                if not handled:
+                    time.sleep(0.01)
 
             self._worker_should_process.clear()
             self._packet_version += 1

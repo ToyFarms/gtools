@@ -100,7 +100,7 @@ class ENetPeerBase:
 
     def poll(self) -> PyENetEvent | None:
         event = ENetEvent()
-        if enet_host_service(self.host, byref(event), 16) > 0:
+        if enet_host_service(self.host, byref(event), 0) > 0:
             if event.type == ENetEventType.CONNECT:
                 return PyENetEvent.new(event)
             elif event.type == ENetEventType.RECEIVE:
