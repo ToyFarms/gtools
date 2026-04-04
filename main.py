@@ -37,10 +37,12 @@ from gtools.protogen.extension_pb2 import (
     PendingPacket,
 )
 from gtools.proxy.accountmgr import AccountManager
-from gtools.proxy.http_proxy import setup_server
+from gtools.proxy.http_proxy import setup_server as setup_http_proxy
+from gtools.server.http_server import setup_server as setup_http_server
 from gtools.proxy.extension.server.broker import Broker
 from gtools.proxy.extension.client.sdk import Extension, register_thread
 from gtools.proxy.proxy import Proxy
+from gtools.server.server import Server
 from thirdparty.enet.bindings import ENetPacketFlag
 from gtools import setting
 from gtools.setting import Setting
@@ -165,10 +167,23 @@ def run_proxy() -> None:
     except PermissionError:
         elevate(wait_for_child=True)
 
-    server = setup_server()
+    server = setup_http_proxy()
     t = threading.Thread(target=lambda: server.serve_forever())
     t.start()
     Proxy().start(block=True)
+
+    with block_sigint():
+        server.shutdown()
+        server.server_close()
+        t.join()
+
+
+def run_server() -> None:
+    server = setup_http_server()
+    t = threading.Thread(target=lambda: server.serve_forever())
+    t.start()
+
+    Server(setting.server.enet_host, setting.server.enet_port).start(block=True)
 
     with block_sigint():
         server.shutdown()
@@ -211,6 +226,7 @@ if __name__ == "__main__":
 
     for name, help_txt in [
         ("proxy", "run the proxy"),
+        ("server", "run the server"),
         ("ext_test", "run extension test"),
         ("test", "run network checks"),
         ("stress", "run stress extension"),
@@ -294,6 +310,8 @@ if __name__ == "__main__":
         test_server()
     elif args.cmd == "proxy":
         run_proxy()
+    elif args.cmd == "server":
+        run_server()
     elif args.cmd == "gui":
         app = App().run()
     elif args.cmd == "acc":

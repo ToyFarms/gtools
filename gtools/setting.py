@@ -24,6 +24,14 @@ _observer = None
 
 
 @dataclass
+class ServerSetting(JsonMixin):
+    login_url: str = field(default="0.0.0.0:443")
+    server_data_host: str = field(default="0.0.0.0")
+    server_data_port: int = field(default=443)
+    enet_host: str = field(default="0.0.0.0")
+    enet_port: int = field(default=18999)
+
+@dataclass
 class Setting(JsonMixin):
     server_data_url: str = field(default="www.growtopia1.com")
     proxy_server: str = field(default="127.0.0.1")
@@ -48,6 +56,7 @@ class Setting(JsonMixin):
 
     opengl_error_checking: bool = field(default=False)
 
+    server: ServerSetting = field(default_factory=ServerSetting)
 
     def __getattribute__(self, name):
         with _setting_lock:
@@ -58,13 +67,13 @@ class Setting(JsonMixin):
             super().__setattr__(name, value)
 
     def save(self) -> None:
-        logging.info(f"saved setting to {SETTING_FILE}")
+        logger.info(f"saved setting to {SETTING_FILE}")
         with _setting_lock:
             self.to_json_file(SETTING_FILE, 4)
 
     @staticmethod
     def load() -> "Setting":
-        logging.info(f"loaded setting from {SETTING_FILE}")
+        logger.info(f"loaded setting from {SETTING_FILE}")
 
         try:
             raw_keys = set(json.loads(SETTING_FILE.read_text()).keys())
@@ -76,13 +85,11 @@ class Setting(JsonMixin):
 
         missing_names = {f.name for f in fields(Setting)} - raw_keys
         if missing_names:
-            logger.info(
-                f"setting migrated, added {len(missing_names)} new field(s): "
-                + ", ".join(sorted(missing_names))
-            )
+            logger.info(f"setting migrated, added {len(missing_names)} new field(s): " + ", ".join(sorted(missing_names)))
             loaded.save()
 
         return loaded
+
 
 class _SettingFileHandler(FileSystemEventHandler):
     def on_modified(self, event: DirModifiedEvent | FileModifiedEvent) -> None:
