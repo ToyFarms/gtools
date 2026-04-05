@@ -1,7 +1,7 @@
 import ctypes
 import logging
 import threading
-import time
+from traceback import print_exc
 from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, TankType
 from gtools.core.growtopia.variant import Variant
 from gtools.core.protocol import Serializable
@@ -52,10 +52,10 @@ class Peer:
             )
         )
 
-    def on_receive(self, data: bytes, flags: ENetPacketFlag) -> None:
+    def on_receive(self, data: bytes, _flags: ENetPacketFlag) -> None:
         pkt = NetPacket.deserialize(data)
 
-        if pkt.type == NetType.GAME_MESSAGE and pkt.game_message.get(b"action") == b"quit":
+        if pkt.type == NetType.GAME_MESSAGE and pkt.game_message.get(b"action", 1) == b"quit":
             self.want_to_disconnect = True
         if pkt.type == NetType.TANK_PACKET and pkt.tank.type == TankType.DISCONNECT:
             self.want_to_disconnect = True
@@ -105,23 +105,28 @@ class Server:
             self._thread_id = threading.Thread(target=self._thread)
             self._thread_id.start()
 
-    def get_peer(self, id: int | Pointer[ENetPeer]) -> Peer:
-        if isinstance(id, int):
-            return self.peers[id]
+    def get_peer(self, enet_peer: Pointer[ENetPeer]) -> Peer:
+        key = ctypes.addressof(enet_peer.contents)
+        return self.peers[key]
 
-        id = ctypes.cast(id, ctypes.POINTER(ENetPeer)).contents.connectID
-        return self.peers[id]
+    def add_peer(self, enet_peer: Pointer[ENetPeer]) -> Peer:
+        key = ctypes.addressof(enet_peer.contents)
+        peer = Peer(key, enet_peer)
+        self.peers[key] = peer
+
+        return peer
+
+    def remove_peer(self, enet_peer: Pointer[ENetPeer]) -> None:
+        key = ctypes.addressof(enet_peer.contents)
+        self.peers.pop(key, None)
 
     def _thread(self) -> None:
         while True:
             event = ENetEvent()
-            if enet_host_service(self.host, byref(event), 0) > 0:
+            if enet_host_service(self.host, byref(event), 16) > 0:
                 try:
                     if event.type == ENetEventType.CONNECT:
-                        enet_peer = ctypes.cast(event.peer, ctypes.POINTER(ENetPeer)).contents
-                        id = enet_peer.connectID
-                        peer = Peer(id, event.peer)
-                        self.peers[id] = peer
+                        peer = self.add_peer(event.peer)
 
                         peer.on_connect()
 
@@ -135,8 +140,6 @@ class Server:
                         peer.on_receive(data, flags)
 
                         if peer.want_to_disconnect:
-                            peer.on_disconnect()
-                            self.peers.pop(peer.id, None)
                             peer.disconnect()
 
                         enet_packet_destroy(event.packet)
@@ -144,8 +147,7 @@ class Server:
                         peer = self.get_peer(event.peer)
                         peer.on_disconnect()
 
-                        self.peers.pop(peer.id)
+                        self.remove_peer(event.peer)
                 except Exception as e:
+                    print_exc()
                     self.logger.error(f"exception in service: {e}")
-
-            time.sleep(0.01)

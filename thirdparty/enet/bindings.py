@@ -18,7 +18,22 @@ def byref[T: ctypes.Structure](val: T, offset: int = 0) -> Pointer[T]:
     return cast(Pointer[T], ctypes.byref(val, offset))
 
 
-class ENetAddress(ctypes.Structure):
+class _ReprMixin:
+    def __repr__(self) -> str:
+        parts: list[str] = []
+        for name, *_ in self._fields_:  # pyright: ignore[reportAttributeAccessIssue]
+            try:
+                parts.append(f"{name}={getattr(self, name)!r}")
+            except Exception:
+                parts.append(f"{name}=<unreadable>")
+        return f"{self.__class__.__name__}({', '.join(parts)})"
+
+
+class ENetStructure(_ReprMixin, ctypes.Structure): ...
+class ENetUnion(_ReprMixin, ctypes.Union): ...
+
+
+class ENetAddress(ENetStructure):
     _fields_ = [
         ("host", ctypes.c_uint32),
         ("port", ctypes.c_uint16),
@@ -53,7 +68,7 @@ class ENetPacketFlag(IntFlag):
     SENT = 1 << 8
 
 
-class ENetPacket(ctypes.Structure):
+class ENetPacket(ENetStructure):
     pass
 
 
@@ -69,7 +84,7 @@ ENetPacket._fields_ = [
 ]
 
 
-class ENetListNode(ctypes.Structure):
+class ENetListNode(ENetStructure):
     pass
 
 
@@ -92,13 +107,13 @@ class EnetPeerState(IntEnum):
     ENET_PEER_STATE_ZOMBIE = 9
 
 
-class ENetList(ctypes.Structure):
+class ENetList(ENetStructure):
     _fields_ = [
         ("sentinel", ENetListNode),
     ]
 
 
-class ENetChannel(ctypes.Structure):
+class ENetChannel(ENetStructure):
     _fields_ = [
         ("outgoingReliableSequenceNumber", ctypes.c_uint16),
         ("outgoingUnreliableSequenceNumber", ctypes.c_uint16),
@@ -110,11 +125,12 @@ class ENetChannel(ctypes.Structure):
         ("incomingUnreliableCommands", ENetList),
     ]
 
-class ENetHost(ctypes.Structure):
+
+class ENetHost(ENetStructure):
     pass
 
 
-class ENetPeer(ctypes.Structure):
+class ENetPeer(ENetStructure):
     _fields_ = [
         ("dispatchList", ENetListNode),
         ("host", ctypes.POINTER(ENetHost)),
@@ -124,7 +140,7 @@ class ENetPeer(ctypes.Structure):
         ("outgoingSessionID", ctypes.c_uint8),
         ("incomingSessionID", ctypes.c_uint8),
         ("address", ENetAddress),  # Internet address of the peer
-        ("data", ctypes.c_void_p),  # Application private data,   may be freely modified
+        ("data", ctypes.c_void_p),  # Application private data, may be freely modified
         ("state", ctypes.c_int),  # EnetPeerState
         ("channels", ctypes.POINTER(ENetChannel)),
         ("channelCount", ctypes.c_size_t),  # Number of channels allocated for communication with peer
@@ -179,7 +195,7 @@ class ENetPeer(ctypes.Structure):
     ]
 
 
-class ENetEvent(ctypes.Structure):
+class ENetEvent(ENetStructure):
     _fields_ = [
         ("type", ctypes.c_int),  # ENetEventType
         ("peer", ctypes.POINTER(ENetPeer)),
@@ -227,7 +243,7 @@ ENET_PROTOCOL_HEADER_SESSION_SHIFT = 12
 ENetSocket = ctypes.c_int
 
 
-class _ENetSocks5Ipv4InnerStruct(ctypes.Structure):
+class _ENetSocks5Ipv4InnerStruct(ENetStructure):
     _fields_ = [
         ("part4", ctypes.c_uint8),
         ("part3", ctypes.c_uint8),
@@ -236,7 +252,7 @@ class _ENetSocks5Ipv4InnerStruct(ctypes.Structure):
     ]
 
 
-class _ENetSocks5Ipv4Union(ctypes.Union):
+class _ENetSocks5Ipv4Union(ENetUnion):
     _fields_ = [
         ("addr", ctypes.c_uint32),
         ("parts", ctypes.c_uint8 * 4),
@@ -244,7 +260,7 @@ class _ENetSocks5Ipv4Union(ctypes.Union):
     ]
 
 
-class ENetSocks5Ipv4(ctypes.Structure):
+class ENetSocks5Ipv4(ENetStructure):
     _pack_ = 1
     _anonymous_ = ("u",)
     _fields_ = [
@@ -253,7 +269,7 @@ class ENetSocks5Ipv4(ctypes.Structure):
     ]
 
 
-class ENetSocks5Header(ctypes.Structure):
+class ENetSocks5Header(ENetStructure):
     _fields_ = [
         ("reserved", ctypes.c_uint16),
         ("fragment", ctypes.c_uint8),
@@ -262,14 +278,14 @@ class ENetSocks5Header(ctypes.Structure):
     ]
 
 
-class ENetSocks5Authentication(ctypes.Structure):
+class ENetSocks5Authentication(ENetStructure):
     _fields_ = [
         ("username", ctypes.c_char_p),
         ("password", ctypes.c_char_p),
     ]
 
 
-class ENetSocks5Info(ctypes.Structure):
+class ENetSocks5Info(ENetStructure):
     _fields_ = [
         ("ip", ctypes.c_char_p),
         ("port", ctypes.c_uint16),
@@ -289,7 +305,7 @@ class ENetSocks5State(Enum):
     ENET_SOCKS5_STATE_CONNECTED = 8
 
 
-class ENetProtocolHeader(ctypes.Structure):
+class ENetProtocolHeader(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("peerID", ctypes.c_uint16),
@@ -297,7 +313,7 @@ class ENetProtocolHeader(ctypes.Structure):
     ]
 
 
-class ENetNewProtocolHeader(ctypes.Structure):
+class ENetNewProtocolHeader(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("integrity", ctypes.c_uint16 * 3),
@@ -306,7 +322,7 @@ class ENetNewProtocolHeader(ctypes.Structure):
     ]
 
 
-class ENetProtocolCommandHeader(ctypes.Structure):
+class ENetProtocolCommandHeader(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("command", ctypes.c_uint8),
@@ -315,7 +331,7 @@ class ENetProtocolCommandHeader(ctypes.Structure):
     ]
 
 
-class ENetProtocolAcknowledge(ctypes.Structure):
+class ENetProtocolAcknowledge(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -324,7 +340,7 @@ class ENetProtocolAcknowledge(ctypes.Structure):
     ]
 
 
-class ENetProtocolConnect(ctypes.Structure):
+class ENetProtocolConnect(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -344,7 +360,7 @@ class ENetProtocolConnect(ctypes.Structure):
     ]
 
 
-class ENetProtocolVerifyConnect(ctypes.Structure):
+class ENetProtocolVerifyConnect(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -363,7 +379,7 @@ class ENetProtocolVerifyConnect(ctypes.Structure):
     ]
 
 
-class ENetProtocolBandwidthLimit(ctypes.Structure):
+class ENetProtocolBandwidthLimit(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -372,7 +388,7 @@ class ENetProtocolBandwidthLimit(ctypes.Structure):
     ]
 
 
-class ENetProtocolThrottleConfigure(ctypes.Structure):
+class ENetProtocolThrottleConfigure(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -382,7 +398,7 @@ class ENetProtocolThrottleConfigure(ctypes.Structure):
     ]
 
 
-class ENetProtocolDisconnect(ctypes.Structure):
+class ENetProtocolDisconnect(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -390,14 +406,14 @@ class ENetProtocolDisconnect(ctypes.Structure):
     ]
 
 
-class ENetProtocolPing(ctypes.Structure):
+class ENetProtocolPing(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
     ]
 
 
-class ENetProtocolSendReliable(ctypes.Structure):
+class ENetProtocolSendReliable(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -405,7 +421,7 @@ class ENetProtocolSendReliable(ctypes.Structure):
     ]
 
 
-class ENetProtocolSendUnreliable(ctypes.Structure):
+class ENetProtocolSendUnreliable(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -414,7 +430,7 @@ class ENetProtocolSendUnreliable(ctypes.Structure):
     ]
 
 
-class ENetProtocolSendUnsequenced(ctypes.Structure):
+class ENetProtocolSendUnsequenced(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -423,7 +439,7 @@ class ENetProtocolSendUnsequenced(ctypes.Structure):
     ]
 
 
-class ENetProtocolSendFragment(ctypes.Structure):
+class ENetProtocolSendFragment(ENetStructure):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -436,7 +452,7 @@ class ENetProtocolSendFragment(ctypes.Structure):
     ]
 
 
-class ENetProtocol(ctypes.Union):
+class ENetProtocol(ENetUnion):
     _pack_ = 1
     _fields_ = [
         ("header", ENetProtocolCommandHeader),
@@ -454,7 +470,7 @@ class ENetProtocol(ctypes.Union):
     ]
 
 
-class ENetBuffer(ctypes.Structure):
+class ENetBuffer(ENetStructure):
     _fields_ = [
         ("data", ctypes.c_void_p),
         ("dataLength", ctypes.c_size_t),
@@ -474,7 +490,7 @@ CompressorDecompressCallback = ctypes.CFUNCTYPE(ctypes.c_size_t, ctypes.c_void_p
 CompressorDestroyCallback = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
 
 
-class ENetCompressor(ctypes.Structure):
+class ENetCompressor(ENetStructure):
     _fields_ = [
         ("context", ctypes.c_void_p),  # Context data for the compressor. Must be non-NULL.
         (
