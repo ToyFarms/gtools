@@ -401,7 +401,7 @@ class NetPacket(Serializable):
         if callable(repr := getattr(self.data, "compact_repr", None)):
             return cast(str, repr())
 
-        return f"{self.data}"
+        return f"[{self.type.name}]{self.data}"
 
     @property
     def tank(self) -> "TankPacket":
