@@ -352,7 +352,7 @@ class NetPacket(Serializable):
                 animation_type=animation_type,
                 net_id=net_id,
                 target_net_id=target_net_id,
-                flags=flags,
+                flags=flags | TankFlags.EXTENDED,
                 float_var=float_var,
                 value=value,
                 vector_x=vector_x,
