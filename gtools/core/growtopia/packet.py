@@ -29,6 +29,7 @@ class NetType(IntEnum):
     SYNC_CLIENT_POSITION = 9  # protocol > 216
     WRITE_TO_RING_BUFFER = 10
 
+
 class TankType(IntEnum):
     STATE = 0
     CALL_FUNCTION = 1
@@ -320,6 +321,50 @@ class NetPacket(Serializable):
     def __init__(self, type: NetType, data: Serializable) -> None:
         self.type = type
         self.data = data
+
+    @classmethod
+    def variant(
+        cls,
+        variant: Variant,
+        type: TankType | int = TankType.CALL_FUNCTION,
+        object_type: int = 0,
+        jump_count: int = 0,
+        animation_type: int = 0,
+        net_id: int = 0,
+        target_net_id: int = 0,
+        flags: TankFlags | int = TankFlags.NONE,
+        float_var: float = 0.0,
+        value: int = 0,
+        vector_x: float = 0.0,
+        vector_y: float = 0.0,
+        vector_x2: float = 0.0,
+        vector_y2: float = 0.0,
+        particle_rotation: float = 0.0,
+        int_x: int = 0,
+        int_y: int = 0,
+    ) -> "NetPacket":
+        return NetPacket(
+            NetType.TANK_PACKET,
+            TankPacket(
+                type=type,
+                object_type=object_type,
+                jump_count=jump_count,
+                animation_type=animation_type,
+                net_id=net_id,
+                target_net_id=target_net_id,
+                flags=flags,
+                float_var=float_var,
+                value=value,
+                vector_x=vector_x,
+                vector_y=vector_y,
+                vector_x2=vector_x2,
+                vector_y2=vector_y2,
+                particle_rotation=particle_rotation,
+                int_x=int_x,
+                int_y=int_y,
+                extended_data=variant.serialize(),
+            ),
+        )
 
     def serialize(self) -> bytes:
         return struct.pack("<I", self.type.value) + self.data.serialize() + b"\x00"
