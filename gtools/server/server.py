@@ -55,7 +55,7 @@ class Peer:
     def on_receive(self, data: bytes, flags: ENetPacketFlag) -> None:
         pkt = NetPacket.deserialize(data)
 
-        if pkt.type == NetType.GENERIC_TEXT and pkt.generic_text.get(b"action") == b"quit":
+        if pkt.type == NetType.GAME_MESSAGE and pkt.game_message.get(b"action") == b"quit":
             self.want_to_disconnect = True
         if pkt.type == NetType.TANK_PACKET and pkt.tank.type == TankType.DISCONNECT:
             self.want_to_disconnect = True
