@@ -25,7 +25,8 @@ _observer = None
 
 @dataclass
 class ServerSetting(JsonMixin):
-    login_url: str = field(default="0.0.0.0:443")
+    # TODO: we should host this ourself
+    login_url: str = field(default="login-gurotopia.vercel.app")
     server_data_host: str = field(default="0.0.0.0")
     server_data_port: int = field(default=443)
     enet_host: str = field(default="0.0.0.0")

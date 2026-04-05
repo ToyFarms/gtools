@@ -15,8 +15,9 @@ class HTTPHandler(BaseHTTPRequestHandler):
     logger = logging.getLogger("http_handler")
 
     def do_POST(self) -> None:
-        print(self.path)
         if not self.path.startswith("/growtopia/server_data.php"):
+            self.send_response(404)
+            self.end_headers()
             return
 
         parsed = urllib.parse.urlsplit(self.path)
@@ -56,18 +57,15 @@ class HTTPHandler(BaseHTTPRequestHandler):
         res.append(["meta", b64encode(os.urandom(32))])
         res.append(["RTENDMARKERBS1001"])
 
-        self.logger.debug(f"response: {res}")
         body = res.serialize()
+        self.logger.debug(f"response: {body!r}")
 
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", f"{len(body)}")
         self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
         self.wfile.write(body)
-
-    def do_GET(self) -> None:
-        print(self.path)
-        # if self.path.startswith("/player/login/dashboard"):
-        #     print(self.rfile.read())
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
