@@ -2,6 +2,7 @@ import ctypes
 import logging
 import threading
 from traceback import print_exc
+from gtools import setting
 from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, TankType
 from gtools.core.growtopia.variant import Variant
 from gtools.core.protocol import Serializable
@@ -55,10 +56,29 @@ class Peer:
     def on_receive(self, data: bytes, _flags: ENetPacketFlag) -> None:
         pkt = NetPacket.deserialize(data)
 
-        if pkt.type == NetType.GAME_MESSAGE and pkt.game_message.get(b"action", 1) == b"quit":
-            self.want_to_disconnect = True
-        if pkt.type == NetType.TANK_PACKET and pkt.tank.type == TankType.DISCONNECT:
-            self.want_to_disconnect = True
+        if pkt.type == NetType.TANK_PACKET:
+            if pkt.tank.type == TankType.DISCONNECT:
+                self.want_to_disconnect = True
+        elif pkt.type == NetType.GENERIC_TEXT:
+            if b"ltoken" in pkt.generic_text:
+                self.send(
+                    NetPacket.variant(
+                        Variant(
+                            [
+                                Variant.vstr(b"OnSendToServer"),
+                                Variant.vint(setting.server.enet_port),
+                                Variant.vint(0),  # token
+                                Variant.vint(0),  # uid
+                                Variant.vstr(f"{setting.server.enet_host}|0|0".encode()),
+                                Variant.vint(1),  # aat
+                                Variant.vstr(b"something"),  # username
+                            ]
+                        )
+                    )
+                )
+        elif NetType.GAME_MESSAGE:
+            if pkt.game_message.get(b"action", 1) == b"quit":
+                self.want_to_disconnect = True
 
         self.logger.debug(f"peer {self.id}: {pkt.compact_repr()}")
 
