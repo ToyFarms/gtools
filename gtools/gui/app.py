@@ -1,6 +1,7 @@
 import OpenGL
 from gtools import setting
 from gtools.gui.lib import perf_stats
+from gtools.gui.lib.toast import ToastManager
 
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking
 
@@ -97,6 +98,8 @@ class App:
         self._update_thread = threading.Thread(target=self._update_loop, name="update", daemon=True)
         self._update_thread.start()
 
+        self.toast_mgr = ToastManager.get()
+
     def _update_loop(self) -> None:
         logger.info("update thread started")
         prev = time.perf_counter()
@@ -110,6 +113,8 @@ class App:
             with self._panels_lock:
                 for panel in self.panels:
                     panel.update(dt)
+
+            self.toast_mgr.update(dt)
 
             elapsed = time.perf_counter() - loop_start
             self._last_update_ms = elapsed * 1000.0
@@ -230,6 +235,7 @@ class App:
                         panel.is_dirty = False
 
             self._cmd.render()
+            self.toast_mgr.render()
 
             imgui.render()
 

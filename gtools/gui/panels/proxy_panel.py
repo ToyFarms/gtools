@@ -1,12 +1,16 @@
 import logging
 import threading
+from traceback import print_exc
 
 from imgui_bundle import imgui
 from imgui_bundle import imgui_toggle  # pyright: ignore[reportMissingModuleSource]
 from gtools.core.format import format_timespan
 from gtools.gui.event import Event
+from gtools.gui.lib.toast import push_error
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
+from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Interest
+from gtools.proxy.extension.client.sdk import Extension
 from gtools.proxy.http_proxy import ThreadedHTTPServer, setup_server
 from gtools.proxy.proxy import Proxy
 
@@ -25,6 +29,14 @@ _BLINK_DOT_RIGHT_MARGIN = 6.0
 _BLINK_DECAY_RATE = 3.5
 
 
+class GuiExtension(Extension):
+    def __init__(self) -> None:
+        super().__init__(name="GUI-EXTENSION", interest=[Interest(interest=INTEREST_STATE_UPDATE)])
+
+    def destroy(self) -> None:
+        pass
+
+
 class ProxyPanel(Panel):
     def __init__(self, dock_id: int) -> None:
         super().__init__(dock_id)
@@ -33,6 +45,7 @@ class ProxyPanel(Panel):
 
         self.http_server_enabled = False
         self.proxy_enabled = False
+        self.extension_enabled = False
 
         self.server: ThreadedHTTPServer | None = None
         self.server_thread: threading.Thread | None = None
@@ -43,34 +56,61 @@ class ProxyPanel(Panel):
         self._server_blink_t: float = 0.0
         self._client_blink_t: float = 0.0
 
+        self.extension: GuiExtension | None = None
+
         self.world_renderer: WorldRenderer | None = None
         self.reload_next_world: bool = True
         self._sidebar_w: float = 250.0
 
     def setup_http_server(self) -> None:
-        self.server = setup_server()
-        self.server_thread = threading.Thread(target=lambda: self.server and self.server.serve_forever())
-        self.server_thread.start()
+        try:
+            self.server = setup_server()
+            self.server_thread = threading.Thread(target=lambda: self.server and self.server.serve_forever())
+            self.server_thread.start()
+        except Exception as e:
+            push_error("HTTP Server", "failed starting http(s) server", f"{e}")
+            print_exc()
 
     def delete_http_server(self) -> None:
         if self.server:
             self.server.shutdown()
             self.server.server_close()
+            self.server = None
 
         if self.server_thread:
             self.server_thread.join(timeout=2.0)
+            self.server_thread = None
 
     def setup_proxy(self) -> None:
-        self.proxy = Proxy()
-        self.proxy.start(block=False)
+        try:
+            self.proxy = Proxy()
+            self.proxy.start(block=False)
+        except Exception as e:
+            push_error("Proxy", "failed starting proxy", f"{e}")
+            print_exc()
 
     def delete_proxy(self) -> None:
         if self.proxy:
             self.proxy.stop()
+            self.proxy = None
+
+    def setup_extension(self) -> None:
+        try:
+            self.extension = GuiExtension()
+            self.extension.start()
+        except Exception as e:
+            push_error("Extension", "failed starting extension", f"{e}")
+            print_exc()
+
+    def delete_extension(self) -> None:
+        if self.extension:
+            self.extension.stop()
+            self.extension = None
 
     def delete(self) -> None:
         self.delete_http_server()
         self.delete_proxy()
+        self.delete_extension()
 
     def _label_value_row(self, label: str, value: str) -> None:
         avail_x = imgui.get_content_region_avail().x
@@ -139,15 +179,17 @@ class ProxyPanel(Panel):
             imgui.set_mouse_cursor(imgui.MouseCursor_.resize_ew)
 
     def _render_body(self) -> None:
-        if self.proxy:
-            if not self.proxy.state.world:
+        state = self.proxy.state if self.proxy else self.extension.state if self.extension else None
+
+        if state:
+            if not state.world:
                 self.reload_next_world = True
 
-            if self.reload_next_world and self.proxy.state.world:
+            if self.reload_next_world and state.world:
                 if self.world_renderer:
                     self.world_renderer.delete()
 
-                self.world_renderer = WorldRenderer(self.proxy.state.world)
+                self.world_renderer = WorldRenderer(state.world)
                 self.reload_next_world = False
 
         changed, self.http_server_enabled = imgui_toggle.toggle("HTTP Server", self.http_server_enabled)
@@ -159,12 +201,25 @@ class ProxyPanel(Panel):
 
         imgui.same_line()
 
+        imgui.begin_disabled(self.extension_enabled)
         changed, self.proxy_enabled = imgui_toggle.toggle("Proxy", self.proxy_enabled)
         if changed:
             if not self.proxy_enabled or (self.proxy_enabled and self.server):
                 self.delete_proxy()
             if self.proxy_enabled:
                 self.setup_proxy()
+        imgui.end_disabled()
+
+        imgui.same_line()
+
+        imgui.begin_disabled(self.proxy_enabled)
+        changed, self.extension_enabled = imgui_toggle.toggle("Extension", self.extension_enabled)
+        if changed:
+            if not self.extension_enabled or (self.extension_enabled and self.extension):
+                self.delete_extension()
+            if self.extension_enabled:
+                self.setup_extension()
+        imgui.end_disabled()
 
         origin_x, origin_y = imgui.get_cursor_screen_pos()
         avail_w, avail_h = imgui.get_content_region_avail()
@@ -177,9 +232,7 @@ class ProxyPanel(Panel):
             flags=(imgui.WindowFlags_.no_docking | imgui.WindowFlags_.no_move | imgui.WindowFlags_.no_decoration | imgui.WindowFlags_.no_resize),
         )
 
-        if self.proxy:
-            state = self.proxy.state
-
+        if state:
             self._label_value_row("status", state.status.name)
 
             if state.status == Status.IN_WORLD and state.world:
@@ -187,20 +240,21 @@ class ProxyPanel(Panel):
 
             imgui.spacing()
 
-            self._render_packet_row(
-                "server",
-                state.telemetry.server_ping,
-                self.proxy.from_server_packet,
-                self._server_blink_t,
-            )
-            self._render_packet_row(
-                "client",
-                state.telemetry.client_ping,
-                self.proxy.from_client_packet,
-                self._client_blink_t,
-            )
+            if self.proxy:
+                self._render_packet_row(
+                    "server",
+                    state.telemetry.server_ping,
+                    self.proxy.from_server_packet,
+                    self._server_blink_t,
+                )
+                self._render_packet_row(
+                    "client",
+                    state.telemetry.client_ping,
+                    self.proxy.from_client_packet,
+                    self._client_blink_t,
+                )
 
-            imgui.spacing()
+                imgui.spacing()
 
             self._label_value_row("uptime", format_timespan(state.me.time_since_login))
             self._label_value_row("in world", format_timespan(state.me.time_in_world))

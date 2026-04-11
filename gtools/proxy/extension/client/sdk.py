@@ -2,7 +2,6 @@ from abc import abstractmethod
 from argparse import ArgumentParser
 from contextlib import contextmanager
 from queue import Empty
-import struct
 from typing import Callable, Iterator, cast
 import os
 import threading
@@ -76,6 +75,7 @@ class Extension(ExtensionUtility):
         self._push = Push(self._context, increment_port(self._broker_addr))
 
         self._worker_thread_id: threading.Thread | None = None
+        self._monitor_thread_id: threading.Thread | None = None
 
         self._stop_event = Signal(False)
         self.broker_connected = Signal(False)
@@ -141,9 +141,6 @@ class Extension(ExtensionUtility):
                 self.logger.debug(f"\x1b[32m<<--\x1b[0m recv    \x1b[32m<<\x1b[0m{pkt!r}\x1b[32m<<\x1b[0m")
 
         return pkt
-
-    @abstractmethod
-    def destroy(self) -> None: ...
 
     def _resolve_decorator(self) -> None:
         seen_id: dict[int, str] = {}
