@@ -187,8 +187,58 @@ def generate_klv(protocol: bytes, version: bytes, rid: bytes) -> bytes:
     return sha256(b"".join(parts))
 
 
-# take this with a grain of salt, i just eyeballed this
-def generate_klv_android(protocol: bytes, rid: bytes) -> bytes:
+# public static String get_deviceID() {
+#     return "35"
+#         + (Build.BOARD.length() % 10)
+#         + (Build.BRAND.length() % 10)
+#         + (Build.CPU_ABI.length() % 10)
+#         + (Build.DEVICE.length() % 10)
+#         + (Build.DISPLAY.length() % 10)
+#         + (Build.HOST.length() % 10)
+#         + (Build.ID.length() % 10)
+#         + (Build.MANUFACTURER.length() % 10)
+#         + (Build.MODEL.length() % 10)
+#         + (Build.PRODUCT.length() % 10)
+#         + (Build.TAGS.length() % 10)
+#         + (Build.TYPE.length() % 10)
+#         + (Build.USER.length() % 10);
+# }
+
+
+def generate_klv_android(device_id_hash: bytes, protocol: bytes, version: bytes, rid: bytes) -> bytes:
+    """
+    device_id_hash is proton_hash(get_deviceID())
+
+    adb shell '
+    props=(
+        "ro.product.board"
+        "ro.product.brand"
+        "ro.product.cpu.abi"
+        "ro.product.device"
+        "ro.build.display.id"
+        "ro.build.host"
+        "ro.build.id"
+        "ro.product.manufacturer"
+        "ro.product.model"
+        "ro.product.name"
+        "ro.build.tags"
+        "ro.build.type"
+        "ro.build.user"
+    )
+
+    result="35"
+
+    for p in "${props[@]}"; do
+        val=$(getprop $p)
+        len=${#val}
+        digit=$((len % 10))
+        result="${result}${digit}"
+    done
+
+    echo $result
+    '
+    """
+
     salts = [
         b"f270bfe3092faf56e02b8740ed8a7390",
         b"c8f2bde4340c3c0fed4d550539489acc",
@@ -196,9 +246,13 @@ def generate_klv_android(protocol: bytes, rid: bytes) -> bytes:
         b"fba119844f893c112125f29cf858bedc",
     ]
     parts = [
-        salts[0] + md5(md5(salts[0])),
-        salts[1] + md5(md5(md5(md5(protocol)))),
-        salts[2] + md5(md5(md5(rid))),
+        salts[0],
+        md5(md5(device_id_hash)),
+        salts[1],
+        md5(md5(md5(md5(protocol)))),
+        salts[2],
+        md5(md5(version)),
+        md5(md5(md5(rid))),
         salts[3],
     ]
     return md5(b"".join(parts))

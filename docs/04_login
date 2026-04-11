@@ -31,6 +31,14 @@ this packet looks like,
     aat|2\x00'
 
 
+NOTE: some field are platform dependent (https://github.com/1i8/ENetSocks5/blob/946b0e00bd2e385d9ccd8a50fb5d88521284edfa/EBotNet/growtopia/TankProtocol.cpp#L51)
+    windows     = wk, zf
+    osx, ios    = aid, vid
+    android     = gid
+
+    and other fields often means different thing in other os
+
+WINDOWS:
 ** see scripts/login_val.py for a working demo and more details **
 each field what they mean and how to derive it,
 f             = swear filter, 0 or 1
@@ -68,7 +76,7 @@ hash2         = hash of the active network adapter's mac address else mac is "",
 meta          = obtained from server_data.php
 fhash         = field hash, calculated with proton_hash(b"tankIDName|tankIDPass|requestedName|f|protocol|game_version|fz|lmode|cbits|hash2|vid|aid|gid|meta|rid|platformID|deviceVersion|country|hash|mac|reconnect|1\nuser|token|doorID|ProductIdwk|fhash|")
 rid           = unique registration id encoding the first time growtopia is run, see `gtools/core/growtopia/crypto.py` for implementation
-platformID    = constant 0,1,1  values
+platformID    = constant 0,1,1  values, idk what these number means
                 enum ePlatformID
                 {
                         PLATFORM_ID_UNKNOWN = -1,
@@ -103,7 +111,5 @@ aat           = obtained from OnSendToServer, index 5 (1i, 3i part)
     Call(Variant(b'OnSendToServer', 17134i, 13826541i, 210578474i, b'213.179.209.177|0|1231723EABABBABA826381726C545711', 1i, b'username'))
     Call(Variant(b'OnSendToServer', 17017i, -1i, 210578474i, b'213.179.209.175||-1', 3i))
 
-NOTE: some field are platform dependent (https://github.com/1i8/ENetSocks5/blob/946b0e00bd2e385d9ccd8a50fb5d88521284edfa/EBotNet/growtopia/TankProtocol.cpp#L51)
-    windows     = wk, zf
-    osx, ios    = aid, vid
-    android     = gid
+ANDROID:
+fhash         = proton hash of device id, which is proton_hash(str(35 + (Build.BOARD.length() % 10) + (Build.BRAND.length() % 10) + (Build.CPU_ABI.length() % 10) + (Build.DEVICE.length() % 10) + (Build.DISPLAY.length() % 10) + (Build.HOST.length() % 10) + (Build.ID.length() % 10) + (Build.MANUFACTURER.length() % 10) + (Build.MODEL.length() % 10) + (Build.PRODUCT.length() % 10) + (Build.TAGS.length() % 10) + (Build.TYPE.length() % 10) + (Build.USER.length() % 10)).encode())
