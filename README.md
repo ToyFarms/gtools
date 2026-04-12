@@ -29,6 +29,12 @@ prerequisites:
 
 setup:
 
+install uv:
+for linux
+$ curl -LsSf https://astral.sh/uv/install.sh | sh
+for windows
+$ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
 install python:
 $ uv python install 3.13
 (at least python >= 3.12)
