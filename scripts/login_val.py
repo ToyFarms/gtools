@@ -3,8 +3,8 @@ from pathlib import Path
 import platform
 import click
 
+from gtools import setting
 from gtools.core.growtopia.crypto import generate_klv, generate_rid, proton_hash
-from gtools.core.wsl import windows_home
 from gtools.core.windows.adapter import get_computer_mac
 from gtools.core.windows.guid import get_machine_guid
 from gtools.core.windows.vsn import get_any_vsn
@@ -14,7 +14,7 @@ from gtools.core.windows.vsn import get_any_vsn
 @click.argument("game_version", default="5.4")
 @click.argument("protocol", default="225")
 @click.argument("rid", default=None)
-@click.argument("gt_path", default=windows_home() / "AppData/Local/Growtopia/growtopia.exe", type=Path)
+@click.argument("gt_path", default=setting.gt_path / "growtopia.exe", type=Path)
 def login_val(game_version: str, protocol: str, rid: str | None, gt_path: Path) -> None:
     if platform.system() != "Windows":
         print("\x1b[33mWARNING: running on something other than windows will result in different hardware id\x1b[0m")
@@ -40,7 +40,9 @@ def login_val(game_version: str, protocol: str, rid: str | None, gt_path: Path) 
     print(f"klv           = {generate_klv(protocol.encode(), game_version.encode(), rid.encode()).decode()}")
     print(f"hash2         = {proton_hash(get_computer_mac().encode() + b'RT')}")
     print(f"meta          = ?")
-    print(f"fhash         = {proton_hash(b'tankIDName|tankIDPass|requestedName|f|protocol|game_version|fz|lmode|cbits|hash2|vid|aid|gid|meta|rid|platformID|deviceVersion|country|hash|mac|reconnect|1\nuser|token|doorID|ProductIdwk|fhash|')}")
+    print(
+        f"fhash         = {proton_hash(b'tankIDName|tankIDPass|requestedName|f|protocol|game_version|fz|lmode|cbits|hash2|vid|aid|gid|meta|rid|platformID|deviceVersion|country|hash|mac|reconnect|1\nuser|token|doorID|ProductIdwk|fhash|')}"
+    )
     print(f"rid           = {'?' if rid_gen else ''}{rid}")
     print(f"platformID    = ?0,1,1")
     print(f"deviceVersion = ?0")

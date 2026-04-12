@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 import platform
@@ -224,7 +222,7 @@ def _resolve_dir(d: str | Path | None) -> str:
     return str(p) if p.is_dir() else str(p.parent)
 
 
-_BACKEND: _Backend | None = None
+_BACKEND: "_Backend | None" = None
 
 
 def _is_running_wsl() -> bool:

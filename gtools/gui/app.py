@@ -64,6 +64,8 @@ class App:
         io.config_windows_move_from_title_bar_only = True
         io.config_flags |= imgui.ConfigFlags_.docking_enable
 
+        self.toast_mgr = ToastManager.get()
+
         self.imgui_renderer = GlfwRenderer(self.window)
         self.event_router = EventRouter(self.window)
 
@@ -97,8 +99,6 @@ class App:
 
         self._update_thread = threading.Thread(target=self._update_loop, name="update", daemon=True)
         self._update_thread.start()
-
-        self.toast_mgr = ToastManager.get()
 
     def _update_loop(self) -> None:
         logger.info("update thread started")
@@ -136,7 +136,7 @@ class App:
 
         @root.submenu("Search World")
         def _(sub: PaletteBuilder) -> None:
-            self.worlds = [x for x in (windows_home() / ".gtools/worlds").glob("*")]
+            self.worlds = [x for x in (setting.appdir / "worlds").glob("*")]
             for world in self.worlds:
 
                 @sub.cmd(world.name)
@@ -326,7 +326,7 @@ class App:
 def main() -> None:
     path: Path | None = None
     if len(argv) > 1:
-        path = windows_home() / ".gtools/worlds" / argv[1]
+        path = setting.appdir / "worlds" / argv[1]
     App(world_path=path).run()
 
 

@@ -459,7 +459,7 @@ if __name__ == "__main__":
         logger = logging.getLogger("world")
         logger.setLevel(logging.CRITICAL)
         logging.getLogger("tank_packet").setLevel(logging.CRITICAL)
-        for f in (windows_home() / ".gtools/worlds").glob("*"):
+        for f in (setting.appdir / "worlds").glob("*"):
             try:
                 pkt = NetPacket.deserialize(f.read_bytes())
                 w = World.from_tank(pkt.tank)
@@ -516,13 +516,13 @@ if __name__ == "__main__":
                 off = ivec2(tile.fg_tex_index % max(stride, 1), tile.fg_tex_index // stride if stride else 0)
                 tex_pos = (ivec2((anchor.tex_coord_x + 1), anchor.tex_coord_y) + off) * 32
 
-                place(mgr.get(setting.asset_path / "game" / anchor.texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32), tile.fg_id, tile.pos, is_bg=False, no_shadow=True)
+                place(mgr.get(setting.gt_path / "game" / anchor.texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32), tile.fg_id, tile.pos, is_bg=False, no_shadow=True)
             if tile.fg_id == STEAM_REVOLVER:
                 tex_pos, _ = tile.tex_pos(tile.fg_id, 0)
                 tex_pos = (tex_pos + ivec2(0, 1)) * 32
 
                 place(
-                    mgr.get(setting.asset_path / "game" / item_database.get(tile.fg_id).texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32),
+                    mgr.get(setting.gt_path / "game" / item_database.get(tile.fg_id).texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32),
                     tile.fg_id,
                     tile.pos,
                     is_bg=False,

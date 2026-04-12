@@ -6,7 +6,7 @@ import numpy as np
 
 
 class SeedRenderer:
-    _TEXTURE = RTTex.from_file(setting.asset_path / "game/seed.rttex")
+    _TEXTURE = RTTex.from_file(setting.gt_path / "game/seed.rttex")
 
     def get(self, base_type: ItemInfoSeedBase, base_color: ItemInfoColor, overlay_type: ItemInfoSeedOverlay, overlay_color: ItemInfoColor) -> np.ndarray:
         base = SeedRenderer._TEXTURE.crop(int(base_type) * 16, 0, 16, 16)

@@ -28,7 +28,7 @@ class SeedIconRenderer(Renderer):
         self.tile_size3d = self.shader3d.get_uniform("u_tileSize")
 
     def build(self, items: list[tuple[DroppedItem, float]], pos_offset: vec2 = vec2(0, 0)) -> Mesh:
-        self.tex = self.tex_mgr.load_texture(setting.asset_path / "game/seed.rttex")
+        self.tex = self.tex_mgr.load_texture(setting.gt_path / "game/seed.rttex")
 
         data_dtype = np.dtype(
             [

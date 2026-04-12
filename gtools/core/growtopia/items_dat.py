@@ -15,7 +15,7 @@ from zmq import IntFlag
 
 from gtools import setting
 from gtools.core.buffer import Buffer
-from gtools.core.wsl import windows_home
+from gtools.core.utils import get_home
 
 if not os.environ.get("NO_BAKED", None):
     from gtools.baked import items
@@ -996,9 +996,10 @@ _SCHEMA_CLASSES = [
 ]
 
 _ITEMS_DAT_CANDIDATES: list[Path] = [
-    windows_home() / "AppData" / "Local" / "Growtopia" / "cache" / "items.dat",
+    get_home() / "AppData/Local/Growtopia/cache/items.dat",
     Path(os.getenv("ITEMS", "items.dat")),
-    setting.appdir / "resources" / "items.dat",
+    setting.appdir / "resources/items.dat",
+    setting.gt_path / "cache/items.dat",
 ]
 
 

@@ -100,7 +100,7 @@ class Note:
         return index
 
     def to_path(self) -> Path:
-        return setting.asset_path / "audio/notes" / f"{self.instrument.value}_{self.to_index()}.wav"
+        return setting.gt_path / "audio/notes" / f"{self.instrument.value}_{self.to_index()}.wav"
 
 
 _SOUNDS: dict[Path, Sound] = {}

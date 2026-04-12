@@ -319,7 +319,7 @@ class ObjectRendererBase(Renderer, ABC):
                     else:
                         tex_file = item.get_icon_texture() or item.texture_file.decode()
 
-                    tex = self._tex_mgr.load_texture(setting.asset_path / "game" / tex_file)
+                    tex = self._tex_mgr.load_texture(setting.gt_path / "game" / tex_file)
 
                     if item.id == GEMS:
                         tex_index = GEMS_TO_TEX_OFFSET[dropped.amount]
@@ -352,7 +352,7 @@ class ObjectRendererBase(Renderer, ABC):
                         )
 
                 if not no_overlay and item.id != GEMS:
-                    overlay_tex = self._tex_mgr.load_texture(setting.asset_path / "game/pickup_box.rttex")
+                    overlay_tex = self._tex_mgr.load_texture(setting.gt_path / "game/pickup_box.rttex")
                     tex = PICKUP_BOX_BLUE
                     if item.item_type == ItemInfoType.CONSUMABLE:
                         tex = PICKUP_BOX_PURPLE
@@ -414,7 +414,7 @@ class ObjectRendererBase(Renderer, ABC):
         shadow_data: dict[TextureArray, list[float]] = defaultdict(list)
 
         for info in icons:
-            tex = self._tex_mgr.load_texture(setting.asset_path / "game" / info.texture_path)
+            tex = self._tex_mgr.load_texture(setting.gt_path / "game" / info.texture_path)
             uv_x = info.tex_pos.x / tex.width
             uv_y = info.tex_pos.y / tex.height
 

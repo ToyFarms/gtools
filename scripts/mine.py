@@ -21,8 +21,8 @@ try:
 except ImportError:
     HAS_RICH = False
 
+from gtools import setting
 from gtools.core.growtopia.items_dat import Item, ItemDatabase
-from gtools.core.wsl import windows_home
 
 FIELD_DESCRIPTIONS: dict[str, str] = {
     "id": "ID",
@@ -630,7 +630,7 @@ def render_timeline_summary_plain(results: list[DiffResult]) -> None:
 
 
 def _get_all_item_database() -> list[Path]:
-    store = windows_home() / ".gtools" / "item_database"
+    store = setting.appdir / "item_database"
     dats = sorted(store.glob("**/*.dat"), reverse=True)
     return dats
 

@@ -1938,7 +1938,7 @@ class Tile:
         item = item_database.get(id)
 
         tex_pos, is_flipped = self.tex_pos(id, tex_index)
-        tex = mgr.get(setting.asset_path / "game" / item.texture_file.decode(), tex_pos.x * 32, tex_pos.y * 32, 32, 32, flip_x=is_flipped)
+        tex = mgr.get(setting.gt_path / "game" / item.texture_file.decode(), tex_pos.x * 32, tex_pos.y * 32, 32, 32, flip_x=is_flipped)
         # in the website, they uses css feColorMatrix which uses linear space, but in the game they don't,
         # causing a more saturated color as opposed to a "pastel" look in the website
         tex = color_matrix_filter(tex, _COLOR_MATRICES[self.get_paint_index()], linear=False)

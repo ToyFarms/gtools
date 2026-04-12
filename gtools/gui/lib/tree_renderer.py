@@ -66,7 +66,7 @@ class TreeRenderer(Renderer):
         self._obj_mesh: ObjectRenderMesh | None = None
 
     def build(self, tiles: list[Tile]) -> TreeMesh:
-        self.tex = self.tex_mgr.load_texture(setting.asset_path / "game/tiles_page1.rttex")
+        self.tex = self.tex_mgr.load_texture(setting.gt_path / "game/tiles_page1.rttex")
 
         data_dtype = np.dtype(
             [

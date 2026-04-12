@@ -10,13 +10,20 @@ from watchdog.events import DirModifiedEvent, FileModifiedEvent, FileSystemEvent
 from watchdog.observers import Observer
 
 from gtools.core.mixin import JsonMixin
-from gtools.core.wsl import windows_home
+from gtools.core.utils import get_growtopia, get_home
+from gtools.core.wsl import is_running_wsl
 
 logger = logging.getLogger("setting")
 
-APPDIR = Path.home() / ".gtools"
+APPDIR = get_home() / ".gtools"
 APPDIR.mkdir(exist_ok=True)
-SETTING_FILE = APPDIR / "setting.json"
+
+if is_running_wsl():
+    # NOTE: in wsl, appdir should be pointing to the windows one,
+    # but the setting still should be separated (different path style)
+    SETTING_FILE = Path.home() / ".gtools/setting.json"
+else:
+    SETTING_FILE = APPDIR / "setting.json"
 
 _setting_lock = threading.RLock()
 _setting = None
@@ -32,6 +39,7 @@ class ServerSetting(JsonMixin):
     enet_host: str = field(default="0.0.0.0")
     enet_port: int = field(default=18999)
 
+
 @dataclass
 class Setting(JsonMixin):
     server_data_url: str = field(default="www.growtopia1.com")
@@ -39,8 +47,8 @@ class Setting(JsonMixin):
     proxy_port: int = field(default=16999)
     http_server_host: str = field(default="127.0.0.1")
     http_server_port: int = field(default=443)
-    appdir: Path = field(default=Path(APPDIR))
-    asset_path: Path = field(default=windows_home() / "AppData/Local/Growtopia")
+    appdir: Path = field(default=APPDIR)
+    gt_path: Path = field(default_factory=get_growtopia)
     broker_addr: str = field(default="tcp://127.0.0.1:6712")
     spoof_hwident: bool = field(default=True)
     heartbeat_interval: float = field(default=1.0)

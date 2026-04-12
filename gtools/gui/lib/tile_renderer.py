@@ -331,7 +331,7 @@ class TileRenderer(Renderer):
 
     def _tile_instance_data(self, tile: Tile, item_id: int, tex_index: int) -> tuple[TextureArray, list[float]]:
         item = item_database.get(item_id)
-        tex = self._tex_mgr.load_texture(setting.asset_path / "game" / item.texture_file.decode())
+        tex = self._tex_mgr.load_texture(setting.gt_path / "game" / item.texture_file.decode())
         tex_pos, is_flipped = tile.tex_pos(item_id, tex_index)
 
         u0 = (tex_pos.x * self.TILE_SIZE) / tex.width
@@ -360,7 +360,7 @@ class TileRenderer(Renderer):
         ]
 
     def _tile_instance_data_raw(self, tile: Tile, texture_file: str, tex_pos: ivec2) -> tuple[TextureArray, list[float]]:
-        tex = self._tex_mgr.load_texture(setting.asset_path / "game" / texture_file)
+        tex = self._tex_mgr.load_texture(setting.gt_path / "game" / texture_file)
         u0 = (tex_pos.x * self.TILE_SIZE) / tex.width
         v0 = (tex_pos.y * self.TILE_SIZE) / tex.height
         u1 = ((tex_pos.x + 1) * self.TILE_SIZE) / tex.width

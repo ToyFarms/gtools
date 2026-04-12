@@ -32,7 +32,7 @@ class GuiMenuRenderer(Renderer):
         self.u_size3d = self.shader3d.get_uniform("u_size")
         self.u_texRes3d = self.shader3d.get_uniform("u_texRes")
 
-        self.tex = get_texture(setting.asset_path / "game/gui_box.rttex")
+        self.tex = get_texture(setting.gt_path / "game/gui_box.rttex")
         self.mesh = Mesh(Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES)
 
         self.text_renderer = TextRenderer("resources/fonts/centurygothic_bold.ttf", size=16)

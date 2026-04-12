@@ -43,31 +43,31 @@ def render_player() -> None:
     skin_color = np.array(player.clothing.skin_color.to_tuple(), dtype=np.uint8)
 
     # right arm
-    layers.append((color_tint(mgr.get(setting.asset_path / "game/player_arm.rttex", 0, 0, 8, 16), skin_color), base + ivec2(20, 17)))
+    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_arm.rttex", 0, 0, 8, 16), skin_color), base + ivec2(20, 17)))
 
     # left feet
-    layers.append((color_tint(mgr.get(setting.asset_path / "game/player_feet.rttex", 0, 0, 32, 32), skin_color), base + ivec2(0, 0)))
+    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_feet.rttex", 0, 0, 32, 32), skin_color), base + ivec2(0, 0)))
     # right feet
-    layers.append((color_tint(mgr.get(setting.asset_path / "game/player_feet.rttex", 0, 32, 32, 32), skin_color), base + ivec2(0, 0)))
+    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_feet.rttex", 0, 32, 32, 32), skin_color), base + ivec2(0, 0)))
 
     # leg
-    layers.append((color_tint(mgr.get(setting.asset_path / "game/player_extraleg.rttex", 0, 0, 16, 16), skin_color), base + ivec2(8, 28)))
+    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_extraleg.rttex", 0, 0, 16, 16), skin_color), base + ivec2(8, 28)))
     # body
-    layers.append((color_tint(mgr.get(setting.asset_path / "game/player_head.rttex", 0, 0, 32, 32), skin_color), base + ivec2(0, 0)))
+    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_head.rttex", 0, 0, 32, 32), skin_color), base + ivec2(0, 0)))
 
     # left arm
-    layers.append((color_tint(mgr.get(setting.asset_path / "game/player_arm.rttex", 0, 0, 8, 16), skin_color), base + ivec2(6, 17)))
+    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_arm.rttex", 0, 0, 8, 16), skin_color), base + ivec2(6, 17)))
 
     # eyes
-    layers.append((mgr.get(setting.asset_path / "game/player_eyes.rttex", 0, 0, 32, 32), base + ivec2(0, 0)))
+    layers.append((mgr.get(setting.gt_path / "game/player_eyes.rttex", 0, 0, 32, 32), base + ivec2(0, 0)))
 
     if player.clothing.hair != 0:
         item = item_database.get(player.clothing.hair)
-        layers.append((mgr.get(setting.asset_path / "game" / item.texture_file.decode(), item.tex_coord_x * 32, item.tex_coord_y * 32, 32, 32), base + ivec2(0, -16)))
+        layers.append((mgr.get(setting.gt_path / "game" / item.texture_file.decode(), item.tex_coord_x * 32, item.tex_coord_y * 32, 32, 32), base + ivec2(0, -16)))
 
     if player.clothing.hat != 0:
         item = item_database.get(player.clothing.hat)
-        layers.append((mgr.get(setting.asset_path / "game" / item.texture_file.decode(), item.tex_coord_x * 32, item.tex_coord_y * 32, 32, 32), base + ivec2(0, -16)))
+        layers.append((mgr.get(setting.gt_path / "game" / item.texture_file.decode(), item.tex_coord_x * 32, item.tex_coord_y * 32, 32, 32), base + ivec2(0, -16)))
 
     out = np.zeros((64, 64, 4), dtype=np.uint8)
     for layer, pos in layers:
