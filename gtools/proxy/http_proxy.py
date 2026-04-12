@@ -110,9 +110,8 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 def setup_server() -> ThreadedHTTPServer:
-    PORT = 443
-    logging.debug(f"running http proxy server on :{PORT}")
-    httpd = ThreadedHTTPServer(("", PORT), ProxyHandler)
+    logging.debug(f"running http proxy server on {setting.http_server_host}:{setting.http_server_port}")
+    httpd = ThreadedHTTPServer((setting.http_server_host, setting.http_server_port), ProxyHandler)
 
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain("resources/cert.pem", "resources/key.pem")

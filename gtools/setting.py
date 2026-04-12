@@ -37,6 +37,8 @@ class Setting(JsonMixin):
     server_data_url: str = field(default="www.growtopia1.com")
     proxy_server: str = field(default="127.0.0.1")
     proxy_port: int = field(default=16999)
+    http_server_host: str = field(default="127.0.0.1")
+    http_server_port: int = field(default=443)
     appdir: Path = field(default=Path(APPDIR))
     asset_path: Path = field(default=windows_home() / "AppData/Local/Growtopia")
     broker_addr: str = field(default="tcp://127.0.0.1:6712")
