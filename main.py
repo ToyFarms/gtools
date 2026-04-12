@@ -9,8 +9,6 @@ import threading
 import time
 import traceback
 
-from PIL import Image
-import numpy as np
 from pyglm.glm import ivec4, ivec2
 
 from gtools import flags
@@ -27,7 +25,7 @@ from gtools.core.log import setup_logger
 from gtools.core.mixer import AudioMixer
 from gtools.core.network import is_up, resolve_doh
 from gtools.core.privilege import elevate, is_elevated, is_elevated_child
-from gtools.core.wsl import is_running_wsl, windows_home
+from gtools.core.wsl import is_running_wsl
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_SERVER_TO_CLIENT,
@@ -468,6 +466,9 @@ if __name__ == "__main__":
                 traceback.print_exc()
                 break
     elif args.cmd == "render":
+        from PIL import Image
+        import numpy as np
+
         world = World.from_tank(Path(args.world).read_bytes())
 
         bg_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)

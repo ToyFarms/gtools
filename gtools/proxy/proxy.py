@@ -6,11 +6,9 @@ import threading
 import time
 import traceback
 from typing import Generator, NamedTuple, cast
-import zlib
 
 from gtools.core.eventbus import subscribe
 from gtools.core.growtopia.crypto import generate_klv
-from gtools.core.growtopia.items_dat import reload_item_database
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
