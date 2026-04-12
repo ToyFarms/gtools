@@ -9,8 +9,6 @@ import threading
 import time
 import traceback
 
-from pyglm.glm import ivec4, ivec2
-
 from gtools import flags
 from gtools.baked.items import COPPER_PLUMBING, STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.block_sigint import block_sigint
@@ -468,6 +466,7 @@ if __name__ == "__main__":
     elif args.cmd == "render":
         from PIL import Image
         import numpy as np
+        from pyglm.glm import ivec4, ivec2
 
         world = World.from_tank(Path(args.world).read_bytes())
 

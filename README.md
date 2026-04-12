@@ -22,6 +22,9 @@
 </table>
 
 
+> [!NOTE]
+> clone with submodule: `git submodule update --init --recursive`
+
 ```
 prerequisites:
 

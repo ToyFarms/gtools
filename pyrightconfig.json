@@ -1,4 +1,3 @@
 {
   "typeCheckingMode": "basic",
-  "exclude": ["gtools/core/growtopia/tile_connection.py"]
 }
