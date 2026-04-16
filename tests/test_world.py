@@ -1,11 +1,16 @@
 from pathlib import Path
 
+import pytest
+
 from gtools.core.growtopia.packet import NetPacket
 from gtools.proxy.state import World
 
 
-def test_conversion() -> None:
-    b = Path("tests/res/FD1234.bin").read_bytes()
+TEST_FILES = [x for x in Path("tests/res").glob("*") if x.is_file()]
+
+@pytest.mark.parametrize("path", TEST_FILES, ids=[p.name for p in TEST_FILES])
+def test_proto_conversion(path: Path) -> None:
+    b = path.read_bytes()
     pkt = NetPacket.deserialize(b)
 
     orig = World.deserialize(pkt.tank.extended_data)
@@ -19,3 +24,16 @@ def test_conversion() -> None:
 
     for x, y in zip(parsed.dropped.items, orig.dropped.items):
         assert x == y
+
+
+@pytest.mark.parametrize("path", TEST_FILES, ids=[p.name for p in TEST_FILES])
+def test_buffer_conversion(path: Path) -> None:
+    b = path.read_bytes()
+    pkt = NetPacket.deserialize(b)
+
+    data = pkt.tank.extended_data
+    world = World.from_extended(data)
+
+    out = world.serialize()
+
+    assert data == out

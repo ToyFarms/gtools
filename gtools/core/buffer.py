@@ -28,7 +28,7 @@ class Buffer:
         return bytes(self.buffer)
 
     def eof(self) -> bool:
-        return self.rpos >= len(self.buffer) - 1
+        return self.rpos >= len(self.buffer)
 
     def _ensure_capacity(self, size: int) -> None:
         if size <= len(self.buffer):
@@ -188,26 +188,26 @@ class Buffer:
     def write_string(self, s: str, encoding: str = "utf-8") -> None:
         self.write_bytes(s.encode(encoding))
 
-    def read_pascal_string(self, prefix_fmt: str = "B", encoding: str = "utf-8") -> str:
+    def read_pascal_string(self, prefix_fmt: str, encoding: str = "utf-8") -> str:
         if self.reverse_read:
             raise NotImplementedError("read_pascal_string is not supported in reversed mode")
 
         length = self.read_fmt(prefix_fmt)
         return self.read_string(length, encoding)
 
-    def write_pascal_string(self, s: str, prefix_fmt: str = "B", encoding: str = "utf-8") -> None:
+    def write_pascal_string(self, prefix_fmt: str, s: str, encoding: str = "utf-8") -> None:
         b = s.encode(encoding)
         self.write_fmt(prefix_fmt, len(b))
         self.write_bytes(b)
 
-    def read_pascal_bytes(self, prefix_fmt: str = "B") -> bytes:
+    def read_pascal_bytes(self, prefix_fmt: str) -> bytes:
         if self.reverse_read:
             raise NotImplementedError("read_pascal_bytes is not supported in reversed mode")
 
         length = self.read_fmt(prefix_fmt)
         return self.read_bytes(length)
 
-    def write_pascal_bytes(self, b: bytes, prefix_fmt: str = "B") -> None:
+    def write_pascal_bytes(self, prefix_fmt: str, b: bytes) -> None:
         self.write_fmt(prefix_fmt, len(b))
         self.write_bytes(b)
 

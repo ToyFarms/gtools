@@ -10,8 +10,8 @@ from gtools.protogen import growtopia_pb2
 
 
 class ItemFlags(IntFlag):
-    NONE = 1 << 0
-    ACTIVE = 1 << 1
+    NONE = 0
+    ACTIVE = 1 << 0
 
 
 @dataclass(slots=True)

@@ -177,7 +177,7 @@ class Variant:
             if v.kind == Kind.FLOAT:
                 s.write_f32(v.value)
             elif v.kind == Kind.STRING:
-                s.write_pascal_bytes(v.value, "I")
+                s.write_pascal_bytes("I", v.value)
             elif v.kind == Kind.VEC2:
                 x, y = v.value
                 s.write_f32(x)

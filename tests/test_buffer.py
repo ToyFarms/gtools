@@ -228,7 +228,7 @@ def test_read_bool() -> None:
 def test_read_eof() -> None:
     buf = Buffer(b"\x01")
     buf.read_u8()
-    with pytest.raises(EOFError, match="Attempt to read"):
+    with pytest.raises(EOFError, match="attempt to read"):
         buf.read_u8()
 
 
@@ -345,7 +345,7 @@ def test_write_string_utf8() -> None:
 
 def test_read_pascal_string() -> None:
     buf = Buffer(b"\x05hello")
-    s = buf.read_pascal_string()
+    s = buf.read_pascal_string("B")
     assert s == "hello"
     verify(repr(s))
 
@@ -359,27 +359,27 @@ def test_read_pascal_string_u16_prefix() -> None:
 
 def test_write_pascal_string() -> None:
     buf = Buffer()
-    buf.write_pascal_string("test")
+    buf.write_pascal_string("B", "test")
     assert buf.serialize() == b"\x04test"
     verify(buf.serialize())
 
 
 def test_write_pascal_string_u16_prefix() -> None:
     buf = Buffer()
-    buf.write_pascal_string("test", prefix_fmt="H")
+    buf.write_pascal_string("H", "test")
     verify(buf.serialize())
 
 
 def test_read_pascal_bytes() -> None:
     buf = Buffer(b"\x03\x01\x02\x03")
-    data = buf.read_pascal_bytes()
+    data = buf.read_pascal_bytes("B")
     assert data == b"\x01\x02\x03"
     verify(repr(data))
 
 
 def test_write_pascal_bytes() -> None:
     buf = Buffer()
-    buf.write_pascal_bytes(b"\x0a\x0b\x0c")
+    buf.write_pascal_bytes("B", b"\x0a\x0b\x0c")
     assert buf.serialize() == b"\x03\x0a\x0b\x0c"
     verify(buf.serialize())
 
@@ -663,13 +663,13 @@ def test_state_corruption_read_past_write() -> None:
 
 def test_complex_scenario() -> None:
     buf = Buffer()
-    buf.write_pascal_string("header")
+    buf.write_pascal_string("B", "header")
     buf.write_u32(12345)
     buf.write_cstring("metadata")
     buf.write_bool(True)
 
     buf.seek_read(0)
-    header = buf.read_pascal_string()
+    header = buf.read_pascal_string("B")
     num = buf.read_u32()
     meta = buf.read_cstring()
     flag = buf.read_bool()

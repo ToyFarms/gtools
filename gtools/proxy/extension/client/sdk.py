@@ -196,6 +196,8 @@ class Extension(ExtensionUtility):
 
         self.logger.debug("stopping extension...")
 
+        self.on_destroy()
+
         try:
             self._send(Packet(type=Packet.TYPE_DISCONNECT))
         except Exception:
@@ -213,6 +215,7 @@ class Extension(ExtensionUtility):
             self.logger.debug("got disconnect ack")
             self.broker_connected.set(False)
             self.push_connected.set(False)
+            self.on_disconnect()
         else:
             self.logger.debug("waiting for disconnection")
             self.broker_connected.wait_false(timeout=2.0)
@@ -374,7 +377,11 @@ class Extension(ExtensionUtility):
                         self.logger.info("connected to broker")
                         self.broker_connected.set(True)
                         self._send(Packet(type=Packet.TYPE_STATE_REQUEST))
-                    case Packet.TYPE_DISCONNECT | Packet.TYPE_DISCONNECT_ACK:
+                    case Packet.TYPE_DISCONNECT:
+                        self.broker_connected.set(False)
+                        self.push_connected.set(False)
+                        self.on_disconnect()
+                    case Packet.TYPE_DISCONNECT_ACK:
                         self.broker_connected.set(False)
                         self.push_connected.set(False)
                     case Packet.TYPE_HANDSHAKE_ACK:
@@ -393,6 +400,7 @@ class Extension(ExtensionUtility):
                         if self.state.status == Status.CONNECTED or self.state.status == Status.IN_WORLD:
                             self.console_log(f"extension {self._name.decode(errors='backslashreplace')} connected")
                             self.play_sound("audio/hit.wav")
+                        self.on_connect()
                     case Packet.TYPE_STATE_UPDATE:
                         self.state.update(pkt.state_update)
         except zmq.error.ZMQError as e:
@@ -401,6 +409,15 @@ class Extension(ExtensionUtility):
         finally:
             self.logger.debug("worker thread exiting")
             self._running = False
+
+    def on_connect(self) -> None:
+        """called AFTER syncing the state"""
+
+    def on_disconnect(self) -> None:
+        """called AFTER being disconnected"""
+
+    def on_destroy(self) -> None:
+        """called BEFORE being destroyed, stopped, and sending stop request"""
 
     # helper
     def standalone(self) -> None:

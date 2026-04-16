@@ -1,4 +1,4 @@
-from gtools.core.growtopia.world import World
+from gtools.core.growtopia.world import World, WorldEvent
 from pyglm.glm import ivec2, vec2
 import logging
 
@@ -15,10 +15,10 @@ def test_world_tile_events() -> None:
 
     events = []
 
-    def on_tile_update(x, y):
+    def on_tile_update(x: int, y: int) -> None:
         events.append((x, y))
 
-    world.on_tile_update(on_tile_update)
+    world.subscribe(WorldEvent.TILE_UPDATE, on_tile_update)
 
     world.place_tile(2, ivec2(10, 20))
     if (10, 20) not in events:
@@ -48,7 +48,7 @@ def test_world_dropped_events() -> None:
         nonlocal events_called
         events_called += 1
 
-    world.on_dropped_update(on_dropped_update)
+    world.subscribe(WorldEvent.DROPPED_UPDATE, on_dropped_update)
 
     world.create_dropped(2, vec2(100, 200), 10, 0)
     if events_called != 1:
@@ -64,4 +64,3 @@ def test_world_dropped_events() -> None:
     world.set_dropped(uid, 10)
     if events_called != 4:
         raise AssertionError(f"set_dropped: events_called is {events_called}, expected 4")
-

@@ -367,7 +367,10 @@ class NetPacket(Serializable):
         )
 
     def serialize(self) -> bytes:
-        return struct.pack("<I", self.type.value) + self.data.serialize() + b"\x00"
+        if setting.anomaly_byte_compensation:
+            return struct.pack("<I", self.type.value) + self.data.serialize() + b"\x00"
+        else:
+            return struct.pack("<I", self.type.value) + self.data.serialize()
 
     @classmethod
     def deserialize(cls, data: bytes, mode: Literal["strict", "relaxed"] = "relaxed") -> "NetPacket":

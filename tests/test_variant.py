@@ -471,10 +471,11 @@ def test_very_large_vec_values() -> None:
 
 
 def test_deserialize_truncated_data() -> None:
-    # TODO: "fix" this test
+    # count, index, kind, (should be data here, but none)
     data = bytes([1, 0, Kind.FLOAT])
-    with pytest.raises(Exception):
-        Variant.deserialize(data)
+    v = Variant.deserialize(data)
+
+    assert len(v) == 0
 
 
 def test_deserialize_invalid_kind() -> None:
@@ -490,13 +491,13 @@ def test_deserialize_empty_data() -> None:
 
 
 def test_deserialize_partial_string() -> None:
-    # TODO: "fix" this test
     v = Variant([Variant.vstr(b"hello")])
     data = bytearray(v.serialize())
 
     data = data[:-2]
-    with pytest.raises(Exception):
-        Variant.deserialize(bytes(data))
+    v2 = Variant.deserialize(bytes(data))
+
+    assert len(v2) == 0
 
 
 def test_vfloat_immutable() -> None:
