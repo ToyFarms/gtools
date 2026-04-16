@@ -197,7 +197,15 @@ class GotoResolver(ast.NodeTransformer):
         transformed_body = self._create_state_machine(node.body)
 
         new_func = ast.FunctionDef(
-            name=node.name, args=node.args, body=transformed_body, decorator_list=node.decorator_list, returns=node.returns, lineno=node.lineno, col_offset=node.col_offset
+            name=node.name,
+            args=node.args,
+            body=transformed_body,
+            decorator_list=node.decorator_list,
+            returns=node.returns,
+            type_comment=None,
+            type_params=[],
+            lineno=node.lineno,
+            col_offset=node.col_offset,
         )
 
         self.in_function = False
@@ -218,7 +226,15 @@ class GotoResolver(ast.NodeTransformer):
         transformed_body = self._create_state_machine(node.body)
 
         new_func = ast.AsyncFunctionDef(
-            name=node.name, args=node.args, body=transformed_body, decorator_list=node.decorator_list, returns=node.returns, lineno=node.lineno, col_offset=node.col_offset
+            name=node.name,
+            args=node.args,
+            body=transformed_body,
+            decorator_list=node.decorator_list,
+            returns=node.returns,
+            type_comment=None,
+            type_params=[],
+            lineno=node.lineno,
+            col_offset=node.col_offset,
         )
 
         self.in_function = False
@@ -471,6 +487,8 @@ class GotoResolver(ast.NodeTransformer):
             args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
             body=start_body,
             decorator_list=[],
+            type_comment=None,
+            type_params=[],
             lineno=1,
             col_offset=0,
         )
@@ -481,7 +499,7 @@ class GotoResolver(ast.NodeTransformer):
                 transformed_block = self._transform_statements(label_blocks_copy[label_name])
 
                 dead_code = DeadCodeEliminator()
-                mod = ast.Module(body=transformed_block)
+                mod = ast.Module(body=transformed_block, type_ignores=[])
                 mod = ast.fix_missing_locations(dead_code.visit(mod))
                 transformed_block = mod.body
 
@@ -520,6 +538,8 @@ class GotoResolver(ast.NodeTransformer):
                     args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
                     body=label_body,
                     decorator_list=[],
+                    type_comment=None,
+                    type_params=[],
                     lineno=1,
                     col_offset=0,
                 )
@@ -629,7 +649,7 @@ def to_snake_case(name: str) -> str:
     if "_" in name and not re.search(r"[a-z][A-Z]", name):
         return name
 
-    # Otherwise convert CamelCase to snake_case
+    # otherwise convert CamelCase to snake_case
     s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
     s2 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1)
 
@@ -1208,14 +1228,19 @@ class NormalizeIdentifiers(ast.NodeTransformer):
         return node
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
-        name = None
         if isinstance(node.func, ast.Name):
             name = node.func.id
+            if name and not name[0].isupper():
+                node.func = ast.copy_location(
+                    ast.Name(id=to_snake_case(name), ctx=ast.Load()),
+                    node.func,
+                )
         elif isinstance(node.func, ast.Attribute):
-            assert type(node.func.value) is ast.Name
-            name = node.func.value.id
-        if name and not name[0].isupper():
-            node.func = ast.Name(to_snake_case(name))
+            if isinstance(node.func.value, ast.Name):
+                name = node.func.value.id
+                if name and not name[0].isupper():
+                    node.func.value.id = to_snake_case(name)
+
         return self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> ast.AST | None:
@@ -1487,7 +1512,12 @@ class RemoveTypeAnnotations(ast.NodeTransformer):
         if node.value is None:
             return None
 
-        new_assign = ast.Assign(targets=[node.target], value=node.value)
+        new_assign = ast.Assign(
+            targets=[node.target],
+            value=node.value,
+            lineno=node.lineno,
+            col_offset=node.col_offset,
+        )
 
         return ast.copy_location(new_assign, node)
 

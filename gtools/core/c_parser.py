@@ -425,7 +425,7 @@ class CParser:
             value = self.parse_expr()
         elif self.get_op_info(self.peek().type)[2] == "assign":  # int x |= (aug assign)
             self.i -= 1
-            return ast.Expr(self.parse_expr())
+            return ast.Expr(value=self.parse_expr())
         else:  # int x;
             self.expect_and_next("SEMI")
 
@@ -519,7 +519,7 @@ class CParser:
                 mods = "*" * pointer_level if pointer_level else "".join(ast.unparse(x) for x in array_dims if x)
             types = "_".join(x.value for x in type_tokens) + mods
             type, _ = type_default_param(types)
-            annotation = ast.Name(type) if type else ast.Constant(types)
+            annotation = ast.Name(type, ast.Load()) if type else ast.Constant(types)
 
             args.append(ast.arg(id_tok.value, annotation))
 
@@ -530,7 +530,23 @@ class CParser:
             self.expect_and_next("COMMA")
 
         *retypes, name = retypes
-        fn = ast.FunctionDef(name.value, ast.arguments(args), [], returns=ast.Constant("_".join(x.value for x in retypes)))
+        fn = ast.FunctionDef(
+            name=name.value,
+            args=ast.arguments(
+                posonlyargs=[],
+                args=args,
+                vararg=None,
+                kwonlyargs=[],
+                kw_defaults=[],
+                kwarg=None,
+                defaults=[],
+            ),
+            body=[],
+            decorator_list=[],
+            returns=ast.Constant(value="_".join(x.value for x in retypes)),
+            type_comment=None,
+            type_params=[],
+        )
 
         fn.body = self.parse_body()
         return fn
@@ -664,7 +680,7 @@ class CParser:
                 types = self.read_inbetween("LPAREN", "RPAREN")
                 right = self.parse_expr(130, context=context)
                 if self.s.preserve_cast:
-                    return ast.Call(func=ast.Name(id="cast", ctx=ast.Load()), args=[ast.Constant("".join(x.value for x in types)), right])
+                    return ast.Call(func=ast.Name(id="cast", ctx=ast.Load()), args=[ast.Constant("".join(x.value for x in types)), right], keywords=[])
                 else:
                     return right
             elif self.is_tuple(context):
@@ -676,7 +692,7 @@ class CParser:
                         self.next()
                         break
                     self.expect_and_next("COMMA")
-                return ast.Subscript(ast.Tuple(exprs), ast.Constant(-1))
+                return ast.Subscript(ast.Tuple(exprs, ast.Load()), ast.Constant(-1), ast.Load())
             else:
                 context["mandatory_paren"] = False
                 # normal grouping
@@ -685,7 +701,7 @@ class CParser:
                 return expr
 
         if t == "ID":
-            return ast.Name(str(v))
+            return ast.Name(str(v), ast.Load())
         if t in ("INT_CONST_DEC", "INT_CONST_HEX", "INT_CONST_OCT"):
             return ast.Constant(int(v, 0))
         if t == "FLOAT_CONST":
@@ -696,7 +712,7 @@ class CParser:
             return ast.Constant(str(v).strip("'"))
         if t == "CASE":
             right = cast(ast.pattern, self.parse_expr(context=context))
-            return cast(ast.expr, ast.match_case(pattern=right, body=[]))
+            return cast(ast.expr, ast.match_case(pattern=right, guard=None, body=[]))
         if t == "LBRACE":
             right = self.parse_expr(context=context)
             self.expect_and_next("SEMI")
@@ -706,7 +722,7 @@ class CParser:
             name = self.next()
             self.expect_and_next("EQUALS")
             right = self.parse_expr(context=context)
-            return ast.Call(ast.Name("init"), [ast.Name(name.value), right])
+            return ast.Call(ast.Name("init", ast.Load()), [ast.Name(name.value, ast.Load()), right], [])
 
         # unary
         if t in ("PLUS", "MINUS", "LNOT", "TILDE", "TIMES", "AMP", "INCREMENT", "DECREMENT", "SIZEOF", "AND"):
@@ -728,7 +744,7 @@ class CParser:
             elif isinstance(op, str):
                 if op in ("ref", "deref") and not self.s.ref:
                     return right
-                return ast.Call(ast.Name(op), args=[right])
+                return ast.Call(ast.Name(op, ast.Load()), args=[right], keywords=[])
 
         assert False, f"nud unhandled token: {tok}"
 
@@ -747,7 +763,7 @@ class CParser:
                         continue
                     break
             self.expect_and_next("RPAREN")
-            return ast.Call(left, args)
+            return ast.Call(left, args, [])
 
         if t == "LBRACKET":
             idx = self.parse_expr(0, context=context)
@@ -755,9 +771,9 @@ class CParser:
             return ast.Subscript(left, idx)
 
         if t == "INCREMENT_POST":
-            return ast.Call(ast.Name("postfix_inc"), args=[left])
+            return ast.Call(ast.Name("postfix_inc", ast.Load()), args=[left], keywords=[])
         if t == "DECREMENT_POST":
-            return ast.Call(ast.Name("postfix_dec"), args=[left])
+            return ast.Call(ast.Name("postfix_dec", ast.Load()), args=[left], keywords=[])
 
         _, _, kind = self.get_op_info(t)
 
@@ -839,11 +855,11 @@ class CParser:
 
             if t == "ASSIGN":
                 right = self.parse_expr(rbp, context=context)
-                return ast.Assign([ast.Name(ast.unparse(left))], right)  # pyright: ignore[reportReturnType]
+                return ast.Assign([ast.Name(ast.unparse(left), ast.Store())], right)  # pyright: ignore[reportReturnType]
 
             if t in assign_aug_map:
                 right = self.parse_expr(rbp, context=context)
-                return ast.AugAssign(ast.Name(ast.unparse(left)), assign_aug_map[t](), right)  # pyright: ignore[reportReturnType]
+                return ast.AugAssign(ast.Name(ast.unparse(left), ast.Store()), assign_aug_map[t](), right)  # pyright: ignore[reportReturnType]
 
             right = self.parse_expr(rbp, context=context)
             return ast.NamedExpr(cast(ast.Name, left), right)
@@ -856,7 +872,7 @@ class CParser:
 
         if kind == "postfix_member":
             right = self.parse_expr(rbp)
-            return ast.Attribute(left, ast.unparse(right))
+            return ast.Attribute(left, ast.unparse(right), ctx=ast.Load())
 
         assert False, f"unhandled led: op={op_tok}, left={ast.dump(left)}"
 
@@ -877,7 +893,6 @@ class CParser:
                 "parse_stmt peek:",
                 self.peek().type,
                 self.peek().value,
-                "[" + self._code[self.peek().lexpos : self.peek().lexpos + 200].replace("\n", "\\n") + "]" if self._code else "",
             )
 
         def looks_like_declaration() -> bool:
@@ -914,7 +929,7 @@ class CParser:
                     # while self.peek().type != "RPAREN":
                     #     args.append(self.parse_expr())
 
-                    return ast.Expr(self.parse_expr())
+                    return ast.Expr(value=self.parse_expr())
                 else:
                     return self.parse_variable_decl()
             case "IF":
@@ -927,10 +942,10 @@ class CParser:
                 self.expect_and_next("SEMI")
                 return ast.Assign(
                     targets=[ast.Name("_", ast.Store())],
-                    value=ast.Call(func=ast.Name("goto", ast.Store()), args=[ast.Constant(label.value)], keywords=[]),
+                    value=ast.Call(func=ast.Name("goto", ast.Load()), args=[ast.Constant(label.value)], keywords=[]),
                 )
             case "LBRACE":
-                return ast.With(items=[], body=self.parse_body())
+                return ast.If(test=ast.Constant(True), body=self.parse_body(), orelse=[])
             case "BREAK":
                 self.next()
                 self.expect_and_next("SEMI")
@@ -997,7 +1012,7 @@ class CParser:
                 while_node = ast.While(test=cond_expr if cond_expr is not None else ast.Constant(True), body=loop_body, orelse=[])
                 if init_stmt is not None:
                     # TODO: return multiple statement
-                    return ast.With(items=[], body=[init_stmt, while_node])
+                    return ast.If(test=ast.Constant(True), body=[init_stmt, while_node], orelse=[])
                 return while_node
             case "SWITCH":
                 self.expect_and_next("SWITCH")
@@ -1022,12 +1037,12 @@ class CParser:
                             buffer.clear()
                         else:
                             for p in buffer:
-                                out.append(ast.match_case(p, body=[ast.Pass()]))
+                                out.append(ast.match_case(p, guard=None, body=[ast.Pass()]))
                             out.append(case_node)
                             buffer.clear()
 
                     for p in buffer:
-                        out.append(ast.match_case(p, body=[ast.Pass()]))
+                        out.append(ast.match_case(p, guard=None, body=[ast.Pass()]))
 
                     parsed_cases = out
                     switch_temp_name = f"__switch_on{CParser.match_q[0]}"
@@ -1051,7 +1066,7 @@ class CParser:
                     while_body: list[ast.stmt] = []
                     for case_node in parsed_cases:
                         if not isinstance(case_node, ast.match_case):
-                            while_body.append(case_node if isinstance(case_node, ast.stmt) else ast.Expr(case_node))
+                            while_body.append(case_node if isinstance(case_node, ast.stmt) else ast.Expr(value=case_node))
                             continue
 
                         pattern = case_node.pattern
@@ -1129,7 +1144,7 @@ class CParser:
             case "DEFAULT":
                 self.expect_and_next("DEFAULT")
                 self.expect_and_next("COLON")
-                cond = ast.match_case(ast.MatchAs(None), body=[])
+                cond = ast.match_case(ast.MatchAs(pattern=None, name=None), guard=None, body=[])
                 if self.peek().type == "LBRACE":
                     cond.body = self.parse_body()
                 else:
@@ -1150,7 +1165,7 @@ class CParser:
             buf.append(self.next())
 
         cons = " ".join(x.value for x in buf)
-        return ast.Expr(ast.Constant(cons))
+        return ast.Expr(value=ast.Constant(cons))
 
     def parse(self) -> ast.Module:
         body: list[ast.stmt] = []
@@ -1160,7 +1175,7 @@ class CParser:
             if not skip.skip:
                 body.append(stmt)
 
-        return ast.Module(body)
+        return ast.Module(body=body, type_ignores=[])
 
 
 def preprocess(c: str) -> str:
@@ -1190,7 +1205,7 @@ def preprocess(c: str) -> str:
 def ctopy(c: str, setting: Setting | None = None) -> str:
     c = preprocess(c)
     lex = CLexer(error_func=lambda *a, **k: None, on_lbrace_func=lambda: None, on_rbrace_func=lambda: None, type_lookup_func=lambda typ: False)
-    lex.build()
+    # lex.build()
     lex.input(c)
 
     tokens = []
@@ -1210,7 +1225,7 @@ def ctopy(c: str, setting: Setting | None = None) -> str:
 def ctopy_ast(c: str, setting: Setting | None = None) -> ast.Module:
     c = preprocess(c)
     lex = CLexer(error_func=lambda *a, **k: None, on_lbrace_func=lambda: None, on_rbrace_func=lambda: None, type_lookup_func=lambda typ: False)
-    lex.build()
+    # lex.build()
     lex.input(c)
 
     tokens = []
