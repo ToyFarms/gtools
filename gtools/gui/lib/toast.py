@@ -40,6 +40,8 @@ class ToastManager:
 
     def __init__(self) -> None:
         self._toasts: list[_Toast] = []
+        self._dirty = True
+        self._prev_count = 0
 
     @classmethod
     def get(cls) -> "ToastManager":
@@ -56,10 +58,36 @@ class ToastManager:
     ) -> None:
         self._toasts.append(_Toast(title=title, subtitle=subtitle, description=description, level=level))
 
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    def clear_dirty(self) -> None:
+        self._dirty = False
+
     def update(self, dt: float) -> None:
+        if not self._toasts:
+            if self._prev_count != 0:
+                self._dirty = True
+                self._prev_count = 0
+            else:
+                self._dirty = False
+            return
+
         for t in self._toasts:
             t.t -= dt
+
         self._toasts = [t for t in self._toasts if t.t > 0.0]
+        after = len(self._toasts)
+
+        structure_changed = after != self._prev_count
+        animating = any(self._is_animating(t) for t in self._toasts)
+
+        self._dirty = structure_changed or animating
+
+        self._prev_count = after
+
+    def _is_animating(self, t: _Toast) -> bool:
+        return (_TOAST_DURATION - t.t) < _TOAST_FADE_TIME or t.t < _TOAST_FADE_TIME
 
     def render(self) -> None:
         if not self._toasts:

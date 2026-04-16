@@ -120,22 +120,7 @@ class PerfOverlayPanel(Panel):
         if vw <= 0 or vh <= 0:
             return
 
-        imgui.set_next_window_pos(ImVec2(0, 0))
-        imgui.set_next_window_size(ImVec2(vw, vh))
-
-        imgui.begin(
-            "##perf_overlay",
-            flags=(
-                imgui.WindowFlags_.no_decoration
-                | imgui.WindowFlags_.no_background
-                | imgui.WindowFlags_.no_inputs
-                | imgui.WindowFlags_.no_nav
-                | imgui.WindowFlags_.no_docking
-                | imgui.WindowFlags_.no_focus_on_appearing
-            ),
-        )
-
-        draw_list = imgui.get_window_draw_list()
+        draw_list = imgui.get_foreground_draw_list()
 
         graph_specs: list[tuple[list[float], int, str]] = []
         for label, q in self._stats.stats.items():
@@ -143,7 +128,6 @@ class PerfOverlayPanel(Panel):
 
         graph_specs = [x for x in graph_specs if x[0]]
         if not graph_specs:
-            imgui.end()
             return
 
         graph_gap = 6
@@ -173,7 +157,3 @@ class PerfOverlayPanel(Panel):
             gy = graphs_y0 + row * (graph_h + graph_gap)
 
             _draw_time_graph(draw_list, gx, gy, graph_w, graph_h, tlist, _maxlen, glabel, None, None)
-
-            imgui.dummy(ImVec2(graph_w, graph_h))
-
-        imgui.end()

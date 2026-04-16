@@ -1,7 +1,7 @@
 import OpenGL
 from gtools import setting
 from gtools.gui.lib import perf_stats
-from gtools.gui.lib.toast import ToastManager
+from gtools.gui.lib.toast import ToastManager, push_debug
 
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking
 
@@ -188,7 +188,7 @@ class App:
             frame_start = time.perf_counter()
 
             with self._panels_lock:
-                any_dirty = any(p.is_dirty for p in self.panels)
+                any_dirty = any(p.is_dirty for p in self.panels) or self._cmd.is_dirty() or self.toast_mgr.is_dirty()
 
             if any_dirty:
                 self.last_dirty_time = time.perf_counter()
@@ -236,6 +236,8 @@ class App:
                 with self._panels_lock:
                     for panel in self.panels:
                         panel.is_dirty = False
+                self._cmd.clear_dirty()
+                self.toast_mgr.clear_dirty()
 
             self._cmd.render()
             self.toast_mgr.render()
@@ -279,6 +281,9 @@ class App:
                     self._cmd.open(self._cmd_builder.build())
                 elif e.key == glfw.KEY_F3:
                     perf_stats.SHOW_DEBUG_OVERLAY = not perf_stats.SHOW_DEBUG_OVERLAY
+
+            if Panel.dev_mode and e.key == glfw.KEY_F12:
+                push_debug("TEST", "SUBTITLE", "DESCRIPTION")
         elif isinstance(e, ResizeEvent):
             glViewport(0, 0, e.width, e.height)
             return

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable, Optional, Union
+
 from imgui_bundle import imgui, ImVec2, ImVec4
 
 
@@ -13,25 +14,30 @@ def fuzzy_score(query: str, text: str) -> tuple[bool, int, list[int]]:
     ti = 0
     consecutive = 0
     score = 0
+
     for ch in q:
         found = False
         while ti < len(t):
             if t[ti] == ch:
                 indices.append(ti)
-                if indices and len(indices) > 1 and indices[-1] == indices[-2] + 1:
+                if len(indices) > 1 and indices[-1] == indices[-2] + 1:
                     consecutive += 1
                     score += 5 * consecutive
                 else:
                     consecutive = 0
+
                 if ti == 0 or t[ti - 1] in (" ", "/", "_", "-", ".", ">"):
                     score += 10
                 score += 1
+
                 ti += 1
                 found = True
                 break
             ti += 1
+
         if not found:
             return False, 0, []
+
     return True, score, indices
 
 
@@ -176,15 +182,26 @@ def v4_to_u32(v: ImVec4) -> int:
     return (a << 24) | (b << 16) | (g << 8) | r
 
 
+FilteredCommand = tuple[Command, int, list[int], str]
+
+
 class CommandPalette:
     def __init__(self) -> None:
-        self.visible: bool = False
+        self.visible = False
         self._stack: list[PaletteLevel] = []
         self._query: str = ""
         self._selected_idx: int = 0
-        self._focus_input: bool = False
-        self._filtered: list[tuple[Command, int, list[int]]] = []
-        self._scroll_to_selected: bool = False
+        self._focus_input = False
+        self._filtered: list[FilteredCommand] = []
+        self._scroll_to_selected = False
+        self._dirty = True
+        self._filter_dirty = True
+
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    def clear_dirty(self) -> None:
+        self._dirty = False
 
     def open(self, level: PaletteLevel) -> None:
         self._stack = [level]
@@ -192,7 +209,8 @@ class CommandPalette:
         self._selected_idx = 0
         self._focus_input = True
         self.visible = True
-        self._rebuild_filter()
+        self._filter_dirty = True
+        self._dirty = True
 
     def close(self) -> None:
         self.visible = False
@@ -223,22 +241,34 @@ class CommandPalette:
         if level is None:
             self._filtered = []
             return
-        results: list[tuple[Command, int, list[int]]] = []
+
+        results: list[FilteredCommand] = []
+        q = self._query
         for cmd in level.commands:
-            matched, score, idxs = fuzzy_score(self._query, cmd.get_label())
+            label = cmd.get_label()
+            matched, score, idxs = fuzzy_score(q, label)
             if matched:
-                results.append((cmd, score, idxs))
+                results.append((cmd, score, idxs, label))
+
         results.sort(key=lambda x: -x[1])
         self._filtered = results
         self._selected_idx = max(0, min(self._selected_idx, len(results) - 1))
 
+    def _ensure_filter(self) -> None:
+        if not self._filter_dirty:
+            return
+        self._rebuild_filter()
+        self._filter_dirty = False
+
     def _execute_selected(self) -> None:
         if not self._filtered:
             return
+
         idx = self._selected_idx
         if idx < 0 or idx >= len(self._filtered):
             return
-        cmd, _, _ = self._filtered[idx]
+
+        cmd, _, _, _ = self._filtered[idx]
         if cmd.callback:
             result = cmd.callback()
             if isinstance(result, PaletteLevel):
@@ -248,13 +278,17 @@ class CommandPalette:
         else:
             self.close()
 
+        self._dirty = True
+
     def render(self) -> None:
         if not self.visible:
             return
 
-        io = imgui.get_io()
+        self._ensure_filter()
 
+        io = imgui.get_io()
         vp = imgui.get_main_viewport()
+
         imgui.set_next_window_pos(ImVec2(0, 0))
         imgui.set_next_window_size(vp.size)
         imgui.set_next_window_bg_alpha(0.45)
@@ -358,7 +392,8 @@ class CommandPalette:
         if changed and new_query != self._query:
             self._query = new_query
             self._selected_idx = 0
-            self._rebuild_filter()
+            self._filter_dirty = True
+            self._dirty = True
 
         if imgui.is_key_pressed(imgui.Key.escape):
             self.pop_level()
@@ -368,9 +403,11 @@ class CommandPalette:
         if imgui.is_key_pressed(imgui.Key.down_arrow):
             self._selected_idx = (self._selected_idx + 1) % max(1, len(self._filtered))
             self._scroll_to_selected = True
+            self._dirty = True
         if imgui.is_key_pressed(imgui.Key.up_arrow):
             self._selected_idx = (self._selected_idx - 1) % max(1, len(self._filtered))
             self._scroll_to_selected = True
+            self._dirty = True
 
         dl = imgui.get_window_draw_list()
         p = imgui.get_cursor_screen_pos()
@@ -385,10 +422,22 @@ class CommandPalette:
             imgui.push_style_var(imgui.StyleVar_.item_spacing, ImVec2(0, 0))
             imgui.begin_child("##results", ImVec2(-1, list_h), False)
 
-            scroll_to = self._scroll_to_selected
-            self._scroll_to_selected = False
+            total = len(self._filtered)
+            scroll_y = imgui.get_scroll_y()
 
-            for i, (cmd, _score, match_idx) in enumerate(self._filtered):
+            visible_start = max(0, int(scroll_y // item_h) - 1)
+            visible_end = min(total, int((scroll_y + list_h) // item_h) + 2)
+
+            if self._scroll_to_selected:
+                target = max(0.0, self._selected_idx * item_h - list_h * 0.5)
+                imgui.set_scroll_y(target)
+                self._scroll_to_selected = False
+
+            if visible_start > 0:
+                imgui.dummy(ImVec2(0, visible_start * item_h))
+
+            for i in range(visible_start, visible_end):
+                cmd, _score, match_idx, label = self._filtered[i]
                 is_selected = i == self._selected_idx
 
                 row_start = imgui.get_cursor_screen_pos()
@@ -418,24 +467,20 @@ class CommandPalette:
                 )
                 imgui.pop_style_color(3)
 
-                post_selectable_pos = imgui.get_cursor_pos()
-
                 if clicked:
                     self._selected_idx = i
                     self._execute_selected()
 
                 if (io.mouse_delta.x != 0 or io.mouse_delta.y != 0 or io.mouse_wheel != 0) and imgui.is_item_hovered() and not is_selected:
                     self._selected_idx = i
-
-                if scroll_to and is_selected:
-                    imgui.set_scroll_here_y(0.5)
+                    self._dirty = True
 
                 text_h = imgui.get_text_line_height()
                 content_y = row_start.y + (item_h - text_h) * 0.5
                 x = row_start.x + 16.0
 
                 idx_set = set(match_idx)
-                for ci, ch in enumerate(cmd.get_label()):
+                for ci, ch in enumerate(label):
                     color = v4_to_u32(C_TEXT_MATCH) if ci in idx_set else v4_to_u32(C_TEXT)
                     dl.add_text(ImVec2(x, content_y), color, ch)
                     x += imgui.calc_text_size(ch).x
@@ -457,7 +502,8 @@ class CommandPalette:
                     )
                     dl.add_text(ImVec2(kb_x, kb_y), v4_to_u32(C_KEYBIND), cmd.keybind)
 
-                imgui.set_cursor_pos(post_selectable_pos)
+            if visible_end < total:
+                imgui.dummy(ImVec2(0, (total - visible_end) * item_h))
 
             imgui.end_child()
             imgui.pop_style_var()
