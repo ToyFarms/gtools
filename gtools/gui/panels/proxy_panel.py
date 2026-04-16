@@ -10,6 +10,7 @@ from gtools.gui.lib.toast import push_error
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
 from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Interest
+from gtools.proxy.event import UpdateClientVersion, UpdateServerData
 from gtools.proxy.extension.client.sdk import Extension
 from gtools.proxy.http_proxy import ThreadedHTTPServer, setup_server
 from gtools.proxy.proxy import Proxy
@@ -220,6 +221,14 @@ class ProxyPanel(Panel):
             if self.extension_enabled:
                 self.setup_extension()
         imgui.end_disabled()
+
+        if Panel.dev_mode:
+            if self.proxy:
+                if imgui.button("set proc"):
+                    self.proxy._worker_should_process.set()
+                imgui.same_line()
+                if imgui.button("clear proc"):
+                    self.proxy._worker_should_process.clear()
 
         origin_x, origin_y = imgui.get_cursor_screen_pos()
         avail_w, avail_h = imgui.get_content_region_avail()

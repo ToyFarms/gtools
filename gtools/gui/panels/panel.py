@@ -1,5 +1,6 @@
 from abc import ABC
 import logging
+from typing import ClassVar
 
 from imgui_bundle import imgui
 
@@ -7,6 +8,8 @@ logger = logging.getLogger("gui-panels")
 
 
 class Panel(ABC):
+    dev_mode: ClassVar[bool] = False
+
     def __init__(self, dock_id: int = 0) -> None:
         self._open = True
         self._dock_id = dock_id

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 from imgui_bundle import imgui, ImVec2, ImVec4
 
 
@@ -36,14 +36,18 @@ def fuzzy_score(query: str, text: str) -> tuple[bool, int, list[int]]:
 
 
 CommandCallback = Callable[[], Optional["PaletteLevel"]]
+LabelType = Union[str, Callable[[], str]]
 
 
 @dataclass
 class Command:
-    label: str
+    label: LabelType
     description: str = ""
     keybind: str = ""
     callback: Optional[CommandCallback] = None
+
+    def get_label(self) -> str:
+        return self.label() if callable(self.label) else self.label
 
 
 @dataclass
@@ -61,7 +65,7 @@ class PaletteBuilder:
 
     def cmd(
         self,
-        label: str,
+        label: LabelType,
         *,
         keybind: str = "",
         description: str = "",
@@ -221,7 +225,7 @@ class CommandPalette:
             return
         results: list[tuple[Command, int, list[int]]] = []
         for cmd in level.commands:
-            matched, score, idxs = fuzzy_score(self._query, cmd.label)
+            matched, score, idxs = fuzzy_score(self._query, cmd.get_label())
             if matched:
                 results.append((cmd, score, idxs))
         results.sort(key=lambda x: -x[1])
@@ -431,7 +435,7 @@ class CommandPalette:
                 x = row_start.x + 16.0
 
                 idx_set = set(match_idx)
-                for ci, ch in enumerate(cmd.label):
+                for ci, ch in enumerate(cmd.get_label()):
                     color = v4_to_u32(C_TEXT_MATCH) if ci in idx_set else v4_to_u32(C_TEXT)
                     dl.add_text(ImVec2(x, content_y), color, ch)
                     x += imgui.calc_text_size(ch).x

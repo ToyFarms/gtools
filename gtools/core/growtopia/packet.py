@@ -162,6 +162,7 @@ class TankPacket(Serializable):
             extended_data = b""
         self._extended_data = extended_data
         if extended_len == 0 and extended_data:
+            self.flags |= TankFlags.EXTENDED
             self.extended_len = len(extended_data)
         else:
             self.extended_len = extended_len

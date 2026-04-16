@@ -30,7 +30,7 @@ from OpenGL.GL import (
     glEnable,
     glViewport,
 )
-from imgui_bundle import imgui
+from imgui_bundle import ImVec2, ImVec4, imgui
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 from pyglm.glm import ivec2, vec2
 
@@ -40,7 +40,6 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import SignTile, Tile, TileFlags, World
 from gtools.core.highres_sleep import nanosleep
 from gtools.core.log import setup_logger
-from gtools.core.wsl import windows_home
 from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent
 from gtools.gui.opengl import ShaderProgram
 from gtools.gui.texture import GLTexManager
@@ -147,6 +146,10 @@ class App:
         def _() -> None:
             self._add_debug_world()
 
+        @root.cmd(lambda: "Dev Mode: Turn Off" if Panel.dev_mode else "Dev Mode: Turn On")
+        def _() -> None:
+            Panel.dev_mode = not Panel.dev_mode
+
         return root
 
     def _add_debug_world(self) -> None:
@@ -236,6 +239,10 @@ class App:
 
             self._cmd.render()
             self.toast_mgr.render()
+
+            if Panel.dev_mode:
+                drawlist = imgui.get_foreground_draw_list()
+                drawlist.add_text(ImVec2(0, 0), imgui.get_color_u32(ImVec4(0.8, 0.8, 0.1, 1.0)), "DEV MODE")
 
             imgui.render()
 
