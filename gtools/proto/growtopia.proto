@@ -130,12 +130,21 @@ message Tile {
 
 // the world data
 message WorldInner {
+  uint32 version = 13;
+  uint32 f = 14;
   bytes name = 1;
   uint32 width = 5;
   uint32 height = 6;
   uint32 nb_tiles = 7;
+  bytes unk2 = 9;
   repeated Tile tiles = 2;
+  bytes unk4 = 10;
   Dropped dropped = 4;
+  uint32 default_weather = 15;
+  uint32 terraform = 16;
+  uint32 active_weather = 17;
+  uint32 unk8 = 11;
+  uint32 unk9 = 12;
   int32 garbage_start = 8;
 }
 

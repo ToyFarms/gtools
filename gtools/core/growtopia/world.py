@@ -3577,26 +3577,44 @@ class World:
             tiles[idx] = tile
 
         return cls(
+            version=proto.inner.version,
+            f=proto.inner.f,
             name=proto.inner.name,
             width=proto.inner.width,
             height=proto.inner.height,
             nb_tiles=proto.inner.nb_tiles,
+            unk2=proto.inner.unk2,
             tiles=tiles,
+            unk4=proto.inner.unk4,
             dropped=Dropped.from_proto(proto.inner.dropped),
-            garbage_start=proto.inner.garbage_start,
             players={p.net_id: p for p in (Player.from_proto(x) for x in proto.player)},
             npcs={npc.id: npc for npc in (Npc.from_proto(x) for x in proto.npcs)},
+            default_weather=WeatherType(proto.inner.default_weather),
+            terraform=TerraformType(proto.inner.terraform),
+            active_weather=WeatherType(proto.inner.active_weather),
+            unk8=proto.inner.unk8,
+            unk9=proto.inner.unk9,
+            garbage_start=proto.inner.garbage_start,
         )
 
     def to_proto(self) -> growtopia_pb2.World:
         return growtopia_pb2.World(
             inner=growtopia_pb2.WorldInner(
+                version=self.version,
+                f=self.f,
                 name=self.name,
                 width=self.width,
                 height=self.height,
                 nb_tiles=self.nb_tiles,
+                unk2=self.unk2,
                 tiles=[tile.to_proto() for tile in self.tiles.values()],
+                unk4=self.unk4,
                 dropped=self.dropped.to_proto(),
+                default_weather=self.default_weather,
+                terraform=self.terraform,
+                active_weather=self.active_weather,
+                unk8=self.unk8,
+                unk9=self.unk9,
                 garbage_start=self.garbage_start,
             ),
             player=[x.to_proto() for x in self.players.values()],

@@ -227,22 +227,40 @@ class Tile(_message.Message):
     def __init__(self, fg_id: _Optional[int] = ..., bg_id: _Optional[int] = ..., lock_index: _Optional[int] = ..., parent_index: _Optional[int] = ..., flags: _Optional[int] = ..., extra: _Optional[bytes] = ..., index: _Optional[int] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., fg_tex_index: _Optional[int] = ..., bg_tex_index: _Optional[int] = ..., overlay_tex_index: _Optional[int] = ..., json_data: _Optional[bytes] = ...) -> None: ...
 
 class WorldInner(_message.Message):
-    __slots__ = ("name", "width", "height", "nb_tiles", "tiles", "dropped", "garbage_start")
+    __slots__ = ("version", "f", "name", "width", "height", "nb_tiles", "unk2", "tiles", "unk4", "dropped", "default_weather", "terraform", "active_weather", "unk8", "unk9", "garbage_start")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    F_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     WIDTH_FIELD_NUMBER: _ClassVar[int]
     HEIGHT_FIELD_NUMBER: _ClassVar[int]
     NB_TILES_FIELD_NUMBER: _ClassVar[int]
+    UNK2_FIELD_NUMBER: _ClassVar[int]
     TILES_FIELD_NUMBER: _ClassVar[int]
+    UNK4_FIELD_NUMBER: _ClassVar[int]
     DROPPED_FIELD_NUMBER: _ClassVar[int]
+    DEFAULT_WEATHER_FIELD_NUMBER: _ClassVar[int]
+    TERRAFORM_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_WEATHER_FIELD_NUMBER: _ClassVar[int]
+    UNK8_FIELD_NUMBER: _ClassVar[int]
+    UNK9_FIELD_NUMBER: _ClassVar[int]
     GARBAGE_START_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    f: int
     name: bytes
     width: int
     height: int
     nb_tiles: int
+    unk2: bytes
     tiles: _containers.RepeatedCompositeFieldContainer[Tile]
+    unk4: bytes
     dropped: Dropped
+    default_weather: int
+    terraform: int
+    active_weather: int
+    unk8: int
+    unk9: int
     garbage_start: int
-    def __init__(self, name: _Optional[bytes] = ..., width: _Optional[int] = ..., height: _Optional[int] = ..., nb_tiles: _Optional[int] = ..., tiles: _Optional[_Iterable[_Union[Tile, _Mapping]]] = ..., dropped: _Optional[_Union[Dropped, _Mapping]] = ..., garbage_start: _Optional[int] = ...) -> None: ...
+    def __init__(self, version: _Optional[int] = ..., f: _Optional[int] = ..., name: _Optional[bytes] = ..., width: _Optional[int] = ..., height: _Optional[int] = ..., nb_tiles: _Optional[int] = ..., unk2: _Optional[bytes] = ..., tiles: _Optional[_Iterable[_Union[Tile, _Mapping]]] = ..., unk4: _Optional[bytes] = ..., dropped: _Optional[_Union[Dropped, _Mapping]] = ..., default_weather: _Optional[int] = ..., terraform: _Optional[int] = ..., active_weather: _Optional[int] = ..., unk8: _Optional[int] = ..., unk9: _Optional[int] = ..., garbage_start: _Optional[int] = ...) -> None: ...
 
 class World(_message.Message):
     __slots__ = ("inner", "player", "npcs")
