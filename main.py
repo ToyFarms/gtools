@@ -24,6 +24,7 @@ from gtools.core.mixer import AudioMixer
 from gtools.core.network import is_up, resolve_doh
 from gtools.core.privilege import elevate, is_elevated, is_elevated_child
 from gtools.core.wsl import is_running_wsl
+from gtools.gui.panels.panel import Panel
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_SERVER_TO_CLIENT,
@@ -227,9 +228,12 @@ if __name__ == "__main__":
         ("test", "run network checks"),
         ("stress", "run stress extension"),
         ("world_test", "test world parsing"),
-        ("gui", "run gui"),
     ]:
         subparsers.add_parser(name, parents=[global_parent], help=help_txt)
+
+    gui = subparsers.add_parser("gui", parents=[global_parent], help="run gui")
+    gui.add_argument("-w", "--world", help="path to world packet file", required=False)
+    gui.add_argument("--dev", help="enable dev mode", action="store_true", default=False)
 
     render = subparsers.add_parser("render", parents=[global_parent], help="render a world file")
     render.add_argument("world", help="path to world packet file")
@@ -309,7 +313,8 @@ if __name__ == "__main__":
     elif args.cmd == "server":
         run_server()
     elif args.cmd == "gui":
-        app = App().run()
+        Panel.dev_mode = args.dev
+        app = App((setting.appdir / "worlds" / args.world if not Path(args.world).is_absolute() else args.world) if args.world else None).run()
     elif args.cmd == "acc":
         repr = lambda x: "".join([f"{x['name']} [v{x.get('_version', 0)}]:\n", "\n".join([f"    {k}={v}" for k, v in x["ident"].items()])])
         if args.acc_op == "list":

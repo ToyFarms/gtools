@@ -1,6 +1,7 @@
 from abc import ABC
+from collections import deque
 import logging
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 from imgui_bundle import imgui
 
@@ -9,11 +10,16 @@ logger = logging.getLogger("gui-panels")
 
 class Panel(ABC):
     dev_mode: ClassVar[bool] = False
+    panels_to_add: ClassVar[deque[Callable[[int], "Panel"]]] = deque()
 
     def __init__(self, dock_id: int = 0) -> None:
         self._open = True
         self._dock_id = dock_id
         self._dirty = False
+
+    @staticmethod
+    def add_panel(panel: Callable[[int], "Panel"]) -> None:
+        Panel.panels_to_add.append(panel)
 
     @property
     def dock_id(self) -> int:

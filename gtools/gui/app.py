@@ -2,6 +2,7 @@ import OpenGL
 from gtools import setting
 from gtools.gui.lib import perf_stats
 from gtools.gui.lib.toast import ToastManager, push_debug
+from gtools.gui.panels.midi_panel import MidiPanel
 
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking
 
@@ -146,6 +147,10 @@ class App:
         def _() -> None:
             self._add_debug_world()
 
+        @root.cmd("Midi")
+        def _() -> None:
+            self.add_panel(MidiPanel(self.dockspace.node_id))
+
         @root.cmd(lambda: "Dev Mode: Turn Off" if Panel.dev_mode else "Dev Mode: Turn On")
         def _() -> None:
             Panel.dev_mode = not Panel.dev_mode
@@ -189,6 +194,12 @@ class App:
 
             with self._panels_lock:
                 any_dirty = any(p.is_dirty for p in self.panels) or self._cmd.is_dirty() or self.toast_mgr.is_dirty()
+
+            if Panel.panels_to_add:
+                while Panel.panels_to_add:
+                    panel = Panel.panels_to_add.pop()
+                    self.add_panel(panel(self.dockspace.node_id))
+                    any_dirty = True
 
             if any_dirty:
                 self.last_dirty_time = time.perf_counter()

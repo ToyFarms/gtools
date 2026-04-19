@@ -136,7 +136,7 @@ class PerfOverlayPanel(Panel):
         graph_h = self._graph_height
         total_graphs_h = num_rows * graph_h + (num_rows - 1) * graph_gap
 
-        graphs_x0 = 100
+        graphs_x0 = 20
         graphs_y0 = vh - total_graphs_h - 20
 
         if self._stats.idle:

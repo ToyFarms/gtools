@@ -99,6 +99,29 @@ class Note:
 
         return index
 
+    @classmethod
+    def from_code(cls, code: bytes, timestamp: int = 0, volume: float = 1.0) -> "Note | None":
+        try:
+            if len(code) < 3:
+                return
+
+            instr, pitch, accidental = list(code.decode())
+            base, octave = CODE_TO_PITCH[pitch]
+
+            return Note(
+                base=base,
+                octave=octave,
+                accident=CODE_TO_ACCIDENT[accidental],
+                instrument=CODE_TO_INSTRUMENT_SET[instr],
+                timestamp=timestamp,
+                volume=volume,
+            )
+        except:
+            return
+
+    def to_code(self) -> bytes:
+        return f"{INSTRUMENT_SET_TO_CODE[self.instrument]}{PITCH_TO_CODE[self.base, self.octave]}{ACCIDENT_TO_CODE[self.accident]}".encode()
+
     def to_path(self) -> Path:
         return setting.gt_path / "audio/notes" / f"{self.instrument.value}_{self.to_index()}.wav"
 
@@ -109,7 +132,8 @@ _SOUNDS: dict[Path, Sound] = {}
 class Sheet:
     logger = logging.getLogger("sheet")
 
-    def __init__(self, bpm: int, notes: list[Note], mixer: AudioMixer) -> None:
+    def __init__(self, bpm: int, notes: list[Note], mixer: AudioMixer | None) -> None:
+        self._notes = notes
         self.notes: defaultdict[int, list[Note]] = defaultdict(list)
         self.any = bool(notes)
         for note in notes:
@@ -134,9 +158,11 @@ class Sheet:
         self._pending_backtrack: int | None = None
 
         self._can_go = threading.Event()
-        self._preload_thread = threading.Thread(target=self._preload, daemon=True)
-        self._preload_thread.start()
-        # TODO: configurable volume, make this dynamic (so it can react to world changes)
+        if mixer:
+            self._preload_thread = threading.Thread(target=self._preload, daemon=True)
+            self._preload_thread.start()
+        else:
+            self._can_go.set()
 
     @property
     def total_notes(self) -> int:
@@ -150,6 +176,36 @@ class Sheet:
     def bpm(self, x: float) -> None:
         self._bpm = int(x)
         self.bps = (x * 4) / 60
+
+    def replace_notes(self, notes: list[Note]) -> None:
+        self.notes.clear()
+        self.any = bool(notes)
+        for note in notes:
+            self.notes[note.timestamp].append(note)
+
+        if notes:
+            self.start = min(notes, key=lambda x: x.timestamp).timestamp
+            self.end = max(notes, key=lambda x: x.timestamp).timestamp
+        else:
+            self.start = 0
+            self.end = 0
+
+        self.playhead = min(self.playhead, self.end)
+
+    def add_notes(self, notes: list[Note]) -> None:
+        for note in notes:
+            self.notes[note.timestamp].append(note)
+
+        self.any = bool(self.notes)
+
+        if notes:
+            self.start = min(notes, key=lambda x: x.timestamp).timestamp
+            self.end = max(notes, key=lambda x: x.timestamp).timestamp
+        else:
+            self.start = 0
+            self.end = 0
+
+        self.playhead = min(self.playhead, self.end)
 
     def _preload(self) -> None:
         for col in range(self.start, self.end):
@@ -208,10 +264,12 @@ class Sheet:
         for note in self.notes[self.playhead]:
             if note.instrument in (InstrumentSet.REPEAT_BEGIN, InstrumentSet.REPEAT_END, InstrumentSet.BLANK):
                 continue
-            path = note.to_path()
-            if path not in _SOUNDS:
-                _SOUNDS[path] = Sound.from_file(str(path))
-            self.mixer.play(_SOUNDS[path], note.volume)
+
+            if self.mixer:
+                path = note.to_path()
+                if path not in _SOUNDS:
+                    _SOUNDS[path] = Sound.from_file(str(path))
+                self.mixer.play(_SOUNDS[path], note.volume)
 
         self.playhead += n
 
@@ -245,6 +303,15 @@ class Sheet:
         return any_change
 
 
+def _invert_dict[K, V](d: dict[K, V]) -> dict[V, K]:
+    inv = {}
+    for k, v in d.items():
+        if v in inv:
+            raise ValueError(f"duplicate value detected: {v}")
+        inv[v] = k
+    return inv
+
+
 CODE_TO_INSTRUMENT_SET = {
     "B": InstrumentSet.BASS,
     "D": InstrumentSet.DRUM,
@@ -257,12 +324,14 @@ CODE_TO_INSTRUMENT_SET = {
     "T": InstrumentSet.MEXICAN_TRUMPET,
     "V": InstrumentSet.VIOLIN,
 }
-ACCIDENT_MAP = {
+INSTRUMENT_SET_TO_CODE = _invert_dict(CODE_TO_INSTRUMENT_SET)
+CODE_TO_ACCIDENT = {
     "#": Note.SHARP,
     "-": Note.NATURAL,
     "b": Note.FLAT,
 }
-CODE_TO_PITCH_MAP = {
+ACCIDENT_TO_CODE = _invert_dict(CODE_TO_ACCIDENT)
+CODE_TO_PITCH = {
     "c": (Note.C, 0),
     "d": (Note.D, 0),
     "e": (Note.E, 0),
@@ -278,6 +347,7 @@ CODE_TO_PITCH_MAP = {
     "A": (Note.A, 1),
     "B": (Note.B, 1),
 }
+PITCH_TO_CODE = _invert_dict(CODE_TO_PITCH)
 
 Y_TO_PITCH_MAP = [
     (Note.B, 1),
@@ -296,6 +366,7 @@ Y_TO_PITCH_MAP = [
     (Note.C, 0),
 ]
 
+PITCH_TO_Y_MAP = {pitch: i for i, pitch in enumerate(Y_TO_PITCH_MAP)}
 
 SHEET_SHARP_ID = {
     SHEET_MUSIC_COLON_SHARP_BASS,
@@ -320,7 +391,6 @@ SHEET_FLAT_ID = {
     SHEET_MUSIC_COLON_FLAT_ELECTRIC_GUITAR,
     SHEET_MUSIC_COLON_FLAT_MEXICAN_TRUMPET,
 }
-
 
 ID_TO_INSTRUMENT_SET = {
     SHEET_MUSIC_COLON_BLANK: InstrumentSet.BLANK,
@@ -356,4 +426,53 @@ ID_TO_INSTRUMENT_SET = {
     SHEET_MUSIC_COLON_MEXICAN_TRUMPET: InstrumentSet.MEXICAN_TRUMPET,
     SHEET_MUSIC_COLON_SHARP_MEXICAN_TRUMPET: InstrumentSet.MEXICAN_TRUMPET,
     SHEET_MUSIC_COLON_FLAT_MEXICAN_TRUMPET: InstrumentSet.MEXICAN_TRUMPET,
+}
+INSTRUMENT_SET_TO_ID = {instr: id for id, instr in ID_TO_INSTRUMENT_SET.items() if id not in SHEET_SHARP_ID and id not in SHEET_FLAT_ID}
+
+INSTRUMENT_ACCIDENT_TO_ID = {
+    (InstrumentSet.BLANK, Note.SHARP): SHEET_MUSIC_COLON_BLANK,
+    (InstrumentSet.BASS, Note.SHARP): SHEET_MUSIC_COLON_SHARP_BASS,
+    (InstrumentSet.PIANO, Note.SHARP): SHEET_MUSIC_COLON_SHARP_PIANO,
+    (InstrumentSet.DRUM, Note.SHARP): SHEET_MUSIC_COLON_DRUMS,
+    (InstrumentSet.SPOOKY, Note.SHARP): SHEET_MUSIC_COLON_SPOOKY,
+    (InstrumentSet.SAX, Note.SHARP): SHEET_MUSIC_COLON_SHARP_SAX,
+    (InstrumentSet.REPEAT_BEGIN, Note.SHARP): SHEET_MUSIC_COLON_REPEAT_BEGIN,
+    (InstrumentSet.REPEAT_END, Note.SHARP): SHEET_MUSIC_COLON_REPEAT_END,
+    (InstrumentSet.FESTIVE, Note.SHARP): SHEET_MUSIC_COLON_WINTERFEST,
+    (InstrumentSet.FLUTE, Note.SHARP): SHEET_MUSIC_COLON_SHARP_FLUTE,
+    (InstrumentSet.SPANISH_GUITAR, Note.SHARP): SHEET_MUSIC_COLON_SHARP_SPANISH_GUITAR,
+    (InstrumentSet.VIOLIN, Note.SHARP): SHEET_MUSIC_COLON_SHARP_VIOLIN,
+    (InstrumentSet.LYRE, Note.SHARP): SHEET_MUSIC_COLON_SHARP_LYRE,
+    (InstrumentSet.ELECTRIC_GUITAR, Note.SHARP): SHEET_MUSIC_COLON_SHARP_ELECTRIC_GUITAR,
+    (InstrumentSet.MEXICAN_TRUMPET, Note.SHARP): SHEET_MUSIC_COLON_SHARP_MEXICAN_TRUMPET,
+    (InstrumentSet.BLANK, Note.FLAT): SHEET_MUSIC_COLON_BLANK,
+    (InstrumentSet.BASS, Note.FLAT): SHEET_MUSIC_COLON_FLAT_BASS,
+    (InstrumentSet.PIANO, Note.FLAT): SHEET_MUSIC_COLON_FLAT_PIANO,
+    (InstrumentSet.DRUM, Note.FLAT): SHEET_MUSIC_COLON_DRUMS,
+    (InstrumentSet.SPOOKY, Note.FLAT): SHEET_MUSIC_COLON_SPOOKY,
+    (InstrumentSet.SAX, Note.FLAT): SHEET_MUSIC_COLON_FLAT_SAX,
+    (InstrumentSet.REPEAT_BEGIN, Note.FLAT): SHEET_MUSIC_COLON_REPEAT_BEGIN,
+    (InstrumentSet.REPEAT_END, Note.FLAT): SHEET_MUSIC_COLON_REPEAT_END,
+    (InstrumentSet.FESTIVE, Note.FLAT): SHEET_MUSIC_COLON_WINTERFEST,
+    (InstrumentSet.FLUTE, Note.FLAT): SHEET_MUSIC_COLON_FLAT_FLUTE,
+    (InstrumentSet.SPANISH_GUITAR, Note.FLAT): SHEET_MUSIC_COLON_FLAT_SPANISH_GUITAR,
+    (InstrumentSet.VIOLIN, Note.FLAT): SHEET_MUSIC_COLON_FLAT_VIOLIN,
+    (InstrumentSet.LYRE, Note.FLAT): SHEET_MUSIC_COLON_FLAT_LYRE,
+    (InstrumentSet.ELECTRIC_GUITAR, Note.FLAT): SHEET_MUSIC_COLON_FLAT_ELECTRIC_GUITAR,
+    (InstrumentSet.MEXICAN_TRUMPET, Note.FLAT): SHEET_MUSIC_COLON_FLAT_MEXICAN_TRUMPET,
+    (InstrumentSet.BLANK, Note.NATURAL): SHEET_MUSIC_COLON_BLANK,
+    (InstrumentSet.BASS, Note.NATURAL): SHEET_MUSIC_COLON_BASS_NOTE,
+    (InstrumentSet.PIANO, Note.NATURAL): SHEET_MUSIC_COLON_PIANO_NOTE,
+    (InstrumentSet.DRUM, Note.NATURAL): SHEET_MUSIC_COLON_DRUMS,
+    (InstrumentSet.SPOOKY, Note.NATURAL): SHEET_MUSIC_COLON_SPOOKY,
+    (InstrumentSet.SAX, Note.NATURAL): SHEET_MUSIC_COLON_SAX_NOTE,
+    (InstrumentSet.REPEAT_BEGIN, Note.NATURAL): SHEET_MUSIC_COLON_REPEAT_BEGIN,
+    (InstrumentSet.REPEAT_END, Note.NATURAL): SHEET_MUSIC_COLON_REPEAT_END,
+    (InstrumentSet.FESTIVE, Note.NATURAL): SHEET_MUSIC_COLON_WINTERFEST,
+    (InstrumentSet.FLUTE, Note.NATURAL): SHEET_MUSIC_COLON_FLUTE_NOTE,
+    (InstrumentSet.SPANISH_GUITAR, Note.NATURAL): SHEET_MUSIC_COLON_SPANISH_GUITAR_NOTE,
+    (InstrumentSet.VIOLIN, Note.NATURAL): SHEET_MUSIC_COLON_VIOLIN_NOTE,
+    (InstrumentSet.LYRE, Note.NATURAL): SHEET_MUSIC_COLON_LYRE_NOTE,
+    (InstrumentSet.ELECTRIC_GUITAR, Note.NATURAL): SHEET_MUSIC_COLON_ELECTRIC_GUITAR,
+    (InstrumentSet.MEXICAN_TRUMPET, Note.NATURAL): SHEET_MUSIC_COLON_MEXICAN_TRUMPET,
 }

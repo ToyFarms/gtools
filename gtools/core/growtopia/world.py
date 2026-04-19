@@ -1,7 +1,9 @@
 from abc import abstractmethod
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag, IntEnum, auto
+import itertools
 import logging
 from pathlib import Path
 from typing import Any, Callable, Iterator, Literal, Type, overload
@@ -13,6 +15,8 @@ from gtools.baked.items import (
     ANGRY_ADVENTURE_GORILLA,
     AQUA_CAVE_CRYSTAL_SEED,
     AUCTION_BLOCK,
+    AUDIO_GEAR,
+    AUDIO_RACK,
     AUTO_SURGEON_STATION,
     BATTLE_PET_CAGE,
     BEDROCK,
@@ -117,7 +121,20 @@ from gtools.core.growtopia.items_dat import (
     WeatherType,
     item_database,
 )
-from gtools.core.growtopia.note import ACCIDENT_MAP, CODE_TO_INSTRUMENT_SET, CODE_TO_PITCH_MAP, ID_TO_INSTRUMENT_SET, SHEET_FLAT_ID, SHEET_SHARP_ID, Y_TO_PITCH_MAP, Note, Sheet
+from gtools.core.growtopia.note import (
+    CODE_TO_ACCIDENT,
+    CODE_TO_INSTRUMENT_SET,
+    CODE_TO_PITCH,
+    ID_TO_INSTRUMENT_SET,
+    INSTRUMENT_ACCIDENT_TO_ID,
+    PITCH_TO_Y_MAP,
+    SHEET_FLAT_ID,
+    SHEET_SHARP_ID,
+    Y_TO_PITCH_MAP,
+    InstrumentSet,
+    Note,
+    Sheet,
+)
 from gtools.core.growtopia.packet import NetPacket, TankFlags, TankPacket
 from gtools.core.growtopia.player import Player
 from gtools.core.growtopia.rttex import RTTexManager
@@ -2751,6 +2768,12 @@ class WorldEvent(Enum):
 
 
 @dataclass(slots=True)
+class Listener:
+    single: Callable | None = None
+    batch: Callable | None = None
+
+
+@dataclass(slots=True)
 class World:
     id: int = 0  # u32, from int_x in tank packet
     version: int = 0  # u32
@@ -2776,58 +2799,89 @@ class World:
     npcs: dict[int, Npc] = field(default_factory=dict)
     sheet: Sheet | None = None
 
-    _listeners: defaultdict[WorldEvent, list[Callable]] = field(default_factory=lambda: defaultdict(list), init=False, repr=False)
+    _listeners: defaultdict[WorldEvent, list[Listener]] = field(default_factory=lambda: defaultdict(list), init=False, repr=False)
+    _batching: bool = False
+    _event_buffer: defaultdict[WorldEvent, list[tuple]] = field(default_factory=lambda: defaultdict(list), init=False, repr=False)
+    live: bool = False
 
     @overload
-    def subscribe(self, event: Literal[WorldEvent.DROPPED_UPDATE], callback: Callable[[], None]) -> None: ...
+    def subscribe(self, event: Literal[WorldEvent.DROPPED_UPDATE], *, single: Callable[[], Any] | None = None, batch: Callable[[], Any] | None = None) -> None: ...
     @overload
-    def subscribe(self, event: Literal[WorldEvent.TILE_UPDATE], callback: Callable[[int, int], None]) -> None: ...
+    def subscribe(
+        self, event: Literal[WorldEvent.TILE_UPDATE], *, single: Callable[[int, int], Any] | None = None, batch: Callable[[list[tuple[int, int]]], Any] | None = None
+    ) -> None: ...
     @overload
-    def subscribe(self, event: Literal[WorldEvent.PLAYER_UPDATE], callback: Callable[[], None]) -> None: ...
+    def subscribe(self, event: Literal[WorldEvent.PLAYER_UPDATE], *, single: Callable[[], Any] | None = None, batch: Callable[[], Any] | None = None) -> None: ...
     @overload
-    def subscribe(self, event: Literal[WorldEvent.NPC_UPDATE], callback: Callable[[], None]) -> None: ...
-    def subscribe(self, event: WorldEvent, callback: Callable) -> None:
-        self._listeners[event].append(callback)
+    def subscribe(self, event: Literal[WorldEvent.NPC_UPDATE], *, single: Callable[[], Any] | None = None, batch: Callable[[], Any] | None = None) -> None: ...
+    def subscribe(self, event: WorldEvent, *, single: Callable | None = None, batch: Callable | None = None) -> None:
+        self._listeners[event].append(Listener(single, batch))
 
-    def unsubscribe(self, event: WorldEvent, callback: Callable) -> None:
+    def unsubscribe(self, event: WorldEvent, *, single: Callable | None = None, batch: Callable | None = None) -> None:
         try:
-            self._listeners[event].remove(callback)
+            self._listeners[event].remove(Listener(single, batch))
         except ValueError:
             pass
 
-    def broadcast(self, event: WorldEvent, *args: Any) -> None:
-        for cb in self._listeners[event]:
-            cb(*args)
+    @contextmanager
+    def batch(self):
+        if self._batching:
+            yield
+            return
 
-    def get_notes(self) -> list[Note]:
+        self._batching = True
+        self._event_buffer.clear()
+
+        try:
+            yield
+        finally:
+            self._flush_batch()
+            self._batching = False
+            self._event_buffer.clear()
+
+    def _flush_batch(self) -> None:
+        for event, calls in self._event_buffer.items():
+            listeners = self._listeners[event]
+
+            for listener in listeners:
+                if listener.batch:
+                    listener.batch(calls)
+                elif listener.single:
+                    for args in calls:
+                        listener.single(*args)
+
+    def broadcast(self, event: WorldEvent, *args: Any) -> None:
+        if self._batching:
+            self._event_buffer[event].append(args)
+            return
+
+        for listener in self._listeners[event]:
+            if listener.single:
+                listener.single(*args)
+            elif listener.batch:
+                listener.batch([args])
+
+    def create_sheet_notes(self) -> list[Note]:
         ret: list[Note] = []
 
         for tile in self.tiles.values():
-            # 4 (60 / 14) staff in one world, the topmost is 0, each staff height is 14 note
+            # 4 (60 / 14) staff in one world, the topmost is 0, each staff height is 14 (note)
             staff_baseline = int(tile.pos.y // 14) * 14
 
             if tile.extra and isinstance(tile.extra, AudioRackTile):
                 rack = tile.extra.expect(AudioRackTile)
                 notes = rack.note.split(b" ")
 
-                for note in notes:
-                    if not note or len(note) != 3:
+                for code in notes:
+                    n = Note.from_code(
+                        code,
+                        timestamp=int(staff_baseline // 14) * self.width + tile.pos.x,
+                        volume=rack.volume / 100.0,
+                    )
+                    if not n:
                         continue
 
-                    code, pitch_str, accidental = list(note.decode())
-                    pitch, octave = CODE_TO_PITCH_MAP[pitch_str]
-
-                    ret.append(
-                        Note(
-                            base=pitch,
-                            octave=octave,
-                            accident=ACCIDENT_MAP[accidental],
-                            instrument=CODE_TO_INSTRUMENT_SET[code],
-                            timestamp=int(staff_baseline // 14) * self.width + tile.pos.x,
-                            volume=rack.volume / 100 if rack.volume != 0 else 0,
-                        )
-                    )
-                    continue
+                    ret.append(n)
 
             if tile.bg_id == 0:
                 continue
@@ -2850,7 +2904,12 @@ class World:
 
         return ret
 
-    def get_sheet(self, mixer: AudioMixer) -> Sheet:
+    class SheetFlags(IntFlag):
+        NONE = 0
+        FORCE_RACK = 1 << 0
+        RACK_ON_EMPTY = 1 << 1
+
+    def get_sheet(self, mixer: AudioMixer | None = None) -> Sheet:
         lock = self.get_world_lock()
         if lock is None or lock.extra is None:
             bpm = 100
@@ -2860,11 +2919,183 @@ class World:
         if not self.sheet:
             self.sheet = Sheet(
                 bpm=bpm,
-                notes=self.get_notes(),
+                notes=self.create_sheet_notes(),
                 mixer=mixer,
             )
 
         return self.sheet
+
+    def remove_sheet(self, sheet: Sheet | None = None, rebuild: bool = True) -> None:
+        """NOTE: *DESTRUCTIVE* WILL REPLACES THE ACTUAL TILES TOO"""
+        sheet = sheet if sheet else self.sheet
+        if not sheet:
+            return
+
+        with self.batch():
+            for t, notes in sheet.notes.items():
+                x = t % self.width
+                staff_baseline = int(t // self.width) * 14
+                for note in notes:
+                    y = staff_baseline + PITCH_TO_Y_MAP[note.base, note.octave]
+                    if tile := self.get_tile(x, y):
+                        item = item_database.get(tile.bg_id)
+                        if item.item_type == ItemInfoType.MUSICNOTE:
+                            instr = ID_TO_INSTRUMENT_SET[tile.bg_id]
+
+                            if note.instrument == instr:
+                                tile.bg_id = 0
+                                self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
+
+            for tile in self.tiles.values():
+                if tile.fg_id in (AUDIO_RACK, AUDIO_GEAR):
+                    self.place_fg(tile, 0)
+
+        if rebuild and self.sheet:
+            self.sheet.replace_notes(self.create_sheet_notes())
+
+    def add_sheet(self, sheet: Sheet, flags: SheetFlags = SheetFlags.NONE) -> None:
+        """add two (or one) sheets together"""
+        if not self.sheet:
+            self.sheet = sheet
+            self.materialize_sheet(sheet, flags)
+        else:
+            self.sheet.add_notes(sheet._notes)
+            self.materialize_sheet(sheet, flags)
+
+    def update_sheet_flags(self, flags: SheetFlags = SheetFlags.NONE) -> None:
+        if not self.sheet:
+            return
+
+        self.remove_sheet(self.sheet, rebuild=False)
+        self.materialize_sheet(self.sheet, flags)
+
+    def materialize_sheet(self, sheet: Sheet | None = None, flags: SheetFlags = SheetFlags.NONE) -> None:
+        sheet = sheet if sheet else self.sheet
+        if not sheet:
+            return
+
+        NON_POSITIONAL = {InstrumentSet.REPEAT_BEGIN, InstrumentSet.REPEAT_END}
+        ABS_DIRECT = {InstrumentSet.SPOOKY, InstrumentSet.FESTIVE}
+
+        force_rack = flags & World.SheetFlags.FORCE_RACK != 0
+        rack_on_empty = flags & World.SheetFlags.RACK_ON_EMPTY != 0
+
+        with self.batch():
+            for t, notes in sheet.notes.items():
+                x = t % self.width
+                staff_baseline = int(t // self.width) * 14
+
+                # separate notes into positional (must occupy their pitch row)
+                # and non-positional (can go anywhere in the column)
+                positional: list[Note] = []
+                non_positional: list[Note] = []
+
+                for note in notes:
+                    if note.instrument == InstrumentSet.BLANK:
+                        if t == sheet.end:
+                            non_positional.append(note)
+                        continue
+                    elif note.instrument in NON_POSITIONAL:
+                        non_positional.append(note)
+                    else:
+                        positional.append(note)
+
+                # bin positional notes by y-row
+                y_groups: defaultdict[int, list[Note]] = defaultdict(list)
+                for note in positional:
+                    y_groups[PITCH_TO_Y_MAP[note.base, note.octave]].append(note)
+
+                # direct_notes is a dict so we can track which y slots are occupied
+                direct_notes: dict[int, Note] = {}
+                rack_notes: list[Note] = []
+
+                for y, y_notes in y_groups.items():
+                    abs_direct = [n for n in y_notes if n.instrument in ABS_DIRECT]
+                    rack_required = [n for n in y_notes if n.instrument not in ABS_DIRECT and n.volume != 1.0]
+                    possible_direct = [n for n in y_notes if n.instrument not in ABS_DIRECT and n.volume == 1.0]
+
+                    if len(abs_direct) > 1:
+                        self.logger.warning(
+                            f"collision between abs direct notes, found {len(abs_direct)} notes " f"({' '.join(n.instrument.name for n in abs_direct)}), last note takes priority"
+                        )
+
+                    rack_notes.extend(rack_required)
+
+                    if abs_direct:
+                        direct_notes[y] = abs_direct[-1]
+                        rack_notes.extend(possible_direct)
+                    elif not force_rack and possible_direct:
+                        direct_notes[y] = possible_direct[0]
+                        rack_notes.extend(possible_direct[1:])
+                    else:
+                        rack_notes.extend(possible_direct)
+
+                # slot non-positional notes into any free row in the column.
+                # if all 14 rows are occupied, move non-abs-direct note to make room.
+                for note in non_positional:
+                    free_y = next((y for y in range(14) if y not in direct_notes), None)
+                    if free_y is not None:
+                        direct_notes[free_y] = note
+                    else:
+                        evict_y = next((y for y, n in direct_notes.items() if n.instrument not in ABS_DIRECT), None)
+                        if evict_y is not None:
+                            rack_notes.append(direct_notes.pop(evict_y))
+                            direct_notes[evict_y] = note
+                        else:
+                            self.logger.warning(f"column {t}: no free row and no evictable note for non-positional {note.instrument.name}, dropping")
+
+                # place direct notes
+                for y, note in direct_notes.items():
+                    if tile := self.get_tile(x, staff_baseline + y):
+                        self.place_bg(tile, INSTRUMENT_ACCIDENT_TO_ID[note.instrument, note.accident])
+
+                # bin rack notes based on the volume
+                volume_groups: defaultdict[int, list[Note]] = defaultdict(list)
+                for note in rack_notes:
+                    volume_groups[int(note.volume * 100)].append(note)
+
+                # place the bin into batch of 5
+                current_y = 0
+                for volume, v_notes in volume_groups.items():
+                    for batch in itertools.batched(v_notes, 5):
+                        tile = None
+
+                        if rack_on_empty:
+                            # prefer a completely free fg slot anywhere in the column
+                            for try_y in range(14):
+                                if (c := self.get_tile(x, staff_baseline + try_y)) and c.fg_id == 0:
+                                    tile = c
+                                    break
+                            # fallback: sequential, but skip slots already holding an audio tile
+                            if tile is None:
+                                while current_y <= 13:
+                                    c = self.get_tile(x, staff_baseline + current_y)
+                                    current_y += 1
+                                    if c and c.fg_id not in (AUDIO_RACK, AUDIO_GEAR):
+                                        tile = c
+                                        break
+                        else:
+                            if current_y <= 13:
+                                tile = self.get_tile(x, staff_baseline + current_y)
+                                current_y += 1
+
+                        if tile is None:
+                            self.logger.warning("rack overflow: too many racks in one column")
+                            break
+
+                        self.place_fg(tile, AUDIO_RACK if tile.fg_id == 0 else AUDIO_GEAR)
+                        assert tile.extra
+                        e = tile.extra.expect(AudioRackTile)
+                        e.note = b" ".join(note.to_code() for note in batch)
+                        e.volume = volume
+
+    def replace_sheet(self, sheet: Sheet, flags: SheetFlags = SheetFlags.NONE) -> None:
+        """NOTE: *DESTRUCTIVE* WILL REPLACES THE ACTUAL TILES TOO"""
+        if self.sheet:
+            self.remove_sheet(self.sheet)
+
+        self.sheet = sheet
+        self.materialize_sheet(self.sheet, flags)
 
     def get_npc(self, id: int) -> Npc | None:
         npc = self.npcs.get(id)
@@ -3424,6 +3655,13 @@ class World:
     @classmethod
     def from_file(cls, file: Path | str) -> "World":
         return cls.from_tank(Path(file).read_bytes())
+
+    def copy(self) -> "World":
+        data = self.serialize()
+        new_world = World.deserialize(data, int_x_id=self.id)
+        new_world.garbage_start = self.garbage_start
+
+        return new_world
 
     def serialize(self) -> bytes:
         s = Buffer()

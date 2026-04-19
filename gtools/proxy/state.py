@@ -15,7 +15,7 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, Tan
 from gtools.core.growtopia.player import CharacterState, Clothing, Player
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
-from gtools.core.growtopia.world import LockTile, Npc, NpcEvent, NpcType, Tile, TileExtraType, TileFlags, World, WorldEvent
+from gtools.core.growtopia.world import Npc, NpcEvent, NpcType, Tile, World, WorldEvent
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
@@ -659,6 +659,7 @@ class State:
                 self.inventory.add(upd.modify_inventory.id, upd.modify_inventory.to_add)
             case StateUpdateWhat.STATE_ENTER_WORLD:
                 self.world = World.from_proto(upd.enter_world.enter_world)
+                self.world.live = True
             case StateUpdateWhat.STATE_EXIT_WORLD:
                 self.world = None
                 self.inventory.clear_ghost_item()

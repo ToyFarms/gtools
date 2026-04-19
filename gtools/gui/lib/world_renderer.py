@@ -29,7 +29,9 @@ from pyglm.glm import ivec2, vec2
 import hashlib
 import colorsys
 
+from gtools import setting
 from gtools.baked.items import PAINTING_EASEL
+from gtools.core import ndialog
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import (
     DisplayBlockTile,
@@ -60,6 +62,7 @@ from gtools.gui.lib.gui_menu_renderer import GuiMenuRenderer
 from gtools.gui.lib.player_renderer import PlayerRenderer
 from gtools.gui.lib.npc_renderer import NpcRenderer
 import gtools.gui.lib.perf_stats as perf_stats
+from gtools.gui.panels.panel import Panel
 
 
 @dataclass(slots=True)
@@ -229,10 +232,12 @@ class WorldRenderer:
         self._entity_update: bool = False
         self._entity_update_lock = threading.Lock()
 
-        self._world.subscribe(WorldEvent.TILE_UPDATE, self._on_tile_update)
-        self._world.subscribe(WorldEvent.DROPPED_UPDATE, self._on_dropped_update)
-        self._world.subscribe(WorldEvent.PLAYER_UPDATE, self._on_player_update)
-        self._world.subscribe(WorldEvent.NPC_UPDATE, self._on_npc_update)
+        self._world.subscribe(WorldEvent.TILE_UPDATE, batch=self._on_tile_update_batch)
+        self._world.subscribe(WorldEvent.DROPPED_UPDATE, single=self._on_dropped_update)
+        self._world.subscribe(WorldEvent.PLAYER_UPDATE, single=self._on_player_update)
+        self._world.subscribe(WorldEvent.NPC_UPDATE, single=self._on_npc_update)
+
+        self._sheet_flags = World.SheetFlags.NONE
 
     @property
     def hovered_tile(self) -> Tile | None:
@@ -528,7 +533,9 @@ class WorldRenderer:
         self._render_order.add(
             "Tile Overlay",
             lambda camera, cull: self._render_tile_overlay and self._tile_overlay_mesh and self._tile_overlay_renderer.draw(camera, self._tile_overlay_mesh),
-            lambda camera3d, layer_spread: self._render_tile_overlay and self._tile_overlay_mesh and self._tile_overlay_renderer.draw_3d(camera3d, layer_spread, self._tile_overlay_mesh),
+            lambda camera3d, layer_spread: self._render_tile_overlay
+            and self._tile_overlay_mesh
+            and self._tile_overlay_renderer.draw_3d(camera3d, layer_spread, self._tile_overlay_mesh),
         )
 
     def _draw_obj_group_shadows_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
@@ -558,6 +565,13 @@ class WorldRenderer:
         # TODO: also build in chunks
         self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
 
+    def _on_tile_update_batch(self, tiles: list[tuple[int, int]]) -> None:
+        with self._tile_update_lock:
+            self._tile_updates |= set(tiles)
+
+        # TODO: also build in chunks
+        self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
+
     def _on_dropped_update(self) -> None:
         self._needs_obj_rebuild = True
         self._dirty = True
@@ -571,10 +585,10 @@ class WorldRenderer:
             self._entity_update = True
 
     def delete(self) -> None:
-        self._world.unsubscribe(WorldEvent.TILE_UPDATE, self._on_tile_update)
-        self._world.unsubscribe(WorldEvent.DROPPED_UPDATE, self._on_dropped_update)
-        self._world.unsubscribe(WorldEvent.PLAYER_UPDATE, self._on_player_update)
-        self._world.unsubscribe(WorldEvent.NPC_UPDATE, self._on_npc_update)
+        self._world.unsubscribe(WorldEvent.TILE_UPDATE, batch=self._on_tile_update_batch)
+        self._world.unsubscribe(WorldEvent.DROPPED_UPDATE, single=self._on_dropped_update)
+        self._world.unsubscribe(WorldEvent.PLAYER_UPDATE, single=self._on_player_update)
+        self._world.unsubscribe(WorldEvent.NPC_UPDATE, single=self._on_npc_update)
 
         self._mixer.stop()
 
@@ -616,6 +630,37 @@ class WorldRenderer:
         _, sheet.bpm = imgui_knobs.knob("BPM", sheet.bpm, 20.0, 200.0, format="%.0f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
         imgui.same_line()
         _, self._mixer.master_gain = imgui_knobs.knob("GAIN", self._mixer.master_gain, 0.0, 1.0, format="%.2f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
+
+        if self._world.live:
+            imgui.begin_disabled()
+
+        if imgui.button("add sheet"):
+            world_path = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
+            if isinstance(world_path, str):
+                world = World.from_file(world_path)
+                self._world.add_sheet(world.get_sheet())
+
+        if imgui.button("remove sheet"):
+            world_path = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
+            if isinstance(world_path, str):
+                world = World.from_file(world_path)
+                self._world.remove_sheet(world.get_sheet())
+
+        for i, flag in enumerate(World.SheetFlags):
+            if i != 0:
+                imgui.same_line()
+
+            changed, is_set = imgui.checkbox(flag.name or "", self._sheet_flags & flag != 0)
+            if changed:
+                if is_set:
+                    self._sheet_flags |= flag
+                else:
+                    self._sheet_flags &= ~flag
+
+                self._world.update_sheet_flags(self._sheet_flags)
+
+        if self._world.live:
+            imgui.end_disabled()
 
         imgui.separator()
 
@@ -786,6 +831,9 @@ class WorldRenderer:
 
         imgui.begin_group()
 
+        draw_list = imgui.get_window_draw_list()
+        ox, oy = self._image_origin
+
         cw, ch = int(main_w), int(total_h)
         if cw > 0 and ch > 0:
             if self._fbo.width != cw or self._fbo.height != ch:
@@ -846,6 +894,10 @@ class WorldRenderer:
                             self._camera.pos, self._camera.zoom = pos, zoom
                             self._dirty = True
 
+                if imgui.menu_item("Send To Work Area", "Ctrl+S", False)[0]:
+                    from gtools.gui.panels.world_panel import WorldPanel
+                    Panel.add_panel(lambda dock_id: WorldPanel(self._world.copy(), dock_id))
+
                 if imgui.menu_item("Reset Camera", "R", False)[0]:
                     if self._mode_3d:
                         self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
@@ -880,8 +932,6 @@ class WorldRenderer:
                 self._show_settings = not self._show_settings
 
             if self._selection_drag["active"]:
-                draw_list = imgui.get_window_draw_list()
-                ox, oy = self._image_origin
                 s = self._selection_drag["start"]
                 c = self._selection_drag["current"]
                 draw_list.add_rect(
@@ -898,6 +948,14 @@ class WorldRenderer:
 
         imgui.end_group()
 
+        if self._world.live:
+            dot_radius = 3.0
+            ox, oy = self._image_origin
+            dot_x = ox + 10.0
+            dot_y = oy + 10.0
+
+            draw_list.add_circle_filled(imgui.ImVec2(dot_x, dot_y), dot_radius, imgui.get_color_u32((1.0, 0.1, 0.1, 1.0)))
+
         if self._show_settings:
             imgui.same_line()
             imgui.begin_child("##settings", (self._settings_width, total_h), child_flags=imgui.ChildFlags_.borders)
@@ -907,7 +965,16 @@ class WorldRenderer:
         if perf_stats.SHOW_DEBUG_OVERLAY:
             self._render_debug_overlay()
 
-    def _draw_vu_meter(self, draw_list: imgui.ImDrawList, pos: ImVec2, size: ImVec2, level: float, rms_level: float, label: str) -> None:
+    def _draw_vu_meter(
+        self,
+        draw_list: imgui.ImDrawList,
+        pos: ImVec2,
+        size: ImVec2,
+        level: float,
+        rms_level: float,
+        label: str,
+        horizontal: bool = False,
+    ) -> None:
         def level_to_log(lvl: float) -> float:
             if lvl <= 0.0:
                 return 0.0
@@ -921,24 +988,59 @@ class WorldRenderer:
                 return imgui.get_color_u32((1.0, 1.0, 0.2, 0.8))
             return imgui.get_color_u32((0.2, 1.0, 0.2, 0.8))
 
-        log_peak = level_to_log(level)
-        log_rms = level_to_log(rms_level)
+        log_peak = min(level_to_log(level), 1.0)
+        log_rms = min(level_to_log(rms_level), 1.0)
 
-        peak_y = pos.y + size.y - size.y * min(log_peak, 1.0)
-        draw_list.add_line(imgui.ImVec2(pos.x, peak_y), imgui.ImVec2(pos.x + size.x, peak_y), imgui.get_color_u32((1.0, 1.0, 1.0, 0.8)), thickness=1)
+        if horizontal:
+            db = 20 * math.log10(max(rms_level, 1e-6))
+            db_text = f"{label} {db:.0f}"
 
-        rms_h = size.y * min(log_rms, 1.0)
-        color = level_to_color(rms_level)
-        draw_list.add_rect_filled(imgui.ImVec2(pos.x, pos.y + size.y - rms_h), imgui.ImVec2(pos.x + size.x, pos.y + size.y), color)
+            text_size = imgui.calc_text_size(db_text)
+            imgui.set_cursor_screen_pos(imgui.ImVec2(pos.x + size.x + 8 - text_size.x, pos.y + (size.y - text_size.y) / 2))
+            imgui.text(db_text)
 
-        db = 20 * math.log10(max(rms_level, 1e-6))
-        db_text = f"{db:.0f}"
-        text_size = imgui.calc_text_size(db_text)
-        imgui.set_cursor_screen_pos(imgui.ImVec2(pos.x + (size.x - text_size.x) / 2, pos.y - 18))
-        imgui.text(db_text)
+            rms_w = (size.x - text_size.x) * log_rms
+            color = level_to_color(rms_level)
+            draw_list.add_rect_filled(
+                imgui.ImVec2(pos.x, pos.y),
+                imgui.ImVec2(pos.x + rms_w, pos.y + size.y),
+                color,
+            )
 
-        imgui.set_cursor_screen_pos(imgui.ImVec2(pos.x + (size.x - imgui.calc_text_size(label).x) / 2, pos.y + size.y + 5))
-        imgui.text(label)
+            peak_x = pos.x + size.x * log_peak
+            draw_list.add_line(
+                imgui.ImVec2(peak_x, pos.y),
+                imgui.ImVec2(peak_x, pos.y + size.y),
+                imgui.get_color_u32((1.0, 1.0, 1.0, 0.8)),
+                thickness=1,
+            )
+        else:
+            peak_y = pos.y + size.y - size.y * log_peak
+            draw_list.add_line(
+                imgui.ImVec2(pos.x, peak_y),
+                imgui.ImVec2(pos.x + size.x, peak_y),
+                imgui.get_color_u32((1.0, 1.0, 1.0, 0.8)),
+                thickness=1,
+            )
+
+            rms_h = size.y * log_rms
+            color = level_to_color(rms_level)
+            draw_list.add_rect_filled(
+                imgui.ImVec2(pos.x, pos.y + size.y - rms_h),
+                imgui.ImVec2(pos.x + size.x, pos.y + size.y),
+                color,
+            )
+
+            db = 20 * math.log10(max(rms_level, 1e-6))
+            db_text = f"{db:.0f}"
+
+            text_size = imgui.calc_text_size(db_text)
+            imgui.set_cursor_screen_pos(imgui.ImVec2(pos.x + (size.x - text_size.x) / 2, pos.y - 18))
+            imgui.text(db_text)
+
+            label_size = imgui.calc_text_size(label)
+            imgui.set_cursor_screen_pos(imgui.ImVec2(pos.x + (size.x - label_size.x) / 2, pos.y + size.y + 5))
+            imgui.text(label)
 
     @cache
     def _get_layer_color(self, name: str) -> tuple[float, float, float, float]:
@@ -1004,6 +1106,7 @@ class WorldRenderer:
         imgui.spacing()
         imgui.text(f"World: {self._world.name}")
         imgui.text(f"Dimension: {'3D' if self._mode_3d else '2D'}")
+        imgui.text(f"Live: {'true' if self._world.live else 'false'}")
 
         if self._mode_3d:
             p = self._camera3d.pos
@@ -1024,6 +1127,23 @@ class WorldRenderer:
         min_p = imgui.get_item_rect_min()
         max_p = imgui.get_item_rect_max()
         self._debug_rects["left"] = (imgui.ImVec2(min_p.x - padding, min_p.y - padding), imgui.ImVec2(max_p.x + padding, max_p.y + padding))
+
+        vu_spacing = 15.0
+        vu_w, vu_h = min(vw / 3, 300), 20.0
+        imgui.set_cursor_pos((10, max_p.y))
+
+        imgui.begin_group()
+        vu_start_pos = imgui.get_cursor_screen_pos()
+        self._draw_vu_meter(draw_list, vu_start_pos, ImVec2(vu_w, vu_h), self._peak_l, self._rms_l, "L", horizontal=True)
+        self._draw_vu_meter(draw_list, ImVec2(vu_start_pos.x, vu_start_pos.y + vu_h + vu_spacing), ImVec2(vu_w, vu_h), self._peak_r, self._rms_r, "R", horizontal=True)
+        imgui.end_group()
+
+        min_p = imgui.get_item_rect_min()
+        max_p = imgui.get_item_rect_max()
+        self._debug_rects["vu"] = (
+            imgui.ImVec2(min_p.x - padding, min_p.y - padding),
+            imgui.ImVec2(max_p.x + padding, max_p.y + padding),
+        )
 
         padding = 10
         right_w = 320
@@ -1119,21 +1239,6 @@ class WorldRenderer:
 
         imgui.end_group()
 
-        vu_w, vu_h, vu_spacing = 20.0, 200.0, 15.0
-        imgui.set_cursor_pos((10.0, vh - vu_h - 20.0))
-
-        imgui.begin_group()
-        vu_start_pos = imgui.get_cursor_screen_pos()
-        self._draw_vu_meter(draw_list, vu_start_pos, ImVec2(vu_w, vu_h), self._peak_l, self._rms_l, "L")
-        self._draw_vu_meter(draw_list, ImVec2(vu_start_pos.x + vu_w + vu_spacing, vu_start_pos.y), ImVec2(vu_w, vu_h), self._peak_r, self._rms_r, "R")
-        imgui.end_group()
-
-        min_p = imgui.get_item_rect_min()
-        max_p = imgui.get_item_rect_max()
-        self._debug_rects["vu"] = (
-            imgui.ImVec2(min_p.x - 5.0, min_p.y - 20.0),
-            imgui.ImVec2(max_p.x + 5.0, max_p.y + 5.0),
-        )
         imgui.end()
 
     def handle_event(self, event: Event) -> bool:
@@ -1191,6 +1296,10 @@ class WorldRenderer:
                 elif event.key == glfw.KEY_SPACE and not self._mode_3d:
                     self._playing = not self._playing
                     self._dirty = True
+                    return True
+                elif event.key == glfw.KEY_S and event.mods & glfw.MOD_CONTROL:
+                    from gtools.gui.panels.world_panel import WorldPanel
+                    Panel.add_panel(lambda dock_id: WorldPanel(self._world.copy(), dock_id))
                     return True
             elif event.action == glfw.RELEASE:
                 self._keys_held.discard(event.key)

@@ -10,7 +10,6 @@ from gtools.gui.lib.toast import push_error
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
 from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Interest
-from gtools.proxy.event import UpdateClientVersion, UpdateServerData
 from gtools.proxy.extension.client.sdk import Extension
 from gtools.proxy.http_proxy import ThreadedHTTPServer, setup_server
 from gtools.proxy.proxy import Proxy
