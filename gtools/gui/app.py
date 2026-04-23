@@ -2,7 +2,6 @@ import OpenGL
 from gtools import setting
 from gtools.gui.lib import perf_stats
 from gtools.gui.lib.toast import ToastManager, push_debug
-from gtools.gui.panels.midi_panel import MidiPanel
 from gtools.gui.panels.midi_workspace import MidiWorkspace
 
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking
@@ -147,10 +146,6 @@ class App:
         @root.cmd("Debug World")
         def _() -> None:
             self._add_debug_world()
-
-        @root.cmd("Midi Viewer")
-        def _() -> None:
-            self.add_panel(MidiPanel(self.dockspace.node_id))
 
         @root.cmd("Midi Workspace")
         def _() -> None:
