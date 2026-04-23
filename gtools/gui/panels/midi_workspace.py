@@ -40,7 +40,7 @@ class MidiWorkspace(Panel):
         self._arbitrary_bpm = 0.0
 
         if Panel.dev_mode:
-            self.load("./resources/unravel.mid")
+            self.load("./resources/bohemian.mid")
 
     def load(self, path: str | Path) -> None:
         self.visible_instruments.clear()
@@ -225,7 +225,6 @@ class MidiWorkspace(Panel):
                         rounding=3.0,
                     )
 
-
                 selected, _ = imgui.selectable(
                     f"##row_{track.index}_{inst.channel}_{inst.program}",
                     is_highlighted,
@@ -236,32 +235,26 @@ class MidiWorkspace(Panel):
                 imgui.set_cursor_screen_pos(row_pos)
                 imgui.begin_group()
 
-                changed, new_visible = imgui.checkbox(
-                    f"##vis_{track.index}_{inst.channel}_{inst.program}", is_visible
-                )
+                changed, new_visible = imgui.checkbox(f"##vis_{track.index}_{inst.channel}_{inst.program}", is_visible)
                 imgui.same_line()
 
-                imgui.text_colored(
-                    (1.0, 1.0, 1.0, 0.9) if is_visible else (0.5, 0.5, 0.5, 0.7),
-                    inst.name
-                )
+                imgui.text_colored((1.0, 1.0, 1.0, 0.9) if is_visible else (0.5, 0.5, 0.5, 0.7), inst.name)
                 imgui.end_group()
 
                 dot_r = 4.0
                 dot_cx = row_max.x - dot_r - 2.0
                 dot_cy = row_pos.y + row_h * 0.5
                 if ping_alpha > 0.0:
-                    draw_list.add_circle_filled(
-                        imgui.ImVec2(dot_cx, dot_cy), dot_r + 2.0,
-                        imgui.get_color_u32((0.2, 1.0, 0.5, ping_alpha * 0.5))
-                    )
+                    draw_list.add_circle_filled(imgui.ImVec2(dot_cx, dot_cy), dot_r + 2.0, imgui.get_color_u32((0.2, 1.0, 0.5, ping_alpha * 0.5)))
                     t = ping_alpha
-                    dot_col = imgui.get_color_u32((
-                        0.3 * (1 - t) + 0.2 * t,
-                        0.3 * (1 - t) + 1.0 * t,
-                        0.35 * (1 - t) + 0.5 * t,
-                        1.0,
-                    ))
+                    dot_col = imgui.get_color_u32(
+                        (
+                            0.3 * (1 - t) + 0.2 * t,
+                            0.3 * (1 - t) + 1.0 * t,
+                            0.35 * (1 - t) + 0.5 * t,
+                            1.0,
+                        )
+                    )
                 else:
                     dot_col = imgui.get_color_u32((0.25, 0.25, 0.3, 1.0))
                 draw_list.add_circle_filled(imgui.ImVec2(dot_cx, dot_cy), dot_r, dot_col)
@@ -318,14 +311,8 @@ class MidiWorkspace(Panel):
                         self.highlighted_instruments.add(key)
 
                 fg = imgui.get_foreground_draw_list()
-                fg.add_rect(
-                    imgui.ImVec2(m_min_x, m_min_y), imgui.ImVec2(m_max_x, m_max_y),
-                    imgui.get_color_u32((1, 1, 1, 1)), 0, 0, 2.0
-                )
-                fg.add_rect_filled(
-                    imgui.ImVec2(m_min_x, m_min_y), imgui.ImVec2(m_max_x, m_max_y),
-                    imgui.get_color_u32((1, 1, 1, 0.1))
-                )
+                fg.add_rect(imgui.ImVec2(m_min_x, m_min_y), imgui.ImVec2(m_max_x, m_max_y), imgui.get_color_u32((1, 1, 1, 1)), 0, 0, 2.0)
+                fg.add_rect_filled(imgui.ImVec2(m_min_x, m_min_y), imgui.ImVec2(m_max_x, m_max_y), imgui.get_color_u32((1, 1, 1, 0.1)))
 
         imgui.end_child()
 
@@ -418,12 +405,7 @@ class MidiWorkspace(Panel):
                     continue
 
                 for note in inst:
-                    n = Note.from_midi(
-                        note.pitch,
-                        note.program,
-                        note.start_slot,
-                        note.velocity,
-                    )
+                    n = Note.from_midi(note.pitch, note.program, note.is_drum, note.start_slot, note.velocity)
                     n.userdata = key
                     notes.append(n)
 

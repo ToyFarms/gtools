@@ -7,6 +7,7 @@ from typing import Any, Callable
 import threading
 
 from gtools import setting
+from gtools.core.midi import GM_INSTRUMENTS
 from gtools.core.mixer import AudioMixer, Sound
 from gtools.baked.items import (
     SHEET_MUSIC_COLON_BASS_NOTE,
@@ -94,6 +95,8 @@ class Note:
     volume: float = 1.0
     userdata: Any = field(default=None, compare=False)
 
+    logger = logging.getLogger("note")
+
     def transpose_octaves(self, octaves: int) -> "Note":
         return Note(
             base=self.base,
@@ -151,17 +154,26 @@ class Note:
         return setting.gt_path / "audio/notes" / f"{self.instrument.value}_{self.to_index()}.wav"
 
     @classmethod
-    def from_midi(cls, note: int, instrument: int, time: int, velocity: int) -> "Note":
-        pitch_class = note % 12
-        octave = note // 12 - 1
-
-        base, accidental = MIDI_PITCH_TO_NOTE[pitch_class]
+    def from_midi(cls, note: int, instrument: int, is_drum: bool, time: int, velocity: int) -> "Note":
+        if is_drum:
+            instr = InstrumentSet.DRUM
+            base = MIDI_DRUMS_TO_INSTRUMENT_SET[note]
+            accidental = Note.NATURAL
+            octave = 0
+        else:
+            pitch_class = note % 12
+            octave = note // 12 - 1
+            base, accidental = MIDI_PITCH_TO_NOTE[pitch_class]
+            instr = MIDI_INSTRUMENT_TO_INSTRUMENT_SET.get(instrument)
+            if not instr:
+                cls.logger.warning(f"no suitable instrument mapping for {GM_INSTRUMENTS[instrument]}, defaulting to piano")
+                instr = InstrumentSet.PIANO
 
         return Note(
             base=base,
             octave=octave,
             accidental=accidental,
-            instrument=MIDI_INSTRUMENT_TO_INSTRUMENT_SET[instrument],
+            instrument=instr,
             timestamp=time,
             volume=velocity / 127 if velocity else 0.0,
         )
@@ -268,8 +280,7 @@ MIDI_INSTRUMENT_TO_INSTRUMENT_SET = {
     77: InstrumentSet.FLUTE,
     78: InstrumentSet.FLUTE,
     79: InstrumentSet.FLUTE,
-
-# TODO: find suitable mapping for this
+    # TODO: find suitable mapping for this
     # festive / bells / chimes-like material
     8: InstrumentSet.PIANO,
     9: InstrumentSet.PIANO,
@@ -289,6 +300,68 @@ MIDI_INSTRUMENT_TO_INSTRUMENT_SET = {
     54: InstrumentSet.PIANO,
     55: InstrumentSet.PIANO,
     69: InstrumentSet.FLUTE,
+}
+
+MIDI_DRUMS_TO_INSTRUMENT_SET = {
+    # Kick (cluster)
+    35: Note.B,  # Acoustic Bass Drum (kind of Kick)
+    36: Note.B,  # Bass Drum 1 (Kick)
+    # Snare (cluster)
+    37: Note.F,  # Side Stick (kind of Snare alt)
+    38: Note.F,  # Acoustic Snare
+    40: Note.F,  # Electric Snare
+    # Clap
+    39: Note.A,  # Hand Clap
+    # Hi-hat (cluster)
+    42: Note.G,  # Closed Hi-hat
+    44: Note.G,  # Pedal Hi-hat (kind of Hi-hat)
+    46: Note.G,  # Open Hi-hat
+    # Low tom (cluster)
+    41: Note.E,  # Low Floor Tom (kind of Low tom)
+    43: Note.E,  # High Floor Tom (kind of Low tom)
+    45: Note.E,  # Low Tom
+    # High tom (cluster)
+    47: Note.D,  # Low-Mid Tom (kind of High tom)
+    48: Note.D,  # Hi-Mid Tom
+    50: Note.D,  # High Tom
+    # Crash (and cymbal-like -> crash approximation)
+    49: Note.C,  # Crash Cymbal 1
+    51: Note.C,  # Ride Cymbal 1 (kind of Crash)
+    52: Note.C,  # Chinese Cymbal (kind of Crash)
+    53: Note.C,  # Ride Bell (kind of Crash)
+    55: Note.C,  # Splash Cymbal (kind of Crash)
+    57: Note.C,  # Crash Cymbal 2
+    # Extra percussion mapped to closest feel
+    # Snare-ish / sharp hits
+    54: Note.F,  # Tambourine (kind of Snare-like transient)
+    56: Note.F,  # Cowbell (kind of Snare-like cut)
+    # Hi-hat-ish / high noise
+    58: Note.G,  # Vibraslap (kind of noisy, hat-like)
+    69: Note.G,  # Cabasa (kind of hi-hat texture)
+    70: Note.G,  # Maracas (kind of hi-hat texture)
+    # Tom-ish / body hits
+    60: Note.E,  # Hi Bongo (kind of small tom -> low tom group)
+    61: Note.E,  # Low Bongo
+    62: Note.D,  # Mute Hi Conga (kind of higher tom)
+    63: Note.E,  # Open Hi Conga
+    64: Note.E,  # Low Conga
+    65: Note.E,  # High Timbale
+    66: Note.E,  # Low Timbale
+    73: Note.D,  # Short Guiro (kind of high percussive)
+    74: Note.E,  # Long Guiro
+    # Kick-ish / low hits
+    67: Note.B,  # High Agogo (weak fit -> mapped low-end intent)
+    68: Note.B,  # Low Agogo (kind of Kick-ish body)
+    # Remaining high percussion -> default to hi-hat or crash feel
+    71: Note.G,  # Short Whistle (kind of high freq)
+    72: Note.G,  # Long Whistle
+    75: Note.G,  # Claves (kind of sharp high)
+    76: Note.G,  # Hi Wood Block
+    77: Note.E,  # Low Wood Block (kind of low body)
+    78: Note.G,  # Mute Cuica
+    79: Note.G,  # Open Cuica
+    80: Note.G,  # Mute Triangle
+    81: Note.C,  # Open Triangle (kind of cymbal-like -> crash)
 }
 
 _SOUNDS: dict[Path, Sound] = {}

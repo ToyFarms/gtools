@@ -2972,6 +2972,13 @@ class World:
         rack_on_empty = flags & World.SheetFlags.RACK_ON_EMPTY != 0
         disable_volume = flags & World.SheetFlags.DISABLE_VOLUME != 0
 
+        def row_candidates(note: Note) -> list[int]:
+            y = note.y_pos()
+            if note.instrument == InstrumentSet.DRUM:
+                # drums can exist in two equivalent vertical positions (6-step wrap)
+                return [r for r in (y, y + 6, y - 6) if 0 <= r < 14]
+            return [y]
+
         with self.batch():
             for t, notes in list(sheet.notes.items()):
                 x = t % self.width
@@ -3001,6 +3008,13 @@ class World:
                 direct_notes: dict[int, Note] = {}
                 rack_notes: list[Note] = []
 
+                def try_place_direct(note: Note) -> bool:
+                    for y in row_candidates(note):
+                        if y not in direct_notes:
+                            direct_notes[y] = note
+                            return True
+                    return False
+
                 for y, y_notes in y_groups.items():
 
                     def classify(note: Note) -> str:
@@ -3020,16 +3034,20 @@ class World:
 
                     if len(abs_direct) > 1:
                         self.logger.warning(
-                            f"collision between abs direct notes, found {len(abs_direct)} notes " f"({' '.join(n.instrument.name for n in abs_direct)}), last note takes priority"
+                            f"collision between abs direct notes, found {len(abs_direct)} notes ({' '.join(n.instrument.name for n in abs_direct)}), last note takes priority"
                         )
 
                     rack_notes.extend(rack_required)
 
                     if abs_direct:
-                        direct_notes[y] = abs_direct[-1]
+                        # try equivalent rows before overwriting
+                        if not try_place_direct(abs_direct[-1]):
+                            direct_notes[y] = abs_direct[-1]
                         rack_notes.extend(possible_direct)
                     elif not force_rack and possible_direct:
-                        direct_notes[y] = possible_direct[0]
+                        # first one tries flexible placement, rest spill
+                        if not try_place_direct(possible_direct[0]):
+                            direct_notes[y] = possible_direct[0]
                         rack_notes.extend(possible_direct[1:])
                     else:
                         rack_notes.extend(possible_direct)
@@ -3084,7 +3102,7 @@ class World:
                                 current_y += 1
 
                         if tile is None:
-                            self.logger.warning("rack overflow: too many racks in one column")
+                            self.logger.warning("rack overflow: too many racks in one column, or could not find a place for the note")
                             break
 
                         self.place_fg(tile, AUDIO_RACK if tile.fg_id == 0 else AUDIO_GEAR)
