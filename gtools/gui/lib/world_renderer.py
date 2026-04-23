@@ -243,8 +243,6 @@ class WorldRenderer:
         self._world.subscribe(WorldEvent.PLAYER_UPDATE, single=self._on_player_update)
         self._world.subscribe(WorldEvent.NPC_UPDATE, single=self._on_npc_update)
 
-        self._sheet_flags = World.SheetFlags.NONE
-
     @property
     def hovered_tile(self) -> Tile | None:
         return self._hovered_tile
@@ -663,14 +661,13 @@ class WorldRenderer:
             self._world.remove_sheet()
 
         for i, flag in enumerate(World.SheetFlags):
-            changed, is_set = imgui.checkbox(flag.name or "", self._sheet_flags & flag != 0)
+            changed, is_set = imgui.checkbox(flag.name or "", self._world._sheet_flags & flag != 0)
             if changed:
                 if is_set:
-                    self._sheet_flags |= flag
+                    self._world._sheet_flags |= flag
                 else:
-                    self._sheet_flags &= ~flag
+                    self._world._sheet_flags &= ~flag
 
-                self._world.sheet_flags = self._sheet_flags
                 self._world.rebuild_sheet()
 
         if self._world.live:
