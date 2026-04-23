@@ -34,9 +34,10 @@ class MidiWorkspace(Panel):
 
         self._ping_times: dict[tuple[int, int, int], float] = {}
 
-        self.max_bps = 13
+        self.max_bpm = 200
         self.wrap_enabled = True
         self.wrap_width = 100
+        self._arbitrary_bpm = 0.0
 
         if Panel.dev_mode:
             self.load("./resources/unravel.mid")
@@ -50,14 +51,17 @@ class MidiWorkspace(Panel):
 
         self.midi_file = MidiFile(path)
         self._error_curve_cache = self.midi_file.error_curve(max_bps=128)
-        self._set_bps(self.midi_file.get_best_bps(max_bps=self.max_bps))
+        best_bpm = self.midi_file.get_best_bps(max_bps=int(self.max_bpm / 15)) * 15
+        self._set_bpm(best_bpm)
         self.world_renderer.center()
 
-    def _set_bps(self, bps: float) -> None:
+    def _set_bpm(self, bpm: float) -> None:
         if not self.midi_file:
             return
 
-        old_bps = self.midi.bps if self.midi else None
+        bps = bpm / 15.0
+        self._arbitrary_bpm = bpm
+        old_bpm = self.midi.bps * 15 if self.midi else None
 
         self.midi = self.midi_file.quantize(bps)
         self._update_world_size()
@@ -69,8 +73,8 @@ class MidiWorkspace(Panel):
 
         self._rebuild_sheet()
 
-        if old_bps and self.world.sheet:
-            self.world.sheet.playhead = int(self.world.sheet.playhead * (bps / old_bps))
+        if old_bpm and self.world.sheet:
+            self.world.sheet.playhead = int(self.world.sheet.playhead * (bpm / old_bpm))
 
     def _update_world_size(self) -> None:
         if not self.midi:
@@ -127,7 +131,9 @@ class MidiWorkspace(Panel):
             return
 
         imgui.text(f"Total slots: {self.midi.duration_slots}")
-        imgui.text(f"BPS: {self.midi.bps:.2f}")
+        imgui.text(f"BPM: {self.midi.bps * 15:.2f}")
+        imgui.same_line()
+        imgui.text_disabled(f"({self.midi.total_error_sec():.3f}s error)")
 
         if imgui.button("Show All"):
             for track in self.midi.tracks:
@@ -340,26 +346,29 @@ class MidiWorkspace(Panel):
         imgui.separator()
         imgui.text("Quantization")
 
-        imgui.text("Max Search BPS")
+        imgui.text("Max Search BPM")
         imgui.set_next_item_width(-1)
-        _, self.max_bps = imgui.slider_int("##MaxSearchBPS", self.max_bps, 1, 128)
+        _, self.max_bpm = imgui.slider_int("##MaxSearchBPM", self.max_bpm, 15, 1920)
         if imgui.is_item_deactivated_after_edit() and self.midi_file:
             self._error_curve_cache = self.midi_file.error_curve(max_bps=128)
-            self._set_bps(self.midi_file.get_best_bps(max_bps=self.max_bps))
+            best_bpm = self.midi_file.get_best_bps(max_bps=int(self.max_bpm / 15)) * 15
+            self._set_bpm(best_bpm)
 
         if self.midi:
-            cur_bps = self.midi.bps
-            imgui.text(f"Current BPS: {cur_bps:.2f}")
-            imgui.text("Arbitrary BPS")
+            cur_bpm = self.midi.bps * 15
+            imgui.text(f"Current BPM: {cur_bpm:.2f}")
+            imgui.text("Arbitrary BPM")
             imgui.set_next_item_width(-1)
-            _, new_bps = imgui.input_float("##ArbitraryBPS", cur_bps)
+            changed, new_bpm = imgui.drag_float("##ArbitraryBPM", self._arbitrary_bpm, 0.1, 1.0, 3000.0, "%.2f BPM")
+            if changed:
+                self._arbitrary_bpm = new_bpm
             if imgui.is_item_deactivated_after_edit():
-                self._set_bps(new_bps)
+                self._set_bpm(self._arbitrary_bpm)
 
         if self.midi_file and self._error_curve_cache:
-            imgui.text("BPS Error Curve")
+            imgui.text("BPM Error Curve")
             curve = self._error_curve_cache
-            bps_vals = [c[0] for c in curve]
+            bpm_vals = [c[0] * 15 for c in curve]
             err_vals = [c[1] for c in curve]
 
             min_err = min(err_vals)
@@ -369,7 +378,7 @@ class MidiWorkspace(Panel):
                 "##ErrorCurve",
                 np.array(err_vals, dtype=np.float32),
                 values_offset=0,
-                overlay_text="Total Error (sec)",
+                overlay_text=f"Total Error: {self.midi.total_error_sec():.4f}s" if self.midi else "Total Error (sec)",
                 scale_min=min_err,
                 scale_max=max_err,
                 graph_size=imgui.ImVec2(0, 80),
@@ -383,15 +392,15 @@ class MidiWorkspace(Panel):
                 width = rect_max.x - rect_min.x
                 rel_x = (mouse_pos.x - rect_min.x) / width
                 if 0 <= rel_x <= 1:
-                    idx = int(rel_x * (len(bps_vals) - 1))
-                    target_bps = bps_vals[idx]
+                    idx = int(rel_x * (len(bpm_vals) - 1))
+                    target_bpm = bpm_vals[idx]
                     imgui.begin_tooltip()
-                    imgui.text(f"BPS: {target_bps}")
+                    imgui.text(f"BPM: {target_bpm:.2f}")
                     imgui.text(f"Error: {err_vals[idx]:.4f}s")
                     imgui.end_tooltip()
 
                     if imgui.is_mouse_clicked(imgui.MouseButton_.left):
-                        self._set_bps(target_bps)
+                        self._set_bpm(target_bpm)
 
     def _on_note_played(self, note: Note) -> None:
         if isinstance(note.userdata, tuple):
@@ -418,12 +427,12 @@ class MidiWorkspace(Panel):
                     n.userdata = key
                     notes.append(n)
 
-        bpm = int(self.midi.bps * 60 / 4)
+        bpm = self.midi.bps * 15
         self.world.remove_sheet()
         if self.world.sheet:
             self.world.sheet.replace_notes(compress_notes(notes))
             self.world.materialize_sheet()
-            self.world.sheet.bpm = bpm
+            self.world.sheet.bpm = int(bpm)
             self.world.sheet.on_note_played = self._on_note_played
 
     @property
