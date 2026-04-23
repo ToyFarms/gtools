@@ -205,6 +205,9 @@ class WorldRenderer:
         self._render_order = RenderOrder()
         self._obj_meshes: list[ObjectRenderMesh] = []
         self._culling_debug_zoom: float = 1.0
+        self._follow_playhead = False
+        self._last_playhead_pos: glm.vec2 | None = None
+        self._follow_rel_x = 0.25
 
         self._show_settings = False
         self._settings_width = 250.0
@@ -322,6 +325,18 @@ class WorldRenderer:
     def tile_flags(self, value: TileRenderer.Flags) -> None:
         if self._tile_renderer.flags != value:
             self._tile_renderer.flags = value
+            self._dirty = True
+
+    @property
+    def follow_playhead(self) -> bool:
+        return self._follow_playhead
+
+    @follow_playhead.setter
+    def follow_playhead(self, value: bool) -> None:
+        if self._follow_playhead != value:
+            self._follow_playhead = value
+            self._last_playhead_pos = None
+            self._follow_rel_x = 0.10
             self._dirty = True
 
     def set_active(self, active: bool) -> None:
@@ -668,6 +683,10 @@ class WorldRenderer:
         _, playing = imgui.checkbox("Play", self._playing)
         self.playing = playing
 
+        imgui.same_line()
+        _, follow_playhead = imgui.checkbox("Follow Playhead", self._follow_playhead)
+        self.follow_playhead = follow_playhead
+
         imgui.separator()
 
         FLAGS: list[tuple[str, TileRenderer.Flags]] = [
@@ -786,7 +805,39 @@ class WorldRenderer:
                         speed *= 2.5
 
                     self._camera.pan_by_screen(-dx * speed, -dy * speed)
+                    if self._follow_playhead and self._sheet.any:
+                        hw = self._camera.width / (2.0 * self._camera.zoom)
+                        self._follow_rel_x -= (dx * speed / self._camera.zoom) / (2.0 * hw)
                     self._dirty = True
+
+        if self._follow_playhead and not self._mode_3d and self._sheet.any:
+            playhead = self._sheet.playhead - 1
+            world_width = self._world.width
+            row_height = 14 * 32.0
+            padding_blocks = 5
+            total_blocks = 14 + (padding_blocks * 2)
+            fit_height = total_blocks * 32.0
+
+            px = (playhead % world_width) * 32
+            py = (playhead // world_width) * row_height + (row_height / 2.0) - 16
+            p_pos = glm.vec2(px, py)
+
+            if self._last_playhead_pos is None:
+                self._camera.zoom = self._camera.height / fit_height
+                self._follow_rel_x = 0.10
+                hw = self._camera.width / (2.0 * self._camera.zoom)
+                self._camera.pos.x = p_pos.x + hw * (1.0 - 2.0 * self._follow_rel_x)
+                self._camera.pos.y = p_pos.y
+                self._last_playhead_pos = p_pos
+            else:
+                hw = self._camera.width / (2.0 * self._camera.zoom)
+                target_x = p_pos.x + hw * (1.0 - 2.0 * self._follow_rel_x)
+                target = glm.vec2(target_x, p_pos.y)
+
+                alpha = 1.0 - math.exp(-10.0 * dt)
+                self._camera.pos = glm.mix(self._camera.pos, target, alpha)  # pyright: ignore[reportAttributeAccessIssue]
+                self._last_playhead_pos = p_pos
+            self._dirty = True
 
         if perf_stats.SHOW_DEBUG_OVERLAY:
             self._peak_l *= 0.95
@@ -1262,6 +1313,10 @@ class WorldRenderer:
                     self._mode_3d = not self._mode_3d
                     self._dirty = True
                     return True
+                if event.key == glfw.KEY_F:
+                    self.follow_playhead = not self.follow_playhead
+                    self._dirty = True
+                    return True
                 if event.key == glfw.KEY_0:
                     self._tile_renderer.flags |= TileRenderer.Flags.RENDER_FG | TileRenderer.Flags.RENDER_BG
                     self._dirty = True
@@ -1453,8 +1508,19 @@ class WorldRenderer:
     def _handle_event_2d(self, event: Event) -> bool:
         if isinstance(event, ScrollEvent):
             if self._hovered and time.monotonic() - self._last_touch_event >= 0.5:
-                lx, ly = self._to_local(event.screen_x, event.screen_y)
-                self._camera.zoom_around(1.1**event.yoff, lx, ly)
+                if self._follow_playhead and self._sheet.any:
+                    playhead = self._sheet.playhead - 1
+                    world_width = self._world.width
+                    row_height = 14 * 32.0
+                    px = (playhead % world_width) * 32
+                    py = (playhead // world_width) * row_height + (row_height / 2.0) - 16
+
+                    p_screen = self._camera.world_to_screen(px, py)
+                    self._camera.zoom_around(1.1**event.yoff, p_screen.x, p_screen.y)
+                else:
+                    lx, ly = self._to_local(event.screen_x, event.screen_y)
+                    self._camera.zoom_around(1.1**event.yoff, lx, ly)
+
                 self._dirty = True
                 return True
         elif isinstance(event, MouseButtonEvent):
@@ -1470,6 +1536,7 @@ class WorldRenderer:
                         "active": True,
                         "start_screen": (lx, ly),
                         "start_cam": glm.vec2(self._camera.pos),
+                        "start_rel_x": self._follow_rel_x if self._follow_playhead else 0.0,
                     }
                     return True
                 elif event.action == glfw.RELEASE and self._drag.get("active"):
@@ -1525,10 +1592,16 @@ class WorldRenderer:
             self._cursor_pos = (event.xpos, event.ypos)
             lx, ly = self._to_local(event.xpos, event.ypos)
             if self._drag.get("active"):
-                dx = lx - self._drag["start_screen"][0]
-                dy = ly - self._drag["start_screen"][1]
-                self._camera.pos.x = self._drag["start_cam"].x - dx / self._camera.zoom
-                self._camera.pos.y = self._drag["start_cam"].y - dy / self._camera.zoom
+                dx_view = lx - self._drag["start_screen"][0]
+                dy_view = ly - self._drag["start_screen"][1]
+
+                if self._follow_playhead and self._sheet.any:
+                    hw = self._camera.width / (2.0 * self._camera.zoom)
+                    self._follow_rel_x = self._drag["start_rel_x"] + (dx_view / self._camera.zoom) / (2.0 * hw)
+                else:
+                    self._camera.pos.x = self._drag["start_cam"].x - dx_view / self._camera.zoom
+                    self._camera.pos.y = self._drag["start_cam"].y - dy_view / self._camera.zoom
+
                 self._dirty = True
                 return True
             if self._selection_drag.get("active"):
@@ -1538,13 +1611,16 @@ class WorldRenderer:
         elif isinstance(event, TouchEvent):
             if self._hovered:
                 self._last_touch_event = time.monotonic()
-                self._camera.pos.x -= event.dx / self._camera.zoom
-                self._camera.pos.y -= event.dy / self._camera.zoom
+                self._camera.pan_by_screen(event.dx, event.dy)
 
                 lx, ly = self._to_local(self._cursor_pos[0], self._cursor_pos[1])
                 self._camera.zoom_around(event.scale_factor, lx, ly)
-                self._dirty = True
 
+                if self._follow_playhead and self._sheet.any:
+                    hw = self._camera.width / (2.0 * self._camera.zoom)
+                    self._follow_rel_x += (event.dx / self._camera.zoom) / (2.0 * hw)
+
+                self._dirty = True
                 return True
         return False
 

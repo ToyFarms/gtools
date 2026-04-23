@@ -31,6 +31,13 @@ class Camera2D:
         nx, ny = sx / self.width, sy / self.height
         return vec2((self.pos.x - hw) + nx * 2 * hw, (self.pos.y - hh) + ny * 2 * hh)
 
+    def world_to_screen(self, wx: float, wy: float) -> vec2:
+        hw = self.width / (2.0 * self.zoom)
+        hh = self.height / (2.0 * self.zoom)
+        nx = (wx - (self.pos.x - hw)) / (2.0 * hw)
+        ny = (wy - (self.pos.y - hh)) / (2.0 * hh)
+        return vec2(nx * self.width, ny * self.height)
+
     def zoom_around(self, factor: float, screen_x: float, screen_y: float) -> None:
         before = self.screen_to_world(screen_x, screen_y)
         self.zoom = max(self.min_zoom, min(self.zoom * factor, self.max_zoom))
