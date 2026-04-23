@@ -670,7 +670,8 @@ class WorldRenderer:
                 else:
                     self._sheet_flags &= ~flag
 
-                self._world.update_sheet_flags(self._sheet_flags)
+                self._world.sheet_flags = self._sheet_flags
+                self._world.rebuild_sheet()
 
         if self._world.live:
             imgui.end_disabled()

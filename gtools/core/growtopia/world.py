@@ -2771,6 +2771,7 @@ class Listener:
 @dataclass(slots=True)
 class World:
     id: int = 0  # u32, from int_x in tank packet
+
     version: int = 0  # u32
     f: int = 0  # u16
     name: bytes = b""
@@ -2794,6 +2795,13 @@ class World:
     npcs: dict[int, Npc] = field(default_factory=dict)
     sheet: Sheet | None = None
 
+    class SheetFlags(IntFlag):
+        NONE = 0
+        FORCE_RACK = 1 << 0
+        RACK_ON_EMPTY = 1 << 1
+        DISABLE_VOLUME = 1 << 2
+
+    _sheet_flags: SheetFlags = SheetFlags.RACK_ON_EMPTY
     _listeners: defaultdict[WorldEvent, list[Listener]] = field(default_factory=lambda: defaultdict(list), init=False, repr=False)
     _batching: bool = False
     _event_buffer: defaultdict[WorldEvent, list[tuple]] = field(default_factory=lambda: defaultdict(list), init=False, repr=False)
@@ -2899,12 +2907,6 @@ class World:
 
         return ret
 
-    class SheetFlags(IntFlag):
-        NONE = 0
-        FORCE_RACK = 1 << 0
-        RACK_ON_EMPTY = 1 << 1
-        DISABLE_VOLUME = 1 << 2
-
     def get_sheet(self, mixer: AudioMixer | None = None) -> Sheet:
         lock = self.get_world_lock()
         if lock is None or lock.extra is None:
@@ -2921,6 +2923,14 @@ class World:
 
         return self.sheet
 
+    @property
+    def sheet_flags(self) -> SheetFlags:
+        return self.SheetFlags(self._sheet_flags)
+
+    @sheet_flags.setter
+    def sheet_flags(self, value: SheetFlags) -> None:
+        self._sheet_flags = value
+
     def remove_sheet(self, clear_notes: bool = True) -> None:
         if self.sheet and clear_notes:
             self.sheet.replace_notes([])
@@ -2933,23 +2943,23 @@ class World:
                 if tile.fg_id in (AUDIO_RACK, AUDIO_GEAR):
                     self.place_fg(tile, 0)
 
-    def add_sheet(self, sheet: Sheet, flags: SheetFlags = SheetFlags.NONE) -> None:
+    def add_sheet(self, sheet: Sheet) -> None:
         """add two (or one) sheets together"""
         if not self.sheet:
             self.sheet = sheet
-            self.materialize_sheet(sheet, flags)
+            self.materialize_sheet(sheet)
         else:
             self.sheet.add_notes(sheet._notes)
-            self.materialize_sheet(sheet, flags)
+            self.materialize_sheet(sheet)
 
-    def update_sheet_flags(self, flags: SheetFlags = SheetFlags.NONE) -> None:
+    def rebuild_sheet(self) -> None:
         if not self.sheet:
             return
 
         self.remove_sheet(clear_notes=False)
-        self.materialize_sheet(self.sheet, flags)
+        self.materialize_sheet(self.sheet)
 
-    def materialize_sheet(self, sheet: Sheet | None = None, flags: SheetFlags = SheetFlags.NONE) -> None:
+    def materialize_sheet(self, sheet: Sheet | None = None) -> None:
         sheet = sheet if sheet else self.sheet
         if not sheet:
             return
@@ -2957,6 +2967,7 @@ class World:
         NON_POSITIONAL = {InstrumentSet.REPEAT_BEGIN, InstrumentSet.REPEAT_END}
         ABS_DIRECT = {InstrumentSet.SPOOKY, InstrumentSet.FESTIVE}
 
+        flags = self.sheet_flags
         force_rack = flags & World.SheetFlags.FORCE_RACK != 0
         rack_on_empty = flags & World.SheetFlags.RACK_ON_EMPTY != 0
         disable_volume = flags & World.SheetFlags.DISABLE_VOLUME != 0
@@ -3082,13 +3093,13 @@ class World:
                         e.note = b" ".join(note.to_code() for note in batch)
                         e.volume = volume
 
-    def replace_sheet(self, sheet: Sheet, flags: SheetFlags = SheetFlags.NONE) -> None:
+    def replace_sheet(self, sheet: Sheet) -> None:
         """NOTE: *DESTRUCTIVE* WILL REPLACES THE ACTUAL TILES TOO"""
         if self.sheet:
             self.remove_sheet()
 
         self.sheet = sheet
-        self.materialize_sheet(self.sheet, flags)
+        self.materialize_sheet(self.sheet)
 
     def get_npc(self, id: int) -> Npc | None:
         npc = self.npcs.get(id)
