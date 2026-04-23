@@ -663,9 +663,6 @@ class WorldRenderer:
             self._world.remove_sheet()
 
         for i, flag in enumerate(World.SheetFlags):
-            if i != 0:
-                imgui.same_line()
-
             changed, is_set = imgui.checkbox(flag.name or "", self._sheet_flags & flag != 0)
             if changed:
                 if is_set:
@@ -853,6 +850,13 @@ class WorldRenderer:
 
         self._world.update_npc(dt)
 
+    def center(self) -> None:
+        if self._mode_3d:
+            self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
+        else:
+            self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
+        self._dirty = True
+
     def render(self) -> None:
         frame_start = time.perf_counter_ns()
         self._frame_times.append((frame_start - self._last_frame_start) / 1_000_000.0)
@@ -961,11 +965,7 @@ class WorldRenderer:
                     Panel.add_panel(lambda dock_id: WorldPanel(self._world.copy(), dock_id))
 
                 if imgui.menu_item("Reset Camera", "R", False)[0]:
-                    if self._mode_3d:
-                        self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
-                    else:
-                        self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
-                    self._dirty = True
+                    self.center()
 
                 imgui.separator()
 
@@ -1370,11 +1370,7 @@ class WorldRenderer:
                     self._dirty = True
                     return True
                 elif event.key == glfw.KEY_R:
-                    if self._mode_3d:
-                        self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
-                    else:
-                        self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
-                    self._dirty = True
+                    self.center()
                     return True
                 elif event.key == glfw.KEY_TAB:
                     self._show_settings = not self._show_settings

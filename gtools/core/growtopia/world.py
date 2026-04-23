@@ -2903,6 +2903,7 @@ class World:
         NONE = 0
         FORCE_RACK = 1 << 0
         RACK_ON_EMPTY = 1 << 1
+        DISABLE_VOLUME = 1 << 2
 
     def get_sheet(self, mixer: AudioMixer | None = None) -> Sheet:
         lock = self.get_world_lock()
@@ -2920,18 +2921,17 @@ class World:
 
         return self.sheet
 
-    def remove_sheet(self) -> None:
-        if self.sheet:
+    def remove_sheet(self, clear_notes: bool = True) -> None:
+        if self.sheet and clear_notes:
             self.sheet.replace_notes([])
 
         with self.batch():
             for tile in self.tiles.values():
-                if not tile.extra:
-                    continue
+                if tile.bg_id in ID_TO_INSTRUMENT_SET:
+                    self.place_bg(tile, 0)
 
-                if isinstance(tile.extra, AudioRackTile):
+                if tile.fg_id in (AUDIO_RACK, AUDIO_GEAR):
                     self.place_fg(tile, 0)
-
 
     def add_sheet(self, sheet: Sheet, flags: SheetFlags = SheetFlags.NONE) -> None:
         """add two (or one) sheets together"""
@@ -2946,7 +2946,7 @@ class World:
         if not self.sheet:
             return
 
-        self.remove_sheet()
+        self.remove_sheet(clear_notes=False)
         self.materialize_sheet(self.sheet, flags)
 
     def materialize_sheet(self, sheet: Sheet | None = None, flags: SheetFlags = SheetFlags.NONE) -> None:
@@ -2959,6 +2959,7 @@ class World:
 
         force_rack = flags & World.SheetFlags.FORCE_RACK != 0
         rack_on_empty = flags & World.SheetFlags.RACK_ON_EMPTY != 0
+        disable_volume = flags & World.SheetFlags.DISABLE_VOLUME != 0
 
         with self.batch():
             for t, notes in list(sheet.notes.items()):
@@ -2994,7 +2995,7 @@ class World:
                     def classify(note: Note) -> str:
                         if note.instrument in ABS_DIRECT or note.octave > 1:
                             return "abs_direct"
-                        if note.volume != 1.0:
+                        if not disable_volume and note.volume != 1.0:
                             return "rack_required"
                         return "possible_direct"
 

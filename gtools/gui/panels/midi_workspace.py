@@ -45,6 +45,7 @@ class MidiWorkspace(Panel):
         self.midi_file = MidiFile(path)
         self._error_curve_cache = self.midi_file.error_curve(max_bps=128)
         self._set_bps(self.midi_file.get_best_bps(max_bps=self.max_bps))
+        self.world_renderer.center()
 
     def _set_bps(self, bps: float) -> None:
         if not self.midi_file:
