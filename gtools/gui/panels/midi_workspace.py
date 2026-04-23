@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 from imgui_bundle import imgui
 import numpy as np
@@ -11,6 +12,8 @@ from gtools.gui.event import Event
 from gtools.gui.lib.world_renderer import WorldRenderer
 from gtools.gui.panels.panel import Panel
 
+_PING_DECAY = 0.5
+
 
 class MidiWorkspace(Panel):
     def __init__(self, dock_id: int) -> None:
@@ -21,13 +24,15 @@ class MidiWorkspace(Panel):
         self.midi: QuantizedMidiFile | None = None
         self.world = World()
         self.world_renderer = WorldRenderer(self.world)
-        self.visible_instruments: set[tuple[int, int]] = set()
-        self.highlighted_instruments: set[tuple[int, int]] = set()
+        self.visible_instruments: set[tuple[int, int, int]] = set()
+        self.highlighted_instruments: set[tuple[int, int, int]] = set()
         self.show_instrument_panel = True
         self._dragging_marquee = False
         self._marquee_start = imgui.ImVec2(0, 0)
 
         self._error_curve_cache: list[tuple[float, float]] | None = None
+
+        self._ping_times: dict[tuple[int, int, int], float] = {}
 
         self.max_bps = 13
         self.wrap_enabled = True
@@ -39,6 +44,7 @@ class MidiWorkspace(Panel):
     def load(self, path: str | Path) -> None:
         self.visible_instruments.clear()
         self.highlighted_instruments.clear()
+        self._ping_times.clear()
 
         self.world.tiles.clear()
 
@@ -59,7 +65,7 @@ class MidiWorkspace(Panel):
         if not self.visible_instruments:
             for track in self.midi.tracks:
                 for inst in track.instruments:
-                    self.visible_instruments.add((track.index, inst.program))
+                    self.visible_instruments.add((track.index, inst.channel, inst.program))
 
         self._rebuild_sheet()
 
@@ -126,7 +132,7 @@ class MidiWorkspace(Panel):
         if imgui.button("Show All"):
             for track in self.midi.tracks:
                 for inst in track.instruments:
-                    self.visible_instruments.add((track.index, inst.program))
+                    self.visible_instruments.add((track.index, inst.channel, inst.program))
             self._rebuild_sheet()
         imgui.same_line()
         if imgui.button("Hide All"):
@@ -135,83 +141,185 @@ class MidiWorkspace(Panel):
 
         imgui.separator()
 
-        avail_w, _ = imgui.get_content_region_avail()
+        now = time.monotonic()
+        draw_list = imgui.get_window_draw_list()
+        row_h = imgui.get_text_line_height_with_spacing()
+
+        inst_rows: list[tuple[tuple, imgui.ImVec2, imgui.ImVec2]] = []
 
         imgui.begin_child("InstListScroll", (0, 0), False, imgui.WindowFlags_.no_move)
-
-        tree_flags = imgui.TreeNodeFlags_.default_open | imgui.TreeNodeFlags_.open_on_arrow | imgui.TreeNodeFlags_.open_on_double_click
+        card_w = imgui.get_content_region_avail()[0]
 
         for track in self.midi.tracks:
-            if imgui.tree_node_ex(f"Track {track.index}: {track.name or 'Unnamed'}", tree_flags):
-                for inst in track.instruments:
-                    key = (track.index, inst.program)
-                    is_visible = key in self.visible_instruments
-                    is_highlighted = key in self.highlighted_instruments
+            if not track.instruments:
+                continue
 
-                    if is_highlighted:
-                        imgui.push_style_color(imgui.Col_.header, (0.4, 0.4, 0.8, 0.5))
-                        imgui.push_style_color(imgui.Col_.header_hovered, (0.5, 0.5, 0.9, 0.5))
-                        bg_color = (0.3, 0.3, 0.7, 0.3)
-                    else:
-                        bg_color = (0, 0, 0, 0)
+            track_name = track.name
+            if not track_name and track.instruments:
+                track_name = track.instruments[0].name
+            if not track_name:
+                track_name = "Unnamed"
 
-                    cursor_pos = imgui.get_cursor_screen_pos()
-                    item_h = imgui.get_text_line_height_with_spacing()
+            card_start = imgui.get_cursor_screen_pos()
+            card_pad = 6.0
+            inner_h = row_h * len(track.instruments) + card_pad * 2
 
-                    draw_list = imgui.get_window_draw_list()
-                    if is_highlighted:
-                        draw_list.add_rect_filled(cursor_pos, imgui.ImVec2(cursor_pos.x + avail_w, cursor_pos.y + item_h), imgui.get_color_u32(bg_color))
+            imgui.push_id(f"card_{track.index}")
+            imgui.begin_group()
 
-                    changed, new_visible = imgui.checkbox(f"##vis_{track.index}_{inst.program}", is_visible)
-                    imgui.same_line()
+            hdr_h = row_h + card_pad
+            draw_list.add_rect_filled(
+                imgui.ImVec2(card_start.x, card_start.y),
+                imgui.ImVec2(card_start.x + card_w, card_start.y + hdr_h),
+                imgui.get_color_u32((0.18, 0.20, 0.25, 1.0)),
+                rounding=4.0,
+                flags=imgui.ImDrawFlags_.round_corners_top,
+            )
+            imgui.set_cursor_screen_pos(imgui.ImVec2(card_start.x + card_pad, card_start.y + card_pad * 0.5))
+            imgui.text_colored((0.75, 0.85, 1.0, 1.0), f"Track {track.index}: {track_name}")
 
-                    if imgui.is_item_clicked():
+            body_start_y = card_start.y + hdr_h
+            body_end_y = body_start_y + inner_h
+            draw_list.add_rect_filled(
+                imgui.ImVec2(card_start.x, body_start_y),
+                imgui.ImVec2(card_start.x + card_w, body_end_y),
+                imgui.get_color_u32((0.12, 0.13, 0.17, 1.0)),
+                rounding=4.0,
+                flags=imgui.ImDrawFlags_.round_corners_bottom,
+            )
+            draw_list.add_rect(
+                imgui.ImVec2(card_start.x, card_start.y),
+                imgui.ImVec2(card_start.x + card_w, body_end_y),
+                imgui.get_color_u32((0.3, 0.35, 0.45, 0.6)),
+                rounding=4.0,
+            )
+
+            imgui.set_cursor_screen_pos(imgui.ImVec2(card_start.x + card_pad, body_start_y + card_pad))
+
+            for inst in track.instruments:
+                key = (track.index, inst.channel, inst.program)
+                is_visible = key in self.visible_instruments
+                is_highlighted = key in self.highlighted_instruments
+
+                ping_t = self._ping_times.get(key, 0.0)
+                ping_age = now - ping_t
+                ping_alpha = max(0.0, 1.0 - ping_age / _PING_DECAY)
+
+                row_pos = imgui.get_cursor_screen_pos()
+                row_min = row_pos
+                row_max = imgui.ImVec2(card_start.x + card_w - card_pad, row_pos.y + row_h)
+                inst_rows.append((key, row_min, row_max))
+                row_width = row_max.x - row_min.x
+
+                if is_highlighted:
+                    draw_list.add_rect_filled(
+                        imgui.ImVec2(row_min.x - 2, row_min.y),
+                        imgui.ImVec2(row_max.x + 2, row_max.y),
+                        imgui.get_color_u32((0.3, 0.45, 0.8, 0.35)),
+                        rounding=3.0,
+                    )
+
+
+                selected, _ = imgui.selectable(
+                    f"##row_{track.index}_{inst.channel}_{inst.program}",
+                    is_highlighted,
+                    imgui.SelectableFlags_.allow_overlap,
+                    (row_width, row_h),
+                )
+
+                imgui.set_cursor_screen_pos(row_pos)
+                imgui.begin_group()
+
+                changed, new_visible = imgui.checkbox(
+                    f"##vis_{track.index}_{inst.channel}_{inst.program}", is_visible
+                )
+                imgui.same_line()
+
+                imgui.text_colored(
+                    (1.0, 1.0, 1.0, 0.9) if is_visible else (0.5, 0.5, 0.5, 0.7),
+                    inst.name
+                )
+                imgui.end_group()
+
+                dot_r = 4.0
+                dot_cx = row_max.x - dot_r - 2.0
+                dot_cy = row_pos.y + row_h * 0.5
+                if ping_alpha > 0.0:
+                    draw_list.add_circle_filled(
+                        imgui.ImVec2(dot_cx, dot_cy), dot_r + 2.0,
+                        imgui.get_color_u32((0.2, 1.0, 0.5, ping_alpha * 0.5))
+                    )
+                    t = ping_alpha
+                    dot_col = imgui.get_color_u32((
+                        0.3 * (1 - t) + 0.2 * t,
+                        0.3 * (1 - t) + 1.0 * t,
+                        0.35 * (1 - t) + 0.5 * t,
+                        1.0,
+                    ))
+                else:
+                    dot_col = imgui.get_color_u32((0.25, 0.25, 0.3, 1.0))
+                draw_list.add_circle_filled(imgui.ImVec2(dot_cx, dot_cy), dot_r, dot_col)
+
+                if not self._dragging_marquee:
+                    if selected:
                         if not imgui.get_io().key_ctrl:
                             self.highlighted_instruments.clear()
-                        if is_highlighted:
+                        if is_highlighted and imgui.get_io().key_ctrl:
                             self.highlighted_instruments.discard(key)
                         else:
                             self.highlighted_instruments.add(key)
 
-                    item_rect_min = imgui.get_item_rect_min()
-                    item_rect_max = imgui.get_item_rect_max()
-                    item_rect_min.x -= 25
+                if changed:
+                    if key not in self.highlighted_instruments:
+                        self.highlighted_instruments.clear()
+                        self.highlighted_instruments.add(key)
+                    target_keys = set(self.highlighted_instruments)
+                    for k in target_keys:
+                        if new_visible:
+                            self.visible_instruments.add(k)
+                        else:
+                            self.visible_instruments.discard(k)
+                    self._rebuild_sheet()
 
-                    if self._dragging_marquee:
-                        m_min = imgui.ImVec2(min(self._marquee_start.x, imgui.get_mouse_pos().x), min(self._marquee_start.y, imgui.get_mouse_pos().y))
-                        m_max = imgui.ImVec2(max(self._marquee_start.x, imgui.get_mouse_pos().x), max(self._marquee_start.y, imgui.get_mouse_pos().y))
+                if ping_alpha > 0.0:
+                    self.world_renderer._dirty = True
 
-                        if not (item_rect_max.x < m_min.x or item_rect_min.x > m_max.x or item_rect_max.y < m_min.y or item_rect_min.y > m_max.y):
-                            self.highlighted_instruments.add(key)
+            imgui.end_group()
+            imgui.pop_id()
 
-                    if is_highlighted:
-                        imgui.pop_style_color(2)
+            imgui.set_cursor_screen_pos(imgui.ImVec2(card_start.x, body_end_y + 6))
+            imgui.dummy((0, 0))
 
-                    if changed:
-                        target_keys = self.highlighted_instruments if key in self.highlighted_instruments else {key}
-                        for k in target_keys:
-                            if new_visible:
-                                self.visible_instruments.add(k)
-                            else:
-                                self.visible_instruments.discard(k)
-                        self._rebuild_sheet()
-                imgui.tree_pop()
+        mouse_pos = imgui.get_mouse_pos()
 
-        if imgui.is_window_hovered() and imgui.is_mouse_clicked(imgui.MouseButton_.left):
+        if imgui.is_window_hovered() and imgui.is_mouse_clicked(imgui.MouseButton_.left) and not imgui.is_any_item_active():
             if not imgui.get_io().key_ctrl:
                 self.highlighted_instruments.clear()
             self._dragging_marquee = True
-            self._marquee_start = imgui.get_mouse_pos()
+            self._marquee_start = mouse_pos
 
         if self._dragging_marquee:
             if imgui.is_mouse_released(imgui.MouseButton_.left):
                 self._dragging_marquee = False
             else:
-                draw_list = imgui.get_foreground_draw_list()
-                m_min = imgui.ImVec2(min(self._marquee_start.x, imgui.get_mouse_pos().x), min(self._marquee_start.y, imgui.get_mouse_pos().y))
-                m_max = imgui.ImVec2(max(self._marquee_start.x, imgui.get_mouse_pos().x), max(self._marquee_start.y, imgui.get_mouse_pos().y))
-                draw_list.add_rect(m_min, m_max, imgui.get_color_u32((1, 1, 1, 1)), 0, 0, 2.0)
-                draw_list.add_rect_filled(m_min, m_max, imgui.get_color_u32((1, 1, 1, 0.1)))
+                m_min_x = min(self._marquee_start.x, mouse_pos.x)
+                m_min_y = min(self._marquee_start.y, mouse_pos.y)
+                m_max_x = max(self._marquee_start.x, mouse_pos.x)
+                m_max_y = max(self._marquee_start.y, mouse_pos.y)
+
+                for key, rmin, rmax in inst_rows:
+                    if not (rmax.x < m_min_x or rmin.x > m_max_x or rmax.y < m_min_y or rmin.y > m_max_y):
+                        self.highlighted_instruments.add(key)
+
+                fg = imgui.get_foreground_draw_list()
+                fg.add_rect(
+                    imgui.ImVec2(m_min_x, m_min_y), imgui.ImVec2(m_max_x, m_max_y),
+                    imgui.get_color_u32((1, 1, 1, 1)), 0, 0, 2.0
+                )
+                fg.add_rect_filled(
+                    imgui.ImVec2(m_min_x, m_min_y), imgui.ImVec2(m_max_x, m_max_y),
+                    imgui.get_color_u32((1, 1, 1, 0.1))
+                )
 
         imgui.end_child()
 
@@ -285,6 +393,10 @@ class MidiWorkspace(Panel):
                     if imgui.is_mouse_clicked(imgui.MouseButton_.left):
                         self._set_bps(target_bps)
 
+    def _on_note_played(self, note: Note) -> None:
+        if isinstance(note.userdata, tuple):
+            self._ping_times[note.userdata] = time.monotonic()
+
     def _rebuild_sheet(self) -> None:
         if not self.midi:
             return
@@ -292,19 +404,19 @@ class MidiWorkspace(Panel):
         notes: list[Note] = []
         for track in self.midi.tracks:
             for inst in track.instruments:
-                key = (track.index, inst.program)
+                key = (track.index, inst.channel, inst.program)
                 if key not in self.visible_instruments:
                     continue
 
                 for note in inst:
-                    notes.append(
-                        Note.from_midi(
-                            note.pitch,
-                            note.program,
-                            note.start_slot,
-                            note.velocity,
-                        )
+                    n = Note.from_midi(
+                        note.pitch,
+                        note.program,
+                        note.start_slot,
+                        note.velocity,
                     )
+                    n.userdata = key
+                    notes.append(n)
 
         bpm = int(self.midi.bps * 60 / 4)
         self.world.remove_sheet()
@@ -312,6 +424,7 @@ class MidiWorkspace(Panel):
             self.world.sheet.replace_notes(compress_notes(notes))
             self.world.materialize_sheet()
             self.world.sheet.bpm = bpm
+            self.world.sheet.on_note_played = self._on_note_played
 
     @property
     def is_dirty(self) -> bool:

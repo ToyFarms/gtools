@@ -1,8 +1,9 @@
 from collections import defaultdict
 from enum import Enum
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable
 import threading
 
 from gtools import setting
@@ -91,6 +92,7 @@ class Note:
     timestamp: int = 0
     duration: float = 0.0
     volume: float = 1.0
+    userdata: Any = field(default=None, compare=False)
 
     def transpose_octaves(self, octaves: int) -> "Note":
         return Note(
@@ -101,6 +103,7 @@ class Note:
             timestamp=self.timestamp,
             duration=self.duration,
             volume=self.volume,
+            userdata=self.userdata,
         )
 
     def to_index(self) -> int:
@@ -312,6 +315,7 @@ class Sheet:
         self.bps = (bpm * 4) / 60
 
         self.mixer = mixer
+        self.on_note_played: Callable[[Note], None] | None = None
 
         self.playhead = self.start
         self._accum = 0.0
@@ -436,6 +440,9 @@ class Sheet:
                 if path not in _SOUNDS:
                     _SOUNDS[path] = Sound.from_file(str(path))
                 self.mixer.play(_SOUNDS[path], note.volume)
+
+            if self.on_note_played:
+                self.on_note_played(note)
 
         self.playhead += n
 

@@ -19,6 +19,12 @@
       <img src="images/debug_ui.png" width="100%"/>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="50%">
+      <p><b>Convert Midi to Notes</b></p>
+      <img src="./images/midi_workspace.png" width="100%"/>
+    </td>
+  </tr>
 </table>
 
 
