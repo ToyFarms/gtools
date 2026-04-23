@@ -178,6 +178,9 @@ class WorldRenderer:
 
         self._playing = True
         self._seek = 0
+        self._seek_start_time = 0.0
+        self._seek_last_count = 0
+        self._seek_interval = 0.0
         self._hovered_tile: Tile | None = None
 
         self._mode_3d = False
@@ -642,10 +645,7 @@ class WorldRenderer:
                 self._world.add_sheet(world.get_sheet())
 
         if imgui.button("remove sheet"):
-            world_path = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
-            if isinstance(world_path, str):
-                world = World.from_file(world_path)
-                self._world.remove_sheet(world.get_sheet())
+            self._world.remove_sheet()
 
         for i, flag in enumerate(World.SheetFlags):
             if i != 0:
@@ -732,8 +732,17 @@ class WorldRenderer:
                 self._dirty = True
 
         if self._seek != 0:
-            self._sheet.seek(self._seek)
-            self._dirty = True
+            if self._seek_interval <= 0:
+                self._sheet.seek(self._seek)
+                self._dirty = True
+            else:
+                elapsed = time.monotonic() - self._seek_start_time
+                count = int(elapsed / self._seek_interval)
+                if count > self._seek_last_count:
+                    jumps = count - self._seek_last_count
+                    self._sheet.seek(self._seek * jumps)
+                    self._seek_last_count = count
+                    self._dirty = True
 
         if self._is_active:
             if self._mode_3d:
@@ -1271,10 +1280,30 @@ class WorldRenderer:
                     return True
                 elif event.key == glfw.KEY_LEFT:
                     self._seek = -1
+                    self._seek_interval = 0
+                    self._sheet.seek(self._seek)
                     self._dirty = True
                     return True
                 elif event.key == glfw.KEY_RIGHT:
                     self._seek = 1
+                    self._seek_interval = 0
+                    self._sheet.seek(self._seek)
+                    self._dirty = True
+                    return True
+                elif event.key == glfw.KEY_UP:
+                    self._seek = -self._world.width
+                    self._seek_interval = 0.1
+                    self._seek_start_time = time.monotonic()
+                    self._seek_last_count = 0
+                    self._sheet.seek(self._seek)
+                    self._dirty = True
+                    return True
+                elif event.key == glfw.KEY_DOWN:
+                    self._seek = self._world.width
+                    self._seek_interval = 0.1
+                    self._seek_start_time = time.monotonic()
+                    self._seek_last_count = 0
+                    self._sheet.seek(self._seek)
                     self._dirty = True
                     return True
                 elif event.key == glfw.KEY_COMMA:
@@ -1306,11 +1335,20 @@ class WorldRenderer:
                     return True
             elif event.action == glfw.RELEASE:
                 self._keys_held.discard(event.key)
-                if event.key == glfw.KEY_LEFT:
+                if event.key in (glfw.KEY_LEFT, glfw.KEY_RIGHT, glfw.KEY_UP, glfw.KEY_DOWN):
                     self._seek = 0
-                    return True
-                elif event.key == glfw.KEY_RIGHT:
-                    self._seek = 0
+                    if glfw.KEY_LEFT in self._keys_held:
+                        self._seek, self._seek_interval = -1, 0
+                    elif glfw.KEY_RIGHT in self._keys_held:
+                        self._seek, self._seek_interval = 1, 0
+                    elif glfw.KEY_UP in self._keys_held:
+                        self._seek, self._seek_interval = -self._world.width, 0.1
+                    elif glfw.KEY_DOWN in self._keys_held:
+                        self._seek, self._seek_interval = self._world.width, 0.1
+
+                    if self._seek != 0:
+                        self._seek_start_time = time.monotonic()
+                        self._seek_last_count = 0
                     return True
 
         if self._mode_3d:

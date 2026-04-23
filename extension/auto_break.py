@@ -277,7 +277,7 @@ class AutoBreakExtension(Extension):
         if self.state.world:
             for sucker in self.state.world.find_tile(where=lambda x: x.extra and isinstance(x.extra, ItemSuckerTile)):
                 assert sucker.extra
-                extra = sucker.extra.expect(ItemSuckerTile)
+                extra = sucker.extra.get(ItemSuckerTile)
 
                 self.console_log(f"{item_database.get(extra.item_id).name.decode()}: {extra.item_amount} (of {extra.limit})")
 

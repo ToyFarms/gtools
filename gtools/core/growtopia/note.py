@@ -165,13 +165,13 @@ class Note:
 
     def y_pos(self) -> int:
         """relative to the staff"""
-        return self.octave * len(PITCH_Y) + PITCH_Y[self.base]
+        return (1 - self.octave) * len(PITCH_Y) + PITCH_Y[self.base]
 
     @staticmethod
     def y_pitch(y: int) -> tuple[int, int]:
         """get base, octave from y pos relative to staff"""
         base_index = y % len(Y_PITCH)
-        octave = y // len(Y_PITCH)
+        octave = 1 - y // len(Y_PITCH)
         return Y_PITCH[base_index], octave
 
 
@@ -265,6 +265,8 @@ MIDI_INSTRUMENT_TO_INSTRUMENT_SET = {
     77: InstrumentSet.FLUTE,
     78: InstrumentSet.FLUTE,
     79: InstrumentSet.FLUTE,
+
+# TODO: find suitable mapping for this
     # festive / bells / chimes-like material
     8: InstrumentSet.PIANO,
     9: InstrumentSet.PIANO,
@@ -337,7 +339,7 @@ class Sheet:
         self._bpm = int(x)
         self.bps = (x * 4) / 60
 
-    def replace_notes(self, notes: list[Note]) -> None:
+    def replace_notes(self, notes: list[Note], playhead_bound_check: bool = False) -> None:
         self._notes = notes
         self.notes.clear()
         self.any = bool(notes)
@@ -351,7 +353,8 @@ class Sheet:
             self.start = 0
             self.end = 0
 
-        self.playhead = min(self.playhead, self.end)
+        if playhead_bound_check:
+            self.playhead = min(self.playhead, self.end)
 
     def add_notes(self, notes: list[Note]) -> None:
         for note in notes:

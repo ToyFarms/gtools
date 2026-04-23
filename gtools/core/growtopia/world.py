@@ -540,7 +540,7 @@ class TileExtra:
             raise NotImplementedError(f"no tile extra for id {type}")
         return extra()
 
-    def expect[T](self, expect: Type[T]) -> T:
+    def get[T](self, expect: Type[T]) -> T:
         if not isinstance(self, expect):
             raise TypeError(f"expected {expect.__class__} but got {self.__class__}")
         return self
@@ -2864,7 +2864,7 @@ class World:
             staff_baseline = int(tile.pos.y // 14) * 14
 
             if tile.extra and isinstance(tile.extra, AudioRackTile):
-                rack = tile.extra.expect(AudioRackTile)
+                rack = tile.extra.get(AudioRackTile)
                 notes = rack.note.split(b" ")
 
                 for code in notes:
@@ -2909,7 +2909,7 @@ class World:
         if lock is None or lock.extra is None:
             bpm = 100
         else:
-            bpm = lock.extra.expect(LockTile).bpm
+            bpm = lock.extra.get(LockTile).bpm
 
         if not self.sheet:
             self.sheet = Sheet(
@@ -2920,33 +2920,18 @@ class World:
 
         return self.sheet
 
-    def remove_sheet(self, sheet: Sheet | None = None, rebuild: bool = True) -> None:
-        """NOTE: *DESTRUCTIVE* WILL REPLACES THE ACTUAL TILES TOO"""
-        sheet = sheet if sheet else self.sheet
-        if not sheet:
-            return
+    def remove_sheet(self) -> None:
+        if self.sheet:
+            self.sheet.replace_notes([])
 
         with self.batch():
-            for t, notes in sheet.notes.items():
-                x = t % self.width
-                staff_baseline = int(t // self.width) * 14
-                for note in notes:
-                    y = staff_baseline + note.y_pos()
-                    if tile := self.get_tile(x, y):
-                        item = item_database.get(tile.bg_id)
-                        if item.item_type == ItemInfoType.MUSICNOTE:
-                            instr = ID_TO_INSTRUMENT_SET[tile.bg_id]
-
-                            if note.instrument == instr:
-                                tile.bg_id = 0
-                                self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
-
             for tile in self.tiles.values():
-                if tile.fg_id in (AUDIO_RACK, AUDIO_GEAR):
+                if not tile.extra:
+                    continue
+
+                if isinstance(tile.extra, AudioRackTile):
                     self.place_fg(tile, 0)
 
-        if rebuild and self.sheet:
-            self.sheet.replace_notes(self.create_sheet_notes())
 
     def add_sheet(self, sheet: Sheet, flags: SheetFlags = SheetFlags.NONE) -> None:
         """add two (or one) sheets together"""
@@ -2961,7 +2946,7 @@ class World:
         if not self.sheet:
             return
 
-        self.remove_sheet(self.sheet, rebuild=False)
+        self.remove_sheet()
         self.materialize_sheet(self.sheet, flags)
 
     def materialize_sheet(self, sheet: Sheet | None = None, flags: SheetFlags = SheetFlags.NONE) -> None:
@@ -3092,14 +3077,14 @@ class World:
 
                         self.place_fg(tile, AUDIO_RACK if tile.fg_id == 0 else AUDIO_GEAR)
                         assert tile.extra
-                        e = tile.extra.expect(AudioRackTile)
+                        e = tile.extra.get(AudioRackTile)
                         e.note = b" ".join(note.to_code() for note in batch)
                         e.volume = volume
 
     def replace_sheet(self, sheet: Sheet, flags: SheetFlags = SheetFlags.NONE) -> None:
         """NOTE: *DESTRUCTIVE* WILL REPLACES THE ACTUAL TILES TOO"""
         if self.sheet:
-            self.remove_sheet(self.sheet)
+            self.remove_sheet()
 
         self.sheet = sheet
         self.materialize_sheet(self.sheet, flags)
@@ -3192,6 +3177,22 @@ class World:
                     self.tiles[idx] = tile
 
         self.nb_tiles = len(self.tiles)
+
+    def resize(self, width: int, height: int) -> None:
+        if self.width == width and self.height == height:
+            return
+
+        new_tiles: dict[int, Tile] = {}
+        for tile in self.tiles.values():
+            if tile.pos.x < width and tile.pos.y < height:
+                idx = tile.pos.y * width + tile.pos.x
+                tile.index = idx
+                new_tiles[idx] = tile
+
+        self.tiles = new_tiles
+        self.width = width
+        self.height = height
+        self.fill()
 
     def get_world_lock(self) -> Tile | None:
         for tile in self.tiles.values():
@@ -3383,16 +3384,16 @@ class World:
                 tile.flags |= TileFlags.HAS_EXTRA_DATA
                 # set some default value
                 if item.id == WEATHER_MACHINE_BACKGROUND:
-                    tile.extra.expect(WeatherMachineTile).item_id = 0
+                    tile.extra.get(WeatherMachineTile).item_id = 0
                 if item.id == EPOCH_MACHINE:
-                    e = tile.extra.expect(GuildWeatherMachineTile)
+                    e = tile.extra.get(GuildWeatherMachineTile)
                     e.flags |= 0b11100
                     e.cycle_time_ms = 600
                 if item.id == INFINITY_WEATHER_MACHINE:
-                    e = tile.extra.expect(InfinityWeatherMachineTile)
+                    e = tile.extra.get(InfinityWeatherMachineTile)
                     e.cycle_time_ms = 600
                 if item.item_type == ItemInfoType.KRANKENS_BLOCK and not a5:
-                    new_tile_id = KRANKEN_S_GALACTIC_BLOCK + 2 * tile.extra.expect(KrankenGalaticBlockTile).pattern_index
+                    new_tile_id = KRANKEN_S_GALACTIC_BLOCK + 2 * tile.extra.get(KrankenGalaticBlockTile).pattern_index
                     if new_tile_id - KRANKEN_S_GALACTIC_BLOCK <= 24:
                         tile.fg_id = new_tile_id
                 # if item.item_type == ItemInfoType.PVE_NPC:
@@ -3509,7 +3510,7 @@ class World:
             self.place_fg(tile, 0)
             self.update_3x3_connection(tile)
         else:
-            seed = tile.extra.expect(SeedTile)
+            seed = tile.extra.get(SeedTile)
             seed.item_on_tree = item_id
             if spawn_seed_flag:
                 tile.flags |= TileFlags.WILL_SPAWN_SEEDS_TOO
@@ -3543,7 +3544,7 @@ class World:
 
         self.place_fg(tile, id)
         assert tile.extra
-        tile.extra.expect(SeedTile).item_on_tree = item_on_tree
+        tile.extra.get(SeedTile).item_on_tree = item_on_tree
 
     def tile_change(
         self,
@@ -3587,7 +3588,7 @@ class World:
                 else:
                     tile.flags &= ~TileFlags.WILL_SPAWN_SEEDS_TOO
                 tile.flags |= TileFlags.IS_SEEDLING
-                tile.extra.expect(SeedTile).item_on_tree = item_on_tree
+                tile.extra.get(SeedTile).item_on_tree = item_on_tree
 
         if item.flags2 & ItemFlag.FLIPPABLE != 0:
             if flags & TankFlags.FACING_LEFT:
@@ -3600,10 +3601,10 @@ class World:
     def update_lock(self, pos: ivec2, lock_owner_id: int, lock_item_id: int, tiles_affected: Iterator[int]) -> None:
         if lock_tile := self.get_tile(pos):
             # place lock if it doesn't exists
-            if (lock_tile.extra and lock_tile.extra.type != TileExtraType.LOCK_TILE) or lock_tile.extra is None or lock_tile.extra.expect(LockTile).owner_uid != lock_owner_id:
+            if (lock_tile.extra and lock_tile.extra.type != TileExtraType.LOCK_TILE) or lock_tile.extra is None or lock_tile.extra.get(LockTile).owner_uid != lock_owner_id:
                 self.place_fg(lock_tile, lock_item_id, broadcast=False)
                 assert lock_tile.extra
-                lock_tile.extra.expect(LockTile).owner_uid = lock_owner_id
+                lock_tile.extra.get(LockTile).owner_uid = lock_owner_id
                 self.broadcast(WorldEvent.TILE_UPDATE, lock_tile.pos.x, lock_tile.pos.y)
 
             self.remove_locked(lock_tile)
