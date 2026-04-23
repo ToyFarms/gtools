@@ -383,7 +383,8 @@ class Mesh:
 
     def draw_instanced(self, mode: int = GL_TRIANGLES) -> None:
         if self._instance_count == 0:
-            raise RuntimeError("cannot draw instanced: no instance data")
+            return
+
         glBindVertexArray(self._vao)
         if self._index_count and self._index_type:
             glDrawElementsInstanced(mode, self._index_count, self._index_type, None, self._instance_count)

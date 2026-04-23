@@ -122,15 +122,10 @@ from gtools.core.growtopia.items_dat import (
     item_database,
 )
 from gtools.core.growtopia.note import (
-    CODE_TO_ACCIDENT,
-    CODE_TO_INSTRUMENT_SET,
-    CODE_TO_PITCH,
     ID_TO_INSTRUMENT_SET,
     INSTRUMENT_ACCIDENT_TO_ID,
-    PITCH_TO_Y_MAP,
     SHEET_FLAT_ID,
     SHEET_SHARP_ID,
-    Y_TO_PITCH_MAP,
     InstrumentSet,
     Note,
     Sheet,
@@ -2890,13 +2885,13 @@ class World:
             if item.item_type == ItemInfoType.MUSICNOTE:
                 accident = Note.SHARP if tile.bg_id in SHEET_SHARP_ID else Note.FLAT if tile.bg_id in SHEET_FLAT_ID else Note.NATURAL
 
-                pitch, octave = Y_TO_PITCH_MAP[tile.pos.y - staff_baseline]
+                pitch, octave = Note.y_pitch(tile.pos.y - staff_baseline)
 
                 ret.append(
                     Note(
                         base=pitch,
                         octave=octave,
-                        accident=accident,
+                        accidental=accident,
                         instrument=ID_TO_INSTRUMENT_SET[tile.bg_id],
                         timestamp=int(tile.pos.y // 14) * self.width + tile.pos.x,
                     )
@@ -2936,7 +2931,7 @@ class World:
                 x = t % self.width
                 staff_baseline = int(t // self.width) * 14
                 for note in notes:
-                    y = staff_baseline + PITCH_TO_Y_MAP[note.base, note.octave]
+                    y = staff_baseline + note.y_pos()
                     if tile := self.get_tile(x, y):
                         item = item_database.get(tile.bg_id)
                         if item.item_type == ItemInfoType.MUSICNOTE:
@@ -2981,7 +2976,7 @@ class World:
         rack_on_empty = flags & World.SheetFlags.RACK_ON_EMPTY != 0
 
         with self.batch():
-            for t, notes in sheet.notes.items():
+            for t, notes in list(sheet.notes.items()):
                 x = t % self.width
                 staff_baseline = int(t // self.width) * 14
 
@@ -3003,16 +2998,28 @@ class World:
                 # bin positional notes by y-row
                 y_groups: defaultdict[int, list[Note]] = defaultdict(list)
                 for note in positional:
-                    y_groups[PITCH_TO_Y_MAP[note.base, note.octave]].append(note)
+                    y_groups[note.y_pos()].append(note)
 
                 # direct_notes is a dict so we can track which y slots are occupied
                 direct_notes: dict[int, Note] = {}
                 rack_notes: list[Note] = []
 
                 for y, y_notes in y_groups.items():
-                    abs_direct = [n for n in y_notes if n.instrument in ABS_DIRECT]
-                    rack_required = [n for n in y_notes if n.instrument not in ABS_DIRECT and n.volume != 1.0]
-                    possible_direct = [n for n in y_notes if n.instrument not in ABS_DIRECT and n.volume == 1.0]
+
+                    def classify(note: Note) -> str:
+                        if note.instrument in ABS_DIRECT or note.octave > 1:
+                            return "abs_direct"
+                        if note.volume != 1.0:
+                            return "rack_required"
+                        return "possible_direct"
+
+                    groups: defaultdict[str, list[Note]] = defaultdict(list)
+                    for n in y_notes:
+                        groups[classify(n)].append(n)
+
+                    abs_direct = groups["abs_direct"]
+                    rack_required = groups["rack_required"]
+                    possible_direct = groups["possible_direct"]
 
                     if len(abs_direct) > 1:
                         self.logger.warning(
@@ -3047,7 +3054,7 @@ class World:
                 # place direct notes
                 for y, note in direct_notes.items():
                     if tile := self.get_tile(x, staff_baseline + y):
-                        self.place_bg(tile, INSTRUMENT_ACCIDENT_TO_ID[note.instrument, note.accident])
+                        self.place_bg(tile, INSTRUMENT_ACCIDENT_TO_ID[note.instrument, note.accidental])
 
                 # bin rack notes based on the volume
                 volume_groups: defaultdict[int, list[Note]] = defaultdict(list)
@@ -3173,6 +3180,9 @@ class World:
         if ys:
             self.height = max(ys) + 1
 
+        self.fill()
+
+    def fill(self) -> None:
         for y in range(self.height):
             for x in range(self.width):
                 idx = y * self.width + x

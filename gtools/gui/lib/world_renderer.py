@@ -626,8 +626,9 @@ class WorldRenderer:
 
         imgui.separator()
 
-        sheet = self._sheet
-        _, sheet.bpm = imgui_knobs.knob("BPM", sheet.bpm, 20.0, 200.0, format="%.0f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
+        changed, bpm = imgui_knobs.knob("BPM", self._sheet.bpm, 20.0, 200.0, format="%.0f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
+        if changed:
+            self._sheet.bpm = bpm
         imgui.same_line()
         _, self._mixer.master_gain = imgui_knobs.knob("GAIN", self._mixer.master_gain, 0.0, 1.0, format="%.2f", size=32, variant=imgui_knobs.ImGuiKnobVariant_.wiper_only)
 
@@ -896,6 +897,7 @@ class WorldRenderer:
 
                 if imgui.menu_item("Send To Work Area", "Ctrl+S", False)[0]:
                     from gtools.gui.panels.world_panel import WorldPanel
+
                     Panel.add_panel(lambda dock_id: WorldPanel(self._world.copy(), dock_id))
 
                 if imgui.menu_item("Reset Camera", "R", False)[0]:
@@ -1299,6 +1301,7 @@ class WorldRenderer:
                     return True
                 elif event.key == glfw.KEY_S and event.mods & glfw.MOD_CONTROL:
                     from gtools.gui.panels.world_panel import WorldPanel
+
                     Panel.add_panel(lambda dock_id: WorldPanel(self._world.copy(), dock_id))
                     return True
             elif event.action == glfw.RELEASE:

@@ -7,6 +7,55 @@ from imgui_bundle import imgui
 
 logger = logging.getLogger("gui-panels")
 
+"""template
+
+from imgui_bundle import imgui
+from gtools.gui.event import Event
+from gtools.gui.panels.panel import Panel
+
+
+class FOO(Panel):
+    def __init__(self, dock_id: int) -> None:
+        super().__init__(dock_id)
+        self._is_docked = False
+        self._first_render = True
+
+    def _render_body(self) -> None:
+        pass
+
+    @property
+    def is_dirty(self) -> bool:
+        return True
+
+    @is_dirty.setter
+    def is_dirty(self, x: bool) -> None:
+        pass
+
+    def update(self, dt: float) -> None:
+        pass
+
+    def render(self) -> None:
+        if not self._is_docked and self.dock_id:
+            imgui.set_next_window_dock_id(self.dock_id)
+
+        opened, self._open = imgui.begin("FOO", self._open)
+        if not self._is_docked and imgui.is_window_docked():
+            self._is_docked = True
+
+        if self._first_render:
+            self._first_render = False
+
+        if opened:
+            self._render_body()
+        imgui.end()
+
+    def handle_event(self, event: Event) -> bool:
+        return False
+
+    def delete(self) -> None:
+        pass
+"""
+
 
 class Panel(ABC):
     dev_mode: ClassVar[bool] = False

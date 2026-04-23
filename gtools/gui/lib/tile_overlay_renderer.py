@@ -43,7 +43,7 @@ class TileOverlayRenderer(Renderer):
 
         mesh.draw_instanced()
 
-    def build(self, world: World, tiles: Iterator[Tile], uid: int = 0) -> Mesh:
+    def build(self, world: World, tiles: Iterator[Tile], uid: int = 0) -> Mesh | None:
         instances: list[float] = []
 
         for tile in tiles:

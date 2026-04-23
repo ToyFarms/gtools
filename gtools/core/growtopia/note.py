@@ -44,6 +44,15 @@ from gtools.baked.items import (
 )
 
 
+def _invert_dict[K, V](d: dict[K, V]) -> dict[V, K]:
+    inv = {}
+    for k, v in d.items():
+        if v in inv:
+            raise ValueError(f"duplicate value detected: {v}")
+        inv[v] = k
+    return inv
+
+
 class InstrumentSet(Enum):
     BLANK = "blank"
     REPEAT_BEGIN = "repeat_begin"
@@ -77,11 +86,22 @@ class Note:
 
     base: int
     octave: int
-    accident: int = NATURAL
+    accidental: int = NATURAL
     instrument: InstrumentSet = InstrumentSet.PIANO
     timestamp: int = 0
     duration: float = 0.0
     volume: float = 1.0
+
+    def transpose_octaves(self, octaves: int) -> "Note":
+        return Note(
+            base=self.base,
+            octave=self.octave + octaves,
+            accidental=self.accidental,
+            instrument=self.instrument,
+            timestamp=self.timestamp,
+            duration=self.duration,
+            volume=self.volume,
+        )
 
     def to_index(self) -> int:
         if self.instrument == InstrumentSet.DRUM:
@@ -94,8 +114,10 @@ class Note:
                 Note.A: 1,
                 Note.B: 0,
             }[self.base]
+        elif self.instrument in (InstrumentSet.SPOOKY, InstrumentSet.FESTIVE):
+            index = 12 * self.octave + self.base
         else:
-            index = 12 * self.octave + self.base + self.accident
+            index = 12 * self.octave + self.base + self.accidental
 
         return index
 
@@ -111,7 +133,7 @@ class Note:
             return Note(
                 base=base,
                 octave=octave,
-                accident=CODE_TO_ACCIDENT[accidental],
+                accidental=CODE_TO_ACCIDENT[accidental],
                 instrument=CODE_TO_INSTRUMENT_SET[instr],
                 timestamp=timestamp,
                 volume=volume,
@@ -120,11 +142,149 @@ class Note:
             return
 
     def to_code(self) -> bytes:
-        return f"{INSTRUMENT_SET_TO_CODE[self.instrument]}{PITCH_TO_CODE[self.base, self.octave]}{ACCIDENT_TO_CODE[self.accident]}".encode()
+        return f"{INSTRUMENT_SET_TO_CODE[self.instrument]}{PITCH_TO_CODE[self.base, self.octave]}{ACCIDENT_TO_CODE[self.accidental]}".encode()
 
     def to_path(self) -> Path:
         return setting.gt_path / "audio/notes" / f"{self.instrument.value}_{self.to_index()}.wav"
 
+    @classmethod
+    def from_midi(cls, note: int, instrument: int, time: int, velocity: int) -> "Note":
+        pitch_class = note % 12
+        octave = note // 12 - 1
+
+        base, accidental = MIDI_PITCH_TO_NOTE[pitch_class]
+
+        return Note(
+            base=base,
+            octave=octave,
+            accidental=accidental,
+            instrument=MIDI_INSTRUMENT_TO_INSTRUMENT_SET[instrument],
+            timestamp=time,
+            volume=velocity / 127 if velocity else 0.0,
+        )
+
+    def y_pos(self) -> int:
+        """relative to the staff"""
+        return self.octave * len(PITCH_Y) + PITCH_Y[self.base]
+
+    @staticmethod
+    def y_pitch(y: int) -> tuple[int, int]:
+        """get base, octave from y pos relative to staff"""
+        base_index = y % len(Y_PITCH)
+        octave = y // len(Y_PITCH)
+        return Y_PITCH[base_index], octave
+
+
+PITCH_Y = {
+    Note.B: 0,
+    Note.A: 1,
+    Note.G: 2,
+    Note.F: 3,
+    Note.E: 4,
+    Note.D: 5,
+    Note.C: 6,
+}
+Y_PITCH = _invert_dict(PITCH_Y)
+
+
+MIDI_PITCH_TO_NOTE = {
+    0: (Note.C, Note.NATURAL),
+    1: (Note.C, Note.SHARP),
+    2: (Note.D, Note.NATURAL),
+    3: (Note.D, Note.SHARP),
+    4: (Note.E, Note.NATURAL),
+    5: (Note.F, Note.NATURAL),
+    6: (Note.F, Note.SHARP),
+    7: (Note.G, Note.NATURAL),
+    8: (Note.G, Note.SHARP),
+    9: (Note.A, Note.NATURAL),
+    10: (Note.A, Note.SHARP),
+    11: (Note.B, Note.NATURAL),
+}
+
+
+MIDI_INSTRUMENT_TO_INSTRUMENT_SET = {
+    # piano family
+    0: InstrumentSet.PIANO,
+    1: InstrumentSet.PIANO,
+    2: InstrumentSet.PIANO,
+    3: InstrumentSet.PIANO,
+    4: InstrumentSet.PIANO,
+    5: InstrumentSet.PIANO,
+    6: InstrumentSet.PIANO,
+    7: InstrumentSet.PIANO,
+    6: InstrumentSet.LYRE,  # Harpsichord
+    46: InstrumentSet.LYRE,  # Orchestral Harp
+    # spanish / acoustic guitar
+    24: InstrumentSet.SPANISH_GUITAR,  # Nylon Acoustic Guitar
+    # electric guitar family
+    25: InstrumentSet.ELECTRIC_GUITAR,  # Steel Acoustic Guitar
+    26: InstrumentSet.ELECTRIC_GUITAR,  # Jazz Guitar
+    27: InstrumentSet.ELECTRIC_GUITAR,  # Clean Electric Guitar
+    28: InstrumentSet.ELECTRIC_GUITAR,  # Muted Guitar
+    29: InstrumentSet.ELECTRIC_GUITAR,  # Overdriven Guitar
+    30: InstrumentSet.ELECTRIC_GUITAR,  # Distortion Guitar
+    31: InstrumentSet.ELECTRIC_GUITAR,  # Guitar Harmonics
+    # bass family
+    32: InstrumentSet.BASS,
+    33: InstrumentSet.BASS,
+    34: InstrumentSet.BASS,
+    35: InstrumentSet.BASS,
+    36: InstrumentSet.BASS,
+    37: InstrumentSet.BASS,
+    38: InstrumentSet.BASS,
+    39: InstrumentSet.BASS,
+    # violin / strings
+    40: InstrumentSet.VIOLIN,
+    41: InstrumentSet.VIOLIN,
+    42: InstrumentSet.VIOLIN,
+    43: InstrumentSet.VIOLIN,
+    44: InstrumentSet.VIOLIN,
+    45: InstrumentSet.VIOLIN,
+    47: InstrumentSet.VIOLIN,
+    # trumpet / brass
+    56: InstrumentSet.MEXICAN_TRUMPET,  # Trumpet
+    57: InstrumentSet.MEXICAN_TRUMPET,  # Trombone
+    58: InstrumentSet.MEXICAN_TRUMPET,  # Tuba
+    59: InstrumentSet.MEXICAN_TRUMPET,  # Muted Trumpet
+    60: InstrumentSet.MEXICAN_TRUMPET,  # French Horn
+    61: InstrumentSet.MEXICAN_TRUMPET,  # Brass Section
+    62: InstrumentSet.MEXICAN_TRUMPET,  # Synth Brass 1
+    63: InstrumentSet.MEXICAN_TRUMPET,  # Synth Brass 2
+    # sax family
+    64: InstrumentSet.SAX,  # Soprano Sax
+    65: InstrumentSet.SAX,  # Alto Sax
+    66: InstrumentSet.SAX,  # Tenor Sax
+    67: InstrumentSet.SAX,  # Baritone Sax
+    # flute / pipes
+    72: InstrumentSet.FLUTE,  # Piccolo
+    73: InstrumentSet.FLUTE,
+    74: InstrumentSet.FLUTE,
+    75: InstrumentSet.FLUTE,
+    76: InstrumentSet.FLUTE,
+    77: InstrumentSet.FLUTE,
+    78: InstrumentSet.FLUTE,
+    79: InstrumentSet.FLUTE,
+    # festive / bells / chimes-like material
+    8: InstrumentSet.PIANO,
+    9: InstrumentSet.PIANO,
+    10: InstrumentSet.PIANO,
+    11: InstrumentSet.PIANO,
+    12: InstrumentSet.PIANO,
+    13: InstrumentSet.PIANO,
+    14: InstrumentSet.PIANO,
+    15: InstrumentSet.PIANO,
+    # spooky / eerie / effect-like material
+    48: InstrumentSet.PIANO,
+    49: InstrumentSet.PIANO,
+    50: InstrumentSet.PIANO,
+    51: InstrumentSet.PIANO,
+    52: InstrumentSet.PIANO,
+    53: InstrumentSet.PIANO,
+    54: InstrumentSet.PIANO,
+    55: InstrumentSet.PIANO,
+    69: InstrumentSet.FLUTE,
+}
 
 _SOUNDS: dict[Path, Sound] = {}
 
@@ -178,6 +338,7 @@ class Sheet:
         self.bps = (x * 4) / 60
 
     def replace_notes(self, notes: list[Note]) -> None:
+        self._notes = notes
         self.notes.clear()
         self.any = bool(notes)
         for note in notes:
@@ -195,6 +356,8 @@ class Sheet:
     def add_notes(self, notes: list[Note]) -> None:
         for note in notes:
             self.notes[note.timestamp].append(note)
+
+        self._notes = notes
 
         self.any = bool(self.notes)
 
@@ -291,8 +454,8 @@ class Sheet:
             return False
 
         self._can_go.wait()
-        tick_duration = 1.0 / self.bps
-        self._accum += min(dt, tick_duration)
+        tick_duration = 1.0 / self.bps if self.bps != 0 else 0
+        self._accum += dt
 
         any_change = False
         while self._accum >= tick_duration:
@@ -303,13 +466,71 @@ class Sheet:
         return any_change
 
 
-def _invert_dict[K, V](d: dict[K, V]) -> dict[V, K]:
-    inv = {}
-    for k, v in d.items():
-        if v in inv:
-            raise ValueError(f"duplicate value detected: {v}")
-        inv[v] = k
-    return inv
+def compress_notes(note_list: list[Note], low_octave: int = 0, high_octave: int = 1, search_octaves: int = 6, window_size: int = 8) -> list[Note]:
+    low = 12 * low_octave + 1
+    high = 12 * high_octave + 12
+
+    def is_pitched(n: Note) -> bool:
+        return n.instrument not in {
+            InstrumentSet.DRUM,
+            InstrumentSet.REPEAT_BEGIN,
+            InstrumentSet.REPEAT_END,
+            InstrumentSet.FESTIVE,
+            InstrumentSet.SPOOKY,
+            InstrumentSet.BLANK,
+        }
+
+    notes: defaultdict[int, list[Note]] = defaultdict(list)
+    for note in note_list:
+        notes[note.timestamp].append(note)
+
+    timestamps = sorted(notes)
+    k_per_ts: dict[int, int] = {}
+
+    for i, ts in enumerate(timestamps):
+        window_start = max(0, i - window_size // 2)
+        window_end = min(len(timestamps), i + window_size // 2 + 1)
+
+        window_notes = [n for j in range(window_start, window_end) for n in notes[timestamps[j]] if is_pitched(n)]
+
+        if not window_notes:
+            k_per_ts[ts] = 0
+            continue
+
+        best_k = 0
+        best_score = None
+
+        for k in range(-search_octaves, search_octaves + 1):
+            moved = [n.to_index() + 12 * k for n in window_notes]
+            outside = sum(v < low or v > high for v in moved)
+            in_range = [v for v in moved if low <= v <= high]
+            span = (max(in_range) - min(in_range)) if in_range else 0
+
+            score = (outside, -span)
+
+            if best_score is None or score < best_score:
+                best_score = score
+                best_k = k
+
+        k_per_ts[ts] = best_k
+
+    out: list[Note] = []
+    for ts in timestamps:
+        for n in notes[ts]:
+            if is_pitched(n):
+                transposed = n.transpose_octaves(k_per_ts[ts])
+                index = transposed.to_index()
+                if index < low:
+                    clamp_octaves = (low - index + 11) // 12
+                    transposed = transposed.transpose_octaves(clamp_octaves)
+                elif index > high:
+                    clamp_octaves = (index - high + 11) // 12
+                    transposed = transposed.transpose_octaves(-clamp_octaves)
+                out.append(transposed)
+            else:
+                out.append(n)
+
+    return out
 
 
 CODE_TO_INSTRUMENT_SET = {
@@ -348,25 +569,6 @@ CODE_TO_PITCH = {
     "B": (Note.B, 1),
 }
 PITCH_TO_CODE = _invert_dict(CODE_TO_PITCH)
-
-Y_TO_PITCH_MAP = [
-    (Note.B, 1),
-    (Note.A, 1),
-    (Note.G, 1),
-    (Note.F, 1),
-    (Note.E, 1),
-    (Note.D, 1),
-    (Note.C, 1),
-    (Note.B, 0),
-    (Note.A, 0),
-    (Note.G, 0),
-    (Note.F, 0),
-    (Note.E, 0),
-    (Note.D, 0),
-    (Note.C, 0),
-]
-
-PITCH_TO_Y_MAP = {pitch: i for i, pitch in enumerate(Y_TO_PITCH_MAP)}
 
 SHEET_SHARP_ID = {
     SHEET_MUSIC_COLON_SHARP_BASS,
