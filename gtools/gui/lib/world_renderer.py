@@ -334,7 +334,7 @@ class WorldRenderer:
         if self._follow_playhead != value:
             self._follow_playhead = value
             self._last_playhead_pos = None
-            self._follow_rel_x = 0.10
+            self._follow_rel_x = 0.5
             self._dirty = True
 
     def set_active(self, active: bool) -> None:
@@ -741,7 +741,7 @@ class WorldRenderer:
         return self._dirty
 
     def update(self, dt: float) -> None:
-        if self._playing:
+        if self._playing and self._seek == 0:
             if self._sheet.update(dt):
                 self._dirty = True
 
@@ -809,7 +809,7 @@ class WorldRenderer:
             playhead = self._sheet.playhead - 1
             world_width = self._world.width
             row_height = 14 * 32.0
-            padding_blocks = 5
+            padding_blocks = 8
             total_blocks = 14 + (padding_blocks * 2)
             fit_height = total_blocks * 32.0
 
@@ -819,7 +819,7 @@ class WorldRenderer:
 
             if self._last_playhead_pos is None:
                 self._camera.zoom = self._camera.height / fit_height
-                self._follow_rel_x = 0.10
+                self._follow_rel_x = 0.5
                 hw = self._camera.width / (2.0 * self._camera.zoom)
                 self._camera.pos.x = p_pos.x + hw * (1.0 - 2.0 * self._follow_rel_x)
                 self._camera.pos.y = p_pos.y
