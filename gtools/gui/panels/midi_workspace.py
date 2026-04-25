@@ -11,6 +11,8 @@ from gtools.core.midi import MidiFile, QuantizedMidiFile
 from gtools.gui.event import Event
 from gtools.gui.lib.world_renderer import WorldRenderer
 from gtools.gui.panels.panel import Panel
+from gtools.core.midi import _instrument_name
+from gtools.core.growtopia.note import Note, compress_notes, InstrumentSet, MIDI_INSTRUMENT_TO_INSTRUMENT_SET
 
 _PING_DECAY = 0.5
 
@@ -34,6 +36,9 @@ class MidiWorkspace(Panel):
 
         self._ping_times: dict[tuple[int, int, int], float] = {}
 
+        self._instrument_search = ""
+        self._active_instrument_key: tuple[int, int, int] | None = None
+        self._should_open_popup = False
         self.max_bpm = 200
         self.wrap_enabled = True
         self.wrap_width = 100
@@ -47,7 +52,7 @@ class MidiWorkspace(Panel):
         self.highlighted_instruments.clear()
         self._ping_times.clear()
 
-        self.world.tiles.clear()
+        self.world.clear()
 
         self.midi_file = MidiFile(path)
         self._error_curve_cache = self.midi_file.error_curve(max_bps=128)
@@ -105,6 +110,13 @@ class MidiWorkspace(Panel):
         imgui.begin_child("WorldView", (world_view_w, avail_h))
         self.world_renderer.render()
         imgui.end_child()
+
+        if self._should_open_popup:
+            imgui.open_popup("InstrumentSelector")
+            self._should_open_popup = False
+            self._instrument_search = ""
+
+        self._render_instrument_change()
 
     def _render_panel_content(self) -> None:
         if imgui.button("Load MIDI"):
@@ -231,6 +243,9 @@ class MidiWorkspace(Panel):
                     imgui.SelectableFlags_.allow_overlap,
                     (row_width, row_h),
                 )
+                if imgui.is_item_clicked(imgui.MouseButton_.right):
+                    self._active_instrument_key = key
+                    self._should_open_popup = True
 
                 imgui.set_cursor_screen_pos(row_pos)
                 imgui.begin_group()
@@ -315,6 +330,101 @@ class MidiWorkspace(Panel):
                 fg.add_rect_filled(imgui.ImVec2(m_min_x, m_min_y), imgui.ImVec2(m_max_x, m_max_y), imgui.get_color_u32((1, 1, 1, 0.1)))
 
         imgui.end_child()
+
+    def _render_instrument_change(self) -> None:
+        if not self._active_instrument_key or not self.midi:
+            return
+
+        imgui.set_next_window_size((400, 500), imgui.Cond_.first_use_ever)
+        if imgui.begin_popup("InstrumentSelector"):
+            key = self._active_instrument_key
+
+            q_instr = None
+            for track in self.midi.tracks:
+                for inst in track.instruments:
+                    if (track.index, inst.channel, inst.program) == key:
+                        q_instr = inst
+                        break
+                if q_instr:
+                    break
+
+            if not q_instr:
+                imgui.text_disabled("Selected instrument is no longer available.")
+                if imgui.button("Close"):
+                    imgui.close_current_popup()
+                imgui.end_popup()
+                return
+
+            imgui.spacing()
+            imgui.set_next_item_width(-1)
+            _, self._instrument_search = imgui.input_text_with_hint("##search", "Search instruments", self._instrument_search)
+            imgui.spacing()
+
+            search_lower = self._instrument_search.lower()
+            EXCLUDED = {InstrumentSet.BLANK, InstrumentSet.REPEAT_BEGIN, InstrumentSet.REPEAT_END}
+            OPTIONS = [i for i in InstrumentSet if i not in EXCLUDED]
+            filtered = [opt for opt in OPTIONS if search_lower in opt.value.lower().replace("_", " ")]
+
+            imgui.begin_child("ctx_scroll", (0, 0), True)
+
+            def get_instrument_params(target_set):
+                if target_set == InstrumentSet.DRUM:
+                    return 0, True
+                for prog, s in MIDI_INSTRUMENT_TO_INSTRUMENT_SET.items():
+                    if s == target_set:
+                        return prog, False
+
+                return 0, False
+
+            for opt in filtered:
+                label = opt.value.replace("_", " ").title()
+                is_current = MIDI_INSTRUMENT_TO_INSTRUMENT_SET.get(q_instr.program) == opt
+
+                clicked, _ = imgui.selectable(f"  {label}##{opt.name}", is_current)
+                if clicked:
+                    targets = self.highlighted_instruments if key in self.highlighted_instruments else {key}
+                    new_prog, new_is_drum = get_instrument_params(opt)
+                    new_name = _instrument_name(new_prog, new_is_drum)
+                    self._apply_instrument_change(targets, new_prog, new_name, new_is_drum)
+                    imgui.close_current_popup()
+                    self._active_instrument_key = None
+
+            if not filtered:
+                imgui.text_disabled("No matches found")
+
+            imgui.end_child()
+            imgui.end_popup()
+
+    def _apply_instrument_change(self, targets: set[tuple[int, int, int]], new_prog: int, new_name: str, new_is_drum: bool) -> None:
+        if not self.midi:
+            return
+
+        for track in self.midi.tracks:
+            for inst in track.instruments:
+                if (track.index, inst.channel, inst.program) in targets:
+                    old_key = (track.index, inst.channel, inst.program)
+                    inst.program = new_prog
+                    inst.name = new_name
+                    inst.is_drum = new_is_drum
+                    for qn in inst.notes:
+                        qn.program = new_prog
+                        qn.instrument_name = new_name
+                        qn.is_drum = new_is_drum
+                        if qn.source:
+                            qn.source.program = new_prog
+                            qn.source.instrument_name = new_name
+                            qn.source.is_drum = new_is_drum
+
+                    if old_key in self.visible_instruments:
+                        self.visible_instruments.discard(old_key)
+                        self.visible_instruments.add((track.index, inst.channel, new_prog))
+
+                    if old_key in self.highlighted_instruments:
+                        self.highlighted_instruments.discard(old_key)
+                        self.highlighted_instruments.add((track.index, inst.channel, new_prog))
+
+        self._rebuild_sheet()
+
 
     def _render_settings(self) -> None:
         changed_wrap, self.wrap_enabled = imgui.checkbox("Wrap", self.wrap_enabled)
@@ -406,8 +516,9 @@ class MidiWorkspace(Panel):
 
                 for note in inst:
                     n = Note.from_midi(note.pitch, note.program, note.is_drum, note.start_slot, note.velocity)
-                    n.userdata = key
-                    notes.append(n)
+                    if n:
+                        n.userdata = (track.index, inst.channel, inst.program)
+                        notes.append(n)
 
         bpm = self.midi.bps * 15
         self.world.remove_sheet()

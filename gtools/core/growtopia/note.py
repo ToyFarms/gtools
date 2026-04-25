@@ -154,15 +154,23 @@ class Note:
         return setting.gt_path / "audio/notes" / f"{self.instrument.value}_{self.to_index()}.wav"
 
     @classmethod
-    def from_midi(cls, note: int, instrument: int, is_drum: bool, time: int, velocity: int) -> "Note":
+    def from_midi(cls, note: int, instrument: int, is_drum: bool, time: int, velocity: int) -> "Note | None":
         if is_drum:
             instr = InstrumentSet.DRUM
+            if note not in MIDI_DRUMS_TO_INSTRUMENT_SET:
+                cls.logger.warning(f"drums note {note} have no suitable mapping")
+                return
+
             base = MIDI_DRUMS_TO_INSTRUMENT_SET[note]
             accidental = Note.NATURAL
             octave = 0
         else:
             pitch_class = note % 12
             octave = note // 12 - 1
+            if instrument not in MIDI_INSTRUMENT_TO_INSTRUMENT_SET:
+                cls.logger.warning(f"midi {GM_INSTRUMENTS[instrument]} have no suitable instrument mapping")
+                return
+
             base, accidental = MIDI_PITCH_TO_NOTE[pitch_class]
             instr = MIDI_INSTRUMENT_TO_INSTRUMENT_SET.get(instrument)
             if not instr:
@@ -337,6 +345,7 @@ MIDI_DRUMS_TO_INSTRUMENT_SET = {
     56: Note.F,  # Cowbell (kind of Snare-like cut)
     # Hi-hat-ish / high noise
     58: Note.G,  # Vibraslap (kind of noisy, hat-like)
+    59: Note.C,  # Ride Cymbal 2 (kind of Crash)
     69: Note.G,  # Cabasa (kind of hi-hat texture)
     70: Note.G,  # Maracas (kind of hi-hat texture)
     # Tom-ish / body hits

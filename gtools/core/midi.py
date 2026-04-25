@@ -442,7 +442,6 @@ class QuantizedMidiFile:
         return self.duration_slots / self.bps
 
     def total_error_sec(self) -> float:
-        """Sum of all start + end snapping errors across every note."""
         return sum(n.start_error_sec + n.end_error_sec for n in self._notes)
 
     def __repr__(self) -> str:

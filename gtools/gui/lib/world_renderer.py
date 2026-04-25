@@ -545,7 +545,7 @@ class WorldRenderer:
             lambda camera3d, layer_spread: self._highlight_renderer.draw_playhead_3d(camera3d, self._sheet, self._world.width, layer_spread),
         )
 
-        self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
+        self._tile_overlay_mesh = None
         self._render_order.add(
             "Tile Overlay",
             lambda camera, cull: self._render_tile_overlay and self._tile_overlay_mesh and self._tile_overlay_renderer.draw(camera, self._tile_overlay_mesh),
@@ -736,9 +736,27 @@ class WorldRenderer:
             self.culling_debug_zoom = debug_zoom
         imgui.text("Culling Debug")
 
+        imgui.separator()
+        if imgui.button("Rebuild Mesh"):
+            self.rebuild_mesh()
+
     @property
     def is_dirty(self) -> bool:
         return self._dirty
+
+    def rebuild_mesh(self) -> None:
+        self._tile_renderer.load(self._world)
+
+        self._needs_obj_rebuild = True
+
+        if self._tile_overlay_mesh:
+            self._tile_overlay_mesh.delete()
+            self._tile_overlay_mesh = None
+
+        if self._render_tile_overlay:
+            self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
+
+        self._dirty = True
 
     def update(self, dt: float) -> None:
         if self._playing and self._seek == 0:
@@ -908,6 +926,9 @@ class WorldRenderer:
             if self._needs_obj_rebuild:
                 self._init_render_order()
                 self._needs_obj_rebuild = False
+
+            if self._render_tile_overlay and (self._tile_overlay_mesh is None or self._dirty):
+                self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
 
             self._update_hover()
 

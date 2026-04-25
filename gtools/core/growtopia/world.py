@@ -2864,6 +2864,14 @@ class World:
             elif listener.batch:
                 listener.batch([args])
 
+    def clear(self) -> None:
+        with self.batch():
+            for tile in self.tiles.values():
+                if tile.bg_id != 0:
+                    self.place_bg(tile, 0)
+                if tile.fg_id != 0:
+                    self.place_fg(tile, 0)
+
     def create_sheet_notes(self) -> list[Note]:
         ret: list[Note] = []
 
