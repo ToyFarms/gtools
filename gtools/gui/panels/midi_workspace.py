@@ -160,12 +160,12 @@ class MidiWorkspace(Panel):
         imgui.separator()
 
         now = time.monotonic()
-        draw_list = imgui.get_window_draw_list()
         row_h = imgui.get_text_line_height_with_spacing()
 
         inst_rows: list[tuple[tuple, imgui.ImVec2, imgui.ImVec2]] = []
 
         imgui.begin_child("InstListScroll", (0, 0), False, imgui.WindowFlags_.no_move)
+        draw_list = imgui.get_window_draw_list()
         card_w = imgui.get_content_region_avail()[0]
 
         for track in self.midi.tracks:
