@@ -9,9 +9,9 @@ from pyglm.glm import ivec2
 from pyglm import glm
 from gtools import setting
 from gtools.baked.items import GEMS, MUTATED_SEED, PAINTING_EASEL
-from gtools.baked.items import COPPER_PLUMBING, STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
+from gtools.baked.items import STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.color import color_matrix_filter, color_tint
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoColor, ItemInfoTextureType, ItemInfoType, get_tex_stride, item_database
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoColor, ItemInfoTextureType, ItemInfoType, ItemInfoVisualEffect, get_tex_stride, item_database
 from gtools.core.growtopia.rttex import RTTexManager
 from gtools.core.growtopia.world import (
     DisplayBlockTile,
@@ -73,7 +73,7 @@ class RenderCommand(Command):
     item_id: int
     layer: RenderLayer
     texture_file: str
-    tex_grid_pos: ivec2
+    tex_pos: ivec2
     pixel_pos: tuple[int, int] | None = None
     sprite_size: int = 32
     sample_size: int = 32
@@ -101,8 +101,8 @@ class RenderCommand(Command):
         tint_key = self.get_tint()
         cache_key = (
             self.texture_file,
-            self.tex_grid_pos.x,
-            self.tex_grid_pos.y,
+            self.tex_pos.x,
+            self.tex_pos.y,
             self.sample_size,
             target_size,
             self.paint_index,
@@ -206,37 +206,37 @@ LAYER_ORDER = [
 ]
 
 
+def _get_discolor_tint(item_id: int) -> tuple[int, int, int] | None:
+    if item_database.get(item_id).visual_effect == ItemInfoVisualEffect.DISCOLOR:
+        seed = item_database.get(item_id + 1)
+        return (seed.seed_overlay_color.r, seed.seed_overlay_color.g, seed.seed_overlay_color.b)
+
+
 def _base_sprite_command(tile: Tile, item_id: int, tex_index: int, layer: RenderLayer) -> RenderCommand:
     item = item_database.get(item_id)
-    tex_grid_pos, is_flipped = tile.tex_pos(item_id, tex_index)
-    tint: np.ndarray | None = None
-    if item_id in (STEAM_PIPE, COPPER_PLUMBING):
-        seed = item_database.get(item_id + 1)
-        tint = np.array(
-            [seed.seed_overlay_color.r, seed.seed_overlay_color.g, seed.seed_overlay_color.b, 255],
-            dtype=np.uint8,
-        )
+    tex_pos, is_flipped = tile.tex_pos(item_id, tex_index)
 
     return RenderCommand(
         tile_pos=tile.pos,
         item_id=item_id,
         layer=layer,
         texture_file=item.texture_file.decode(),
-        tex_grid_pos=tex_grid_pos,
+        tex_pos=tex_pos,
         paint_index=tile.get_paint_index(),
-        tint=tint,
+        tint=_get_discolor_tint(item_id),
         is_flipped=is_flipped,
     )
 
 
-def _raw_sprite_command(tile: Tile, item_id: int, layer: RenderLayer, texture_file: str, tex_grid_pos: ivec2) -> RenderCommand:
+def _raw_sprite_command(tile: Tile, item_id: int, layer: RenderLayer, texture_file: str, tex_pos: ivec2) -> RenderCommand:
     return RenderCommand(
         tile_pos=tile.pos,
         item_id=item_id,
         layer=layer,
         texture_file=texture_file,
-        tex_grid_pos=tex_grid_pos,
+        tex_pos=tex_pos,
         paint_index=tile.get_paint_index(),
+        tint=_get_discolor_tint(item_id),
     )
 
 
@@ -292,9 +292,10 @@ def _object_icon_command(
             item_id=dropped.id,
             layer=layer,
             texture_file=texture_file,
-            tex_grid_pos=tex_pos,
+            tex_pos=tex_pos,
             pixel_pos=(px, py),
             sprite_size=size,
+            tint=_get_discolor_tint(dropped.id),
         )
     )
 
@@ -351,7 +352,7 @@ def _pickup_overlay_command(dropped: DroppedItem, layer: RenderLayer, commands: 
             item_id=dropped.id,
             layer=layer,
             texture_file="pickup_box.rttex",
-            tex_grid_pos=ivec2(tex_index, 0),
+            tex_pos=ivec2(tex_index, 0),
             pixel_pos=(px, py),
             sprite_size=size,
             sample_size=20,
@@ -430,7 +431,7 @@ def _seed_icon_commands(dropped: DroppedItem, layer: RenderLayer, commands: list
                 item_id=dropped.id,
                 layer=layer,
                 texture_file="seed.rttex",
-                tex_grid_pos=ivec2(item.seed_base.value, 0),
+                tex_pos=ivec2(item.seed_base.value, 0),
                 pixel_pos=(px, py),
                 sprite_size=16,
                 sample_size=16,
@@ -441,7 +442,7 @@ def _seed_icon_commands(dropped: DroppedItem, layer: RenderLayer, commands: list
                 item_id=dropped.id,
                 layer=layer,
                 texture_file="seed.rttex",
-                tex_grid_pos=ivec2(item.seed_overlay.value, 1),
+                tex_pos=ivec2(item.seed_overlay.value, 1),
                 pixel_pos=(px, py),
                 sprite_size=16,
                 sample_size=16,
@@ -670,8 +671,8 @@ def _load_sprite(mgr: RTTexManager, cmd: RenderCommand, target_size: int, *, alp
     size = max(1, cmd.sample_size)
     raw = mgr.get(
         setting.gt_path / "game" / cmd.texture_file,
-        cmd.tex_grid_pos.x * size,
-        cmd.tex_grid_pos.y * size,
+        cmd.tex_pos.x * size,
+        cmd.tex_pos.y * size,
         size,
         size,
         flip_x=cmd.is_flipped,

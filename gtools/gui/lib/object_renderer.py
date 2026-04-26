@@ -4,12 +4,12 @@ from dataclasses import dataclass, field
 from enum import IntFlag, auto
 from typing import ClassVar
 
-from OpenGL.GL import GL_FALSE, GL_TRUE, glDepthMask
+from OpenGL.GL import GL_FALSE, GL_TRUE, GL_UNSIGNED_INT, glDepthMask
 from pyglm.glm import ivec2, vec2
 
 from gtools import setting
-from gtools.baked.items import GEMS, MUTATED_SEED
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoType, item_database
+from gtools.baked.items import ANTIMATTER_DUST, COMET_DUST, GEMS, MUTATED_SEED
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoType, ItemInfoVisualEffect, item_database
 from gtools.core.growtopia.world import DroppedItem
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
@@ -36,6 +36,12 @@ LAYER_STRIDE = 4
 MAX_LAYER = MAX_PER_REGION * LAYER_STRIDE
 
 GEMS_TO_TEX_OFFSET = {1: 0, 5: 1, 10: 2, 50: 3, 100: 4}
+
+DEFAULT_TINT: int = 0xFFFFFFFF
+
+
+def _pack_rgba_u32(r: int, g: int, b: int, a: int = 255) -> int:
+    return ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | (a & 0xFF)
 
 
 @dataclass(slots=True)
@@ -137,7 +143,6 @@ class ObjectRendererBase(Renderer, ABC):
         self._spread3d = self._shader3d.get_uniform("u_layer_spread")
         self._rotation3d = self._shader3d.get_uniform("u_rotation")
         self._pixel_scale3d = self._shader3d.get_uniform("u_pixelScale")
-        self._tint3d = self._shader3d.get_uniform("u_tint")
         self._z_offset3d = self._shader3d.get_uniform("u_zOffset")
 
         self._init_main_shader()
@@ -163,7 +168,17 @@ class ObjectRendererBase(Renderer, ABC):
         tex_layer: float,
         z: float,
         dropped: DroppedItem,
+        tint_u32: int,
     ) -> list[float]: ...
+
+    @staticmethod
+    def _select_item_tint_u32(item_id: int, default: tuple[int, int, int]) -> int:
+        item = item_database.get(item_id)
+        if item.visual_effect == ItemInfoVisualEffect.DISCOLOR:
+            seed = item_database.get(item_id + 1)
+            return int(seed.seed_overlay_color.to_rgba()) & 0xFFFFFFFF
+
+        return _pack_rgba_u32(default[0], default[1], default[2])
 
     def draw_shadow(self, camera: Camera2D, render_mesh: ObjectRenderMesh, z_offset: float = 0) -> None:
         if not render_mesh.dropped_meshes:
@@ -227,7 +242,6 @@ class ObjectRendererBase(Renderer, ABC):
         layer_spread: float,
         rotation: float = 0,
         pixel_scale: float = 1,
-        tint: tuple[float, float, float] = (1, 1, 1),
         z_offset: float = 0,
     ) -> None:
         if not render_mesh.dropped_meshes:
@@ -238,7 +252,6 @@ class ObjectRendererBase(Renderer, ABC):
         self._spread3d.set_float(layer_spread)
         self._rotation3d.set_float(rotation)
         self._pixel_scale3d.set_float(pixel_scale)
-        self._tint3d.set_vec3(np.array(tint, dtype=np.float32))
         self._z_offset3d.set_float(z_offset)
 
         self._tile_size3d.set_float(32.0)
@@ -267,6 +280,7 @@ class ObjectRendererBase(Renderer, ABC):
         overlay_scale: float = 1,
         icon_scale: float = 1,
         flags: "ObjectRendererBase.Flags" = Flags(0),
+        tint: tuple[float, float, float] = (1, 1, 1),
     ) -> ObjectRenderMesh:
         region_counters: dict[tuple[int, int], int] = defaultdict(int)
         bucketed: defaultdict[int, list[DroppedItem]] = defaultdict(list)
@@ -335,7 +349,8 @@ class ObjectRendererBase(Renderer, ABC):
                     uv_y = tex_pos.y * 32 / tex.height
                     z = self._get_object_z(local_index, SUBLAYER_ICON)
 
-                    icons[tex.array].extend(self._make_icon_instance(x, y, icon_scale, uv_x, uv_y, tex.layer, z, dropped))
+                    tint_u32 = self._select_item_tint_u32(item.id, (int(tint[0] * 255), int(tint[1] * 255), int(tint[2] * 255)))
+                    icons[tex.array].extend(self._make_icon_instance(x, y, icon_scale, uv_x, uv_y, tex.layer, z, dropped, tint_u32))
 
                     if not no_shadow:
                         icon_shadows[tex.array].extend(
@@ -348,10 +363,11 @@ class ObjectRendererBase(Renderer, ABC):
                                 uv_y,
                                 tex.layer,
                                 self._get_shadow_z(local_index, SHADOW_SUBLAYER_ICON),
+                                DEFAULT_TINT,
                             ]
                         )
 
-                if not no_overlay and item.id != GEMS:
+                if not no_overlay and item.id not in (GEMS, COMET_DUST, ANTIMATTER_DUST):
                     overlay_tex = self._tex_mgr.load_texture(setting.gt_path / "game/pickup_box.rttex")
                     tex = PICKUP_BOX_BLUE
                     if item.item_type == ItemInfoType.CONSUMABLE:
@@ -373,6 +389,7 @@ class ObjectRendererBase(Renderer, ABC):
                             0,
                             overlay_tex.layer,
                             self._get_object_z(local_index, SUBLAYER_OVERLAY),
+                            DEFAULT_TINT,
                         ]
                     )
 
@@ -387,6 +404,7 @@ class ObjectRendererBase(Renderer, ABC):
                                 0,
                                 overlay_tex.layer,
                                 self._get_shadow_z(local_index, SHADOW_SUBLAYER_OVERLAY),
+                                DEFAULT_TINT,
                             ]
                         )
 
@@ -428,6 +446,7 @@ class ObjectRendererBase(Renderer, ABC):
                 uv_y,
                 tex.layer,
                 info.z,
+                DEFAULT_TINT,
             ]
             icon_data[tex.array].extend(instance)
 
@@ -441,6 +460,7 @@ class ObjectRendererBase(Renderer, ABC):
                     uv_y,
                     tex.layer,
                     info.z - 0.0001,
+                    DEFAULT_TINT,
                 ]
                 shadow_data[tex.array].extend(shadow_instance)
 
@@ -490,28 +510,66 @@ class ObjectRendererBase(Renderer, ABC):
             shadow_z=self._get_object_z(local_index, SUBLAYER_TEXT_SHADOW),
         )
 
+    def _make_instance_data(
+        self,
+        x: float,
+        y: float,
+        scale_x: float,
+        scale_y: float,
+        uv_x: float,
+        uv_y: float,
+        layer: float,
+        z: float,
+        tint: tuple[int, int, int, int],
+    ) -> list[float | int]:
+        r, g, b, a = tint
+        return [
+            x,
+            y,
+            scale_x,
+            scale_y,
+            uv_x,
+            uv_y,
+            layer,
+            z,
+            _pack_rgba_u32(r, g, b, a),
+        ]
+
     def _make_meshes(
         self,
         src: dict[TextureArray, list[float]],
     ) -> dict[TextureArray, Mesh]:
+        dtype = np.dtype([("v", np.float32, 8), ("v2", np.uint32)])
         return {
             arr: Mesh(
                 Mesh.RECT_WITH_UV_VERTS,
                 self.LAYOUT,
                 Mesh.RECT_INDICES,
-                instance_data=np.array(inst, dtype=np.float32),
+                instance_data=self._to_instance_array(inst, dtype),
                 instance_layout=self.INSTANCE_LAYOUT,
                 instance_attrib_base=2,
             )
             for arr, inst in src.items()
         }
 
+    @staticmethod
+    def _to_instance_array(inst: list[float], dtype: np.dtype) -> np.ndarray:
+        if len(inst) % 9 != 0:
+            raise ValueError(f"instance data length must be multiple of 9, got {len(inst)}")
+
+        records: list[tuple[list[float], int]] = []
+        for i in range(0, len(inst), 9):
+            v = [float(x) for x in inst[i : i + 8]]
+            tint_u32 = int(inst[i + 8]) & 0xFFFFFFFF
+            records.append((v, tint_u32))
+        return np.array(records, dtype=dtype)
+
     def delete(self) -> None:
         self._seed_renderer.delete()
 
 
 class ObjectRenderer(ObjectRendererBase):
-    INSTANCE_LAYOUT: ClassVar[list[int]] = [2, 2, 2, 1, 1]
+    INSTANCE_LAYOUT: ClassVar[list] = [2, 2, 2, 1, 1, (1, GL_UNSIGNED_INT)]
 
     def _init_main_shader(self) -> None:
         self._shader = ShaderProgram.get("shaders/object")
@@ -520,7 +578,6 @@ class ObjectRenderer(ObjectRendererBase):
         self._tile_size = self._shader.get_uniform("u_tileSize")
         self._rotation = self._shader.get_uniform("u_rotation")
         self._pixel_scale = self._shader.get_uniform("u_pixelScale")
-        self._tint = self._shader.get_uniform("u_tint")
         self._z_offset = self._shader.get_uniform("u_zOffset")
 
     def draw(
@@ -538,7 +595,6 @@ class ObjectRenderer(ObjectRendererBase):
         self._shader.use()
         self._rotation.set_float(rotation)
         self._pixel_scale.set_float(pixel_scale)
-        self._tint.set_vec3(np.array(tint, dtype=np.float32))
         self._z_offset.set_float(z_offset)
         self._mvp.set_mat4x4(camera.proj_as_numpy())
 
@@ -570,5 +626,6 @@ class ObjectRenderer(ObjectRendererBase):
         tex_layer: float,
         z: float,
         dropped: DroppedItem,
+        tint_u32: int,
     ) -> list[float]:
-        return [x, y, icon_scale, icon_scale, uv_x, uv_y, tex_layer, z]
+        return [x, y, icon_scale, icon_scale, uv_x, uv_y, tex_layer, z, int(tint_u32) & 0xFFFFFFFF]

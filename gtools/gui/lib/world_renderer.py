@@ -71,7 +71,6 @@ class ObjectRenderable:
     renderer: ObjectRenderer
     rotation: float = 0.0
     pixel_scale: float = 1.0
-    tint: tuple[float, float, float] = (1.0, 1.0, 1.0)
     z_offset: float = 0.0
 
 
@@ -348,9 +347,9 @@ class WorldRenderer:
 
     def get_perf(self, out: dict[str, float]) -> None:
         if self.mode_3d:
-            out["render_layer"] = self._render_order.last_overall_times["draw_3d"]
+            out["render_layer"] = self._render_order.last_overall_times.get("draw_3d", 0)
         else:
-            out["render_layer"] = self._render_order.last_overall_times["draw_2d"]
+            out["render_layer"] = self._render_order.last_overall_times.get("draw_2d", 0)
 
     def _build_object_renderable(self) -> list[ObjectRenderable]:
         self.tile_objects = 0
@@ -441,10 +440,9 @@ class WorldRenderer:
             self._obj_meshes.append(renderable[-1].mesh)
             renderable.append(
                 ObjectRenderable(
-                    mesh=self._renderer_post_fg.build(icons["easel_mark"], flags=flag, icon_scale=1.1, tex_offset=ivec2(0, 1)),
+                    mesh=self._renderer_post_fg.build(icons["easel_mark"], flags=flag, icon_scale=1.1, tex_offset=ivec2(0, 1), tint=(0.3, 0.3, 0.3)),
                     renderer=self._renderer_post_fg,
                     rotation=0.1,
-                    tint=(0.3, 0.3, 0.3),
                     z_offset=0.001,
                 )
             )
@@ -568,11 +566,11 @@ class WorldRenderer:
 
     def _draw_obj_group_main_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
         for task in tasks:
-            task.renderer.draw(camera, task.mesh, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
+            task.renderer.draw(camera, task.mesh, rotation=task.rotation, pixel_scale=task.pixel_scale, z_offset=task.z_offset)
 
     def _draw_obj_group_main_3d(self, camera3d: Camera3D, layer_spread: float, tasks: list[ObjectRenderable]) -> None:
         for task in tasks:
-            task.renderer.draw_3d(camera3d, task.mesh, layer_spread, rotation=task.rotation, pixel_scale=task.pixel_scale, tint=task.tint, z_offset=task.z_offset)
+            task.renderer.draw_3d(camera3d, task.mesh, layer_spread, rotation=task.rotation, pixel_scale=task.pixel_scale, z_offset=task.z_offset)
 
     def _on_tile_update(self, x: int, y: int) -> None:
         with self._tile_update_lock:

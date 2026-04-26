@@ -10,6 +10,7 @@ layout (location = 6) in float in_depth;
 
 out vec2 texCoord;
 flat out float layer;
+out vec4 tint;
 
 uniform mat4 u_mvp;
 uniform sampler2DArray texArray;
@@ -28,5 +29,6 @@ void main() {
         mix(in_texCoords.y, in_texCoords.y + uvStep.y, in_texCoord.y)
     );
     layer = in_layer;
+    tint = vec4(1.0);
 }
 

@@ -9,7 +9,7 @@ from pyglm.glm import ivec2
 from gtools import setting
 from gtools.baked.items import COPPER_PLUMBING, STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.color import pack_color
-from gtools.core.growtopia.items_dat import ItemInfoTextureType, get_tex_stride, item_database
+from gtools.core.growtopia.items_dat import ItemInfoTextureType, ItemInfoVisualEffect, get_tex_stride, item_database
 from gtools.core.growtopia.world import DisplayBlockTile, SeedTile, Tile, TileFlags, VendingMachineTile, World
 
 from gtools.gui.camera import Camera2D
@@ -342,10 +342,10 @@ class TileRenderer(Renderer):
             u0, u1 = u1, u0
 
         tint = _WHITE_TINT
-        if item_id in (STEAM_PIPE, COPPER_PLUMBING):
+
+        if item.visual_effect == ItemInfoVisualEffect.DISCOLOR:
             seed = item_database.get(item_id + 1)
-            c = seed.seed_overlay_color
-            tint = pack_color(c.to_rgba())
+            tint = pack_color(seed.seed_overlay_color.to_rgba())
 
         return tex.array, [
             tile.pos.x * self.TILE_SIZE,
