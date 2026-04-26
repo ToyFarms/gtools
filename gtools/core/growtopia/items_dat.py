@@ -702,6 +702,18 @@ TEXTURE_WITH_ICONS_VARIANT: dict[bytes, str] = {
 }
 
 
+_NON_TILE_ITEM_TYPES: set[ItemInfoType] = {
+    ItemInfoType.FIST,
+    ItemInfoType.WRENCH,
+    ItemInfoType.GEMS,
+    ItemInfoType.CONSUMABLE,
+    ItemInfoType.CLOTHES,
+    ItemInfoType.COMPONENT,
+    ItemInfoType.PETFISH,
+    ItemInfoType.ARTIFACT,
+}
+
+
 def is_seed(id: int) -> bool:
     return id % 2 == 1
 
@@ -728,6 +740,14 @@ def is_background(item_type: ItemInfoType) -> bool:
         ItemInfoType.BACK_BOOMBOX,
         ItemInfoType.MUSICNOTE,
     )
+
+
+def is_placeable(item_type: ItemInfoType) -> bool:
+    return item_type not in _NON_TILE_ITEM_TYPES
+
+
+def is_foreground(item_type: ItemInfoType) -> bool:
+    return is_placeable(item_type) and not is_background(item_type)
 
 
 TEXTURE_STRIDE = {
@@ -851,6 +871,15 @@ class Item:
 
     def is_background(self) -> bool:
         return is_background(self.item_type)
+
+    def is_placeable(self) -> bool:
+        return is_placeable(self.item_type)
+
+    def is_foreground(self, include_seed: bool = False) -> bool:
+        if include_seed:
+            return is_foreground(self.item_type)
+        else:
+            return is_foreground(self.item_type) and not self.is_seed()
 
     def get_tex_stride(self) -> int:
         return get_tex_stride(self.texture_type)

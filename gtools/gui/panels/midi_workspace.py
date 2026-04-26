@@ -410,10 +410,9 @@ class MidiWorkspace(Panel):
                         qn.program = new_prog
                         qn.instrument_name = new_name
                         qn.is_drum = new_is_drum
-                        if qn.source:
-                            qn.source.program = new_prog
-                            qn.source.instrument_name = new_name
-                            qn.source.is_drum = new_is_drum
+                        qn.source.program = new_prog
+                        qn.source.instrument_name = new_name
+                        qn.source.is_drum = new_is_drum
 
                     if old_key in self.visible_instruments:
                         self.visible_instruments.discard(old_key)

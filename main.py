@@ -10,12 +10,9 @@ import time
 import traceback
 
 from gtools import flags
-from gtools.baked.items import COPPER_PLUMBING, STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.block_sigint import block_sigint
-from gtools.core.color import color_tint, composite
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoTextureType, get_tex_stride, item_database
+from gtools.core.growtopia.world_renderer_cpu import RenderOptions, render_world_image
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
-from gtools.core.growtopia.rttex import RTTexManager
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.world import World
 from gtools.core.hosts import HostsFileManager
@@ -24,7 +21,6 @@ from gtools.core.mixer import AudioMixer
 from gtools.core.network import is_up, resolve_doh
 from gtools.core.privilege import elevate, is_elevated, is_elevated_child
 from gtools.core.wsl import is_running_wsl
-from gtools.gui.panels.panel import Panel
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_SERVER_TO_CLIENT,
@@ -44,7 +40,6 @@ from thirdparty.enet.bindings import ENetPacketFlag
 from gtools import setting
 from gtools.setting import Setting
 from extension.utils import UtilityExtension
-from gtools.gui.app import App
 
 
 def get_host_mgr() -> HostsFileManager:
@@ -237,6 +232,7 @@ if __name__ == "__main__":
 
     render = subparsers.add_parser("render", parents=[global_parent], help="render a world file")
     render.add_argument("world", help="path to world packet file")
+    render.add_argument("--scale", type=float, default=3.0, help="world render scale multiplier")
 
     music = subparsers.add_parser("music", parents=[global_parent], help="simulate world music")
     music.add_argument("world", help="path to world packet file")
@@ -313,6 +309,9 @@ if __name__ == "__main__":
     elif args.cmd == "server":
         run_server()
     elif args.cmd == "gui":
+        from gtools.gui.app import App
+        from gtools.gui.panels.panel import Panel
+
         Panel.dev_mode = args.dev
         app = App((setting.appdir / "worlds" / args.world if not Path(args.world).is_absolute() else args.world) if args.world else None).run()
     elif args.cmd == "acc":
@@ -469,79 +468,14 @@ if __name__ == "__main__":
                 traceback.print_exc()
                 break
     elif args.cmd == "render":
-        from PIL import Image
-        import numpy as np
-        from pyglm.glm import ivec4, ivec2
-
         world = World.from_tank(Path(args.world).read_bytes())
-
-        bg_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
-        fg_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
-        bg_shadow_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
-        fg_shadow_layer = np.zeros((world.height * 32, world.width * 32, 4), dtype=np.uint8)
-
         start = time.perf_counter()
+        img = render_world_image(world, options=RenderOptions(scale=max(0.01, args.scale)))
+        print(f"rendering took {time.perf_counter() - start:.3f}s", flush=True)
+        img.show()
 
-        def place(tex: np.ndarray, id: int, pos: ivec2, is_bg: bool, no_shadow: bool = False) -> None:
-            if id <= 0:
-                return
-
-            item = item_database.get(id)
-
-            if id in (STEAM_PIPE, COPPER_PLUMBING):
-                seed = item_database.get(id + 1)
-                tex = color_tint(tex, np.array([seed.seed_overlay_color.r, seed.seed_overlay_color.g, seed.seed_overlay_color.b, 255]))
-
-            base_layer = bg_layer if is_bg else fg_layer
-            shadow_layer = bg_shadow_layer if is_bg else fg_shadow_layer
-
-            dst = ivec4(pos.x * 32, pos.y * 32, 32, 32)
-            alpha_mask = tex[:, :, 3] > 4
-            dst_slice = base_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
-            dst_slice[alpha_mask] = tex[:, :, : dst_slice.shape[2]][alpha_mask]
-
-            if not no_shadow and item.flags & ItemFlag.NO_SHADOW == 0:
-                dst = ivec4(pos.x * 32, pos.y * 32, 32, 32)
-                alpha_mask = tex[:, :, 3] > 4
-                dst_slice = shadow_layer[dst.y : dst.y + dst.z, dst.x : dst.x + dst.w, :]
-                dst_slice[..., :3][alpha_mask] = 0
-                dst_slice[..., 3][alpha_mask] = tex[..., 3][alpha_mask]
-
-        mgr = RTTexManager()
-        for i, tile in world.tiles.items():
-            if i == world.garbage_start:
-                break
-
-            place(tile.get_bg_texture(mgr), tile.bg_id, tile.pos, is_bg=True)
-            place(tile.get_fg_texture(mgr), tile.fg_id, tile.pos, is_bg=False)
-
-            if item_database.get(tile.fg_id).is_steam():
-                anchor = item_database.get(STEAM_TUBES)
-                stride = get_tex_stride(ItemInfoTextureType.SMART_EDGE)
-                off = ivec2(tile.fg_tex_index % max(stride, 1), tile.fg_tex_index // stride if stride else 0)
-                tex_pos = (ivec2((anchor.tex_coord_x + 1), anchor.tex_coord_y) + off) * 32
-
-                place(mgr.get(setting.gt_path / "game" / anchor.texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32), tile.fg_id, tile.pos, is_bg=False, no_shadow=True)
-            if tile.fg_id == STEAM_REVOLVER:
-                tex_pos, _ = tile.tex_pos(tile.fg_id, 0)
-                tex_pos = (tex_pos + ivec2(0, 1)) * 32
-
-                place(
-                    mgr.get(setting.gt_path / "game" / item_database.get(tile.fg_id).texture_file.decode(), tex_pos.x, tex_pos.y, 32, 32),
-                    tile.fg_id,
-                    tile.pos,
-                    is_bg=False,
-                    no_shadow=True,
-                )
-
-        bg = composite(bg_layer, bg_shadow_layer, dx=-2, dy=2)
-        fg = composite(fg_layer, fg_shadow_layer, dx=-2, dy=2)
-        img = composite(fg, bg)
-
-        print(f"rendering took {time.perf_counter() - start:.3f}s")
-
-        Image.fromarray(img).show()
-        time.sleep(1)
+        if is_running_wsl():
+            time.sleep(1)
     elif args.cmd == "music":
         world = World.from_tank(Path(args.world).read_bytes())
         mixer = AudioMixer()

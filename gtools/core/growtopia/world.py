@@ -642,7 +642,7 @@ class LockTile(TileExtra):
         s.write_u32(self.owner_uid)
         s.write_u32(self.access_count)
 
-        for i, uid in enumerate(self.access_uids):
+        for _, uid in enumerate(self.access_uids):
             s.write_i32(uid)
 
         if format_version >= 12:
