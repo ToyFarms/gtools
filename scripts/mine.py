@@ -2,6 +2,7 @@ import dataclasses
 import enum as enum_module
 import hashlib
 import datetime
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -90,10 +91,12 @@ FIELD_DESCRIPTIONS: dict[str, str] = {
     "alt_unk1": "Alt Unk1",
     "alt_unk2": "Alt Unk2",
     "alt_unk3": "Alt Unk3",
-    "player_transform_related": "Ply Trans",
+    "player_transform_related": "Transform",
     "info": "Info",
     "ingredients": "Ingredients",
     "unk9": "Unk9",
+    "hit_fx": "Hit FX",
+    "hit_duration_ms": "Hit Duration",
 }
 
 
@@ -176,6 +179,54 @@ def compute_diff(
         new_path=new_path,
         old_path=old_path,
     )
+
+
+def _item_to_dict(item: Item) -> dict:
+    return {f.name: _fmt(getattr(item, f.name)) for f in dataclasses.fields(item)}
+
+
+def diff_result_to_dict(result: DiffResult) -> dict:
+    return {
+        "old_version": result.old_version,
+        "new_version": result.new_version,
+        "same_schema": result.same_schema,
+        "old_path": str(result.old_path) if result.old_path else None,
+        "new_path": str(result.new_path) if result.new_path else None,
+        "old_date": _file_date(result.old_path) if result.old_path else None,
+        "new_date": _file_date(result.new_path) if result.new_path else None,
+        "summary": {
+            "added": len(result.added),
+            "removed": len(result.removed),
+            "modified": len(result.modified),
+            "total": result.total_changes,
+        },
+        "added": [_item_to_dict(item) for item in result.added],
+        "removed": [_item_to_dict(item) for item in result.removed],
+        "modified": [
+            {
+                "id": new_item.id,
+                "name": _fmt(new_item.name),
+                "changes": [
+                    {
+                        "field": fn,
+                        "before": ov,
+                        "after": nv,
+                    }
+                    for fn, ov, nv in changes
+                ],
+            }
+            for new_item, _old_item, changes in result.modified
+        ],
+    }
+
+
+def render_json(results: list[DiffResult], *, consecutive: bool) -> None:
+    if consecutive:
+        payload: Any = [diff_result_to_dict(r) for r in results]
+    else:
+        payload = diff_result_to_dict(results[0])
+
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def _build_diff_table(rows: list[tuple[str, str, str]], max_cell: int = 60) -> "Table":
@@ -644,34 +695,122 @@ def _render(result: DiffResult, no_color: bool) -> None:
         render_plain(result)
 
 
+def _render_separator(use_rich: bool, use_ansi: bool, console: "Console | None") -> None:
+    if use_rich and console:
+        console.print(Rule(style="bright_black"))
+    elif use_ansi:
+        print("\n" + A.c(A.GREY, text="═" * 72) + "\n")
+    else:
+        print("\n" + "═" * 72 + "\n")
+
+
+def _render_timeline(results: list[DiffResult], use_rich: bool, use_ansi: bool, console: "Console | None") -> None:
+    if use_rich and console:
+        render_timeline_summary_rich(results, console)
+    elif use_ansi:
+        render_timeline_summary_ansi(results)
+    else:
+        render_timeline_summary_plain(results)
+
+
 @click.command
 @click.argument("old_dat", required=False, metavar="OLD.DAT", type=click.Path(exists=True))
 @click.argument("new_dat", required=False, metavar="NEW.DAT", type=click.Path(exists=True))
-@click.option("--no-color", is_flag=True, default=False, help="disable color / rich output")
-@click.option("--all", is_flag=True, default=False, help="diff every consecutive pair of archived .dat files (oldest -> newest)")
-def mine(old_dat: Path | None, new_dat: Path | None, no_color: bool, all: bool) -> None:
-    use_rich = HAS_RICH and not no_color
-    use_ansi = not use_rich and not no_color
+@click.option("--no-color", is_flag=True, default=False, help="Disable color / rich output.")
+@click.option("--all", "use_all", is_flag=True, default=False, help="Use all archived .dat files (overrides -n).")
+@click.option(
+    "--consecutive",
+    is_flag=True,
+    default=False,
+    help=(
+        "Diff each consecutive pair in the selected range instead of a single "
+        "cumulative diff between the oldest and newest."
+    ),
+)
+@click.option(
+    "-n",
+    "count",
+    default=2,
+    show_default=True,
+    metavar="N",
+    help=(
+        "Number of latest archives to include. "
+        "Default 2 diffs the latest against its predecessor. "
+        "Ignored when --all is set."
+    ),
+)
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output structured JSON (suppresses all other output).")
+def mine(
+    old_dat: Path | None,
+    new_dat: Path | None,
+    no_color: bool,
+    use_all: bool,
+    consecutive: bool,
+    count: int,
+    output_json: bool,
+) -> None:
+    use_rich = HAS_RICH and not no_color and not output_json
+    use_ansi = not use_rich and not no_color and not output_json
     console = Console(highlight=False) if use_rich else None
 
-    if all:
-        dats = _get_all_item_database()
-        if len(dats) < 2:
-            print("need at least two archived .dat files for --all", file=sys.stderr)
+    if old_dat and new_dat:
+        new_path = Path(new_dat)
+        old_path = Path(old_dat)
+        new_db = ItemDatabase.load(new_path)
+        old_db = ItemDatabase.load(old_path)
+        result = compute_diff(new_db, old_db, new_path=new_path, old_path=old_path)
+        if output_json:
+            render_json([result], consecutive=False)
+        else:
+            _render(result, no_color=no_color)
+        return
+
+    dats = _get_all_item_database()
+
+    if use_all:
+        selected = dats
+    else:
+        if count < 2:
+            print("error: -n must be at least 2", file=sys.stderr)
             sys.exit(1)
+        selected = dats[:count]
 
-        pairs = list(reversed(list(zip(dats, dats[1:]))))
-        print(f"found {len(dats)} archives -> running {len(pairs)} diff(s)  (oldest -> newest).\n", file=sys.stderr)
+    if len(selected) < 2:
+        needed = "at least two archived .dat files"
+        print(f"need {needed}", file=sys.stderr)
+        sys.exit(1)
 
-        all_results: list[DiffResult] = []
-        for i, (newer, older) in enumerate(pairs, 1):
+    if not consecutive:
+        newest, oldest = selected[0], selected[-1]
+        if not output_json:
+            print(f"comparing:\n  NEW: {newest}\n  OLD: {oldest}\n", file=sys.stderr)
+        new_db = ItemDatabase.load(newest)
+        old_db = ItemDatabase.load(oldest)
+        result = compute_diff(new_db, old_db, new_path=newest, old_path=oldest)
+        if output_json:
+            render_json([result], consecutive=False)
+        else:
+            _render(result, no_color=no_color)
+        return
+
+    pairs = list(reversed(list(zip(selected, selected[1:]))))
+    if not output_json:
+        print(
+            f"found {len(selected)} archives -> running {len(pairs)} diff(s)  (oldest -> newest).\n",
+            file=sys.stderr,
+        )
+
+    all_results: list[DiffResult] = []
+    for i, (newer, older) in enumerate(pairs, 1):
+        if not output_json:
             print(f"[{i}/{len(pairs)}]  {older.name}  ->  {newer.name}", file=sys.stderr)
 
-            new_db = ItemDatabase.load(newer)
-            old_db = ItemDatabase.load(older)
-            result = compute_diff(new_db, old_db, new_path=newer, old_path=older)
-            all_results.append(result)
+        new_db = ItemDatabase.load(newer)
+        old_db = ItemDatabase.load(older)
+        result = compute_diff(new_db, old_db, new_path=newer, old_path=older)
+        all_results.append(result)
 
+        if not output_json:
             if use_rich and console:
                 render_rich(result, console)
             elif use_ansi:
@@ -680,37 +819,9 @@ def mine(old_dat: Path | None, new_dat: Path | None, no_color: bool, all: bool) 
                 render_plain(result)
 
             if i < len(pairs):
-                if use_rich and console:
-                    console.print(Rule(style="bright_black"))
-                elif use_ansi:
-                    print("\n" + A.c(A.GREY, text="═" * 72) + "\n")
-                else:
-                    print("\n" + "═" * 72 + "\n")
+                _render_separator(use_rich, use_ansi, console)
 
-        if use_rich and console:
-            render_timeline_summary_rich(all_results, console)
-        elif use_ansi:
-            render_timeline_summary_ansi(all_results)
-        else:
-            render_timeline_summary_plain(all_results)
-
-        return
-
-    if new_dat and old_dat:
-        new_path = Path(new_dat)
-        old_path = Path(old_dat)
-        new_db = ItemDatabase.load(new_path)
-        old_db = ItemDatabase.load(old_path)
-        result = compute_diff(new_db, old_db, new_path=new_path, old_path=old_path)
+    if output_json:
+        render_json(all_results, consecutive=True)
     else:
-        dats = _get_all_item_database()
-        if len(dats) < 2:
-            print("need at least two archived .dat files", file=sys.stderr)
-            sys.exit(1)
-
-        print(f"comparing:\n  NEW: {dats[0]}\n  OLD: {dats[1]}\n", file=sys.stderr)
-        new_db = ItemDatabase.load(dats[0])
-        old_db = ItemDatabase.load(dats[1])
-        result = compute_diff(new_db, old_db, new_path=dats[0], old_path=dats[1])
-
-    _render(result, no_color=no_color)
+        _render_timeline(all_results, use_rich, use_ansi, console)
