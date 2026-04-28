@@ -793,12 +793,13 @@ def get_icon_texture(texture_file: bytes) -> str | None:
 
 @dataclass(slots=True)
 class Item:
+    # lpstr (length-prefixed): str with 2 bytes size prefix
     id: int = 0  # u32
     flags: ItemFlag = ItemFlag.NONE  # u16
     item_type: ItemInfoType = ItemInfoType.FIST  # u8
     material: ItemInfoMaterialType = ItemInfoMaterialType.WOODEN  # u8
-    name: bytes = b""  # str with 2 bytes size prefix
-    texture_file: bytes = b""  # str with 2 bytes size prefix
+    name: bytes = b""  # lpstr
+    texture_file: bytes = b""  # lpstr
     texture_file_hash: int = 0  # u32
     visual_effect: ItemInfoVisualEffect = ItemInfoVisualEffect.NONE  # u8
     cooking_time: int = 0  # i32
@@ -812,13 +813,13 @@ class Item:
     clothing_type: ItemInfoClothingType = ItemInfoClothingType.HAT  # u8
     rarity: int = 0  # u16
     max_amount: int = 0  # u8
-    extra_file: bytes = b""  # str with 2 bytes size prefix
+    extra_file: bytes = b""  # lpstr
     extra_file_hash: int = 0  # u32
     frame_interval_ms: int = 0  # u32
-    pet_name: bytes = b""  # str with 2 bytes size prefix
-    pet_prefix: bytes = b""  # str with 2 bytes size prefix
-    pet_suffix: bytes = b""  # str with 2 bytes size prefix
-    pet_ability: bytes = b""  # str with 2 bytes size prefix
+    pet_name: bytes = b""  # lpstr
+    pet_prefix: bytes = b""  # lpstr
+    pet_suffix: bytes = b""  # lpstr
+    pet_ability: bytes = b""  # lpstr
     seed_base: ItemInfoSeedBase = ItemInfoSeedBase.NONE  # u8
     seed_overlay: ItemInfoSeedOverlay = ItemInfoSeedOverlay.LINES  # u8
     tree_base: ItemInfoTreeBase = ItemInfoTreeBase.BRANCH_TREE  # u8
@@ -828,16 +829,16 @@ class Item:
     ingredient_: int = 0  # u32
     grow_time: int = 0  # u32
     fx_flags: FXFlags = FXFlags.NONE  # u32
-    animating_coordinates: bytes = b""  # str with 2 bytes size prefix
-    animating_texture_files: bytes = b""  # str with 2 bytes size prefix
-    animating_coordinates_2: bytes = b""  # str with 2 bytes size prefix
+    animating_coordinates: bytes = b""  # lpstr
+    animating_texture_files: bytes = b""  # lpstr
+    animating_coordinates_2: bytes = b""  # lpstr
     unk1: int = 0  # u32  unused? all item zero
     unk2: int = 0  # u32  neon nerve, stitchlips, omegalul all 2
     flags2: ItemInfoFlag2 = ItemInfoFlag2.NONE  # u32
     cybot_related: bytes = b""  # u8 (60)
     tile_range: int = 0  # u32
     vault_capacity: int = 0  # u32
-    punch_options: bytes = b""  # str with 2 bytes size prefix
+    punch_options: bytes = b""  # lpstr
     masked_body_len: int = 0  # u32  only on Haunted Jack O' Lantern with value 2, matches [4, 7, 9, 9, 9, 9, 9, 9, 9] with 2 element differing
     body_render_mask: bytes = b""  # u8 (9)  each byte represent a body part, if its not '\t' its rendered differently, such as on Haunted Jack O' Lantern
     light_range: int = 0  # u32
@@ -849,8 +850,8 @@ class Item:
     chair_texture_y: int = 0  # u32
     chair_leg_offset_x: int = 0  # i32
     chair_leg_offset_y: int = 0  # i32
-    chair_texture_file: bytes = b""  # str with 2 bytes size prefix
-    renderer_data_file: bytes = b""  # str with 2 bytes size prefix
+    chair_texture_file: bytes = b""  # lpstr
+    renderer_data_file: bytes = b""  # lpstr
     unk6: int = 0  # u32  only on Buster Brush with value 1815
     renderer_data_file_hash: int = 0  # u32
     has_alt_tile: int = 0  # u8
@@ -859,9 +860,11 @@ class Item:
     alt_unk2: int = 0  # u8
     alt_unk3: int = 0  # u8
     player_transform_related: int = 0  # u16
-    info: bytes = b""  # str with 2 bytes size prefix
+    info: bytes = b""  # lpstr
     ingredients: tuple[int, int] = field(default_factory=lambda: (0, 0))  # u16 (2)
     unk9: int = 0  # u8  only on Me11e's Snowshine with value 2
+    hit_fx: bytes = b""  # lpstr
+    hit_duration_ms: int = 0  # lpstr
 
     def is_seed(self) -> bool:
         return is_seed(self.id)
@@ -976,6 +979,9 @@ class Item:
             item.ingredients = (s.read_u16(), s.read_u16())
         if version >= 24:
             item.unk9 = s.read_u8()
+        if version >= 25:
+            item.hit_fx = s.read_pascal_bytes("H")
+            item.hit_duration_ms = s.read_u32()
 
         return item
 
