@@ -332,15 +332,22 @@ class HostsFileManager:
             self._write_parsed(new)
 
     def backup(self) -> Path:
-        dst = self.hosts_path.with_suffix(self.hosts_path.suffix + ".bak")
-        shutil.copy2(self.hosts_path, dst)
+        try:
+            dst = self.hosts_path.with_suffix(self.hosts_path.suffix + ".bak")
+            shutil.copy2(self.hosts_path, dst)
+        except PermissionError:
+            pass
 
         return dst
 
     def restore(self) -> Path:
-        dst = self.hosts_path.with_suffix(self.hosts_path.suffix + ".bak")
-        if not dst.exists():
-            raise FileNotFoundError("no backup found")
+        try:
+            dst = self.hosts_path.with_suffix(self.hosts_path.suffix + ".bak")
+            if not dst.exists():
+                raise FileNotFoundError("no backup found")
 
-        shutil.copy2(dst, self.hosts_path)
+            shutil.copy2(dst, self.hosts_path)
+        except PermissionError:
+            pass
+
         return dst
