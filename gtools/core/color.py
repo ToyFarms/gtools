@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image, ImageChops
 
 
-def _srgb_to_linear_01(c: np.ndarray) -> np.ndarray:
+def srgb_to_linear(c: np.ndarray) -> np.ndarray:
     a = 0.055
     low = c <= 0.04045
     out = np.empty_like(c)
@@ -13,12 +13,41 @@ def _srgb_to_linear_01(c: np.ndarray) -> np.ndarray:
     return out
 
 
-def _linear_to_srgb_01(c: np.ndarray) -> np.ndarray:
+def linear_to_srgb(c: np.ndarray) -> np.ndarray:
     a = 0.055
     low = c <= 0.0031308
     out = np.empty_like(c)
     out[low] = c[low] * 12.92
     out[~low] = (1.0 + a) * c[~low] ** (1.0 / 2.4) - a
+    return out
+
+
+LAB_EPS = 0.008856451679035631
+LAB_A = 7.787037037037037
+LAB_B = 0.13793103448275862
+
+
+def _lab_f(t: np.ndarray) -> np.ndarray:
+    out = LAB_A * t + LAB_B
+    np.cbrt(t, out=out, where=t > LAB_EPS)
+    return out
+
+
+def linear_to_lab(c: np.ndarray) -> np.ndarray:
+    c0, c1, c2 = np.moveaxis(c, -1, 0)
+
+    x = (0.4124564 * c0 + 0.3575761 * c1 + 0.1804375 * c2) / 0.95047
+    y = 0.2126729 * c0 + 0.7151522 * c1 + 0.0721750 * c2
+    z = (0.0193339 * c0 + 0.1191920 * c1 + 0.9503041 * c2) / 1.08883
+
+    fx = _lab_f(x)
+    fy = _lab_f(y)
+    fz = _lab_f(z)
+
+    out = np.empty(c.shape[:-1] + (3,), dtype=np.result_type(c, np.float64))
+    out[..., 0] = 116.0 * fy - 16.0
+    out[..., 1] = 500.0 * (fx - fy)
+    out[..., 2] = 200.0 * (fy - fz)
     return out
 
 
@@ -45,13 +74,13 @@ def color_matrix_filter[T: (np.ndarray, Image.Image)](image: T, matrix: np.ndarr
         flat = arr.reshape(-1, 4).astype(np.float32) / 255.0
 
         if linear:
-            flat[:, :3] = _srgb_to_linear_01(flat[:, :3])
+            flat[:, :3] = srgb_to_linear(flat[:, :3])
 
         result = flat @ matrix[:, :4].T + matrix[:, 4]
         np.clip(result, 0.0, 1.0, out=result)
 
         if linear:
-            result[:, :3] = _linear_to_srgb_01(result[:, :3])
+            result[:, :3] = linear_to_srgb(result[:, :3])
 
         out_arr = np.rint(result * 255.0).astype(np.uint8).reshape(h, w, 4)
         return Image.fromarray(out_arr, "RGBA")
@@ -64,13 +93,13 @@ def color_matrix_filter[T: (np.ndarray, Image.Image)](image: T, matrix: np.ndarr
     flat = arr.reshape(-1, 4).astype(np.float32) / 255.0
 
     if linear:
-        flat[:, :3] = _srgb_to_linear_01(flat[:, :3])
+        flat[:, :3] = srgb_to_linear(flat[:, :3])
 
     result = flat @ matrix[:, :4].T + matrix[:, 4]
     np.clip(result, 0.0, 1.0, out=result)
 
     if linear:
-        result[:, :3] = _linear_to_srgb_01(result[:, :3])
+        result[:, :3] = linear_to_srgb(result[:, :3])
 
     return np.rint(result * 255.0).astype(np.uint8).reshape(h, w, 4)
 

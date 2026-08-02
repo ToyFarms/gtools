@@ -118,9 +118,10 @@ class DockspacePanel(Panel):
 
     def render(self) -> tuple[bool, bool]:
         display_w, display_h = imgui.get_io().display_size
+        menu_h = imgui.get_frame_height()
 
-        imgui.set_next_window_pos((0, 0))
-        imgui.set_next_window_size((display_w, display_h))
+        imgui.set_next_window_pos((0, menu_h))
+        imgui.set_next_window_size((display_w, display_h - menu_h))
         imgui.set_next_window_bg_alpha(0.0)
 
         opened = imgui.begin(

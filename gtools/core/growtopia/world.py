@@ -3250,13 +3250,13 @@ class World:
         return 0
 
     @overload
-    def get_tile(self, x: ivec2) -> Tile | None: ...
+    def get_tile(self, x: ivec2, *, log: bool = True) -> Tile | None: ...
     @overload
-    def get_tile(self, x: int) -> Tile | None: ...
+    def get_tile(self, x: int, *, log: bool = True) -> Tile | None: ...
     @overload
-    def get_tile(self, x: int, y: int) -> Tile | None: ...
+    def get_tile(self, x: int, y: int, *, log: bool = True) -> Tile | None: ...
 
-    def get_tile(self, x: ivec2 | int, y: int | None = None) -> Tile | None:
+    def get_tile(self, x: ivec2 | int, y: int | None = None, *, log: bool = True) -> Tile | None:
         if isinstance(x, ivec2):
             idx = x.y * self.width + x.x
         elif y is None:
@@ -3265,7 +3265,7 @@ class World:
             idx = y * self.width + x
 
         tile = self.tiles.get(idx)
-        if tile is None:
+        if log and tile is None:
             self.logger.warning(f"tile idx={idx} in {self.name} does not exist")
 
         return tile
@@ -3536,7 +3536,7 @@ class World:
 
         for y in range(-1, 2):
             for x in range(-1, 2):
-                if n := self.get_tile(tile.pos + ivec2(x, y)):
+                if n := self.get_tile(tile.pos + ivec2(x, y), log=False):
                     self.update_tile_connection(n)
 
     def update_tree(self, tile: Tile, item_id: int, harvest: bool, spawn_seed_flag: bool, seedling_flag: bool) -> None:

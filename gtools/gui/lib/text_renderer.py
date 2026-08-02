@@ -93,7 +93,7 @@ class TextRenderer(Renderer):
         self._softness = self.shader.get_uniform("u_edgeSoftness")
         self._weight = self.shader.get_uniform("u_weight")
 
-        self.shader3d = ShaderProgram.from_file("shaders/text3d.vert", "shaders/text.frag")
+        self.shader3d = ShaderProgram.from_files("shaders/text3d.vert", "shaders/text.frag")
         self._vp3d = self.shader3d.get_uniform("u_view_proj")
         self._offset3d = self.shader3d.get_uniform("u_offset")
         self._tex3d = self.shader3d.get_uniform("u_texture")

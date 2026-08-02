@@ -12,7 +12,7 @@ class HighlightRenderer:
         self._u_proj = self._shader.get_uniform("u_proj")
         self._u_model = self._shader.get_uniform("u_model")
 
-        self._shader3d = ShaderProgram.from_file("shaders/solid3d.vert", "shaders/solid.frag")
+        self._shader3d = ShaderProgram.from_files("shaders/solid3d.vert", "shaders/solid.frag")
         self._u_vp3d = self._shader3d.get_uniform("u_view_proj")
         self._u_model3d = self._shader3d.get_uniform("u_model")
         self._u_z3d = self._shader3d.get_uniform("u_z")

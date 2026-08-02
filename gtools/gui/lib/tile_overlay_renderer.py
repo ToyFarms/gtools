@@ -16,7 +16,7 @@ class TileOverlayRenderer(Renderer):
         self.u_proj = self.shader.get_uniform("u_proj")
         self.u_model = self.shader.get_uniform("u_model")
 
-        self.shader3d = ShaderProgram.from_file("shaders/solid3d.vert", "shaders/solid.frag")
+        self.shader3d = ShaderProgram.from_files("shaders/solid3d.vert", "shaders/solid.frag")
         self.u_vp3d = self.shader3d.get_uniform("u_view_proj")
         self.u_model3d = self.shader3d.get_uniform("u_model")
         self.u_z3d = self.shader3d.get_uniform("u_z")

@@ -157,6 +157,50 @@ class App:
 
         return root
 
+    def _render_menu_bar(self) -> None:
+        if not imgui.begin_main_menu_bar():
+            return
+
+        if imgui.begin_menu("View"):
+
+            if imgui.menu_item("Midi Workspace", "", False)[0]:
+                self.add_panel(MidiWorkspace(self.dockspace.node_id))
+
+            if imgui.menu_item("Proxy", "", False)[0]:
+                self.add_panel(ProxyPanel(self.dockspace.node_id))
+
+            imgui.separator()
+
+            if imgui.menu_item("Open World", "", False)[0]:
+                world = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
+                if isinstance(world, str):
+                    self.add_panel(WorldPanel.load(Path(world), self.dockspace.node_id))
+
+            if imgui.begin_menu("Open Recent World"):
+                self.worlds = [x for x in (setting.appdir / "worlds").glob("*")]
+                if self.worlds:
+                    for p in self.worlds:
+                        if imgui.menu_item(p.name, "", False)[0]:
+                            self.add_panel(WorldPanel.load(p, self.dockspace.node_id))
+                else:
+                    imgui.begin_disabled()
+                    imgui.menu_item("(none)", "", False)
+                    imgui.end_disabled()
+                imgui.end_menu()
+
+            if imgui.menu_item("Debug World", "", False)[0]:
+                self._add_debug_world()
+
+            imgui.separator()
+
+            label = "Dev Mode: Turn Off" if Panel.dev_mode else "Dev Mode: Turn On"
+            if imgui.menu_item(label, "", False)[0]:
+                Panel.dev_mode = not Panel.dev_mode
+
+            imgui.end_menu()
+
+        imgui.end_main_menu_bar()
+
     def _add_debug_world(self) -> None:
         size = math.ceil(math.sqrt(item_database.item_count))
         w = World(name=b"Debug World", width=size, height=size)
@@ -218,6 +262,14 @@ class App:
             self.imgui_renderer.process_inputs()
             imgui.new_frame()
 
+            io = imgui.get_io()
+            _md = io.mouse_delta
+            imgui_active = (
+                _md.x != 0.0 or _md.y != 0.0 or any(io.mouse_down) or io.mouse_wheel != 0.0 or io.want_capture_keyboard or imgui.is_any_item_hovered() or imgui.is_any_item_active()
+            )
+            if imgui_active:
+                self.last_dirty_time = time.perf_counter()
+
             for event in self.event_router.poll():
                 self.process_events(event)
 
@@ -226,6 +278,8 @@ class App:
 
             to_remove: list[Panel] = []
             panel_perf: dict[str, float] = {}
+
+            self._render_menu_bar()
 
             panel_render_start = time.perf_counter()
             with self._panels_lock:
@@ -339,6 +393,7 @@ class App:
             for panel in self.panels:
                 panel.delete()
 
+        glfw.make_context_current(self.window)
         GLTexManager().delete_all()
         ShaderProgram.delete_all()
 

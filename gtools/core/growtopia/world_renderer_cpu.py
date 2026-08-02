@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from enum import Enum, auto
 import math
@@ -11,7 +11,7 @@ from gtools import setting
 from gtools.baked.items import GEMS, MUTATED_SEED, PAINTING_EASEL
 from gtools.baked.items import STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.color import color_matrix_filter, color_tint
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoColor, ItemInfoTextureType, ItemInfoType, ItemInfoVisualEffect, get_tex_stride, item_database
+from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoColor, ItemInfoTextureType, ItemInfoType, ItemInfoVisualEffect, get_default_tex, get_tex_stride, item_database
 from gtools.core.growtopia.rttex import RTTexManager
 from gtools.core.growtopia.world import (
     DisplayBlockTile,
@@ -60,11 +60,61 @@ class TileConnectionState:
     bg: int | None = None
     overlay: int | None = None
 
+    @classmethod
+    def default(cls, tile: Tile) -> "TileConnectionState":
+        return TileConnectionState(
+            fg=item_database.get(tile.fg_id).get_default_tex(),
+            bg=item_database.get(tile.bg_id).get_default_tex(),
+            overlay=get_default_tex(ItemInfoTextureType.SMART_EDGE),
+        )
+
 
 class Command(Protocol):
     layer: RenderLayer
 
     def render(self, canvas: np.ndarray, mgr: RTTexManager, options: RenderOptions, origin: ivec2 | None = None) -> None: ...
+
+_process_mgr: RTTexManager | None = None
+
+
+def _get_process_mgr() -> RTTexManager:
+    global _process_mgr
+    if _process_mgr is None:
+        _process_mgr = RTTexManager()
+
+    return _process_mgr
+
+
+class _LRU:
+    def __init__(self, capacity: int) -> None:
+        self._data: OrderedDict = OrderedDict()
+        self._capacity = capacity
+
+    def get(self, key):
+        if key not in self._data:
+            return None
+        self._data.move_to_end(key)
+        return self._data[key]
+
+    def put(self, key, value) -> None:
+        if key in self._data:
+            self._data.move_to_end(key)
+            self._data[key] = value
+            return
+        self._data[key] = value
+        if len(self._data) > self._capacity:
+            self._data.popitem(last=False)
+
+
+def _numpy_resize_nearest(arr: np.ndarray, target: int) -> np.ndarray:
+    src_h, src_w = arr.shape[:2]
+    if src_h == target and src_w == target:
+        return arr
+
+    row_idx = np.arange(target, dtype=np.int32) * src_h // target
+    col_idx = np.arange(target, dtype=np.int32) * src_w // target
+
+    return arr[np.ix_(row_idx, col_idx)]
 
 
 @dataclass(slots=True)
@@ -82,6 +132,8 @@ class RenderCommand(Command):
     is_flipped: bool = False
     opacity: float = 1.0
 
+    _sprite_cache: ClassVar[_LRU] = _LRU(4096)
+
     def with_tint(self, tint: np.ndarray | tuple[int, int, int] | ItemInfoColor | None = None) -> "RenderCommand":
         self.tint = tint
         return self
@@ -93,12 +145,12 @@ class RenderCommand(Command):
             self.tint = np.array(self.tint, dtype=np.uint8)
         elif isinstance(self.tint, ItemInfoColor):
             self.tint = np.array([self.tint.r, self.tint.g, self.tint.b, 255], dtype=np.uint8)
-
         return self.tint
 
     def render(self, canvas: np.ndarray, mgr: RTTexManager, options: RenderOptions, origin: ivec2 | None = None) -> None:
         target_size = max(1, int(round(self.sprite_size * options.scale)))
         tint_key = self.get_tint()
+
         cache_key = (
             self.texture_file,
             self.tex_pos.x,
@@ -111,16 +163,13 @@ class RenderCommand(Command):
             round(self.opacity, 4),
             options.alpha_threshold,
         )
-        sprite_cache: dict[tuple, np.ndarray] = {}
-        tex = sprite_cache.get(cache_key)
+
+        cache = RenderCommand._sprite_cache
+        tex = cache.get(cache_key)
+
         if tex is None:
-            tex = _load_sprite(
-                mgr,
-                self,
-                target_size,
-                alpha_threshold=options.alpha_threshold,
-            )
-            sprite_cache[cache_key] = tex
+            tex = _load_sprite(mgr, self, target_size, alpha_threshold=options.alpha_threshold)
+            cache.put(cache_key, tex)
 
         if self.pixel_pos is not None:
             ox = int(round(self.pixel_pos[0] * options.scale))
@@ -144,42 +193,38 @@ class TextCommand(Command):
     color: tuple[int, int, int, int] = (255, 255, 255, 255)
     offset: tuple[int, int] = (0, 0)
 
-    _font_cache: ClassVar[dict[tuple[str, int], ImageFont.FreeTypeFont]] = {}
-    _text_cache: ClassVar[dict[tuple[str, int, str, tuple[int, int, int, int]], np.ndarray]] = {}
+    _font_cache: ClassVar[dict] = {}
+    _text_cache: ClassVar[dict] = {}
 
     def render(self, canvas: np.ndarray, mgr: RTTexManager, options: RenderOptions, origin: ivec2 | None = None) -> None:
         scale = options.scale
-        scaled_size = int(round(self.size * scale))
-        if scaled_size < 1:
-            scaled_size = 1
+        scaled_size = max(1, int(round(self.size * scale)))
 
         cache_key = (self.font, scaled_size, self.text, self.color)
-        if cache_key in TextCommand._text_cache:
-            arr = TextCommand._text_cache[cache_key]
+
+        arr = TextCommand._text_cache.get(cache_key)
+
+        if arr is not None:
             ox = int(self.pixel_pos[0] * scale + self.offset[0])
             oy = int(self.pixel_pos[1] * scale + self.offset[1])
-
             _composite(canvas, arr, ox, oy)
             return
 
         font_key = (self.font, scaled_size)
-        if font_key not in TextCommand._font_cache:
-            TextCommand._font_cache[font_key] = ImageFont.truetype(self.font, scaled_size)
-
-        font = TextCommand._font_cache[font_key]
+        font = TextCommand._font_cache.get(font_key)
+        if font is None:
+            font = ImageFont.truetype(self.font, scaled_size)
+            TextCommand._font_cache[font_key] = font
 
         dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
         draw = ImageDraw.Draw(dummy)
-
         bbox = draw.textbbox((0, 0), self.text, font=font)
         left, top, right, bottom = bbox
-
         w = right - left + 4
         h = bottom - top + 4
 
         img = Image.new("RGBA", (int(math.ceil(w)), int(math.ceil(h))), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-
         draw.text((-left, -top), self.text, font=font, fill=self.color)
 
         arr = np.array(img, dtype=np.uint8).astype(np.float32)
@@ -189,7 +234,6 @@ class TextCommand(Command):
 
         ox = int(round(self.pixel_pos[0] * scale))
         oy = int(round(self.pixel_pos[1] * scale))
-
         _composite(canvas, arr, ox, oy)
 
 
@@ -515,7 +559,6 @@ def build_object_commands(world: World, commands: list[Command]) -> None:
     for obj in world.dropped.items:
         if _seed_icon_commands(obj, RenderLayer.OBJ_POST, commands, pos_offset=(0, 0)):
             continue
-
         _object_icon_command(obj, RenderLayer.OBJ_POST, commands, icon_scale=0.5, pos_offset=(2, 2), render_pickup_overlay=True)
 
     for obj in icons["easel"]:
@@ -536,12 +579,18 @@ def build_object_commands(world: World, commands: list[Command]) -> None:
 
 def build_tile_commands(tile: Tile, connection: TileConnectionState | None = None, *, options: RenderOptions | None = None, commands: list[Command]) -> None:
     options = options or RenderOptions()
-    connection = connection or TileConnectionState()
 
-    bg_tex = tile.bg_tex_index if connection.bg is None else connection.bg
-    fg_tex = tile.fg_tex_index if connection.fg is None else connection.fg
+    if connection:
+        default = TileConnectionState.default(tile)
+        bg_tex = connection.bg if connection.bg else default.bg
+        fg_tex = connection.fg if connection.fg else default.fg
+        overlay_tex = connection.overlay if connection.overlay else default.overlay
+        assert bg_tex is not None and fg_tex is not None and overlay_tex is not None
+    else:
+        bg_tex = tile.bg_tex_index
+        fg_tex = tile.fg_tex_index
+        overlay_tex = tile.overlay_tex_index
 
-    overlay_tex = tile.overlay_tex_index if connection.overlay is None else connection.overlay
     if tile.bg_id > 0:
         commands.append(_base_sprite_command(tile, tile.bg_id, bg_tex, RenderLayer.BG))
 
@@ -658,7 +707,6 @@ def build_world_commands(world: World, *, options: RenderOptions | None = None) 
     for i in sorted(world.tiles):
         if options.stop_at_garbage_start and world.garbage_start is not None and i == world.garbage_start:
             break
-
         build_tile_commands(world.tiles[i], options=options, commands=commands)
 
     if options.include_objects:
@@ -678,10 +726,10 @@ def _load_sprite(mgr: RTTexManager, cmd: RenderCommand, target_size: int, *, alp
         flip_x=cmd.is_flipped,
     )
 
-    tex = Image.fromarray(raw, "RGBA")
     if target_size != size:
-        tex = tex.resize((target_size, target_size), Image.Resampling.NEAREST)
+        raw = _numpy_resize_nearest(raw, target_size)
 
+    tex = Image.fromarray(raw, "RGBA")
     tex = color_matrix_filter(tex, _COLOR_MATRICES[cmd.paint_index], linear=False)
     if (tint := cmd.get_tint()) is not None:
         tex = color_tint(tex, tint)
@@ -737,11 +785,10 @@ def _sort_commands_by_layer(commands: Sequence[Command]) -> Iterator[Command]:
 
 
 def _rasterize(commands: Sequence[Command], width_px: int, height_px: int, *, options: RenderOptions, tile_origin: ivec2 | None = None) -> np.ndarray:
-    mgr = RTTexManager()
+    mgr = _get_process_mgr()
     canvas = np.zeros((height_px, width_px, 4), dtype=np.float32)
     for cmd in _sort_commands_by_layer(commands):
         cmd.render(canvas, mgr, options, tile_origin)
-
     return canvas.astype(np.uint8)
 
 
@@ -777,6 +824,23 @@ def render_tile(tile: Tile, connection: TileConnectionState | None = None, *, op
     )
 
     return Image.fromarray(img, mode="RGBA")
+
+
+def render_tile_array(tile: Tile, connection: TileConnectionState | None = None, *, options: RenderOptions | None = None) -> np.ndarray:
+    options = options or RenderOptions()
+    scale = max(0.01, options.scale)
+    commands: list[Command] = []
+    build_tile_commands(tile, connection=connection, options=options, commands=commands)
+
+    img = _rasterize(
+        commands,
+        width_px=max(1, int(round(options.tile_size * scale))),
+        height_px=max(1, int(round(options.tile_size * scale))),
+        options=options,
+        tile_origin=tile.pos,
+    )
+
+    return img
 
 
 def render_commands(commands: Iterable[Command], width_px: int, height_px: int, *, options: RenderOptions | None = None) -> np.ndarray:

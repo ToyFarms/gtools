@@ -21,7 +21,7 @@ class SeedIconRenderer(Renderer):
         self.mvp = self.shader.get_uniform("u_mvp")
         self.tile_size = self.shader.get_uniform("u_tileSize")
 
-        self.shader3d = ShaderProgram.from_file("shaders/seed3d.vert", "shaders/seed.frag")
+        self.shader3d = ShaderProgram.from_files("shaders/seed3d.vert", "shaders/seed.frag")
         self.vp3d = self.shader3d.get_uniform("u_view_proj")
         self.tex3d = self.shader3d.get_uniform("u_texture")
         self.spread3d = self.shader3d.get_uniform("u_layer_spread")

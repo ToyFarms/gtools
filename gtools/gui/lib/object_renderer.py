@@ -127,7 +127,7 @@ class ObjectRendererBase(Renderer, ABC):
         self._shadow_alpha = self._shadow_shader.get_uniform("u_shadowAlpha")
         self._shadow_z_offset = self._shadow_shader.get_uniform("u_zOffset")
 
-        self._shadow_shader3d = ShaderProgram.from_file("shaders/object_shadow3d.vert", "shaders/object.frag")
+        self._shadow_shader3d = ShaderProgram.from_files("shaders/object_shadow3d.vert", "shaders/object.frag")
         self._shadow_vp3d = self._shadow_shader3d.get_uniform("u_view_proj")
         self._shadow_tex3d = self._shadow_shader3d.get_uniform("texArray")
         self._shadow_tile_size3d = self._shadow_shader3d.get_uniform("u_tileSize")

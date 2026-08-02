@@ -66,7 +66,7 @@ class TileRenderer(Renderer):
         self._layer = self._shader.get_uniform("u_layer")
         self._opacity = self._shader.get_uniform("u_opacity")
 
-        self._shader3d = ShaderProgram.from_file("shaders/world3d.vert", "shaders/world.frag")
+        self._shader3d = ShaderProgram.from_files("shaders/world3d.vert", "shaders/world.frag")
         self._vp3d = self._shader3d.get_uniform("u_view_proj")
         self._tex3d = self._shader3d.get_uniform("texArray")
         self._layer3d = self._shader3d.get_uniform("u_layer")

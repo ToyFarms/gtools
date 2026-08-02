@@ -22,7 +22,7 @@ class GuiMenuRenderer(Renderer):
         self.u_texRes = self.shader.get_uniform("u_texRes")
         self.u_z = self.shader.get_uniform("u_z")
 
-        self.shader3d = ShaderProgram.from_file("shaders/gui_box3d.vert", "shaders/gui_box.frag")
+        self.shader3d = ShaderProgram.from_files("shaders/gui_box3d.vert", "shaders/gui_box.frag")
         self.u_vp3d = self.shader3d.get_uniform("u_view_proj")
         self.u_model3d = self.shader3d.get_uniform("u_model")
         self.u_texture3d = self.shader3d.get_uniform("u_texture")

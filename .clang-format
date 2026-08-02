@@ -1,0 +1,22 @@
+BasedOnStyle: Microsoft
+ColumnLimit: 120
+AlignAfterOpenBracket: Align
+AlignArrayOfStructures: Left
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+  AlignCaseColons: false
+AllowAllParametersOfDeclarationOnNextLine: true
+PPIndentWidth: 2
+IndentPPDirectives: AfterHash
+UseTab: Never
+IndentWidth: 4
+PointerAlignment: Right
+SpaceAroundPointerQualifiers: After
+AllowShortBlocksOnASingleLine: true
+ReflowComments: false
