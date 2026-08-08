@@ -1202,6 +1202,7 @@ class WorldRenderer:
             imgui.text(f"FG: {item_database.get(self._hovered_tile.fg_id).name} / BG: {item_database.get(self._hovered_tile.bg_id).name}")
 
         imgui.end_group()
+        left_bottom_y = imgui.get_cursor_pos().y
 
         min_p = imgui.get_item_rect_min()
         max_p = imgui.get_item_rect_max()
@@ -1209,7 +1210,7 @@ class WorldRenderer:
 
         vu_spacing = 15.0
         vu_w, vu_h = min(vw / 3, 300), 20.0
-        imgui.set_cursor_pos((10, max_p.y))
+        imgui.set_cursor_pos((10, left_bottom_y + 15))
 
         imgui.begin_group()
         vu_start_pos = imgui.get_cursor_screen_pos()
