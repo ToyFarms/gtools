@@ -18,7 +18,7 @@ def test_world_tile_events() -> None:
     def on_tile_update(x: int, y: int) -> None:
         events.append((x, y))
 
-    world.subscribe(WorldEvent.TILE_UPDATE, on_tile_update)
+    world.subscribe(WorldEvent.TILE_UPDATE, single=on_tile_update)
 
     world.place_tile(2, ivec2(10, 20))
     if (10, 20) not in events:
@@ -48,7 +48,7 @@ def test_world_dropped_events() -> None:
         nonlocal events_called
         events_called += 1
 
-    world.subscribe(WorldEvent.DROPPED_UPDATE, on_dropped_update)
+    world.subscribe(WorldEvent.DROPPED_UPDATE, single=on_dropped_update)
 
     world.create_dropped(2, vec2(100, 200), 10, 0)
     if events_called != 1:
