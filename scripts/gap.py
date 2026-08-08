@@ -1,4 +1,3 @@
-import argparse
 import contextlib
 import inspect
 import io
@@ -9,11 +8,15 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import click
+
 from gtools import setting
 
 from gtools.core.buffer import Buffer
+
 os.environ["DONT_LOAD_ITEM"] = "1"
 from gtools.core.growtopia.items_dat import Item
+
 del os.environ["DONT_LOAD_ITEM"]
 from gtools.core.utils import get_home
 
@@ -708,21 +711,29 @@ def get_latest_item_dat() -> Path:
     raise FileNotFoundError("no valid items.dat found. checked: " + ", ".join(str(p) for p in _ITEMS_DAT_CANDIDATES))
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("files", type=Path, nargs="*")
-    ap.add_argument("--window", type=int, default=8192, help="Max bytes to scan ahead for the next item anchor (auto-doubled up to 4x on misses)")
-    ap.add_argument("--verbose", action="store_true", help="Also print the full step-by-step narration for every version pair, not just the final summary")
-    args = ap.parse_args()
-
-    if len(args.files) < 2:
-        args.files = [
+@click.command
+@click.argument("files", nargs=-1, type=click.Path(path_type=Path))
+@click.option(
+    "--window",
+    type=int,
+    default=8192,
+    show_default=True,
+    help="Max bytes to scan ahead for the next item anchor (auto-doubled up to 4x on misses)",
+)
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Also print the full step-by-step narration for every version pair, not just the final summary",
+)
+def gap(files: list[Path], window: int, verbose: bool) -> None:
+    if len(files) < 2:
+        files = [
             Path("items.dat"),
             get_latest_item_dat(),
         ]
 
     by_version: dict[int, Path] = {}
-    for p in args.files:
+    for p in files:
         v = _peek_version(p)
         if v in by_version:
             print(f"{DIM}Skipping {p.name} (duplicate version {v}).{RESET}")
@@ -740,15 +751,11 @@ def main() -> None:
     unk_next = 0
     for old_v, new_v in zip(unique_versions, unique_versions[1:]):
         baseline, target = by_version[old_v], by_version[new_v]
-        r = run_pair(baseline, target, args.window, unk_start=unk_next)
+        r = run_pair(baseline, target, window, unk_start=unk_next)
         results.append(r)
         unk_next = r["next_unk"]
-        if args.verbose:
+        if verbose:
             print(f"\n{DIM}--- v{old_v} -> v{new_v} ---{RESET}")
             print(r["log"])
 
     print_summary(results)
-
-
-if __name__ == "__main__":
-    main()
