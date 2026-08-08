@@ -4,6 +4,20 @@ from typing import Iterator
 
 BytesLike = bytes | bytearray
 
+_STRUCT_CACHE: dict[tuple[str, str], struct.Struct] = {}
+
+
+def _get_struct(endian: str, fmt: str) -> struct.Struct:
+    key = (endian, fmt)
+    s = _STRUCT_CACHE.get(key)
+    if s is None:
+        s = struct.Struct(endian + fmt)
+        _STRUCT_CACHE[key] = s
+    return s
+
+
+_ZERO_PAD = {n: bytes(n) for n in (1, 2, 4, 8)}
+
 
 class Buffer:
     def __new__(cls, x: "BytesLike | None | Buffer" = None, *args, **kwargs) -> "Buffer":
@@ -31,9 +45,10 @@ class Buffer:
         return self.rpos >= len(self.buffer)
 
     def _ensure_capacity(self, size: int) -> None:
-        if size <= len(self.buffer):
+        cur = len(self.buffer)
+        if size <= cur:
             return
-        self.buffer.extend(b"\x00" * (size - len(self.buffer)))
+        self.buffer.extend(bytes(size - cur))
 
     def _read_raw(self, n: int) -> bytes:
         if self.rpos + n > len(self.buffer):
@@ -56,23 +71,42 @@ class Buffer:
         return data
 
     def _write_raw(self, b: BytesLike) -> None:
-        end = self.wpos + len(b)
-        self._ensure_capacity(end)
-        self.buffer[self.wpos : end] = b
+        wpos = self.wpos
+        blen = len(b)
+        end = wpos + blen
+        buf_len = len(self.buffer)
+
+        if wpos == buf_len:
+            self.buffer += b
+        elif end <= buf_len:
+            self.buffer[wpos:end] = b
+        else:
+            if wpos > buf_len:
+                self.buffer.extend(bytes(wpos - buf_len))
+            self.buffer[wpos:end] = b
+
         self.wpos = end
 
     def read_fmt(self, fmt: str) -> int:
-        full_fmt = self.endian + fmt
-        size = struct.calcsize(full_fmt)
-        raw = self._read_raw(size) if not self.reverse_read else self._read_raw_back(size)
-        vals = struct.unpack(full_fmt, raw)
+        s = _get_struct(self.endian, fmt)
 
-        return vals[0]
+        raw = self._read_raw_back(s.size) if self.reverse_read else self._read_raw(s.size)
+
+        return s.unpack(raw)[0]
 
     def write_fmt(self, fmt: str, *vals) -> None:
-        full_fmt = self.endian + fmt
-        packed = struct.pack(full_fmt, *vals)
-        self._write_raw(packed)
+        s = _get_struct(self.endian, fmt)
+
+        buf = self.buffer
+        wpos = self.wpos
+        size = s.size
+
+        if wpos == len(buf):
+            buf.extend(_ZERO_PAD.get(size) or bytes(size))
+            s.pack_into(buf, wpos, *vals)
+            self.wpos = wpos + size
+        else:
+            self._write_raw(s.pack(*vals))
 
     def read_u8(self) -> int:
         return self.read_fmt("B")

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import IntEnum
 from pathlib import Path
-from typing import Any, ClassVar, Hashable, Literal, Sequence, overload
+from typing import Any, ClassVar, Hashable, Literal, Self, Sequence, overload
 
 import xxhash
 from rapidfuzz import fuzz, process
@@ -636,10 +636,18 @@ class ItemInfoFlag2(IntFlag):
 
 
 _SECRET = b"PBG892FXX982ABC*"
+_SECRET_LEN = len(_SECRET)
+_SECRET_TILED = _SECRET * ((4096 + _SECRET_LEN) // _SECRET_LEN + 2)
 
 
 def _decrypt(s: bytes, item_id: int) -> bytes:
-    return bytes(s[i] ^ _SECRET[(i + item_id) % len(_SECRET)] for i in range(len(s)))
+    n = len(s)
+    if n == 0:
+        return b""
+
+    off = item_id % _SECRET_LEN
+    key = _SECRET_TILED[off : off + n]
+    return (int.from_bytes(s, "big") ^ int.from_bytes(key, "big")).to_bytes(n, "big")
 
 
 TEXTURE_WITH_ICONS_VARIANT: dict[bytes, str] = {
@@ -865,6 +873,7 @@ class Item:
     unk9: int = 0  # u8  only on Me11e's Snowshine with value 2
     hit_fx: bytes = b""  # lpstr
     hit_duration_ms: int = 0  # lpstr
+    unk10: int = 0  # u8
 
     def is_seed(self) -> bool:
         return is_seed(self.id)
@@ -894,7 +903,7 @@ class Item:
         return get_icon_texture(self.texture_file)
 
     @classmethod
-    def deserialize(cls, s: Buffer, version: int = 99999999999) -> "Item":
+    def deserialize(cls, s: Buffer, version: int = 99999999999) -> Self:
         item = cls()
 
         item.id = s.read_u32()
@@ -982,6 +991,8 @@ class Item:
         if version >= 25:
             item.hit_fx = s.read_pascal_bytes("H")
             item.hit_duration_ms = s.read_u32()
+        if version >= 26:
+            item.unk10 = s.read_u8()
 
         return item
 
@@ -1292,7 +1303,7 @@ class ItemDatabase:
 
         source_hash = xxhash.xxh64_hexdigest(data)
 
-        # in-memory hit.
+        # in-memory hit
         if (hit := cls._mem.get(source_hash)) is not None:
             return hit
 
@@ -1371,7 +1382,8 @@ class ItemDatabase:
         return dir_.is_dir() and any(p.is_file() for p in dir_.iterdir())
 
 
-item_database = ItemDatabase.latest()
+if not os.getenv("DONT_LOAD_ITEM", None):
+    item_database = ItemDatabase.latest()
 
 
 def reload_item_database(data: bytes | None = None) -> ItemDatabase:
