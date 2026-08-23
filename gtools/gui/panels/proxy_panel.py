@@ -60,6 +60,7 @@ class ProxyPanel(Panel):
 
         self.world_renderer: WorldRenderer | None = None
         self.reload_next_world: bool = True
+        self._prev_world_name: bytes = b""
         self._sidebar_w: float = 250.0
 
     def setup_http_server(self) -> None:
@@ -96,6 +97,7 @@ class ProxyPanel(Panel):
 
     def setup_extension(self) -> None:
         try:
+            # TODO: add a way to start specific extension, also make it not mutually exclusive with proxy
             self.extension = GuiExtension()
             self.extension.start()
         except Exception as e:
@@ -182,7 +184,7 @@ class ProxyPanel(Panel):
         state = self.proxy.state if self.proxy else self.extension.state if self.extension else None
 
         if state:
-            if not state.world:
+            if not state.world or state.world.name != self._prev_world_name:
                 self.reload_next_world = True
 
             if self.reload_next_world and state.world:
@@ -191,6 +193,7 @@ class ProxyPanel(Panel):
 
                 self.world_renderer = WorldRenderer(state.world)
                 self.reload_next_world = False
+                self._prev_world_name = state.world.name
 
         changed, self.http_server_enabled = imgui_toggle.toggle("HTTP Server", self.http_server_enabled)
         if changed:
