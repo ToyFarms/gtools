@@ -1,20 +1,24 @@
+from dataclasses import dataclass
 import logging
+import os
 import threading
 from traceback import print_exc
 
 from imgui_bundle import imgui
 from imgui_bundle import imgui_toggle  # pyright: ignore[reportMissingModuleSource]
 from gtools.core.format import format_timespan
+from gtools.core.growtopia.packet import NetType, PreparedPacket
 from gtools.gui.event import Event
 from gtools.gui.lib.toast import push_error
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
-from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Interest
+from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Interest
 from gtools.proxy.extension.client.sdk import Extension
 from gtools.proxy.http_proxy import ThreadedHTTPServer, setup_server
 from gtools.proxy.proxy import Proxy
 
 from gtools.proxy.state import Status
+from gtools.gui.lib.updater import Updater, UpdateState
 
 logger = logging.getLogger("gui-proxy-panel")
 
@@ -28,6 +32,22 @@ _BLINK_DOT_PAD = 8.0
 _BLINK_DOT_RIGHT_MARGIN = 6.0
 _BLINK_DECAY_RATE = 3.5
 
+_UPDATE_SEGMENT_H = 14.0
+_UPDATE_SEGMENT_GAP = 3.0
+_UPDATE_SEGMENT_MAX_W = 340.0
+
+_UPDATE_STATE_LABEL = {
+    UpdateState.IDLE: "",
+    UpdateState.PREPARING: "preparing...",
+    UpdateState.DOWNLOADING: "downloading update...",
+    UpdateState.DOWNLOADED: "download complete",
+    UpdateState.KILLING_PROCESS: "closing Growtopia...",
+    UpdateState.INSTALLING: "installing...",
+    UpdateState.DONE: "update installed",
+    UpdateState.ERROR: "update failed",
+    UpdateState.CANCELLED: "update cancelled",
+}
+
 
 class GuiExtension(Extension):
     def __init__(self) -> None:
@@ -35,6 +55,12 @@ class GuiExtension(Extension):
 
     def destroy(self) -> None:
         pass
+
+
+@dataclass
+class UpdatePending:
+    url: str
+    version: str
 
 
 class ProxyPanel(Panel):
@@ -63,6 +89,9 @@ class ProxyPanel(Panel):
         self._prev_world_name: bytes = b""
         self._sidebar_w: float = 250.0
 
+        self.update_pending: UpdatePending | None = None
+        self.updater = Updater()
+
     def setup_http_server(self) -> None:
         try:
             self.server = setup_server()
@@ -82,9 +111,31 @@ class ProxyPanel(Panel):
             self.server_thread.join(timeout=2.0)
             self.server_thread = None
 
+    def _check_for_update(self, packet: PreparedPacket) -> None:
+        if packet.direction == DIRECTION_SERVER_TO_CLIENT and packet.as_net.type == NetType.GAME_MESSAGE:
+            game_msg = packet.as_net.game_message
+            if (msg := game_msg.get(b"msg", 1)) is not None and b"UPDATE REQUIRED" in bytes(msg):
+                msg_str = msg.decode()
+                msg_str = msg_str.removeprefix("`4UPDATE REQUIRED!`` : The `$V")
+                version = msg_str[: msg_str.find("``")]
+
+                if self.update_pending:
+                    self.update_pending.version = version
+                else:
+                    self.update_pending = UpdatePending(url="", version=version)
+
+            if game_msg.get(b"label", 1) == b"Download Latest Version" and b"url" in game_msg:
+                url = game_msg[b"url", 1].decode()
+
+                if self.update_pending:
+                    self.update_pending.url = url
+                else:
+                    self.update_pending = UpdatePending(url=url, version="")
+
     def setup_proxy(self) -> None:
         try:
             self.proxy = Proxy()
+            self.proxy.add_handler(self._check_for_update)
             self.proxy.start(block=False)
         except Exception as e:
             push_error("Proxy", "failed starting proxy", f"{e}")
@@ -110,6 +161,7 @@ class ProxyPanel(Panel):
             self.extension = None
 
     def delete(self) -> None:
+        self.updater.cancel()
         self.delete_http_server()
         self.delete_proxy()
         self.delete_extension()
@@ -156,6 +208,81 @@ class ProxyPanel(Panel):
 
         dl.add_circle_filled((dot_cx, dot_cy), _BLINK_DOT_RADIUS, fill_col)
         dl.add_circle((dot_cx, dot_cy), _BLINK_DOT_RADIUS, rim_col, num_segments=0, thickness=1.2)
+
+    def _render_update_segments(self, center_x: float, top_y: float, total_w: float) -> None:
+        state = self.updater.state
+        segments = state.segments
+        if not segments:
+            return
+
+        dl = imgui.get_window_draw_list()
+        gap = _UPDATE_SEGMENT_GAP
+        n = len(segments)
+        seg_w = (total_w - gap * (n - 1)) / n
+        x = center_x - total_w * 0.5
+
+        for seg in segments:
+            p0 = (x, top_y)
+            p1 = (x + seg_w, top_y + _UPDATE_SEGMENT_H)
+
+            dl.add_rect_filled(p0, p1, imgui.get_color_u32((1.0, 1.0, 1.0, 0.08)), rounding=2.0)
+
+            if seg.downloaded > 0:
+                lit_w = seg_w * seg.progress
+                lit_p1 = (x + lit_w, top_y + _UPDATE_SEGMENT_H)
+                fill_col = imgui.get_color_u32((0.35, 0.85, 0.40, 0.9) if seg.done else (0.75, 0.70, 0.25, 0.9))
+                dl.add_rect_filled(p0, lit_p1, fill_col, rounding=2.0)
+
+            dl.add_rect(p0, p1, imgui.get_color_u32((1.0, 1.0, 1.0, 0.25)), rounding=2.0, thickness=1.0)
+            x += seg_w + gap
+
+    def _render_update_area(self, origin_x: float, origin_y: float, right_w: float, avail_h: float) -> None:
+        if self.update_pending is None or self.proxy is None:
+            return
+
+        state = self.updater.state
+        orig_version = self.proxy.client_version.version if self.proxy.client_version else "?"
+
+        if state.state == UpdateState.DONE:
+            self.update_pending = None
+            return
+
+        center_x = origin_x + self._sidebar_w + _SPLITTER_THICKNESS + right_w * 0.5
+
+        if state.state == UpdateState.IDLE:
+            label = f"update is available (v{orig_version} -> v{self.update_pending.version})"
+            text_size = imgui.calc_text_size(label)
+            imgui.set_cursor_screen_pos((center_x - text_size.x * 0.5, origin_y + (avail_h - text_size.y) * 0.5 - 16.0))
+            imgui.text(label)
+
+            btn_w = 100.0
+            imgui.set_cursor_screen_pos((center_x - btn_w * 0.5, origin_y + (avail_h - text_size.y) * 0.5 + 16.0))
+
+            # TODO: support wsl
+            if os.name == "nt":
+                if imgui.button("update", (btn_w, 0.0)):
+                    self.updater.start(self.update_pending.url, self.update_pending.version)
+
+            return
+
+        status_label = _UPDATE_STATE_LABEL.get(state.state, state.state.name)
+        if state.state == UpdateState.ERROR and state.error:
+            status_label = f"{status_label}: {state.error}"
+
+        text_size = imgui.calc_text_size(status_label)
+        label_y = origin_y + (avail_h - text_size.y) * 0.5 - 16.0
+        imgui.set_cursor_screen_pos((center_x - text_size.x * 0.5, label_y))
+        imgui.text(status_label)
+
+        if state.state in (UpdateState.DOWNLOADING, UpdateState.DOWNLOADED) and state.segments:
+            seg_bar_w = min(_UPDATE_SEGMENT_MAX_W, right_w * 0.8)
+            seg_top_y = label_y + text_size.y + 12.0
+            self._render_update_segments(center_x, seg_top_y, seg_bar_w)
+
+            pct_label = f"{state.progress * 100:.0f}%"
+            pct_size = imgui.calc_text_size(pct_label)
+            imgui.set_cursor_screen_pos((center_x - pct_size.x * 0.5, seg_top_y + _UPDATE_SEGMENT_H + 6.0))
+            imgui.text(pct_label)
 
     def _render_splitter(self, origin_x: float, origin_y: float, h: float) -> None:
         imgui.set_cursor_screen_pos((origin_x + self._sidebar_w, origin_y))
@@ -274,7 +401,9 @@ class ProxyPanel(Panel):
         self._render_splitter(origin_x, origin_y, avail_h)
         imgui.set_cursor_screen_pos((origin_x + self._sidebar_w + _SPLITTER_THICKNESS, origin_y))
 
-        if self.world_renderer:
+        if self.update_pending and self.proxy:
+            self._render_update_area(origin_x, origin_y, right_w, avail_h)
+        elif self.world_renderer:
             imgui.begin_child(
                 "##world",
                 (right_w, avail_h),

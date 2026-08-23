@@ -16,6 +16,7 @@ dependencies = [
     "pytest==9.0.2",
     "pytest-forked==1.6.0",
     "rapidfuzz==3.14.3",
+    "requests>=2.34.2",
     "sounddevice==0.5.5",
     "soundfile==0.13.1",
     "soxr==1.0.0",

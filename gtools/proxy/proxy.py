@@ -5,7 +5,7 @@ from queue import Queue
 import threading
 import time
 import traceback
-from typing import Generator, NamedTuple, cast
+from typing import Any, Callable, Generator, NamedTuple, cast
 
 from gtools.core.eventbus import subscribe
 from gtools.core.growtopia.crypto import generate_klv
@@ -66,6 +66,7 @@ class Proxy:
         self.logger.debug(f"starting broker on {addr}")
         self.broker.start()
         self.broker.set_handler(Packet.TYPE_STATE_REQUEST, self._state_request)
+        self._custom_handler: list[Callable[[PreparedPacket], Any]] = []
 
         self._last_event_time = -1
         self._event_elapsed = -1.0
@@ -78,6 +79,17 @@ class Proxy:
         self.from_server_packet = 0
 
         self.account_name: bytes | None = None
+
+    def add_handler(self, handler: Callable[[PreparedPacket], Any]) -> Callable[[], None]:
+        self._custom_handler.append(handler)
+
+        def unsub() -> None:
+            try:
+                self._custom_handler.remove(handler)
+            except ValueError:
+                pass
+
+        return unsub
 
     def _state_request(self, _id: bytes, _pkt: Packet, fn: BrokerFunction) -> None:
         fn.reply(
@@ -183,6 +195,9 @@ class Proxy:
                     pkt = _pkt_replace
             except Exception as e:
                 self.logger.error(f"process_event failed: {e}")
+
+        for handler in self._custom_handler:
+            handler(pkt)
 
         try:
             self.state.emit_event(self.broker, pkt)
