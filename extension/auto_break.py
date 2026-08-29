@@ -492,8 +492,6 @@ class AutoBreakExtension(Extension):
 
                 self.console_log(f"{item_database.get(extra.item_id).name.decode()}: {extra.item_amount} (of {extra.limit})")
 
-        # 09:40:35 [INFO    ] proxy proxy.py:211: from server (TANK_PACKET) TankPacket(type=ITEM_EFFECT, animation_type=6, net_id=-1, target_net_id=-1, vector_x=592.0, vector_y=1616.0, vector_x2=640.0, vector_y2=1568.0, int_x=231)
-
         return self.cancel()
 
     @dispatch(s.command_toggle("/auto", id=s.auto))
