@@ -2,10 +2,12 @@ import concurrent.futures
 import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
+
 import requests
 
 logger = logging.getLogger("gui-updater")
@@ -18,9 +20,18 @@ _MIN_SEGMENT_SIZE = 1 * 1024 * 1024
 _HTTP_TIMEOUT = 15
 
 _SILENT_INSTALL_FLAGS = ("/S", "/VERYSILENT /NORESTART", "/quiet")
-_SILENT_PROBE_TIMEOUT_S = 4.0
+_FLAG_REJECT_FAST_EXIT_S = 2.5
 
 _GAME_PROCESS_NAME = "Growtopia.exe"
+_GAME_WINDOW_TITLE = "Growtopia"
+
+_CHILD_INSTALLER_TITLE_PATTERNS = (
+    "microsoft visual c++",
+    "visual c++ 20",
+    "microsoft .net",
+    "directx",
+)
+_UAC_TITLE_MARKER = "user account control"
 
 
 class UpdateState(Enum):
@@ -195,16 +206,20 @@ class Updater:
 
     def _kill_game_process(self) -> None:
         self._set_state(UpdateState.KILLING_PROCESS)
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/IM", _GAME_PROCESS_NAME],
-                capture_output=True,
-                timeout=10,
-            )
-        except FileNotFoundError:
-            logger.warning("taskkill not available on this platform, skipping process kill")
-        except Exception:
-            logger.exception("failed to kill %s", _GAME_PROCESS_NAME)
+
+        pids = _find_pids_by_window_title(_GAME_WINDOW_TITLE, exact=True)
+        pids |= _find_pids_by_image_name(_GAME_PROCESS_NAME)
+
+        if not pids:
+            logger.info("no running Growtopia window/process found, nothing to kill")
+        for pid in pids:
+            try:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=10)
+            except FileNotFoundError:
+                logger.warning("taskkill not available on this platform, skipping process kill")
+                break
+            except Exception:
+                logger.exception("failed to kill pid %s", pid)
 
         time.sleep(1.0)
 
@@ -216,36 +231,42 @@ class Updater:
         if not path:
             raise RuntimeError("no installer path to run")
 
-        for flag_str in _SILENT_INSTALL_FLAGS:
-            args = [path, *flag_str.split()]
-            with self._lock:
-                self.state.attempted_flag = flag_str
+        stop_watcher = threading.Event()
+        watcher_thread = threading.Thread(target=_watch_and_dismiss_child_installers, args=(stop_watcher,), daemon=True, name="updater-child-watch")
+        watcher_thread.start()
 
-            try:
-                proc = subprocess.Popen(args)
-            except Exception:
-                logger.debug("failed to launch installer with %s", flag_str, exc_info=True)
-                continue
-
-            try:
-                returncode = proc.wait(timeout=_SILENT_PROBE_TIMEOUT_S)
-            except subprocess.TimeoutExpired:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                continue
-
-            if returncode == 0:
+        try:
+            for flag_str in _SILENT_INSTALL_FLAGS:
+                args = [path, *flag_str.split()]
                 with self._lock:
-                    self.state.used_silent_install = True
-                return
+                    self.state.attempted_flag = flag_str
 
-        logger.info("no silent install flag was accepted, launching installer normally")
-        with self._lock:
-            self.state.attempted_flag = None
-        subprocess.Popen([path])
+                try:
+                    proc = subprocess.Popen(args)
+                except Exception:
+                    logger.debug("failed to launch installer with %s", flag_str, exc_info=True)
+                    continue
+
+                try:
+                    returncode = proc.wait(timeout=_FLAG_REJECT_FAST_EXIT_S)
+                except subprocess.TimeoutExpired:
+                    returncode = proc.wait()
+
+                if returncode == 0:
+                    with self._lock:
+                        self.state.used_silent_install = True
+                    return
+
+                logger.debug("installer exited %s with flag %r, trying next", returncode, flag_str)
+
+            logger.info("no silent install flag succeeded, launching installer normally")
+            with self._lock:
+                self.state.attempted_flag = None
+
+            subprocess.Popen([path]).wait()
+        finally:
+            stop_watcher.set()
+            watcher_thread.join(timeout=2.0)
 
 
 def _split_segments(total_size: int, count: int) -> list[Segment]:
@@ -256,4 +277,109 @@ def _split_segments(total_size: int, count: int) -> list[Segment]:
         end = start + base - 1 if i < count - 1 else total_size - 1
         segments.append(Segment(index=i, start=start, end=end))
         start = end + 1
+
     return segments
+
+
+def _enum_visible_windows() -> list[tuple[int, str]]:
+    if sys.platform != "win32":
+        return []
+
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    found: list[tuple[int, str]] = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def _callback(hwnd: int, _lparam: int) -> bool:
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        if buf.value:
+            found.append((hwnd, buf.value))
+        return True
+
+    user32.EnumWindows(_callback, 0)
+    return found
+
+
+def _pid_for_window(hwnd: int) -> int | None:
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value or None
+
+
+def _find_pids_by_window_title(title: str, exact: bool = True) -> set[int]:
+    pids: set[int] = set()
+    for hwnd, window_title in _enum_visible_windows():
+        matched = window_title == title if exact else title.lower() in window_title.lower()
+        if not matched:
+            continue
+        pid = _pid_for_window(hwnd)
+        if pid:
+            pids.add(pid)
+
+    return pids
+
+
+def _find_pids_by_image_name(image_name: str) -> set[int]:
+    if sys.platform != "win32":
+        return set()
+
+    pids: set[int] = set()
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        logger.debug("tasklist lookup failed", exc_info=True)
+        return pids
+
+    for line in result.stdout.splitlines():
+        parts = [p.strip().strip('"') for p in line.split(",")]
+        if len(parts) >= 2 and parts[0].lower() == image_name.lower() and parts[1].isdigit():
+            pids.add(int(parts[1]))
+    return pids
+
+
+def _watch_and_dismiss_child_installers(stop_event: threading.Event) -> None:
+    if sys.platform != "win32":
+        return
+
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    handled: set[int] = set()
+
+    while not stop_event.is_set():
+        for hwnd, title in _enum_visible_windows():
+            title_lower = title.lower()
+            if _UAC_TITLE_MARKER in title_lower:
+                continue
+            if hwnd in handled:
+                continue
+            if not any(pattern in title_lower for pattern in _CHILD_INSTALLER_TITLE_PATTERNS):
+                continue
+
+            logger.info("auto-confirming bundled prerequisite installer window: %r", title)
+            user32.SetForegroundWindow(hwnd)
+            time.sleep(0.15)
+            user32.keybd_event(0x0D, 0, 0, 0)
+            user32.keybd_event(0x0D, 0, 2, 0)
+            handled.add(hwnd)
+
+        stop_event.wait(0.75)

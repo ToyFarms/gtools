@@ -6,6 +6,7 @@ from enum import Enum, IntFlag, IntEnum, auto
 import itertools
 import logging
 from pathlib import Path
+from traceback import print_exc
 from typing import Any, Callable, Iterator, Literal, Type, overload
 
 from pyglm import glm
@@ -2848,10 +2849,16 @@ class World:
 
             for listener in listeners:
                 if listener.batch:
-                    listener.batch(calls)
+                    try:
+                        listener.batch(calls)
+                    except:
+                        print_exc()
                 elif listener.single:
                     for args in calls:
-                        listener.single(*args)
+                        try:
+                            listener.single(*args)
+                        except:
+                            print_exc()
 
     def broadcast(self, event: WorldEvent, *args: Any) -> None:
         if self._batching:
@@ -2859,10 +2866,13 @@ class World:
             return
 
         for listener in self._listeners[event]:
-            if listener.single:
-                listener.single(*args)
-            elif listener.batch:
-                listener.batch([args])
+            try:
+                if listener.single:
+                    listener.single(*args)
+                elif listener.batch:
+                    listener.batch([args])
+            except:
+                print_exc()
 
     def clear(self) -> None:
         with self.batch():

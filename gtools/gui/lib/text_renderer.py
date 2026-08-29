@@ -1,3 +1,4 @@
+from functools import lru_cache
 import numpy as np
 from OpenGL.GL import glBindTexture, GL_TEXTURE_2D, glActiveTexture, GL_TEXTURE0
 from gtools.gui.camera import Camera2D
@@ -119,6 +120,7 @@ class TextRenderer(Renderer):
             self._shadow_mesh.delete()
             self._shadow_mesh = None
 
+    @lru_cache(maxsize=512)
     def get_text_size(self, text: str, scale: float = 1.0) -> tuple[float, float]:
         parsed = _parse_colored_text(text)
         width = 0.0

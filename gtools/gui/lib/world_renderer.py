@@ -1,7 +1,7 @@
 from collections import defaultdict, deque
 from functools import cache
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import threading
 import time
 from typing import Any, Callable
@@ -78,6 +78,42 @@ type RenderOrder2D = Callable[[Camera2D, Camera2D | None], Any]
 type RenderOrder3D = Callable[[Camera3D, float], Any]
 
 
+@dataclass(slots=True)
+class DragGesture:
+    click_threshold: float = 5.0
+    active: bool = False
+    start: tuple[float, float] = (0.0, 0.0)
+    current: tuple[float, float] = (0.0, 0.0)
+    state: dict[str, Any] = field(default_factory=dict)
+
+    def begin(self, lx: float, ly: float, **state: Any) -> None:
+        self.active = True
+        self.start = (lx, ly)
+        self.current = (lx, ly)
+        self.state = state
+
+    def move(self, lx: float, ly: float) -> None:
+        self.current = (lx, ly)
+
+    def distance(self) -> float:
+        return math.hypot(self.current[0] - self.start[0], self.current[1] - self.start[1])
+
+    def deactivate(self) -> bool:
+        self.active = False
+        return self.distance() >= self.click_threshold
+
+
+@dataclass(slots=True)
+class DragHandler:
+    on_start: Callable[[float, float], dict[str, Any] | None] | None = None
+    on_move: Callable[[DragGesture], None] | None = None
+    on_click: Callable[[float, float], None] | None = None
+    on_drag_end: Callable[[DragGesture], None] | None = None
+    click_threshold: float = 5.0
+    consume_press: bool = True
+    consume_click: bool = True
+
+
 class RenderOrder:
     _SMOOTH_WINDOW = 30
 
@@ -152,8 +188,8 @@ class WorldRenderer:
         self._fbo = Framebuffer(800, 600)
 
         self._hovered = False
-        self._drag: dict = {"active": False}
-        self._selection_drag: dict = {"active": False, "start": (0.0, 0.0), "current": (0.0, 0.0)}
+        self._drag_gestures: dict[int, DragGesture] = {}
+        self._selected_dropped_items: list[DroppedItem] = []
         self._image_origin: tuple[float, float] = (0.0, 0.0)
         self._viewport_size: tuple[int, int] = (800, 600)
         self._cursor_pos: tuple[float, float] = (0.0, 0.0)
@@ -198,8 +234,10 @@ class WorldRenderer:
 
         self._history_2d: deque[tuple[glm.vec2, float]] = deque(maxlen=10)
         self._history_3d: deque[tuple[glm.vec3, float, float]] = deque(maxlen=10)
-        self._last_right_click_time = 0.0
-        self._last_right_click_pos = (0.0, 0.0)
+        self._last_zoom_click_time = 0.0
+        self._last_zoom_click_pos = (0.0, 0.0)
+
+        self._drag_handlers_2d, self._drag_handlers_3d = self._build_drag_handlers()
 
         self._render_order = RenderOrder()
         self._obj_meshes: list[ObjectRenderMesh] = []
@@ -232,9 +270,15 @@ class WorldRenderer:
         self._init_render_order()
 
         self._needs_obj_rebuild = False
+
         self._tile_updates: set[tuple[int, int]] = set()
         self._tile_update_lock = threading.Lock()
+
+        self._tile_overlay_update: bool = False
+        self._tile_overlay_update_lock = threading.Lock()
+
         self._entity_update: bool = False
+
         self._entity_update_lock = threading.Lock()
 
         self._world.subscribe(WorldEvent.TILE_UPDATE, batch=self._on_tile_update_batch)
@@ -576,15 +620,18 @@ class WorldRenderer:
         with self._tile_update_lock:
             self._tile_updates.add((x, y))
 
-        # TODO: also build in chunks
-        self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
+        with self._tile_overlay_update_lock:
+            self._tile_overlay_update = True
 
     def _on_tile_update_batch(self, tiles: list[tuple[int, int]]) -> None:
         with self._tile_update_lock:
             self._tile_updates |= set(tiles)
 
-        # TODO: also build in chunks
-        self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
+        with self._tile_overlay_update_lock:
+            self._tile_overlay_update = True
+
+        with self._tile_overlay_update_lock:
+            self._tile_overlay_update = True
 
     def _on_dropped_update(self) -> None:
         self._needs_obj_rebuild = True
@@ -903,6 +950,9 @@ class WorldRenderer:
                 self._tile_updates.clear()
                 self._dirty = True
 
+        with self._tile_overlay_update_lock:
+            self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
+
         with self._entity_update_lock:
             if self._entity_update:
                 self._dirty = True
@@ -1010,9 +1060,11 @@ class WorldRenderer:
             if imgui.button("<" if not self._show_settings else "x", (30, 25)):
                 self._show_settings = not self._show_settings
 
-            if self._selection_drag["active"]:
-                s = self._selection_drag["start"]
-                c = self._selection_drag["current"]
+            for button in (glfw.MOUSE_BUTTON_MIDDLE, glfw.MOUSE_BUTTON_RIGHT):
+                gesture = self._drag_gestures.get(button)
+                if not gesture or not gesture.active:
+                    continue
+                s, c = gesture.start, gesture.current
                 draw_list.add_rect(
                     imgui.ImVec2(ox + s[0], oy + s[1]),
                     imgui.ImVec2(ox + c[0], oy + c[1]),
@@ -1129,6 +1181,7 @@ class WorldRenderer:
         b = 0.3 + (h[2] % 128) / 255.0
         hue, sat, _ = colorsys.rgb_to_hsv(r, g, b)
         r, g, b = colorsys.hsv_to_rgb(hue, min(sat * 1.5, 1.0), 0.8)
+
         return (r, g, b, 0.8)
 
     def _draw_pie_chart(self, draw_list, center, radius, values, labels):
@@ -1424,6 +1477,218 @@ class WorldRenderer:
             return self._handle_event_3d(event)
         return self._handle_event_2d(event)
 
+    def _dispatch_drag(self, event: Event, handlers: dict[int, DragHandler]) -> bool:
+        if isinstance(event, MouseButtonEvent):
+            handler = handlers.get(event.button)
+            if handler is None:
+                return False
+
+            gesture = self._drag_gestures.setdefault(event.button, DragGesture())
+
+            if event.action == glfw.PRESS:
+                if not self._hovered or gesture.active:
+                    return False
+
+                lx, ly = self._to_local(event.screen_x, event.screen_y)
+                extra = handler.on_start(lx, ly) if handler.on_start else {}
+                if extra is not None:
+                    gesture.click_threshold = handler.click_threshold
+                    gesture.begin(lx, ly, **extra)
+
+                return handler.consume_press
+
+            if event.action == glfw.RELEASE and gesture.active:
+                lx, ly = self._to_local(event.screen_x, event.screen_y)
+                gesture.move(lx, ly)
+                dragged = gesture.deactivate()
+                if dragged:
+                    if handler.on_drag_end:
+                        handler.on_drag_end(gesture)
+                    return True
+
+                if handler.on_click:
+                    handler.on_click(lx, ly)
+
+                return handler.consume_click
+
+            return False
+
+        if isinstance(event, CursorMoveEvent):
+            lx, ly = self._to_local(event.xpos, event.ypos)
+            handled = False
+            for button, gesture in self._drag_gestures.items():
+                if not gesture.active:
+                    continue
+                handler = handlers.get(button)
+                if handler is None:
+                    continue
+                gesture.move(lx, ly)
+                if handler.on_move:
+                    handler.on_move(gesture)
+                handled = True
+
+            return handled
+
+        return False
+
+    def _build_drag_handlers(self) -> tuple[dict[int, DragHandler], dict[int, DragHandler]]:
+        def cancel_other_drag(button: int) -> bool:
+            other = self._drag_gestures.get(button)
+            if other and other.active:
+                other.active = False
+                self._dirty = True
+                return True
+
+            return False
+
+        def left_pan_start_2d(lx: float, ly: float) -> dict[str, Any] | None:
+            if cancel_other_drag(glfw.MOUSE_BUTTON_MIDDLE):
+                return None
+
+            return {
+                "start_cam": glm.vec2(self._camera.pos),
+                "start_rel_x": self._follow_rel_x if self._follow_playhead else 0.0,
+            }
+
+        def left_pan_move_2d(gesture: DragGesture) -> None:
+            dx_view = gesture.current[0] - gesture.start[0]
+            dy_view = gesture.current[1] - gesture.start[1]
+
+            if self._follow_playhead and self._sheet.any:
+                hw = self._camera.width / (2.0 * self._camera.zoom)
+                self._follow_rel_x = gesture.state["start_rel_x"] + (dx_view / self._camera.zoom) / (2.0 * hw)
+            else:
+                start_cam = gesture.state["start_cam"]
+                self._camera.pos.x = start_cam.x - dx_view / self._camera.zoom
+                self._camera.pos.y = start_cam.y - dy_view / self._camera.zoom
+
+            self._dirty = True
+
+        def left_look_start_3d(lx: float, ly: float) -> dict[str, Any] | None:
+            if cancel_other_drag(glfw.MOUSE_BUTTON_MIDDLE):
+                return None
+
+            return {"last_screen": (lx, ly)}
+
+        def left_look_move_3d(gesture: DragGesture) -> None:
+            prev = gesture.state["last_screen"]
+            dx = gesture.current[0] - prev[0]
+            dy = gesture.current[1] - prev[1]
+            gesture.state["last_screen"] = gesture.current
+            self._camera3d.look(dx, dy)
+            self._dirty = True
+
+        def middle_select_start(lx: float, ly: float, *, fit_to_world: Callable[[], None]) -> dict[str, Any] | None:
+            now = time.monotonic()
+            is_double_click = now - self._last_zoom_click_time < 0.3 and math.hypot(lx - self._last_zoom_click_pos[0], ly - self._last_zoom_click_pos[1]) < 10
+            if is_double_click:
+                fit_to_world()
+                self._last_zoom_click_time = 0.0
+                self._dirty = True
+                return None
+
+            self._last_zoom_click_time = now
+            self._last_zoom_click_pos = (lx, ly)
+
+            return {}
+
+        def middle_select_move(gesture: DragGesture) -> None:
+            self._dirty = True
+
+        def middle_select_click_2d(lx: float, ly: float) -> None:
+            if self._history_2d:
+                self._camera.pos, self._camera.zoom = self._history_2d.pop()
+                self._dirty = True
+
+        def middle_select_end_2d(gesture: DragGesture) -> None:
+            s, e = gesture.start, gesture.current
+            if abs(s[0] - e[0]) > 5 and abs(s[1] - e[1]) > 5:
+                self._history_2d.append((glm.vec2(self._camera.pos), self._camera.zoom))
+                p1 = self._camera.screen_to_world(s[0], s[1])
+                p2 = self._camera.screen_to_world(e[0], e[1])
+                min_x, max_x = min(p1.x, p2.x), max(p1.x, p2.x)
+                min_y, max_y = min(p1.y, p2.y), max(p1.y, p2.y)
+                self._camera.fit_to_rect(min_x, min_y, max_x - min_x, max_y - min_y)
+                self._dirty = True
+
+        def middle_select_click_3d(lx: float, ly: float) -> None:
+            if self._history_3d:
+                self._camera3d.pos, self._camera3d.yaw, self._camera3d.pitch = self._history_3d.pop()
+                self._dirty = True
+
+        def middle_select_end_3d(gesture: DragGesture) -> None:
+            s, e = gesture.start, gesture.current
+            if abs(s[0] - e[0]) > 5 and abs(s[1] - e[1]) > 5:
+                self._history_3d.append((glm.vec3(self._camera3d.pos), self._camera3d.yaw, self._camera3d.pitch))
+                z = WORLD_POST_FOREGROUND * self._layer_spread
+                p1 = self._camera3d.unproject(s[0], s[1], z_plane=z)
+                p2 = self._camera3d.unproject(e[0], e[1], z_plane=z)
+                min_x, max_x = min(p1.x, p2.x), max(p1.x, p2.x)
+                min_y, max_y = min(p1.y, p2.y), max(p1.y, p2.y)
+                self._camera3d.fit_to_rect(min_x, min_y, max_x - min_x, max_y - min_y, z=z)
+                self._dirty = True
+
+        def right_select_start(lx: float, ly: float) -> dict[str, Any]:
+            return {}
+
+        def right_select_end_2d(gesture: DragGesture) -> None:
+            s, e = gesture.start, gesture.current
+            p1 = self._camera.screen_to_world(s[0], s[1])
+            p2 = self._camera.screen_to_world(e[0], e[1])
+            self._select_dropped_items_in_rect(min(p1.x, p2.x), min(p1.y, p2.y), max(p1.x, p2.x), max(p1.y, p2.y))
+
+        def right_select_end_3d(gesture: DragGesture) -> None:
+            s, e = gesture.start, gesture.current
+            z = WORLD_POST_FOREGROUND * self._layer_spread
+            p1 = self._camera3d.unproject(s[0], s[1], z_plane=z)
+            p2 = self._camera3d.unproject(e[0], e[1], z_plane=z)
+            self._select_dropped_items_in_rect(min(p1.x, p2.x), min(p1.y, p2.y), max(p1.x, p2.x), max(p1.y, p2.y))
+
+        handlers_2d: dict[int, DragHandler] = {
+            glfw.MOUSE_BUTTON_LEFT: DragHandler(on_start=left_pan_start_2d, on_move=left_pan_move_2d),
+            glfw.MOUSE_BUTTON_MIDDLE: DragHandler(
+                on_start=lambda lx, ly: middle_select_start(lx, ly, fit_to_world=lambda: self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)),
+                on_move=middle_select_move,
+                on_click=middle_select_click_2d,
+                on_drag_end=middle_select_end_2d,
+            ),
+            glfw.MOUSE_BUTTON_RIGHT: DragHandler(
+                on_start=right_select_start,
+                on_move=middle_select_move,
+                on_drag_end=right_select_end_2d,
+            ),
+        }
+
+        handlers_3d: dict[int, DragHandler] = {
+            glfw.MOUSE_BUTTON_LEFT: DragHandler(on_start=left_look_start_3d, on_move=left_look_move_3d),
+            glfw.MOUSE_BUTTON_MIDDLE: DragHandler(
+                on_start=lambda lx, ly: middle_select_start(lx, ly, fit_to_world=lambda: self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)),
+                on_move=middle_select_move,
+                on_click=middle_select_click_3d,
+                on_drag_end=middle_select_end_3d,
+            ),
+            glfw.MOUSE_BUTTON_RIGHT: DragHandler(
+                on_start=right_select_start,
+                on_move=middle_select_move,
+                on_drag_end=right_select_end_3d,
+            ),
+        }
+
+        return handlers_2d, handlers_3d
+
+    def _select_dropped_items_in_rect(self, min_x: float, min_y: float, max_x: float, max_y: float) -> None:
+        pad = 8.0
+        self._selected_dropped_items = [
+            item
+            for item in self._world.dropped.items
+            if (min_x - pad) <= item.pos.x <= (max_x + pad) and (min_y - pad) <= item.pos.y <= (max_y + pad)
+        ]
+        self._dirty = True
+
+    @property
+    def selected_dropped_items(self) -> list[DroppedItem]:
+        return self._selected_dropped_items
+
     def _handle_event_3d(self, event: Event) -> bool:
         if isinstance(event, ScrollEvent):
             if self._hovered:
@@ -1432,85 +1697,10 @@ class WorldRenderer:
                 self._dirty = True
                 return True
         elif isinstance(event, MouseButtonEvent):
-            if event.button == glfw.MOUSE_BUTTON_LEFT:
-                if event.action == glfw.PRESS and self._hovered:
-                    if self._selection_drag.get("active"):
-                        self._selection_drag["active"] = False
-                        self._dirty = True
-                        return True
-
-                    lx, ly = self._to_local(event.screen_x, event.screen_y)
-                    self._drag = {
-                        "active": True,
-                        "last_screen": (lx, ly),
-                    }
-                    return True
-                elif event.action == glfw.RELEASE and self._drag.get("active"):
-                    self._drag["active"] = False
-                    return True
-            elif event.button == glfw.MOUSE_BUTTON_MIDDLE:
-                if event.action == glfw.PRESS and self._hovered:
-                    lx, ly = self._to_local(event.screen_x, event.screen_y)
-                    now = time.monotonic()
-                    if now - self._last_right_click_time < 0.3 and math.hypot(lx - self._last_right_click_pos[0], ly - self._last_right_click_pos[1]) < 10:
-                        self._camera3d.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
-                        self._last_right_click_time = 0.0
-                        self._dirty = True
-                        return True
-
-                    self._last_right_click_time = now
-                    self._last_right_click_pos = (lx, ly)
-                    self._selection_drag = {
-                        "active": True,
-                        "start": (lx, ly),
-                        "current": (lx, ly),
-                    }
-                    return True
-                elif event.action == glfw.RELEASE and self._selection_drag.get("active"):
-                    s = self._selection_drag["start"]
-                    e = self._selection_drag["current"]
-                    dist = math.hypot(e[0] - s[0], e[1] - s[1])
-
-                    self._selection_drag["active"] = False
-
-                    if dist < 5:
-                        if self._history_3d:
-                            pos, yaw, pitch = self._history_3d.pop()
-                            self._camera3d.pos = pos
-                            self._camera3d.yaw = yaw
-                            self._camera3d.pitch = pitch
-                            self._dirty = True
-                        return True
-
-                    s = self._selection_drag["start"]
-                    e = self._selection_drag["current"]
-
-                    if abs(s[0] - e[0]) > 5 and abs(s[1] - e[1]) > 5:
-                        self._history_3d.append((glm.vec3(self._camera3d.pos), self._camera3d.yaw, self._camera3d.pitch))
-                        z = WORLD_POST_FOREGROUND * self._layer_spread
-                        p1 = self._camera3d.unproject(s[0], s[1], z_plane=z)
-                        p2 = self._camera3d.unproject(e[0], e[1], z_plane=z)
-                        min_x, max_x = min(p1.x, p2.x), max(p1.x, p2.x)
-                        min_y, max_y = min(p1.y, p2.y), max(p1.y, p2.y)
-                        self._camera3d.fit_to_rect(min_x, min_y, max_x - min_x, max_y - min_y, z=z)
-                        self._dirty = True
-
-                    return True
+            return self._dispatch_drag(event, self._drag_handlers_3d)
         elif isinstance(event, CursorMoveEvent):
             self._cursor_pos = (event.xpos, event.ypos)
-            lx, ly = self._to_local(event.xpos, event.ypos)
-            if self._drag.get("active"):
-                prev = self._drag["last_screen"]
-                dx = lx - prev[0]
-                dy = ly - prev[1]
-                self._drag["last_screen"] = (lx, ly)
-                self._camera3d.look(dx, dy)
-                self._dirty = True
-                return True
-            if self._selection_drag.get("active"):
-                self._selection_drag["current"] = (lx, ly)
-                self._dirty = True
-                return True
+            return self._dispatch_drag(event, self._drag_handlers_3d)
         elif isinstance(event, TouchEvent):
             if self._hovered:
                 self._last_touch_event = time.monotonic()
@@ -1538,90 +1728,10 @@ class WorldRenderer:
                 self._dirty = True
                 return True
         elif isinstance(event, MouseButtonEvent):
-            if event.button == glfw.MOUSE_BUTTON_LEFT:
-                if event.action == glfw.PRESS and self._hovered:
-                    if self._selection_drag.get("active"):
-                        self._selection_drag["active"] = False
-                        self._dirty = True
-                        return True
-
-                    lx, ly = self._to_local(event.screen_x, event.screen_y)
-                    self._drag = {
-                        "active": True,
-                        "start_screen": (lx, ly),
-                        "start_cam": glm.vec2(self._camera.pos),
-                        "start_rel_x": self._follow_rel_x if self._follow_playhead else 0.0,
-                    }
-                    return True
-                elif event.action == glfw.RELEASE and self._drag.get("active"):
-                    self._drag["active"] = False
-                    return True
-            elif event.button == glfw.MOUSE_BUTTON_MIDDLE:
-                if event.action == glfw.PRESS and self._hovered:
-                    lx, ly = self._to_local(event.screen_x, event.screen_y)
-                    now = time.monotonic()
-                    if now - self._last_right_click_time < 0.3 and math.hypot(lx - self._last_right_click_pos[0], ly - self._last_right_click_pos[1]) < 10:
-                        self._camera.fit_to_rect(0, 0, self._world.width * 32, self._world.height * 32)
-                        self._last_right_click_time = 0.0
-                        self._dirty = True
-                        return True
-
-                    self._last_right_click_time = now
-                    self._last_right_click_pos = (lx, ly)
-                    self._selection_drag = {
-                        "active": True,
-                        "start": (lx, ly),
-                        "current": (lx, ly),
-                    }
-                    return True
-                elif event.action == glfw.RELEASE and self._selection_drag.get("active"):
-                    s = self._selection_drag["start"]
-                    e = self._selection_drag["current"]
-                    dist = math.hypot(e[0] - s[0], e[1] - s[1])
-
-                    self._selection_drag["active"] = False
-
-                    if dist < 5:
-                        if self._history_2d:
-                            pos, zoom = self._history_2d.pop()
-                            self._camera.pos = pos
-                            self._camera.zoom = zoom
-                            self._dirty = True
-                        return True
-
-                    s = self._selection_drag["start"]
-                    e = self._selection_drag["current"]
-
-                    if abs(s[0] - e[0]) > 5 and abs(s[1] - e[1]) > 5:
-                        self._history_2d.append((glm.vec2(self._camera.pos), self._camera.zoom))
-                        p1 = self._camera.screen_to_world(s[0], s[1])
-                        p2 = self._camera.screen_to_world(e[0], e[1])
-                        min_x, max_x = min(p1.x, p2.x), max(p1.x, p2.x)
-                        min_y, max_y = min(p1.y, p2.y), max(p1.y, p2.y)
-                        self._camera.fit_to_rect(min_x, min_y, max_x - min_x, max_y - min_y)
-                        self._dirty = True
-
-                    return True
+            return self._dispatch_drag(event, self._drag_handlers_2d)
         elif isinstance(event, CursorMoveEvent):
             self._cursor_pos = (event.xpos, event.ypos)
-            lx, ly = self._to_local(event.xpos, event.ypos)
-            if self._drag.get("active"):
-                dx_view = lx - self._drag["start_screen"][0]
-                dy_view = ly - self._drag["start_screen"][1]
-
-                if self._follow_playhead and self._sheet.any:
-                    hw = self._camera.width / (2.0 * self._camera.zoom)
-                    self._follow_rel_x = self._drag["start_rel_x"] + (dx_view / self._camera.zoom) / (2.0 * hw)
-                else:
-                    self._camera.pos.x = self._drag["start_cam"].x - dx_view / self._camera.zoom
-                    self._camera.pos.y = self._drag["start_cam"].y - dy_view / self._camera.zoom
-
-                self._dirty = True
-                return True
-            if self._selection_drag.get("active"):
-                self._selection_drag["current"] = (lx, ly)
-                self._dirty = True
-                return True
+            return self._dispatch_drag(event, self._drag_handlers_2d)
         elif isinstance(event, TouchEvent):
             if self._hovered:
                 self._last_touch_event = time.monotonic()

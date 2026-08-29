@@ -145,8 +145,6 @@ class Proxy:
                         self.redirecting = True
                         self.proxy_server.send(pkt.as_net.serialize(), pkt.flags)
                         enet_host_flush(self.proxy_server.host)
-                        self.proxy_client.disconnect()
-                        self.proxy_server.disconnect()
                         self._should_reconnect.set()
 
                         return
@@ -164,8 +162,6 @@ class Proxy:
                 self.proxy_server.send(pkt.as_raw, pkt.flags)
                 enet_host_flush(self.proxy_server.host)
 
-                self.proxy_client.disconnect()
-                self.proxy_server.disconnect()
                 self._should_reconnect.set()
                 return
 
@@ -213,8 +209,10 @@ class Proxy:
                 )
             if pkt.as_net.type == NetType.TANK_PACKET:
                 if pkt.as_net.tank.type == TankType.DISCONNECT:
-                    src_ = self.proxy_client if pkt.direction == DIRECTION_CLIENT_TO_SERVER else self.proxy_server
-                    src_.disconnect_now()
+                    if pkt.direction == DIRECTION_CLIENT_TO_SERVER:
+                        self.proxy_client.disconnect_now()
+                    elif pkt.direction == DIRECTION_SERVER_TO_CLIENT:
+                        self.proxy_server.disconnect()
             elif pkt.as_net.type == NetType.GENERIC_TEXT:
                 if (
                     setting.spoof_hwident
@@ -292,9 +290,8 @@ class Proxy:
     def disconnect_all(self) -> None:
         self.proxy_client.disconnect_now()
         self.proxy_server.disconnect_now()
-        self._should_reconnect.set()
         self.state.update_status(self.broker, Status.DISCONNECTED)
-        self.logger.info("gt client disconnected")
+        self.logger.info("gt client & server disconnected")
 
     def _worker(self) -> None:
         self.logger.debug("starting packet worker thread")

@@ -335,7 +335,7 @@ class ObjectRendererBase(Renderer, ABC):
 
                     tex = self._tex_mgr.load_texture(setting.gt_path / "game" / tex_file)
 
-                    if item.id == GEMS:
+                    if item.id == GEMS and dropped.amount in GEMS_TO_TEX_OFFSET:
                         tex_index = GEMS_TO_TEX_OFFSET[dropped.amount]
                         stride = 5
                     else:

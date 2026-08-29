@@ -1,11 +1,14 @@
 import array
+from collections import deque
 from dataclasses import dataclass
 from enum import IntEnum, auto
+from functools import lru_cache
 import io
 import math
 import random
 import sys
 import time
+import numpy as np
 
 from pyglm.glm import ivec2
 from gtools.baked.items import BEDROCK
@@ -53,37 +56,165 @@ s = helper()
 if sys.platform == "win32":
     try:
         import wave, winsound
+        _SAMPLE_RATE = 44100
 
-        def beep(freq: int = 440, duration_ms: int = 80, volume: float = 0.3) -> None:
-            sample_rate = 44100
-            n_samples = int(sample_rate * duration_ms / 1000)
-            samples = array.array("h", [int(32767 * volume * math.sin(2 * math.pi * freq * i / sample_rate)) for i in range(n_samples)])
+        _NOISE_POOL = array.array("d", [random.uniform(-1, 1) for _ in range(_SAMPLE_RATE)])
+        _noise_cursor = 0
+
+        @lru_cache(maxsize=512)
+        def _bake_waveform_win(freq: float, duration_ms: int, freq_end: float | None, waveform: str, drive: float) -> array.array:
+            n_samples = int(_SAMPLE_RATE * duration_ms / 1000)
+            if freq_end is not None and freq_end != freq:
+                k = (freq_end - freq) / (duration_ms / 1000)
+
+                def phase_at(i: int) -> float:
+                    ti = i / _SAMPLE_RATE
+                    return 2 * math.pi * (freq * ti + 0.5 * k * ti**2)
+
+            else:
+
+                def phase_at(i: int) -> float:
+                    return 2 * math.pi * freq * (i / _SAMPLE_RATE)
+
+            gain = math.tanh(1 + drive * 5) if drive > 0 else 1.0
+            values = []
+            for i in range(n_samples):
+                p = phase_at(i)
+                if waveform == "square":
+                    v = 1.0 if math.sin(p) >= 0 else -1.0
+                elif waveform == "saw":
+                    x = (p / (2 * math.pi)) % 1.0
+                    v = 2 * x - 1
+                else:
+                    v = math.sin(p)
+                if drive > 0:
+                    v = math.tanh(v * (1 + drive * 5)) / gain
+                values.append(v)
+
+            return array.array("d", values)
+
+        def _to_pcm16(shape, volume: float) -> array.array:
+            return array.array("h", [int(32767 * volume * v) for v in shape])
+
+        def _play_pcm16(samples: array.array) -> None:
             buf = io.BytesIO()
             with wave.open(buf, "wb") as w:
                 w.setnchannels(1)
                 w.setsampwidth(2)
-                w.setframerate(sample_rate)
+                w.setframerate(_SAMPLE_RATE)
                 w.writeframes(samples.tobytes())
             winsound.PlaySound(buf.getvalue(), winsound.SND_MEMORY)
+
+        def beep(
+            freq: int = 440,
+            duration_ms: int = 80,
+            volume: float = 0.3,
+            freq_end: int | None = None,
+            waveform: str = "sine",
+            drive: float = 0.0,
+        ) -> None:
+            shape = _bake_waveform_win(
+                float(freq),
+                int(duration_ms),
+                float(freq_end) if freq_end is not None else None,
+                waveform,
+                round(drive, 2),
+            )
+
+            _play_pcm16(_to_pcm16(shape, volume))
+
+        def click(duration_ms: int = 20, volume: float = 0.4) -> None:
+            global _noise_cursor
+            n_samples = int(_SAMPLE_RATE * duration_ms / 1000)
+            start = _noise_cursor
+            end = start + n_samples
+            if end <= len(_NOISE_POOL):
+                chunk = _NOISE_POOL[start:end]
+            else:
+                chunk = _NOISE_POOL[start:] + _NOISE_POOL[: end - len(_NOISE_POOL)]
+            _noise_cursor = end % len(_NOISE_POOL)
+
+            _play_pcm16(_to_pcm16(chunk, volume))
 
     except Exception:
         pass
 else:
     try:
-        import numpy as np
-
         _mixer = AudioMixer()
+        _SAMPLE_RATE = 44100
 
-        def beep(freq: int = 440, duration_ms: int = 80, volume: float = 0.3) -> None:
-            sample_rate = 44100
-            n_samples = int(sample_rate * duration_ms / 1000)
-            t = np.arange(n_samples) / sample_rate
-            pcm = (np.sin(2 * math.pi * freq * t) * volume).astype(np.float32)
-            _mixer.play(Sound(pcm, sample_rate=sample_rate), gain=1.0)
+        _NOISE_POOL = np.random.uniform(-1, 1, _SAMPLE_RATE).astype(np.float32)
+        _noise_cursor = 0
+
+        @lru_cache(maxsize=512)
+        def _bake_waveform(freq: float, duration_ms: int, freq_end: float | None, waveform: str, drive: float) -> np.ndarray:
+            n_samples = int(_SAMPLE_RATE * duration_ms / 1000)
+            t = np.arange(n_samples) / _SAMPLE_RATE
+            if freq_end is not None and freq_end != freq:
+                k = (freq_end - freq) / (duration_ms / 1000)
+                phase = 2 * math.pi * (freq * t + 0.5 * k * t**2)
+            else:
+                phase = 2 * math.pi * freq * t
+
+            if waveform == "square":
+                wave_vals = np.sign(np.sin(phase))
+            elif waveform == "saw":
+                x = (phase / (2 * math.pi)) % 1.0
+                wave_vals = 2 * x - 1
+            else:
+                wave_vals = np.sin(phase)
+
+            if drive > 0:
+                k_drive = 1 + drive * 5
+                wave_vals = np.tanh(wave_vals * k_drive) / math.tanh(k_drive)
+
+            return wave_vals.astype(np.float32)
+
+        def beep(
+            freq: int = 440,
+            duration_ms: int = 80,
+            volume: float = 0.3,
+            freq_end: int | None = None,
+            waveform: str = "sine",
+            drive: float = 0.0,
+        ) -> None:
+            shape = _bake_waveform(
+                float(freq),
+                int(duration_ms),
+                float(freq_end) if freq_end is not None else None,
+                waveform,
+                round(drive, 2),
+            )
+            pcm = shape * np.float32(volume)
+            _mixer.play(Sound(pcm, sample_rate=_SAMPLE_RATE), gain=1.0)
+
+        def click(duration_ms: int = 20, volume: float = 0.4) -> None:
+            global _noise_cursor
+            n_samples = int(_SAMPLE_RATE * duration_ms / 1000)
+            start = _noise_cursor
+            end = start + n_samples
+            if end <= len(_NOISE_POOL):
+                chunk = _NOISE_POOL[start:end]
+            else:
+                chunk = np.concatenate((_NOISE_POOL[start:], _NOISE_POOL[: end - len(_NOISE_POOL)]))
+            _noise_cursor = end % len(_NOISE_POOL)
+
+            pcm = chunk * np.float32(volume)  # pyright: ignore[reportOperatorIssue]
+            _mixer.play(Sound(pcm, sample_rate=_SAMPLE_RATE), gain=1.0)
 
     except Exception:
 
-        def beep(freq: int = 440, duration_ms: int = 80, volume: float = 0.3) -> None:
+        def beep(
+            freq: int = 440,
+            duration_ms: int = 80,
+            volume: float = 0.3,
+            freq_end: int | None = None,
+            waveform: str = "sine",
+            drive: float = 0.0,
+        ) -> None:
+            pass
+
+        def click(duration_ms: int = 20, volume: float = 0.4) -> None:
             pass
 
 
@@ -103,33 +234,61 @@ class AutoBreakExtension(Extension):
         self.place_pending: dict[ivec2, float] = {}
         self.last_confirmation = 0
         self.recording = False
-        self.beep = False
+        self.beep = True
+
+        self.cycle_start_time: float | None = None
+        self.cycle_durations: deque[float] = deque(maxlen=64)
+        self._last_eta_log = 0.0
 
     @register_thread
     def tone_worker(self) -> None:
         dur = 0.05
-        interval = 5
+        stall_since: float | None = None
 
         while True:
             while not self.beep:
                 time.sleep(0.5)
+                stall_since = None
 
             if self.state.status != Status.IN_WORLD:
-                beep(660, int(dur * 1000), 0.1)
-                time.sleep(0.1)
-                beep(660, int(dur * 1000), 0.1)
-                time.sleep(1 - dur)
-
+                stall_since = None
+                beep(900, 110, 0.4, freq_end=1400, waveform="square", drive=0.3)
+                beep(1400, 110, 0.4, freq_end=900, waveform="square", drive=0.3)
                 continue
 
             if time.time() - self.last_confirmation < 1:
-                beep(500, int(dur * 1000), 0.1)
-                interval = 5
-            else:
-                beep(800, int(dur * 1000), 0.05)
-                interval = 0.5
+                stall_since = None
+                beep(523, int(dur * 1000), 0.08)
+                time.sleep(5 - dur)
+                continue
 
-            time.sleep(interval - dur)
+            if stall_since is None:
+                stall_since = time.time()
+            stalled_for = time.time() - stall_since
+
+            ramp = min(stalled_for / 8.0, 1.0)
+
+            if stalled_for < 2:
+                vol = 0.05 + 0.10 * ramp
+                drive = 0.15 * ramp
+                beep(784, 90, vol, waveform="square", drive=drive)
+                time.sleep(0.06)
+                beep(523, 130, vol, waveform="square", drive=drive)
+                time.sleep(0.9 - 0.2 * ramp)
+            elif stalled_for < 5:
+                vol = 0.15 + 0.19 * ramp
+                drive = 0.15 + 0.10 * ramp
+                beep(500, 220, vol, freq_end=1300, waveform="saw", drive=drive)
+                time.sleep(0.20 - 0.12 * ramp)
+            else:
+                vol = 0.34 + 0.16 * ramp
+                drive = 0.25 + 0.25 * ramp
+                click_vol = 0.15 + 0.25 * ramp
+                beep(500, 150, vol, freq_end=1500, waveform="square", drive=drive)
+                click(20, click_vol)
+                time.sleep(0.02)
+                click(20, click_vol)
+                time.sleep(0.02)
 
     @dispatch(Interest(interest=INTEREST_TILE_APPLY_DAMAGE, blocking_mode=BLOCKING_MODE_SEND_AND_FORGET, direction=DIRECTION_SERVER_TO_CLIENT, id=s.auto))
     def _apply_damange(self, _event: PendingPacket) -> PendingPacket | None:
@@ -168,6 +327,7 @@ class AutoBreakExtension(Extension):
             for target in self.target:
                 if self.state.inventory.get(self.item_id) is None:
                     self.auto_state = State.BREAKING
+                    self._complete_cycle()
                     return True
                 if not self.in_range(target, punch=False) or not self.can_place(target, self.item_id):
                     continue
@@ -177,9 +337,60 @@ class AutoBreakExtension(Extension):
                 assert self.item_id != 0
                 return TileChangeRequest(self.item_id, target)
             self.auto_state = State.BREAKING
+            self._complete_cycle()
+
             return True
 
         return False
+
+    def _complete_cycle(self) -> None:
+        now = time.time()
+        if self.cycle_start_time is not None:
+            duration = now - self.cycle_start_time
+            if duration > 0:
+                self.cycle_durations.append(duration)
+        self.cycle_start_time = now
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        hours, rem = divmod(seconds, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours:
+            return f"{hours}h {minutes}m {secs}s"
+        if minutes:
+            return f"{minutes}m {secs}s"
+
+        return f"{secs}s"
+
+    def log_eta(self) -> None:
+        if not self.cycle_durations:
+            self.console_log("ETA: still gathering timing data")
+            return
+
+        items_per_cycle = len(self.target)
+        if items_per_cycle == 0:
+            return
+
+        avg_cycle_time = sum(self.cycle_durations) / len(self.cycle_durations)
+        if avg_cycle_time <= 0:
+            return
+
+        rate = items_per_cycle / avg_cycle_time
+        total_items = self.state.world.dropped.get_total(self.item_id) if self.state.world else None
+        if total_items is None:
+            self.console_log(f"cycle avg: {avg_cycle_time:.2f}s for {items_per_cycle} items ({rate:.2f} items/s)")
+            return
+
+        eta_seconds = total_items / rate
+        self.console_log(f"ETA: {self._format_duration(eta_seconds)} for {total_items} items ({rate:.2f} items/s, based on last {len(self.cycle_durations)} cycles)")
+
+    @register_thread
+    def eta_worker(self) -> None:
+        while True:
+            time.sleep(30)
+            if self.enabled:
+                self.log_eta()
 
     @register_thread
     def thread_punch(self) -> None:
@@ -208,10 +419,10 @@ class AutoBreakExtension(Extension):
 
                 next = self.get_next_target()
                 if isinstance(next, bool) or not next:
-                    if next:
-                        time.sleep(0.05)
-                    else:
-                        time.sleep(0.01)
+                    # if next:
+                    #     time.sleep(0.05)
+                    # else:
+                    time.sleep(0.01)
                     continue
 
                 now = time.monotonic()
@@ -281,6 +492,8 @@ class AutoBreakExtension(Extension):
 
                 self.console_log(f"{item_database.get(extra.item_id).name.decode()}: {extra.item_amount} (of {extra.limit})")
 
+        # 09:40:35 [INFO    ] proxy proxy.py:211: from server (TANK_PACKET) TankPacket(type=ITEM_EFFECT, animation_type=6, net_id=-1, target_net_id=-1, vector_x=592.0, vector_y=1616.0, vector_x2=640.0, vector_y2=1568.0, int_x=231)
+
         return self.cancel()
 
     @dispatch(s.command_toggle("/auto", id=s.auto))
@@ -290,6 +503,8 @@ class AutoBreakExtension(Extension):
             self.console_log(f"auto is now {self.enabled}")
             if self.enabled:
                 self.last_confirmation = time.time()
+                if self.cycle_start_time is None:
+                    self.cycle_start_time = time.time()
         else:
             self.console_log(f"set item id first")
 
@@ -315,6 +530,7 @@ class AutoBreakExtension(Extension):
                 self.target.append(target)
                 self.send_particle(ParticleID.LBOT_PLACE, tile=target)
         else:
+            self._set_id_to_next = True
             if not self.recording:
                 self.target.clear()
                 self.recording = True
