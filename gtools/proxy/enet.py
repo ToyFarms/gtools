@@ -90,7 +90,8 @@ class ENetPeerBase:
 
         buf = ctypes.create_string_buffer(data)
         pkt = enet_packet_create(ctypes.cast(buf, ctypes.c_void_p), len(data), flags)
-        enet_peer_send(self.peer, 0, pkt)
+        if enet_peer_send(self.peer, 0, pkt) < 0:
+            enet_packet_destroy(pkt)
 
     def destroy(self) -> None:
         if not self.host:

@@ -21,6 +21,7 @@ from gtools.flags import PERF
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_UNSPECIFIED,
     CapabilityResponse,
+    InterestType,
     Packet,
     Interest,
     PendingPacket,
@@ -65,9 +66,9 @@ def dispatch_fallback(fn: UnboundDispatchHandle) -> UnboundDispatchHandle:
 class Extension(ExtensionUtility):
     logger = logging.getLogger("extension")
 
-    def __init__(self, name: str | bytes, interest: list[Interest], broker_addr: str | None = None) -> None:
+    def __init__(self, name: str | bytes, interest: list[Interest] | None = None, broker_addr: str | None = None) -> None:
         self._name = name.encode() if isinstance(name, str) else name
-        self._interest = interest
+        self._interest = interest if interest else [Interest(interest=InterestType.INTEREST_STATE_UPDATE)]
         self._broker_addr = broker_addr if broker_addr else f"tcp://127.0.0.1:{os.getenv("PORT", 6712)}"
 
         self._context = zmq.Context()

@@ -15,7 +15,7 @@ from gtools.core.growtopia.packet import NetType, PreparedPacket, TankFlags, Tan
 from gtools.core.growtopia.player import CharacterState, Clothing, Player
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
-from gtools.core.growtopia.world import Npc, NpcEvent, NpcType, Tile, World, WorldEvent
+from gtools.core.growtopia.world import ItemSuckerTile, Npc, NpcEvent, NpcType, Tile, World, WorldEvent
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
@@ -23,6 +23,7 @@ from gtools.protogen.state_pb2 import (
     STATE_EXIT_WORLD,
     STATE_MODIFY_INVENTORY,
     STATE_MODIFY_ITEM,
+    STATE_MODIFY_SUCKER,
     STATE_MODIFY_WORLD,
     STATE_NPC_UPDATE,
     STATE_PLAYER_JOIN,
@@ -41,6 +42,7 @@ from gtools.protogen.state_pb2 import (
     EnterWorld,
     ModifyInventory,
     ModifyItem,
+    ModifySucker,
     ModifyWorld,
     NpcRemoveByCond,
     NpcUpdate,
@@ -215,6 +217,19 @@ class State:
                                         splice=pkt.tank.jump_count == 1,
                                         should_take_item=pkt.tank.particle_rotation == 0.0,
                                         tree_item_amount=pkt.tank.animation_type,
+                                    ),
+                                ),
+                            )
+                    case TankType.ITEM_EFFECT:
+                        if pkt.tank.animation_type == 6:
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_MODIFY_SUCKER,
+                                    modify_sucker=ModifySucker(
+                                        x=int(pkt.tank.vector_x),
+                                        y=int(pkt.tank.vector_y),
+                                        to_add=1,
                                     ),
                                 ),
                             )
@@ -699,6 +714,14 @@ class State:
                     lock_item_id=upd.send_lock.lock_item_id,
                     tiles_affected=(x for x in upd.send_lock.tiles_affected),
                 )
+            case StateUpdateWhat.STATE_MODIFY_SUCKER:
+                if not self.world:
+                    self.logger.warning("sucker modify, but world is not initialized")
+                    return
+
+                if (tile := self.world.get_tile(upd.modify_sucker.x, upd.modify_sucker.y)) and tile.extra:
+                    sucker = tile.extra.get(ItemSuckerTile)
+                    sucker.item_amount += upd.modify_sucker.to_add
             case StateUpdateWhat.STATE_UPDATE_TREE_STATE:
                 if not self.world:
                     self.logger.warning("update tree state, but world is not initialized")

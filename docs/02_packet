@@ -128,7 +128,7 @@ payload is determiend through the type,
     ON_STEP_TILE_MOD                 (46): (todo)
 
 
-APP_CHECK_RESPONSE and APP_INTEGRITY_FAIL,
+APP_CHECK_RESPONSE,
     it looks like,
         TankPacket(type=APP_CHECK_RESPONSE, net_id=-1, value=1125432991)
 
@@ -143,4 +143,19 @@ APP_CHECK_RESPONSE and APP_INTEGRITY_FAIL,
         tank_value = (tank_value + proton_hash(s)) & 0x7FFFFFFF
     ```
 
-    APP_CHECK_RESPONSE is sent by the client, idk what happen when APP_INTEGRITY_FAIL is hit though
+    APP_CHECK_RESPONSE is sent by the client
+
+APP_INTEGRITY_FAIL,
+    the packet looks like,
+        TankPacket(type=APP_INTEGRITY_FAIL, value=2, vector_x=1730.0, vector_y=674.0, vector_x2=3.221020221710205, vector_y2=0, target_net_id=0)
+
+    with value being the status code.
+    its sent by the client when a cheat is detected, there are a couple of type of cheats:
+
+    ITEM_DATA_MISMATCH (5): when the items database is modified (checked with a set of hardcoded item id, if one mismatches then it triggers this)
+    FORBIDDEN_WINDOW_NAME (8): CheAt Engine 6.4, CheAt Engine 6.5, CheAt Engine 6.3, CheAt Engine 6.2, CheAt Engine 6.1, CheAt Engine 6.0, CheAt Engine 5.6, CheAt Engine 5.6.1, CheAt Engine 5.5. checked with FindWindowA
+    FORBIDDEN_MODULE_NAME (13): vehdebug-i386.dll, vehdebug-x86_64.dll. checked with GetModuleHandleA
+    LONG_PUNCH_HACK (28): check if punch is registered outside of the possible bound
+    TELEPORT_HACK (25)
+
+    there are other code, but im too lazy to find out what triggers them

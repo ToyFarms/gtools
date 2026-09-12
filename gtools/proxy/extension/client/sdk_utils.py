@@ -1,3 +1,4 @@
+# TODO: ditch this whole shit
 from abc import ABC, abstractmethod
 import itertools
 import logging
@@ -389,7 +390,7 @@ class ExtensionUtility(ABC):
             return self.state.me.flags & TankFlags.FACING_LEFT
 
         if int(self.state.me.pos.x // 32) == int(target.x // 32):
-            return self.state.me.flags & TankFlags.FACING_LEFT
+            return self.state.me.flags & ~TankFlags.FACING_LEFT
 
         return TankFlags.FACING_LEFT if self.state.me.pos.x > target.x else TankFlags.NONE
 

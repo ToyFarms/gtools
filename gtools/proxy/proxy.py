@@ -193,7 +193,10 @@ class Proxy:
                 self.logger.error(f"process_event failed: {e}")
 
         for handler in self._custom_handler:
-            handler(pkt)
+            try:
+                handler(pkt)
+            except:
+                traceback.print_exc()
 
         try:
             self.state.emit_event(self.broker, pkt)
@@ -209,10 +212,10 @@ class Proxy:
                 )
             if pkt.as_net.type == NetType.TANK_PACKET:
                 if pkt.as_net.tank.type == TankType.DISCONNECT:
-                    if pkt.direction == DIRECTION_CLIENT_TO_SERVER:
-                        self.proxy_client.disconnect_now()
-                    elif pkt.direction == DIRECTION_SERVER_TO_CLIENT:
-                        self.proxy_server.disconnect()
+                    self._should_reconnect.set()
+                elif pkt.as_net.tank.type == TankType.APP_INTEGRITY_FAIL:
+                    self.logger.critical(f"APP_INTEGRITY_FAIL from {Direction.Name(pkt.direction)}")
+                    return
             elif pkt.as_net.type == NetType.GENERIC_TEXT:
                 if (
                     setting.spoof_hwident
@@ -260,10 +263,7 @@ class Proxy:
                     self.logger.info(f"spoofed login: {pkt.as_net.generic_text}")
             elif pkt.as_net.type == NetType.GAME_MESSAGE:
                 if pkt.as_net.game_message["action", 1] == b"quit":
-                    self.disconnect_all()
                     self._should_reconnect.set()
-
-                    return
             elif pkt.as_net.type == NetType.SERVER_HELLO:
                 self.state.update_status(self.broker, Status.LOGGING_IN)
 
@@ -289,7 +289,7 @@ class Proxy:
 
     def disconnect_all(self) -> None:
         self.proxy_client.disconnect_now()
-        self.proxy_server.disconnect_now()
+        self.proxy_server.disconnect()
         self.state.update_status(self.broker, Status.DISCONNECTED)
         self.logger.info("gt client & server disconnected")
 
@@ -430,6 +430,7 @@ class Proxy:
 
             self.state.update_status(self.broker, Status.CONNECTING)
             self.logger.info("waiting for growtopia to connect...")
+            self.proxy_server.disconnect_now()
             while self.running and not self.proxy_server.peer:
                 self.proxy_server.poll()
                 time.sleep(0.16)

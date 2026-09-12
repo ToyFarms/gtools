@@ -5,7 +5,7 @@ from typing import Iterator
 from pyglm.glm import ivec2
 
 from gtools.baked.items import DIGIVEND_MACHINE, VENDING_MACHINE
-from gtools.core.growtopia.items_dat import item_database
+from gtools.core.growtopia.items_dat import Item, item_database
 from gtools.core.growtopia.particles import ParticleID
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
@@ -61,15 +61,40 @@ s = helper()
 
 class UtilityExtension(Extension):
     def __init__(self) -> None:
-        super().__init__(
-            name="utils",
-            interest=[Interest(interest=InterestType.INTEREST_STATE_UPDATE)],
-        )
+        super().__init__(name="utils")
         self.should_block = False
         self.warp_target = None
         self.fast_drop = False
         self.intercept_warp = True
         self.fast_drop_amt = 200
+        self.world_switch: tuple[str, str] | None = None
+
+    @dispatch(s.command("/wset", s.auto))
+    def _wset(self, event: PendingPacket) -> PendingPacket | None:
+        worlds = s.parse_command(event).split(" ")
+        if len(worlds) < 2:
+            self.console_log("/wset <world1> <world2>")
+            return self.cancel()
+
+        self.world_switch = (worlds[-2].upper(), worlds[-1].upper())
+        self.console_log(f"switch set to {self.world_switch}")
+
+        return self.cancel()
+
+    @dispatch(s.command_toggle("/w", s.auto))
+    def _warp_switch(self, event: PendingPacket) -> PendingPacket | None:
+        if not self.state.world or self.world_switch is None:
+            return self.cancel()
+
+        target = self.world_switch[0]
+        if target == self.state.world.name.decode().upper():
+            target = self.world_switch[1]
+
+        self.warp_target = target
+        self.console_log(f"warping to {self.warp_target!r}")
+        self.to_main_menu()
+
+        return self.cancel()
 
     def to_main_menu(self) -> None:
         self.should_block = True
@@ -248,12 +273,25 @@ class UtilityExtension(Extension):
             )
         )
 
+    def get_item_id(self, id_or_name: int | str | bytes) -> Item:
+        if isinstance(id_or_name, int):
+            return item_database.get(id_or_name)
+        else:
+            if isinstance(id_or_name, bytes):
+                id_or_name = id_or_name.decode()
+
+            if id_or_name.isnumeric():
+                return item_database.get(int(id_or_name))
+            else:
+                return item_database.search(id_or_name, n=1)[0]
+
     @dispatch(s.command("/item", s.auto))
     def _item(self, event: PendingPacket) -> PendingPacket | None:
         if self.state.world:
             id = s.parse_command(event)
             if id:
-                self.console_log(f"{self.state.world.dropped.get_total(int(id))}")
+                item = self.get_item_id(id)
+                self.console_log(f"{item.name}: {self.state.world.dropped.get_total(item.id)}")
             else:
                 x: set[int] = set()
                 for item in self.state.world.dropped.items:

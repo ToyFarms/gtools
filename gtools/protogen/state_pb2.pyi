@@ -31,6 +31,7 @@ class StateUpdateWhat(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     STATE_NPC_UPDATE: _ClassVar[StateUpdateWhat]
     STATE_UPDATE_CLOTHING: _ClassVar[StateUpdateWhat]
     STATE_RELOAD_ITEMS_DATABASE: _ClassVar[StateUpdateWhat]
+    STATE_MODIFY_SUCKER: _ClassVar[StateUpdateWhat]
 STATE_UNSPECIFIED: StateUpdateWhat
 STATE_PLAYER_UPDATE: StateUpdateWhat
 STATE_SET_MY_PLAYER: StateUpdateWhat
@@ -52,9 +53,10 @@ STATE_TILE_CHANGE_REQUEST: StateUpdateWhat
 STATE_NPC_UPDATE: StateUpdateWhat
 STATE_UPDATE_CLOTHING: StateUpdateWhat
 STATE_RELOAD_ITEMS_DATABASE: StateUpdateWhat
+STATE_MODIFY_SUCKER: StateUpdateWhat
 
 class StateUpdate(_message.Message):
-    __slots__ = ("what", "player_update", "set_my_player", "send_inventory", "modify_inventory", "enter_world", "player_join", "player_leave", "modify_world", "modify_world_batched", "modify_item", "update_status", "character_state", "set_my_telemetry", "send_lock", "update_tree_state", "tile_change_req", "npc_update", "update_clothing", "reload_items_database")
+    __slots__ = ("what", "player_update", "set_my_player", "send_inventory", "modify_inventory", "enter_world", "player_join", "player_leave", "modify_world", "modify_world_batched", "modify_item", "update_status", "character_state", "set_my_telemetry", "send_lock", "update_tree_state", "tile_change_req", "npc_update", "update_clothing", "reload_items_database", "modify_sucker")
     WHAT_FIELD_NUMBER: _ClassVar[int]
     PLAYER_UPDATE_FIELD_NUMBER: _ClassVar[int]
     SET_MY_PLAYER_FIELD_NUMBER: _ClassVar[int]
@@ -75,6 +77,7 @@ class StateUpdate(_message.Message):
     NPC_UPDATE_FIELD_NUMBER: _ClassVar[int]
     UPDATE_CLOTHING_FIELD_NUMBER: _ClassVar[int]
     RELOAD_ITEMS_DATABASE_FIELD_NUMBER: _ClassVar[int]
+    MODIFY_SUCKER_FIELD_NUMBER: _ClassVar[int]
     what: StateUpdateWhat
     player_update: PlayerUpdate
     set_my_player: int
@@ -95,7 +98,18 @@ class StateUpdate(_message.Message):
     npc_update: NpcUpdate
     update_clothing: UpdateClothing
     reload_items_database: ReloadItemsDatabase
-    def __init__(self, what: _Optional[_Union[StateUpdateWhat, str]] = ..., player_update: _Optional[_Union[PlayerUpdate, _Mapping]] = ..., set_my_player: _Optional[int] = ..., send_inventory: _Optional[_Union[_growtopia_pb2.Inventory, _Mapping]] = ..., modify_inventory: _Optional[_Union[ModifyInventory, _Mapping]] = ..., enter_world: _Optional[_Union[EnterWorld, _Mapping]] = ..., player_join: _Optional[_Union[_growtopia_pb2.Player, _Mapping]] = ..., player_leave: _Optional[int] = ..., modify_world: _Optional[_Union[ModifyWorld, _Mapping]] = ..., modify_world_batched: _Optional[_Union[ModifyWorldBatched, _Mapping]] = ..., modify_item: _Optional[_Union[ModifyItem, _Mapping]] = ..., update_status: _Optional[int] = ..., character_state: _Optional[_Union[_growtopia_pb2.CharacterState, _Mapping]] = ..., set_my_telemetry: _Optional[_Union[SetMyTelemetry, _Mapping]] = ..., send_lock: _Optional[_Union[SendLock, _Mapping]] = ..., update_tree_state: _Optional[_Union[UpdateTreeState, _Mapping]] = ..., tile_change_req: _Optional[_Union[TileChangeRequest, _Mapping]] = ..., npc_update: _Optional[_Union[NpcUpdate, _Mapping]] = ..., update_clothing: _Optional[_Union[UpdateClothing, _Mapping]] = ..., reload_items_database: _Optional[_Union[ReloadItemsDatabase, _Mapping]] = ...) -> None: ...
+    modify_sucker: ModifySucker
+    def __init__(self, what: _Optional[_Union[StateUpdateWhat, str]] = ..., player_update: _Optional[_Union[PlayerUpdate, _Mapping]] = ..., set_my_player: _Optional[int] = ..., send_inventory: _Optional[_Union[_growtopia_pb2.Inventory, _Mapping]] = ..., modify_inventory: _Optional[_Union[ModifyInventory, _Mapping]] = ..., enter_world: _Optional[_Union[EnterWorld, _Mapping]] = ..., player_join: _Optional[_Union[_growtopia_pb2.Player, _Mapping]] = ..., player_leave: _Optional[int] = ..., modify_world: _Optional[_Union[ModifyWorld, _Mapping]] = ..., modify_world_batched: _Optional[_Union[ModifyWorldBatched, _Mapping]] = ..., modify_item: _Optional[_Union[ModifyItem, _Mapping]] = ..., update_status: _Optional[int] = ..., character_state: _Optional[_Union[_growtopia_pb2.CharacterState, _Mapping]] = ..., set_my_telemetry: _Optional[_Union[SetMyTelemetry, _Mapping]] = ..., send_lock: _Optional[_Union[SendLock, _Mapping]] = ..., update_tree_state: _Optional[_Union[UpdateTreeState, _Mapping]] = ..., tile_change_req: _Optional[_Union[TileChangeRequest, _Mapping]] = ..., npc_update: _Optional[_Union[NpcUpdate, _Mapping]] = ..., update_clothing: _Optional[_Union[UpdateClothing, _Mapping]] = ..., reload_items_database: _Optional[_Union[ReloadItemsDatabase, _Mapping]] = ..., modify_sucker: _Optional[_Union[ModifySucker, _Mapping]] = ...) -> None: ...
+
+class ModifySucker(_message.Message):
+    __slots__ = ("x", "y", "to_add")
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    TO_ADD_FIELD_NUMBER: _ClassVar[int]
+    x: int
+    y: int
+    to_add: int
+    def __init__(self, x: _Optional[int] = ..., y: _Optional[int] = ..., to_add: _Optional[int] = ...) -> None: ...
 
 class ReloadItemsDatabase(_message.Message):
     __slots__ = ("data",)
