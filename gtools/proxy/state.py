@@ -227,8 +227,8 @@ class State:
                                 StateUpdate(
                                     what=STATE_MODIFY_SUCKER,
                                     modify_sucker=ModifySucker(
-                                        x=int(pkt.tank.vector_x),
-                                        y=int(pkt.tank.vector_y),
+                                        x=int(pkt.tank.vector_x // 32),
+                                        y=int(pkt.tank.vector_y // 32),
                                         to_add=1,
                                     ),
                                 ),
