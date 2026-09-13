@@ -39,7 +39,6 @@ from gtools.core.growtopia.world import (
     HeartOfGaiaTile,
     ItemSuckerTile,
     PaintingEaselTile,
-    SeedTile,
     ShelfTile,
     TechnoOrganicEngineTile,
     TesseractManipulatorTile,
@@ -935,14 +934,7 @@ class WorldRenderer:
 
                 for cx, cy in affected_chunks:
                     self._tile_renderer.delete_chunk((cx, cy))
-                    self._tile_renderer._build_chunk(self._world, cx, cy)
-
-                trees = [t for t in self._world.tiles.values() if t.fg_id and t.extra and isinstance(t.extra, SeedTile)]
-                if self._tile_renderer.tree_mesh:
-                    self._tile_renderer.tree_mesh.delete()
-
-                self._tile_renderer.tree_mesh = self._tile_renderer._tree_renderer.build(trees)
-                self._tile_renderer._tex_mgr.flush()
+                    self._tile_renderer.build_chunk(self._world, cx, cy)
 
                 self._tile_updates.clear()
                 self._dirty = True

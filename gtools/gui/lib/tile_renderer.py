@@ -7,7 +7,7 @@ import numpy as np
 from pyglm.glm import ivec2
 
 from gtools import setting
-from gtools.baked.items import COPPER_PLUMBING, STEAM_PIPE, STEAM_REVOLVER, STEAM_TUBES
+from gtools.baked.items import STEAM_REVOLVER, STEAM_TUBES
 from gtools.core.color import pack_color
 from gtools.core.growtopia.items_dat import ItemInfoTextureType, ItemInfoVisualEffect, get_tex_stride, item_database
 from gtools.core.growtopia.world import DisplayBlockTile, SeedTile, Tile, TileFlags, VendingMachineTile, World
@@ -15,8 +15,8 @@ from gtools.core.growtopia.world import DisplayBlockTile, SeedTile, Tile, TileFl
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib import layer
-from gtools.gui.lib.renderer import Renderer
-from gtools.gui.lib.tree_renderer import TreeMesh, TreeRenderer
+from gtools.gui.lib.chunked_renderer import ChunkedRenderer, ChunkKey
+from gtools.gui.lib.tree_renderer import TreeRenderer
 from gtools.gui.opengl import Mesh, ShaderProgram, Uniform
 from gtools.gui.texture import GLTexManager, TextureArray
 
@@ -36,10 +36,9 @@ class _RenderLayer:
 _WHITE_TINT = pack_color(0xFFFFFFFF)
 
 
-class TileRenderer(Renderer):
+class TileRenderer(ChunkedRenderer):
     LAYOUT = [2, 2]
     INSTANCE_LAYOUT = [2, 4, 1, 1, (1, GL_UNSIGNED_INT)]
-    TILE_SIZE = 32
 
     class Flags(IntFlag):
         NONE = 0
@@ -74,17 +73,14 @@ class TileRenderer(Renderer):
         self._opacity3d = self._shader3d.get_uniform("u_opacity")
 
         self._tree_renderer = TreeRenderer()
-        self.tree_mesh: TreeMesh | None = None
-        self._chunk_meshes: dict[tuple[int, int], list[tuple[str, TextureArray, Mesh]]] = {}
-        self.CHUNK_SIZE = 8
+        self._chunk_meshes: dict[ChunkKey, list[tuple[str, TextureArray, Mesh]]] = {}
 
     def load(self, world: World) -> None:
-        self.delete()
-        self._build_meshes(world)
+        super().load(world)
         self._tex_mgr.flush()
 
     def any(self) -> bool:
-        return any(rl.chunks for rl in self._layers.values())
+        return any(rl.chunks for rl in self._layers.values()) or self._tree_renderer.any()
 
     @property
     def texture_count(self) -> int:
@@ -98,10 +94,11 @@ class TileRenderer(Renderer):
         self._mvp.set_mat4x4(camera.proj_as_numpy())
         if layer:
             self.draw_layer(layer, camera, self._tex, self._layer, self._opacity, culling_camera=culling_camera)
+            if layer == "fg":
+                self._tree_renderer.draw(camera, culling_camera=culling_camera)
         else:
             self._draw_layers(camera, self._tex, self._layer, self._opacity, culling_camera=culling_camera)
-        if self.tree_mesh:
-            self._tree_renderer.draw(camera, self.tree_mesh, culling_camera=culling_camera)
+            self._tree_renderer.draw(camera, culling_camera=culling_camera)
 
     def draw_3d(self, camera3d: Camera3D, layer_spread: float, layer: str | None = None) -> None:
         if not self.any():
@@ -112,15 +109,14 @@ class TileRenderer(Renderer):
         self._spread3d.set_float(layer_spread)
         if layer:
             self.draw_layer(layer, None, self._tex3d, self._layer3d, self._opacity3d)
+            if layer == "fg":
+                self._tree_renderer.draw_3d(camera3d, layer_spread)
         else:
             self._draw_layers(None, self._tex3d, self._layer3d, self._opacity3d)
-        if self.tree_mesh:
-            self._tree_renderer.draw_3d(camera3d, self.tree_mesh, layer_spread)
+            self._tree_renderer.draw_3d(camera3d, layer_spread)
 
     def delete(self) -> None:
-        if self.tree_mesh:
-            self.tree_mesh.delete()
-            self.tree_mesh = None
+        self._tree_renderer.delete()
 
         for chunk_list in self._chunk_meshes.values():
             for _, _, mesh in chunk_list:
@@ -174,7 +170,9 @@ class TileRenderer(Renderer):
         if not rl.depth_write:
             glDepthMask(GL_TRUE)
 
-    def delete_chunk(self, chunk_key: tuple[int, int]) -> None:
+    def delete_chunk(self, chunk_key: ChunkKey) -> None:
+        self._tree_renderer.delete_chunk(chunk_key)
+
         if chunk_key not in self._chunk_meshes:
             return
 
@@ -186,27 +184,11 @@ class TileRenderer(Renderer):
 
         del self._chunk_meshes[chunk_key]
 
-    def _build_meshes(self, world: World) -> None:
-        self.delete()
-
-        chunk_coords = set()
-        for tile in world.tiles.values():
-            chunk_coords.add((tile.pos.x // self.CHUNK_SIZE, tile.pos.y // self.CHUNK_SIZE))
-
-        for cx, cy in chunk_coords:
-            self._build_chunk(world, cx, cy)
-
-        trees = [t for t in world.tiles.values() if t.fg_id and t.extra and isinstance(t.extra, SeedTile)]
-        self.tree_mesh = self._tree_renderer.build(trees)
-
-    def _build_chunk(self, world: World, chunk_x: int, chunk_y: int) -> None:
+    def build_chunk(self, world: World, chunk_x: int, chunk_y: int) -> None:
         # layer -> tex_array -> list[float]
         instances: dict[str, dict[TextureArray, list[float]]] = {key: defaultdict(list) for key in self._layers}
 
-        start_x = chunk_x * self.CHUNK_SIZE
-        start_y = chunk_y * self.CHUNK_SIZE
-        end_x = min(start_x + self.CHUNK_SIZE, world.width)
-        end_y = min(start_y + self.CHUNK_SIZE, world.height)
+        start_x, start_y, end_x, end_y = self.chunk_tile_range(world, chunk_x, chunk_y)
 
         for y in range(start_y, end_y):
             for x in range(start_x, end_x):
@@ -301,12 +283,7 @@ class TileRenderer(Renderer):
                     tex_array, data = self._tile_instance_data_raw(tile, "water.rttex", tex_pos)
                     instances["water"][tex_array].extend(data)
 
-        bounds = (
-            chunk_x * self.CHUNK_SIZE * self.TILE_SIZE - 16,
-            chunk_y * self.CHUNK_SIZE * self.TILE_SIZE - 16,
-            self.CHUNK_SIZE * self.TILE_SIZE,
-            self.CHUNK_SIZE * self.TILE_SIZE,
-        )
+        bounds = self.chunk_bounds(chunk_x, chunk_y)
 
         chunk_key = (chunk_x, chunk_y)
         self._chunk_meshes[chunk_key] = []
@@ -328,6 +305,8 @@ class TileRenderer(Renderer):
                     rl.chunks[tex_array] = []
                 rl.chunks[tex_array].append((bounds, mesh))
                 self._chunk_meshes[chunk_key].append((layer_key, tex_array, mesh))
+
+        self._tree_renderer.build_chunk(world, chunk_x, chunk_y)
 
     def _tile_instance_data(self, tile: Tile, item_id: int, tex_index: int) -> tuple[TextureArray, list[float]]:
         item = item_database.get(item_id)
