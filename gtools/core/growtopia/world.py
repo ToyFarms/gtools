@@ -3658,6 +3658,8 @@ class World:
 
     def apply_damage(self, tile: Tile, damage: int, dice_extra: int = 0) -> None:
         item = item_database.get(tile.front)
+        update = False
+
         if tile.fg_id:
             if item.item_type in (ItemInfoType.BOOMBOX, ItemInfoType.BOOMBOX2) and item.id != BULLSEYE:
                 # if item.id in (BALLOON_JAMMER, GUARDIAN_PINEAPPLE):
@@ -3666,6 +3668,7 @@ class World:
                 #     return (__int16)ItemById;
                 if tile.fg_id != ANTIGRAVITY_GENERATOR:
                     tile.flags ^= TileFlags.IS_ON
+                    update = True
                 # if ( getForeground(tile) == GREEN_FOUNTAIN && (tile->flags & IS_ON) != 0 )
                 # {
                 #   v21 = getOrInitAppContext();
@@ -3674,9 +3677,11 @@ class World:
                 # }
             if item.item_type == ItemInfoType.PUNCH_TOGGLE:
                 tile.flags ^= TileFlags.IS_ON
+                update = True
 
             if tile.fg_id == STEAM_CRANK:
                 tile.flags ^= TileFlags.IS_ON
+                update = True
 
             if (
                 item.item_type in (ItemInfoType.SWITCHEROO, ItemInfoType.CHEST, ItemInfoType.LAB)
@@ -3687,9 +3692,11 @@ class World:
                 )
             ):
                 tile.flags ^= TileFlags.IS_ON
+                update = True
 
             if item.item_type == ItemInfoType.SFX_WITH_EXTRA_FRAME or item.item_type == ItemInfoType.DICE or item.item_type == ItemInfoType.PROVIDER:
                 tile.flags ^= TileFlags.IS_ON
+                update = True
                 # if ( *(_DWORD *)&v15->itemId == TOTALLY_HARMLESS_DOLL )
                 # {
                 #   LODWORD(ItemById) = randInt(5000);
@@ -3701,8 +3708,13 @@ class World:
         elif tile.bg_id:
             if item.item_type == ItemInfoType.BACK_BOOMBOX:
                 tile.flags ^= TileFlags.BG_IS_ON
+                update = True
             if item.item_type == ItemInfoType.BACKGD_SFX_EXTRA_FRAME and tile.flags & TileFlags.BG_IS_ON != 0:
                 tile.flags ^= TileFlags.BG_IS_ON
+                update = True
+
+        if update:
+            self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
     def update_lock(self, pos: ivec2, lock_owner_id: int, lock_item_id: int, tiles_affected: Iterator[int]) -> None:
         if lock_tile := self.get_tile(pos):
