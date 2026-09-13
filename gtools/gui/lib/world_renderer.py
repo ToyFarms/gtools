@@ -678,10 +678,7 @@ class WorldRenderer:
 
         hovered = self._hovered_tile
         if hovered:
-            if hovered.extra:
-                imgui.text_wrapped(f"{hovered.extra}")
-            else:
-                imgui.text("-")
+            imgui.text_wrapped(f"{hovered}")
         else:
             imgui.text("-")
 

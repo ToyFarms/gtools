@@ -638,7 +638,7 @@ class State:
                     case ModifyWorld.OP_DESTROY:
                         self.world.destroy_tile(pos)
                     case ModifyWorld.OP_REPLACE:
-                        self.world.replace_whole_tile(world.Tile.from_proto(upd.modify_world.tile))
+                        self.world.replace_whole_tile(world.Tile.from_proto(upd.modify_world.tile), pos)
             case StateUpdateWhat.STATE_MODIFY_ITEM:
                 if not self.world:
                     self.logger.warning("modify world item, but world is not initialized")

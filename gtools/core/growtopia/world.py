@@ -2487,12 +2487,23 @@ class Tile:
             is_flipped = False
 
         if (
-            item.collision_type == ItemInfoCollisionType.COLLIDE_IF_OFF
-            and self.flags & TileFlags.IS_ON != 0
-            or item.collision_type == ItemInfoCollisionType.COLLIDE_IF_ON
-            and self.flags & TileFlags.IS_ON == 0
-            or item.item_type == ItemInfoType.BOOMBOX
-            and self.flags & TileFlags.IS_ON != 0
+            (item.collision_type == ItemInfoCollisionType.COLLIDE_IF_OFF and self.flags & TileFlags.IS_ON != 0)
+            or (item.collision_type == ItemInfoCollisionType.COLLIDE_IF_ON and self.flags & TileFlags.IS_ON == 0)
+            or (
+                item.item_type
+                in (
+                    ItemInfoType.BOOMBOX,
+                    ItemInfoType.BOOMBOX2,
+                    ItemInfoType.BACK_BOOMBOX,
+                    ItemInfoType.BACKGD_SFX_EXTRA_FRAME,
+                    ItemInfoType.SFX_WITH_EXTRA_FRAME,
+                    ItemInfoType.SWITCHEROO,
+                    ItemInfoType.CHEST,
+                    ItemInfoType.LAB,
+                    ItemInfoType.PUNCH_TOGGLE,
+                )
+                and self.flags & TileFlags.IS_ON != 0
+            )
         ):
             tex_index += 1
             stride = 2
@@ -3295,7 +3306,7 @@ class World:
             if bool(where(tile)):
                 yield tile
 
-    def index_tile(self, pos: ivec2) -> int | None:
+    def index_tile(self, pos: ivec2) -> int:
         return pos.y * self.width + pos.x
 
     def index_to_pos(self, index: int) -> ivec2:
@@ -3325,12 +3336,11 @@ class World:
 
         self.broadcast(WorldEvent.TILE_UPDATE, pos.x, pos.y)
 
-    def replace_whole_tile(self, tile: Tile) -> None:
-        idx = self.index_tile(tile.pos)
-        if idx is not None:
-            tile.index = idx
-            self.tiles[idx] = tile
-            self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
+    def replace_whole_tile(self, tile: Tile, pos: ivec2) -> None:
+        idx = self.index_tile(pos)
+        tile.index = idx
+        self.tiles[idx] = tile
+        self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
     def place_fg(self, tile: Tile, fg: int, connection: int = 0, a5: bool = False, broadcast: bool = True) -> None:
         item = item_database.get(fg)
