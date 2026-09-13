@@ -1,8 +1,7 @@
-from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import IntFlag, auto
-from typing import ClassVar
+from typing import Callable, ClassVar, Iterable
 
 from OpenGL.GL import GL_FALSE, GL_TRUE, GL_UNSIGNED_INT, glDepthMask
 from pyglm.glm import ivec2, vec2
@@ -10,10 +9,10 @@ from pyglm.glm import ivec2, vec2
 from gtools import setting
 from gtools.baked.items import ANTIMATTER_DUST, COMET_DUST, GEMS, MUTATED_SEED
 from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoType, ItemInfoVisualEffect, item_database
-from gtools.core.growtopia.world import DroppedItem
+from gtools.core.growtopia.world import DroppedItem, Tile
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
-from gtools.gui.lib.renderer import Renderer
+from gtools.gui.lib.chunked_renderer import ChunkBounds, ChunkKey
 from gtools.gui.lib.seed_icon_renderer import SeedIconRenderer
 from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.texture import GLTexManager, TextureArray
@@ -38,6 +37,16 @@ MAX_LAYER = MAX_PER_REGION * LAYER_STRIDE
 GEMS_TO_TEX_OFFSET = {1: 0, 5: 1, 10: 2, 50: 3, 100: 4}
 
 DEFAULT_TINT: int = 0xFFFFFFFF
+
+PICKUP_BOX_BLUE = 0
+PICKUP_BOX_YELLOW = 1
+PICKUP_BOX_RED = 2
+PICKUP_BOX_GREEN = 3
+PICKUP_BOX_GOLD = 4
+PICKUP_BOX_PURPLE = 5
+PICKUP_BOX_ORANGE = 6
+PICKUP_BOX_GRAY = 7
+PICKUP_BOX_WHITE = 8
 
 
 def _pack_rgba_u32(r: int, g: int, b: int, a: int = 255) -> int:
@@ -81,20 +90,14 @@ class IconInfo:
     z: float
 
 
-PICKUP_BOX_BLUE = 0
-PICKUP_BOX_YELLOW = 1
-PICKUP_BOX_RED = 2
-PICKUP_BOX_GREEN = 3
-PICKUP_BOX_GOLD = 4
-PICKUP_BOX_PURPLE = 5
-PICKUP_BOX_ORANGE = 6
-PICKUP_BOX_GRAY = 7
-PICKUP_BOX_WHITE = 8
+TileExtractor = Callable[[Tile], list[DroppedItem]]
 
 
-class ObjectRendererBase(Renderer, ABC):
+class ObjectRenderer:
     LAYOUT: ClassVar[list[int]] = [2, 2]
-    INSTANCE_LAYOUT: ClassVar[list[int]]
+    INSTANCE_LAYOUT: ClassVar[list] = [2, 2, 2, 1, 1, (1, GL_UNSIGNED_INT)]
+    CHUNK_SIZE: int = 8
+    TILE_SIZE: int = 32
 
     class Flags(IntFlag):
         NONE = 0
@@ -145,40 +148,159 @@ class ObjectRendererBase(Renderer, ABC):
         self._pixel_scale3d = self._shader3d.get_uniform("u_pixelScale")
         self._z_offset3d = self._shader3d.get_uniform("u_zOffset")
 
-        self._init_main_shader()
+        self._shader = ShaderProgram.get("shaders/object")
+        self._mvp = self._shader.get_uniform("u_mvp")
+        self._tex = self._shader.get_uniform("texArray")
+        self._tile_size = self._shader.get_uniform("u_tileSize")
+        self._rotation = self._shader.get_uniform("u_rotation")
+        self._pixel_scale = self._shader.get_uniform("u_pixelScale")
+        self._z_offset = self._shader.get_uniform("u_zOffset")
 
-    @abstractmethod
-    def _init_main_shader(self) -> None: ...
-    @abstractmethod
+        self._chunks: dict[ChunkKey, tuple[ChunkBounds, ObjectRenderMesh, int]] = {}
+
+    @staticmethod
+    def _chunk_bounds(chunk_x: int, chunk_y: int, chunk_size: int = 8, tile_size: int = 32) -> ChunkBounds:
+        return (
+            chunk_x * chunk_size * tile_size - 16,
+            chunk_y * chunk_size * tile_size - 16,
+            chunk_size * tile_size,
+            chunk_size * tile_size,
+        )
+
+    def _chunk_key_for_pos(self, x: float, y: float) -> ChunkKey:
+        span = self.CHUNK_SIZE * self.TILE_SIZE
+        return (int(x // span), int(y // span))
+
+    @property
+    def total_items(self) -> int:
+        return sum(count for _, _, count in self._chunks.values())
+
+    def any(self) -> bool:
+        return bool(self._chunks)
+
+    def set_chunk(self, chunk_key: ChunkKey, items: list[DroppedItem], **build_kwargs) -> None:
+        self._delete_chunk(chunk_key)
+        if not items:
+            return
+        mesh = self.build(items, **build_kwargs)
+        self._chunks[chunk_key] = (self._chunk_bounds(*chunk_key), mesh, len(items))
+
+    def sync(self, items: Iterable[DroppedItem], **build_kwargs) -> None:
+        buckets: dict[ChunkKey, list[DroppedItem]] = defaultdict(list)
+        for item in items:
+            buckets[self._chunk_key_for_pos(item.pos.x, item.pos.y)].append(item)
+
+        for key in set(self._chunks.keys()) - buckets.keys():
+            self._delete_chunk(key)
+
+        for key, chunk_items in buckets.items():
+            signature = self._signature(chunk_items)
+            existing = self._chunks.get(key)
+            if existing is not None:
+                if existing[2] == hash(signature):
+                    continue
+                existing[1].delete()
+
+            mesh = self.build(chunk_items, **build_kwargs)
+            self._chunks[key] = (self._chunk_bounds(*key), mesh, hash(signature))
+
+    def _delete_chunk(self, key: ChunkKey) -> None:
+        entry = self._chunks.pop(key, None)
+        if entry is not None:
+            _, mesh, _ = entry
+            mesh.delete()
+
+    def delete(self) -> None:
+        for key in list(self._chunks.keys()):
+            self._delete_chunk(key)
+        self._seed_renderer.delete()
+
+    @staticmethod
+    def _signature(items: list[DroppedItem]) -> tuple:
+        return tuple(sorted((item.uid, item.id, item.amount, round(item.pos.x, 2), round(item.pos.y, 2)) for item in items))
+
+    def _visible_meshes(self, cull: Camera2D | None) -> Iterable[ObjectRenderMesh]:
+        for bounds, mesh, _ in self._chunks.values():
+            if cull is None or cull.is_visible(*bounds):
+                yield mesh
+
+    def draw_chunks(
+        self,
+        camera: Camera2D,
+        culling_camera: Camera2D | None = None,
+        rotation: float = 0,
+        pixel_scale: float = 1,
+        z_offset: float = 0,
+    ) -> None:
+        cull = culling_camera or camera
+        for mesh in self._visible_meshes(cull):
+            self.draw(camera, mesh, rotation=rotation, pixel_scale=pixel_scale, z_offset=z_offset)
+
+    def draw_chunks_3d(
+        self,
+        camera3d: Camera3D,
+        layer_spread: float,
+        rotation: float = 0,
+        pixel_scale: float = 1,
+        z_offset: float = 0,
+    ) -> None:
+        for _, mesh, _ in self._chunks.values():
+            self.draw_3d(camera3d, mesh, layer_spread, rotation=rotation, pixel_scale=pixel_scale, z_offset=z_offset)
+
+    def draw_chunks_shadow(
+        self,
+        camera: Camera2D,
+        culling_camera: Camera2D | None = None,
+        z_offset: float = 0,
+    ) -> None:
+        cull = culling_camera or camera
+        for mesh in self._visible_meshes(cull):
+            self.draw_shadow(camera, mesh, z_offset=z_offset)
+
+    def draw_chunks_shadow_3d(
+        self,
+        camera3d: Camera3D,
+        layer_spread: float,
+        z_offset: float = 0,
+    ) -> None:
+        for _, mesh, _ in self._chunks.values():
+            self.draw_shadow_3d(camera3d, mesh, layer_spread, z_offset=z_offset)
+
     def draw(
         self,
         camera: Camera2D,
         render_mesh: ObjectRenderMesh,
         rotation: float = 0,
         pixel_scale: float = 1,
-    ) -> None: ...
-    @abstractmethod
-    def _make_icon_instance(
-        self,
-        x: float,
-        y: float,
-        icon_scale: float,
-        uv_x: float,
-        uv_y: float,
-        tex_layer: float,
-        z: float,
-        dropped: DroppedItem,
-        tint_u32: int,
-    ) -> list[float]: ...
+        tint: tuple[float, float, float] = (1, 1, 1),
+        z_offset: float = 0,
+    ) -> None:
+        if not render_mesh.dropped_meshes:
+            return
 
-    @staticmethod
-    def _select_item_tint_u32(item_id: int, default: tuple[int, int, int]) -> int:
-        item = item_database.get(item_id)
-        if item.visual_effect == ItemInfoVisualEffect.DISCOLOR:
-            seed = item_database.get(item_id + 1)
-            return int(seed.seed_overlay_color.to_rgba()) & 0xFFFFFFFF
+        self._shader.use()
+        self._rotation.set_float(rotation)
+        self._pixel_scale.set_float(pixel_scale)
+        self._z_offset.set_float(z_offset)
+        self._mvp.set_mat4x4(camera.proj_as_numpy())
 
-        return _pack_rgba_u32(default[0], default[1], default[2])
+        self._tile_size.set_float(32.0)
+        for arr, mesh in render_mesh.dropped_meshes.items():
+            arr.bind(unit=0)
+            self._tex.set_int(0)
+            mesh.draw_instanced()
+
+        self._tile_size.set_float(20.0)
+        for arr, mesh in render_mesh.pickup_overlay.items():
+            arr.bind(unit=0)
+            self._tex.set_int(0)
+            mesh.draw_instanced()
+
+        if render_mesh.seed_mesh is not None:
+            self._seed_renderer.draw(camera, render_mesh.seed_mesh)
+
+        if render_mesh.text_renderer is not None:
+            render_mesh.text_renderer.draw(camera, offset=(0.3, 0.3), shadow_color=(0, 0, 0))
 
     def draw_shadow(self, camera: Camera2D, render_mesh: ObjectRenderMesh, z_offset: float = 0) -> None:
         if not render_mesh.dropped_meshes:
@@ -203,34 +325,6 @@ class ObjectRendererBase(Renderer, ABC):
         for arr, mesh in render_mesh.overlay_shadows.items():
             arr.bind(unit=0)
             self._shadow_tex.set_int(0)
-            mesh.draw_instanced()
-
-        glDepthMask(GL_TRUE)
-
-    def draw_shadow_3d(self, camera3d: Camera3D, render_mesh: ObjectRenderMesh, layer_spread: float, z_offset: float = 0) -> None:
-        if not render_mesh.dropped_meshes:
-            return
-
-        glDepthMask(GL_FALSE)
-
-        self._shadow_shader3d.use()
-        self._shadow_vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
-        self._shadow_alpha3d.set_float(0.4)
-        self._shadow_spread3d.set_float(layer_spread)
-        self._shadow_z_offset3d.set_float(z_offset)
-        offset = 5.0
-        self._shadow_offset3d.set_vec2(np.array([-offset, offset], dtype=np.float32))
-
-        self._shadow_tile_size3d.set_float(32.0)
-        for arr, mesh in render_mesh.icon_shadows.items():
-            arr.bind(unit=0)
-            self._shadow_tex3d.set_int(0)
-            mesh.draw_instanced()
-
-        self._shadow_tile_size3d.set_float(20.0)
-        for arr, mesh in render_mesh.overlay_shadows.items():
-            arr.bind(unit=0)
-            self._shadow_tex3d.set_int(0)
             mesh.draw_instanced()
 
         glDepthMask(GL_TRUE)
@@ -272,6 +366,43 @@ class ObjectRendererBase(Renderer, ABC):
         if render_mesh.text_renderer is not None:
             render_mesh.text_renderer.draw_3d(camera3d, layer_spread, offset=(0.3, 0.3), shadow_color=(0, 0, 0))
 
+    def draw_shadow_3d(self, camera3d: Camera3D, render_mesh: ObjectRenderMesh, layer_spread: float, z_offset: float = 0) -> None:
+        if not render_mesh.dropped_meshes:
+            return
+
+        glDepthMask(GL_FALSE)
+
+        self._shadow_shader3d.use()
+        self._shadow_vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
+        self._shadow_alpha3d.set_float(0.4)
+        self._shadow_spread3d.set_float(layer_spread)
+        self._shadow_z_offset3d.set_float(z_offset)
+        offset = 5.0
+        self._shadow_offset3d.set_vec2(np.array([-offset, offset], dtype=np.float32))
+
+        self._shadow_tile_size3d.set_float(32.0)
+        for arr, mesh in render_mesh.icon_shadows.items():
+            arr.bind(unit=0)
+            self._shadow_tex3d.set_int(0)
+            mesh.draw_instanced()
+
+        self._shadow_tile_size3d.set_float(20.0)
+        for arr, mesh in render_mesh.overlay_shadows.items():
+            arr.bind(unit=0)
+            self._shadow_tex3d.set_int(0)
+            mesh.draw_instanced()
+
+        glDepthMask(GL_TRUE)
+
+    @staticmethod
+    def _select_item_tint_u32(item_id: int, default: tuple[int, int, int]) -> int:
+        item = item_database.get(item_id)
+        if item.visual_effect == ItemInfoVisualEffect.DISCOLOR:
+            seed = item_database.get(item_id + 1)
+            return int(seed.seed_overlay_color.to_rgba()) & 0xFFFFFFFF
+
+        return _pack_rgba_u32(default[0], default[1], default[2])
+
     def build(
         self,
         items: list[DroppedItem],
@@ -279,13 +410,13 @@ class ObjectRendererBase(Renderer, ABC):
         pos_offset: vec2 = vec2(0, 0),
         overlay_scale: float = 1,
         icon_scale: float = 1,
-        flags: "ObjectRendererBase.Flags" = Flags(0),
+        flags: "ObjectRenderer.Flags" = Flags(0),
         tint: tuple[float, float, float] = (1, 1, 1),
     ) -> ObjectRenderMesh:
         region_counters: dict[tuple[int, int], int] = defaultdict(int)
         bucketed: defaultdict[int, list[DroppedItem]] = defaultdict(list)
 
-        if flags & ObjectRendererBase.Flags.ORDER_BY_UID:
+        if flags & ObjectRenderer.Flags.ORDER_BY_UID:
             items = sorted(items, key=lambda x: x.uid)
 
         for dropped in items:
@@ -296,10 +427,10 @@ class ObjectRendererBase(Renderer, ABC):
             region_counters[region] += 1
             bucketed[local_index].append(dropped)
 
-        no_text = flags & ObjectRendererBase.Flags.NO_TEXT
-        no_shadow = flags & ObjectRendererBase.Flags.NO_SHADOW
-        no_overlay = flags & ObjectRendererBase.Flags.NO_OVERLAY
-        no_icon = flags & ObjectRendererBase.Flags.NO_ICON
+        no_text = flags & ObjectRenderer.Flags.NO_TEXT
+        no_shadow = flags & ObjectRenderer.Flags.NO_SHADOW
+        no_overlay = flags & ObjectRenderer.Flags.NO_OVERLAY
+        no_icon = flags & ObjectRenderer.Flags.NO_ICON
 
         text_renderer = None if no_text else TextRenderer("resources/fonts/centurygothic_bold.ttf", size=32)
 
@@ -328,7 +459,7 @@ class ObjectRendererBase(Renderer, ABC):
                     self._build_text(vec2(20 * overlay_scale), text_renderer, dropped, local_index, x, y)
 
                 if not no_icon:
-                    if flags & ObjectRendererBase.Flags.USE_ORIGINAL_TEXTURE:
+                    if flags & ObjectRenderer.Flags.USE_ORIGINAL_TEXTURE:
                         tex_file = item.texture_file.decode()
                     else:
                         tex_file = item.get_icon_texture() or item.texture_file.decode()
@@ -350,7 +481,7 @@ class ObjectRendererBase(Renderer, ABC):
                     z = self._get_object_z(local_index, SUBLAYER_ICON)
 
                     tint_u32 = self._select_item_tint_u32(item.id, (int(tint[0] * 255), int(tint[1] * 255), int(tint[2] * 255)))
-                    icons[tex.array].extend(self._make_icon_instance(x, y, icon_scale, uv_x, uv_y, tex.layer, z, dropped, tint_u32))
+                    icons[tex.array].extend([x, y, icon_scale, icon_scale, uv_x, uv_y, tex.layer, z, int(tint_u32) & 0xFFFFFFFF])
 
                     if not no_shadow:
                         icon_shadows[tex.array].extend(
@@ -510,31 +641,6 @@ class ObjectRendererBase(Renderer, ABC):
             shadow_z=self._get_object_z(local_index, SUBLAYER_TEXT_SHADOW),
         )
 
-    def _make_instance_data(
-        self,
-        x: float,
-        y: float,
-        scale_x: float,
-        scale_y: float,
-        uv_x: float,
-        uv_y: float,
-        layer: float,
-        z: float,
-        tint: tuple[int, int, int, int],
-    ) -> list[float | int]:
-        r, g, b, a = tint
-        return [
-            x,
-            y,
-            scale_x,
-            scale_y,
-            uv_x,
-            uv_y,
-            layer,
-            z,
-            _pack_rgba_u32(r, g, b, a),
-        ]
-
     def _make_meshes(
         self,
         src: dict[TextureArray, list[float]],
@@ -562,70 +668,5 @@ class ObjectRendererBase(Renderer, ABC):
             v = [float(x) for x in inst[i : i + 8]]
             tint_u32 = int(inst[i + 8]) & 0xFFFFFFFF
             records.append((v, tint_u32))
+
         return np.array(records, dtype=dtype)
-
-    def delete(self) -> None:
-        self._seed_renderer.delete()
-
-
-class ObjectRenderer(ObjectRendererBase):
-    INSTANCE_LAYOUT: ClassVar[list] = [2, 2, 2, 1, 1, (1, GL_UNSIGNED_INT)]
-
-    def _init_main_shader(self) -> None:
-        self._shader = ShaderProgram.get("shaders/object")
-        self._mvp = self._shader.get_uniform("u_mvp")
-        self._tex = self._shader.get_uniform("texArray")
-        self._tile_size = self._shader.get_uniform("u_tileSize")
-        self._rotation = self._shader.get_uniform("u_rotation")
-        self._pixel_scale = self._shader.get_uniform("u_pixelScale")
-        self._z_offset = self._shader.get_uniform("u_zOffset")
-
-    def draw(
-        self,
-        camera: Camera2D,
-        render_mesh: ObjectRenderMesh,
-        rotation: float = 0,
-        pixel_scale: float = 1,
-        tint: tuple[float, float, float] = (1, 1, 1),
-        z_offset: float = 0,
-    ) -> None:
-        if not render_mesh.dropped_meshes:
-            return
-
-        self._shader.use()
-        self._rotation.set_float(rotation)
-        self._pixel_scale.set_float(pixel_scale)
-        self._z_offset.set_float(z_offset)
-        self._mvp.set_mat4x4(camera.proj_as_numpy())
-
-        self._tile_size.set_float(32.0)
-        for arr, mesh in render_mesh.dropped_meshes.items():
-            arr.bind(unit=0)
-            self._tex.set_int(0)
-            mesh.draw_instanced()
-
-        self._tile_size.set_float(20.0)
-        for arr, mesh in render_mesh.pickup_overlay.items():
-            arr.bind(unit=0)
-            self._tex.set_int(0)
-            mesh.draw_instanced()
-
-        if render_mesh.seed_mesh is not None:
-            self._seed_renderer.draw(camera, render_mesh.seed_mesh)
-
-        if render_mesh.text_renderer is not None:
-            render_mesh.text_renderer.draw(camera, offset=(0.3, 0.3), shadow_color=(0, 0, 0))
-
-    def _make_icon_instance(
-        self,
-        x: float,
-        y: float,
-        icon_scale: float,
-        uv_x: float,
-        uv_y: float,
-        tex_layer: float,
-        z: float,
-        dropped: DroppedItem,
-        tint_u32: int,
-    ) -> list[float]:
-        return [x, y, icon_scale, icon_scale, uv_x, uv_y, tex_layer, z, int(tint_u32) & 0xFFFFFFFF]

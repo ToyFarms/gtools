@@ -1,30 +1,14 @@
-from dataclasses import dataclass
-from OpenGL.GL import GL_DEPTH_TEST, glDisable, glEnable
 from OpenGL.raw.GL._types import GL_UNSIGNED_INT
-from pyglm.glm import vec2
 from gtools import setting
 from gtools.core.growtopia.items_dat import item_database
-from gtools.core.growtopia.world import DroppedItem, SeedTile, Tile, World
+from gtools.core.growtopia.world import SeedTile, Tile, World
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib.chunked_renderer import ChunkBounds, ChunkedRenderer, ChunkKey
-from gtools.gui.lib.layer import OBJECT_POST_FOREGROUND_END, OBJECT_POST_FOREGROUND_START, WORLD_FOREGROUND
-from gtools.gui.lib.object_renderer import ObjectRenderMesh, ObjectRenderer
+from gtools.gui.lib.layer import WORLD_FOREGROUND
 from gtools.gui.opengl import Mesh, ShaderProgram
 from gtools.gui.texture import GLTexManager
 import numpy as np
-
-
-@dataclass(slots=True)
-class TreeMesh:
-    tree: Mesh | None
-    object: ObjectRenderMesh | None
-
-    def delete(self) -> None:
-        if self.tree:
-            self.tree.delete()
-        if self.object:
-            self.object.delete()
 
 
 # TODO: scale based on time left
@@ -49,13 +33,6 @@ t = time taken (seconds)
 r = cbrt(t/2 + sqrt(t^2/4 + 1000)) + cbrt(t/2 - sqrt(t^2/4 + 1000))
 """
 
-_TREE_ITEM_OFFSET = {
-    0: (-4, -7),
-    1: (6, -7),
-    2: (-10, 2),
-    3: (0, 2),
-}
-
 
 class TreeRenderer(ChunkedRenderer):
     def __init__(self) -> None:
@@ -74,8 +51,7 @@ class TreeRenderer(ChunkedRenderer):
         self.spread3d = self.shader3d.get_uniform("u_layer_spread")
         self.tile_size3d = self.shader3d.get_uniform("u_tileSize")
 
-        self._obj_renderer = ObjectRenderer(OBJECT_POST_FOREGROUND_START, OBJECT_POST_FOREGROUND_END)
-        self._chunks: dict[ChunkKey, tuple[ChunkBounds, TreeMesh]] = {}
+        self._chunks: dict[ChunkKey, tuple[ChunkBounds, Mesh]] = {}
 
     def any(self) -> bool:
         return bool(self._chunks)
@@ -94,7 +70,8 @@ class TreeRenderer(ChunkedRenderer):
             return
 
         mesh = self._build_mesh(tiles)
-        self._chunks[(chunk_x, chunk_y)] = (self.chunk_bounds(chunk_x, chunk_y), mesh)
+        if mesh is not None:
+            self._chunks[(chunk_x, chunk_y)] = (self.chunk_bounds(chunk_x, chunk_y), mesh)
 
     def delete_chunk(self, chunk_key: ChunkKey) -> None:
         entry = self._chunks.pop(chunk_key, None)
@@ -102,7 +79,7 @@ class TreeRenderer(ChunkedRenderer):
             _, mesh = entry
             mesh.delete()
 
-    def _build_mesh(self, tiles: list[Tile]) -> TreeMesh:
+    def _build_mesh(self, tiles: list[Tile]) -> Mesh | None:
         data_dtype = np.dtype(
             [
                 ("tilePos", np.float32, 3),
@@ -117,12 +94,13 @@ class TreeRenderer(ChunkedRenderer):
 
         tex_w = self.tex.width
         tex_h = self.tex.height
-        items: list[DroppedItem] = []
+        any_valid = False
 
         for i, tile in enumerate(tiles):
             if tile.extra is None or not isinstance(tile.extra, SeedTile):
                 continue
 
+            any_valid = True
             item = item_database.get(tile.fg_id)
 
             overlay_r = item.seed_overlay_color.r
@@ -140,28 +118,16 @@ class TreeRenderer(ChunkedRenderer):
             data[i]["overlayTexCoord"] = [leaf * 32 / tex_w, 18 * 32 / tex_h]
             data[i]["layer"] = self.tex.layer
 
-            for j in range(tile.extra.item_on_tree):
-                # fg_id is seed, -1 becomes the item
-                items.append(DroppedItem(tile.fg_id - 1, pos=vec2(tile.pos) * 32 + vec2(_TREE_ITEM_OFFSET[j]), amount=1))
+        if not any_valid:
+            return None
 
-        return TreeMesh(
-            tree=(
-                Mesh(
-                    Mesh.RECT_WITH_UV_VERTS,
-                    [2, 2],
-                    Mesh.RECT_INDICES,
-                    instance_data=data,
-                    instance_layout=[3, (1, GL_UNSIGNED_INT), (1, GL_UNSIGNED_INT), 2, 2, 1],
-                    instance_attrib_base=2,
-                )
-                if items
-                else None
-            ),
-            object=(
-                self._obj_renderer.build(items, flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT, icon_scale=0.25)
-                if items
-                else None
-            ),
+        return Mesh(
+            Mesh.RECT_WITH_UV_VERTS,
+            [2, 2],
+            Mesh.RECT_INDICES,
+            instance_data=data,
+            instance_layout=[3, (1, GL_UNSIGNED_INT), (1, GL_UNSIGNED_INT), 2, 2, 1],
+            instance_attrib_base=2,
         )
 
     def draw(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
@@ -175,15 +141,9 @@ class TreeRenderer(ChunkedRenderer):
         self.texture.set_int(0)
 
         cull = culling_camera or camera
-        visible_meshes = [mesh for bounds, mesh in self._chunks.values() if cull is None or cull.is_visible(*bounds)]
-
-        for mesh in visible_meshes:
-            if mesh.tree:
-                mesh.tree.draw_instanced()
-
-        for mesh in visible_meshes:
-            if mesh.object:
-                self._obj_renderer.draw(camera, mesh.object)
+        for bounds, mesh in self._chunks.values():
+            if cull is None or cull.is_visible(*bounds):
+                mesh.draw_instanced()
 
     def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
         if not self.tex or not self._chunks:
@@ -197,12 +157,8 @@ class TreeRenderer(ChunkedRenderer):
         self.tex3d.set_int(0)
 
         for _, mesh in self._chunks.values():
-            if mesh.tree:
-                mesh.tree.draw_instanced()
-            if mesh.object:
-                self._obj_renderer.draw_3d(camera3d, mesh.object, layer_spread)
+            mesh.draw_instanced()
 
     def delete(self) -> None:
         for key in list(self._chunks.keys()):
             self.delete_chunk(key)
-        self._obj_renderer.delete()

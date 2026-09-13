@@ -39,6 +39,7 @@ from gtools.core.growtopia.world import (
     HeartOfGaiaTile,
     ItemSuckerTile,
     PaintingEaselTile,
+    SeedTile,
     ShelfTile,
     TechnoOrganicEngineTile,
     TesseractManipulatorTile,
@@ -177,6 +178,14 @@ class RenderOrder:
             self._record(name, (time.perf_counter_ns() - start) / 1_000_000.0)
 
         self._record_overall("draw_3d", (time.perf_counter_ns() - start_overall) / 1_000_000.0)
+
+
+_TREE_ICON_OFFSET = {
+    0: (-4, -7),
+    1: (6, -7),
+    2: (-10, 2),
+    3: (0, 2),
+}
 
 
 class WorldRenderer:
@@ -403,6 +412,9 @@ class WorldRenderer:
 
             if isinstance(tile.extra, DisplayBlockTile) and tile.extra.item_id != 0:
                 icons["display"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
+            elif isinstance(tile.extra, SeedTile):
+                for i in range(tile.extra.item_on_tree):
+                    icons["tree"].append(DroppedItem(pos=vec2(tile.pos) * 32 + _TREE_ICON_OFFSET[i], id=tile.fg_id - 1))
             elif isinstance(tile.extra, VendingMachineTile) and tile.extra.item_id != 0 and tile.extra.price != 0:
                 icons["vending"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(-2, -3), id=tile.extra.item_id))
             elif isinstance(tile.extra, PaintingEaselTile) and tile.extra.item_id != 0:
@@ -451,6 +463,19 @@ class WorldRenderer:
                         icon_scale=1,
                     ),
                     renderer=self._renderer_pre_fg,
+                )
+            )
+            self._obj_meshes.append(renderable[-1].mesh)
+
+        if icons["tree"]:
+            renderable.append(
+                ObjectRenderable(
+                    mesh=self._renderer_post_fg.build(
+                        icons["tree"],
+                        flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
+                        icon_scale=0.30,
+                    ),
+                    renderer=self._renderer_post_fg,
                 )
             )
             self._obj_meshes.append(renderable[-1].mesh)
@@ -1667,11 +1692,7 @@ class WorldRenderer:
 
     def _select_dropped_items_in_rect(self, min_x: float, min_y: float, max_x: float, max_y: float) -> None:
         pad = 8.0
-        self._selected_dropped_items = [
-            item
-            for item in self._world.dropped.items
-            if (min_x - pad) <= item.pos.x <= (max_x + pad) and (min_y - pad) <= item.pos.y <= (max_y + pad)
-        ]
+        self._selected_dropped_items = [item for item in self._world.dropped.items if (min_x - pad) <= item.pos.x <= (max_x + pad) and (min_y - pad) <= item.pos.y <= (max_y + pad)]
         self._dirty = True
 
     @property
