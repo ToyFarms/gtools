@@ -18,6 +18,8 @@ enum Op {
   OP_STARTSWITH = 10;
   OP_ENDSWITH = 11;
   OP_CONTAINS = 12;
+  OP_DIVIDES_BY = 13;
+  OP_NOT_DIVIDES_BY = 14;
 }
 
 message Vec2 {

@@ -22,6 +22,8 @@ class Op(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     OP_STARTSWITH: _ClassVar[Op]
     OP_ENDSWITH: _ClassVar[Op]
     OP_CONTAINS: _ClassVar[Op]
+    OP_DIVIDES_BY: _ClassVar[Op]
+    OP_NOT_DIVIDES_BY: _ClassVar[Op]
 OP_UNSPECIFIED: Op
 OP_EQ: Op
 OP_EQ_EPS: Op
@@ -35,6 +37,8 @@ OP_LIKE: Op
 OP_STARTSWITH: Op
 OP_ENDSWITH: Op
 OP_CONTAINS: Op
+OP_DIVIDES_BY: Op
+OP_NOT_DIVIDES_BY: Op
 
 class Vec2(_message.Message):
     __slots__ = ("x", "y")

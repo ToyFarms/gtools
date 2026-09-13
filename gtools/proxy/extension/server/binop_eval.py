@@ -110,6 +110,8 @@ _OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
     Op.OP_STARTSWITH: lambda lval, rval: lval.startswith(rval),
     Op.OP_ENDSWITH: lambda lval, rval: lval.endswith(rval),
     Op.OP_CONTAINS: lambda lval, rval: rval in lval,
+    Op.OP_DIVIDES_BY: lambda lval, rval: rval % lval == 0,
+    Op.OP_NOT_DIVIDES_BY: lambda lval, rval: rval % lval != 0,
 }
 
 logger = logging.getLogger("matcher")

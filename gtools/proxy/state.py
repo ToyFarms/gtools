@@ -326,7 +326,7 @@ class State:
                                     ),
                                 )
                             case NpcEvent.BURP:
-                                # send particle and play audio for GHOST_SHARK, TRAPPED_GHOST_JAR, HOMING_PROJECTILE, UNK4
+                                # only display particle and play audio
                                 pass
                             case NpcEvent.TELEPORT:
                                 self.send_state_update(
@@ -347,7 +347,6 @@ class State:
                                     ),
                                 )
                             case NpcEvent.DIE:
-                                # send particle and play audio for NORMAL_FEATHER_ATTACK, ROTATING, THANKSGIVING_TURKEY, and ULT_FEATHER_ATTACK
                                 self.send_state_update(
                                     broker,
                                     StateUpdate(
@@ -375,7 +374,6 @@ class State:
                             case NpcEvent.PUNCH:
                                 pass
                             case NpcEvent.OUCH:
-                                # just spawning particle for THANKSGIVING_TURKEY, and ROTATING
                                 pass
                             case NpcEvent.ATTACK:
                                 pass

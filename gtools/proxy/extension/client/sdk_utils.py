@@ -113,6 +113,12 @@ class BinOpSelector:
     def like(self, other: "helper.Type | TAny") -> BinOp:
         return self._binop(other, Op.OP_LIKE)
 
+    def divides_by(self, other: "helper.Type | TAny") -> BinOp:
+        return self._binop(other, Op.OP_DIVIDES_BY)
+
+    def not_divides_by(self, other: "helper.Type | TAny") -> BinOp:
+        return self._binop(other, Op.OP_NOT_DIVIDES_BY)
+
 
 def any(obj: object) -> Any:
     ret = Any()
