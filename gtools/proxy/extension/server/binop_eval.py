@@ -3,7 +3,7 @@ import re
 from typing import Any, Callable, cast
 
 from google.protobuf.internal.containers import RepeatedCompositeFieldContainer
-from gtools.core.growtopia.packet import NetType, TankPacket, TankType
+from gtools.core.growtopia.packet import TankPacket
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.protogen.extension_pb2 import InterestType
@@ -110,8 +110,8 @@ _OP_EVALUATE: dict[Op, Callable[[Any, Any], bool]] = {
     Op.OP_STARTSWITH: lambda lval, rval: lval.startswith(rval),
     Op.OP_ENDSWITH: lambda lval, rval: lval.endswith(rval),
     Op.OP_CONTAINS: lambda lval, rval: rval in lval,
-    Op.OP_DIVIDES_BY: lambda lval, rval: rval % lval == 0,
-    Op.OP_NOT_DIVIDES_BY: lambda lval, rval: rval % lval != 0,
+    Op.OP_DIVIDES_BY: lambda lval, rval: lval % rval == 0,
+    Op.OP_NOT_DIVIDES_BY: lambda lval, rval: lval % rval != 0,
 }
 
 logger = logging.getLogger("matcher")
