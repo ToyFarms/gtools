@@ -27,6 +27,7 @@ enum StateUpdateWhat {
   STATE_UPDATE_CLOTHING = 20;
   STATE_RELOAD_ITEMS_DATABASE = 21;
   STATE_MODIFY_SUCKER = 22;
+  STATE_APPLY_DAMAGE = 23;
 }
 
 message StateUpdate {
@@ -52,7 +53,15 @@ message StateUpdate {
     UpdateClothing update_clothing = 19;
     ReloadItemsDatabase reload_items_database = 20;
     ModifySucker modify_sucker = 21;
+    ApplyDamage apply_damage = 22;
   }
+}
+
+message ApplyDamage {
+  int32 x = 1;
+  int32 y = 2;
+  uint32 damage = 3;
+  uint32 dice_extra = 4;
 }
 
 message ModifySucker {

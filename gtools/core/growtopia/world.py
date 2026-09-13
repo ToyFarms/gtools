@@ -12,13 +12,19 @@ from typing import Any, Callable, Iterator, Literal, Type, overload
 from pyglm import glm
 from pyglm.glm import ivec2, vec2
 from gtools.baked.items import (
+    ADVENTURE_ITEM_CRYSTAL_GOBLET,
+    ADVENTURE_ITEM_PINEAPPLE,
+    ADVENTURE_ITEM_ROPE,
+    ADVENTURE_ITEM_TORCH,
     ANCIENT_BLOCK,
     ANGRY_ADVENTURE_GORILLA,
+    ANTIGRAVITY_GENERATOR,
     AQUA_CAVE_CRYSTAL_SEED,
     AUCTION_BLOCK,
     AUDIO_GEAR,
     AUDIO_RACK,
     AUTO_SURGEON_STATION,
+    BALLOON_JAMMER,
     BATTLE_PET_CAGE,
     BEDROCK,
     BEDROCK_CANDY,
@@ -42,6 +48,7 @@ from gtools.baked.items import (
     BOUNTIFUL_MONKSHOOD_ROOTS,
     BOUNTIFUL_WHITE_DOLL_S_EYES_ROOTS,
     BUILDER_S_LOCK,
+    BULLSEYE,
     CAVE_COLUMN,
     CAVE_DIRT,
     CAVE_PLATFORM,
@@ -62,6 +69,7 @@ from gtools.baked.items import (
     GREAT_TURRET_OF_GROWTOPIA,
     GREAT_WALL_OF_GROWTOPIA,
     GROWMOJI_TURKEY_SEED,
+    GUARDIAN_PINEAPPLE,
     GUILD_FLAG_POLE_SPEAR,
     GUILD_FLAG_POLE_WINGS,
     GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE_SEED,
@@ -91,8 +99,10 @@ from gtools.baked.items import (
     SMALL_LOCK,
     STALACTITE,
     STALAGMITE,
+    STEAM_CRANK,
     STEAM_LAUNCHER,
     STEAM_PIPE,
+    STEAM_SPIKES,
     STONE_PAGODA,
     STONE_PAGODA_BASE,
     STONE_PAGODA_ROOF_ELEMENT_SEED,
@@ -3558,19 +3568,19 @@ class World:
             self.place_fg(tile, 0)
             self.update_3x3_connection(tile)
         else:
-            seed = tile.extra.get(SeedTile)
-            seed.item_on_tree = item_id
-            if spawn_seed_flag:
-                tile.flags |= TileFlags.WILL_SPAWN_SEEDS_TOO
-            else:
-                tile.flags &= ~TileFlags.WILL_SPAWN_SEEDS_TOO
+            if isinstance(tile.extra, SeedTile):
+                tile.extra.item_on_tree = item_id
+                if spawn_seed_flag:
+                    tile.flags |= TileFlags.WILL_SPAWN_SEEDS_TOO
+                else:
+                    tile.flags &= ~TileFlags.WILL_SPAWN_SEEDS_TOO
 
-            if seedling_flag:
-                tile.flags |= TileFlags.IS_SEEDLING
-            else:
-                tile.flags &= ~TileFlags.IS_SEEDLING
+                if seedling_flag:
+                    tile.flags |= TileFlags.IS_SEEDLING
+                else:
+                    tile.flags &= ~TileFlags.IS_SEEDLING
 
-            self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
+                self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
 
             # TODO: set current time here
             # TODO: store somewhere the seed placed time
@@ -3645,6 +3655,54 @@ class World:
                 tile.flags &= ~TileFlags.FLIPPED_X
 
         self.update_3x3_connection(tile)
+
+    def apply_damage(self, tile: Tile, damage: int, dice_extra: int = 0) -> None:
+        item = item_database.get(tile.front)
+        if tile.fg_id:
+            if item.item_type in (ItemInfoType.BOOMBOX, ItemInfoType.BOOMBOX2) and item.id != BULLSEYE:
+                # if item.id in (BALLOON_JAMMER, GUARDIAN_PINEAPPLE):
+                # LOWORD(ItemById) = tile->accumulatedDamage - (_WORD)damage;
+                # if ( tile->accumulatedDamage - damage > 0 )
+                #     return (__int16)ItemById;
+                if tile.fg_id != ANTIGRAVITY_GENERATOR:
+                    tile.flags ^= TileFlags.IS_ON
+                # if ( getForeground(tile) == GREEN_FOUNTAIN && (tile->flags & IS_ON) != 0 )
+                # {
+                #   v21 = getOrInitAppContext();
+                #   v22 = GetActiveTimingSystem(v21);
+                #   tile->nextUpdateMs = getTick(v22) + 1;
+                # }
+            if item.item_type == ItemInfoType.PUNCH_TOGGLE:
+                tile.flags ^= TileFlags.IS_ON
+
+            if tile.fg_id == STEAM_CRANK:
+                tile.flags ^= TileFlags.IS_ON
+
+            if (
+                item.item_type in (ItemInfoType.SWITCHEROO, ItemInfoType.CHEST, ItemInfoType.LAB)
+                or (item.item_type == ItemInfoType.DEADLY_IF_ON and tile.fg_id not in (STEAM_SPIKES, ANGRY_ADVENTURE_GORILLA))
+                and not (
+                    (tile.fg_id >= ADVENTURE_ITEM_ROPE and tile.fg_id <= ADVENTURE_ITEM_TORCH and (tile.fg_id & 1) == 0)
+                    or tile.fg_id in (ADVENTURE_ITEM_PINEAPPLE, ADVENTURE_ITEM_CRYSTAL_GOBLET)
+                )
+            ):
+                tile.flags ^= TileFlags.IS_ON
+
+            if item.item_type == ItemInfoType.SFX_WITH_EXTRA_FRAME or item.item_type == ItemInfoType.DICE or item.item_type == ItemInfoType.PROVIDER:
+                tile.flags ^= TileFlags.IS_ON
+                # if ( *(_DWORD *)&v15->itemId == TOTALLY_HARMLESS_DOLL )
+                # {
+                #   LODWORD(ItemById) = randInt(5000);
+                #   tile->nextUpdateMs += (int)ItemById;
+                # }
+
+            # if item.item_type == ItemInfoType.DICE:
+            #     tile.extra = TileExtra(type=TileExtraType(dice_extra))
+        elif tile.bg_id:
+            if item.item_type == ItemInfoType.BACK_BOOMBOX:
+                tile.flags ^= TileFlags.BG_IS_ON
+            if item.item_type == ItemInfoType.BACKGD_SFX_EXTRA_FRAME and tile.flags & TileFlags.BG_IS_ON != 0:
+                tile.flags ^= TileFlags.BG_IS_ON
 
     def update_lock(self, pos: ivec2, lock_owner_id: int, lock_item_id: int, tiles_affected: Iterator[int]) -> None:
         if lock_tile := self.get_tile(pos):

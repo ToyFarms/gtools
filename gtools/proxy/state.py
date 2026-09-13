@@ -19,11 +19,11 @@ from gtools.core.growtopia.world import ItemSuckerTile, Npc, NpcEvent, NpcType, 
 from gtools.protogen import growtopia_pb2
 from gtools.protogen.extension_pb2 import DIRECTION_SERVER_TO_CLIENT, INTEREST_STATE_UPDATE, Packet
 from gtools.protogen.state_pb2 import (
+    STATE_APPLY_DAMAGE,
     STATE_ENTER_WORLD,
     STATE_EXIT_WORLD,
     STATE_MODIFY_INVENTORY,
     STATE_MODIFY_ITEM,
-    STATE_MODIFY_SUCKER,
     STATE_MODIFY_WORLD,
     STATE_NPC_UPDATE,
     STATE_PLAYER_JOIN,
@@ -39,10 +39,10 @@ from gtools.protogen.state_pb2 import (
     STATE_UPDATE_CLOTHING,
     STATE_UPDATE_STATUS,
     STATE_UPDATE_TREE_STATE,
+    ApplyDamage,
     EnterWorld,
     ModifyInventory,
     ModifyItem,
-    ModifySucker,
     ModifyWorld,
     NpcRemoveByCond,
     NpcUpdate,
@@ -220,19 +220,19 @@ class State:
                                     ),
                                 ),
                             )
-                    case TankType.ITEM_EFFECT:
-                        if pkt.tank.animation_type == 6:
-                            self.send_state_update(
-                                broker,
-                                StateUpdate(
-                                    what=STATE_MODIFY_SUCKER,
-                                    modify_sucker=ModifySucker(
-                                        x=int(pkt.tank.vector_x // 32),
-                                        y=int(pkt.tank.vector_y // 32),
-                                        to_add=1,
-                                    ),
+                    case TankType.TILE_APPLY_DAMAGE:
+                        self.send_state_update(
+                            broker,
+                            StateUpdate(
+                                what=STATE_APPLY_DAMAGE,
+                                apply_damage=ApplyDamage(
+                                    x=pkt.tank.int_x,
+                                    y=pkt.tank.int_y,
+                                    damage=pkt.tank.value,
+                                    dice_extra=pkt.tank.animation_type
                                 ),
-                            )
+                            ),
+                        )
                     case TankType.SEND_TILE_TREE_STATE:
                         self.send_state_update(
                             broker,
@@ -725,7 +725,7 @@ class State:
                     self.logger.warning("update tree state, but world is not initialized")
                     return
 
-                if tile := self.world.get_tile(ivec2(upd.update_tree_state.x, upd.update_tree_state.y)):
+                if tile := self.world.get_tile(upd.update_tree_state.x, upd.update_tree_state.y):
                     self.world.update_tree(
                         tile=tile,
                         item_id=upd.update_tree_state.item_id,
@@ -738,7 +738,7 @@ class State:
                     self.logger.warning("tile change request, but world is not initialized")
                     return
 
-                if tile := self.world.get_tile(ivec2(upd.tile_change_req.x, upd.tile_change_req.y)):
+                if tile := self.world.get_tile(upd.tile_change_req.x, upd.tile_change_req.y):
                     self.world.tile_change(
                         tile=tile,
                         inventory=self.inventory,
@@ -749,6 +749,13 @@ class State:
                         should_take_item=upd.tile_change_req.should_take_item,
                         item_on_tree=upd.tile_change_req.tree_item_amount,
                     )
+            case StateUpdateWhat.STATE_APPLY_DAMAGE:
+                if not self.world:
+                    self.logger.warning("apply damage, but world is not initialized")
+                    return
+
+                if tile := self.world.get_tile(upd.apply_damage.x, upd.apply_damage.y):
+                    self.world.apply_damage(tile, upd.apply_damage.damage, upd.apply_damage.dice_extra)
             case StateUpdateWhat.STATE_NPC_UPDATE:
                 if not self.world:
                     self.logger.warning("npc update, but world is not initialized")
