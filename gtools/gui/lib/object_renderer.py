@@ -156,7 +156,14 @@ class ObjectRenderer:
         self._pixel_scale = self._shader.get_uniform("u_pixelScale")
         self._z_offset = self._shader.get_uniform("u_zOffset")
 
-        self._chunks: dict[ChunkKey, tuple[ChunkBounds, ObjectRenderMesh, int]] = {}
+        # bound, mesh, count, signature
+        self._chunks: dict[ChunkKey, tuple[ChunkBounds, ObjectRenderMesh, int, int | None]] = {}
+
+        self._visible_count = 0
+
+    @property
+    def visible_count(self) -> int:
+        return self._visible_count
 
     @staticmethod
     def _chunk_bounds(chunk_x: int, chunk_y: int, chunk_size: int = 8, tile_size: int = 32) -> ChunkBounds:
@@ -173,7 +180,7 @@ class ObjectRenderer:
 
     @property
     def total_items(self) -> int:
-        return sum(count for _, _, count in self._chunks.values())
+        return sum(count for _, _, count, _ in self._chunks.values())
 
     def any(self) -> bool:
         return bool(self._chunks)
@@ -182,8 +189,9 @@ class ObjectRenderer:
         self._delete_chunk(chunk_key)
         if not items:
             return
+
         mesh = self.build(items, **build_kwargs)
-        self._chunks[chunk_key] = (self._chunk_bounds(*chunk_key), mesh, len(items))
+        self._chunks[chunk_key] = (self._chunk_bounds(*chunk_key), mesh, len(items), None)
 
     def sync(self, items: Iterable[DroppedItem], **build_kwargs) -> None:
         buckets: dict[ChunkKey, list[DroppedItem]] = defaultdict(list)
@@ -202,12 +210,12 @@ class ObjectRenderer:
                 existing[1].delete()
 
             mesh = self.build(chunk_items, **build_kwargs)
-            self._chunks[key] = (self._chunk_bounds(*key), mesh, hash(signature))
+            self._chunks[key] = (self._chunk_bounds(*key), mesh, len(chunk_items), hash(signature))
 
     def _delete_chunk(self, key: ChunkKey) -> None:
         entry = self._chunks.pop(key, None)
         if entry is not None:
-            _, mesh, _ = entry
+            _, mesh, _, _ = entry
             mesh.delete()
 
     def delete(self) -> None:
@@ -220,9 +228,13 @@ class ObjectRenderer:
         return tuple(sorted((item.uid, item.id, item.amount, round(item.pos.x, 2), round(item.pos.y, 2)) for item in items))
 
     def _visible_meshes(self, cull: Camera2D | None) -> Iterable[ObjectRenderMesh]:
-        for bounds, mesh, _ in self._chunks.values():
+        total = 0
+        for bounds, mesh, count, _ in self._chunks.values():
             if cull is None or cull.is_visible(*bounds):
+                total += count
                 yield mesh
+
+        self._visible_count = total
 
     def draw_chunks(
         self,
@@ -244,7 +256,7 @@ class ObjectRenderer:
         pixel_scale: float = 1,
         z_offset: float = 0,
     ) -> None:
-        for _, mesh, _ in self._chunks.values():
+        for _, mesh, _, _ in self._chunks.values():
             self.draw_3d(camera3d, mesh, layer_spread, rotation=rotation, pixel_scale=pixel_scale, z_offset=z_offset)
 
     def draw_chunks_shadow(
@@ -263,7 +275,7 @@ class ObjectRenderer:
         layer_spread: float,
         z_offset: float = 0,
     ) -> None:
-        for _, mesh, _ in self._chunks.values():
+        for _, mesh, _, _ in self._chunks.values():
             self.draw_shadow_3d(camera3d, mesh, layer_spread, z_offset=z_offset)
 
     def draw(

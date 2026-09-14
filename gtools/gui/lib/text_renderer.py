@@ -76,7 +76,7 @@ class TextRenderer(Renderer):
         edge_softness: float = 0.1,
         weight: float = 0.0,
     ) -> None:
-        self.font = FontManager(
+        self.font = FontManager.acquire(
             font_path,
             size=size,
             sdf_pixel_range=sdf_pixel_range,

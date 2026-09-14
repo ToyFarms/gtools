@@ -25,34 +25,24 @@ from OpenGL.GL import (
 import glfw
 from imgui_bundle import ImVec2, imgui, imgui_knobs  # pyright: ignore[reportMissingModuleSource]
 from pyglm import glm
-from pyglm.glm import ivec2, vec2
+from pyglm.glm import vec2
 import hashlib
 import colorsys
 
 from gtools import setting
-from gtools.baked.items import PAINTING_EASEL
 from gtools.core import ndialog
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import (
-    DisplayBlockTile,
     DroppedItem,
-    HeartOfGaiaTile,
-    ItemSuckerTile,
-    PaintingEaselTile,
-    SeedTile,
-    ShelfTile,
-    TechnoOrganicEngineTile,
-    TesseractManipulatorTile,
     Tile,
-    VendingMachineTile,
     World,
     WorldEvent,
 )
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
-from gtools.gui.lib.layer import OBJECT_PRE_FOREGROUND_END, OBJECT_PRE_FOREGROUND_START, OBJECT_DROPPED_END, OBJECT_POST_FOREGROUND_START, WORLD_POST_FOREGROUND
-from gtools.gui.lib.object_renderer import ObjectRenderMesh, ObjectRenderer
+from gtools.gui.lib.layer import WORLD_POST_FOREGROUND
+from gtools.gui.lib.dropped_object_renderer import DroppedObjectRenderer
 from gtools.gui.lib.tile_overlay_renderer import TileOverlayRenderer
 from gtools.gui.opengl import Framebuffer, Mesh
 from gtools.gui.event import Event, ScrollEvent, MouseButtonEvent, CursorMoveEvent, KeyEvent, TouchEvent
@@ -63,15 +53,6 @@ from gtools.gui.lib.player_renderer import PlayerRenderer
 from gtools.gui.lib.npc_renderer import NpcRenderer
 import gtools.gui.lib.perf_stats as perf_stats
 from gtools.gui.panels.panel import Panel
-
-
-@dataclass(slots=True)
-class ObjectRenderable:
-    mesh: ObjectRenderMesh
-    renderer: ObjectRenderer
-    rotation: float = 0.0
-    pixel_scale: float = 1.0
-    z_offset: float = 0.0
 
 
 type RenderOrder2D = Callable[[Camera2D, Camera2D | None], Any]
@@ -180,14 +161,6 @@ class RenderOrder:
         self._record_overall("draw_3d", (time.perf_counter_ns() - start_overall) / 1_000_000.0)
 
 
-_TREE_ICON_OFFSET = {
-    0: (-4, -7),
-    1: (6, -7),
-    2: (-10, 2),
-    3: (0, 2),
-}
-
-
 class WorldRenderer:
     def __init__(self, world: World) -> None:
         self._world = world
@@ -237,8 +210,7 @@ class WorldRenderer:
         self._tile_renderer = TileRenderer()
         self._tile_renderer.load(self._world)
 
-        self._renderer_pre_fg = ObjectRenderer(OBJECT_PRE_FOREGROUND_START, OBJECT_PRE_FOREGROUND_END)
-        self._renderer_post_fg = ObjectRenderer(OBJECT_POST_FOREGROUND_START, OBJECT_DROPPED_END)
+        self._dropped_object_renderer = DroppedObjectRenderer()
 
         self._history_2d: deque[tuple[glm.vec2, float]] = deque(maxlen=10)
         self._history_3d: deque[tuple[glm.vec3, float, float]] = deque(maxlen=10)
@@ -248,7 +220,6 @@ class WorldRenderer:
         self._drag_handlers_2d, self._drag_handlers_3d = self._build_drag_handlers()
 
         self._render_order = RenderOrder()
-        self._obj_meshes: list[ObjectRenderMesh] = []
         self._culling_debug_zoom: float = 1.0
         self._follow_playhead = False
         self._last_playhead_pos: glm.vec2 | None = None
@@ -274,10 +245,8 @@ class WorldRenderer:
         self._smoothed_times_last_update: float = 0.0
         self._SMOOTHED_TIMES_INTERVAL = 0.1
 
-        self.tile_objects = 0
+        self._dropped_object_renderer.sync(self._world.dropped.items)
         self._init_render_order()
-
-        self._needs_obj_rebuild = False
 
         self._tile_updates: set[tuple[int, int]] = set()
         self._tile_update_lock = threading.Lock()
@@ -286,8 +255,10 @@ class WorldRenderer:
         self._tile_overlay_update_lock = threading.Lock()
 
         self._entity_update: bool = False
-
         self._entity_update_lock = threading.Lock()
+
+        self._dropped_update: bool = False
+        self._dropped_update_lock = threading.Lock()
 
         self._world.subscribe(WorldEvent.TILE_UPDATE, batch=self._on_tile_update_batch)
         self._world.subscribe(WorldEvent.DROPPED_UPDATE, single=self._on_dropped_update)
@@ -297,6 +268,22 @@ class WorldRenderer:
     @property
     def hovered_tile(self) -> Tile | None:
         return self._hovered_tile
+
+    @property
+    def tile_objects(self) -> int:
+        return self._tile_renderer.tile_object_count
+
+    @property
+    def tile_objects_visible(self) -> int:
+        return self._tile_renderer.visible_count
+
+    @property
+    def dropped_objects(self) -> int:
+        return self._dropped_object_renderer.total_items
+
+    @property
+    def dropped_objects_visible(self) -> int:
+        return self._dropped_object_renderer.visible_count
 
     @property
     def mixer(self) -> AudioMixer:
@@ -403,141 +390,13 @@ class WorldRenderer:
         else:
             out["render_layer"] = self._render_order.last_overall_times.get("draw_2d", 0)
 
-    def _build_object_renderable(self) -> list[ObjectRenderable]:
-        self.tile_objects = 0
-        icons: defaultdict[str, list[DroppedItem]] = defaultdict(list)
-        for tile in self._world.tiles.values():
-            if not tile.extra:
-                continue
-
-            if isinstance(tile.extra, DisplayBlockTile) and tile.extra.item_id != 0:
-                icons["display"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
-            elif isinstance(tile.extra, SeedTile):
-                for i in range(tile.extra.item_on_tree):
-                    icons["tree"].append(DroppedItem(pos=vec2(tile.pos) * 32 + _TREE_ICON_OFFSET[i], id=tile.fg_id - 1))
-            elif isinstance(tile.extra, VendingMachineTile) and tile.extra.item_id != 0 and tile.extra.price != 0:
-                icons["vending"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(-2, -3), id=tile.extra.item_id))
-            elif isinstance(tile.extra, PaintingEaselTile) and tile.extra.item_id != 0:
-                icons["easel"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(2, -6), id=tile.extra.item_id))
-                icons["easel_mark"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(2, 0), id=PAINTING_EASEL))
-            elif isinstance(tile.extra, ShelfTile):
-                for id, pos in (
-                    (tile.extra.top_left_item_id, (-5, -8)),
-                    (tile.extra.top_right_item_id, (7, -8)),
-                    (tile.extra.bottom_left_item_id, (-5, 7)),
-                    (tile.extra.bottom_right_item_id, (7, 7)),
-                ):
-                    if id != 0:
-                        icons["shelf"].append(DroppedItem(pos=vec2(tile.pos) * 32 + vec2(pos), id=id))
-            elif isinstance(tile.extra, ItemSuckerTile):
-                icons["sucker"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
-            elif isinstance(tile.extra, (TesseractManipulatorTile, HeartOfGaiaTile)):
-                icons["sucker"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
-            elif isinstance(tile.extra, TechnoOrganicEngineTile):
-                icons["sucker"].append(DroppedItem(pos=vec2(tile.pos) * 32, id=tile.extra.item_id))
-
-        for obj in icons.values():
-            self.tile_objects += len(obj)
-
-        renderable: list[ObjectRenderable] = []
-
-        if icons["sucker"]:
-            renderable.append(
-                ObjectRenderable(
-                    mesh=self._renderer_pre_fg.build(
-                        icons["sucker"],
-                        flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
-                        icon_scale=0.5,
-                    ),
-                    renderer=self._renderer_pre_fg,
-                )
-            )
-            self._obj_meshes.append(renderable[-1].mesh)
-
-        if icons["display"]:
-            renderable.append(
-                ObjectRenderable(
-                    mesh=self._renderer_pre_fg.build(
-                        icons["display"],
-                        flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
-                        icon_scale=1,
-                    ),
-                    renderer=self._renderer_pre_fg,
-                )
-            )
-            self._obj_meshes.append(renderable[-1].mesh)
-
-        if icons["tree"]:
-            renderable.append(
-                ObjectRenderable(
-                    mesh=self._renderer_post_fg.build(
-                        icons["tree"],
-                        flags=ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT,
-                        icon_scale=0.30,
-                    ),
-                    renderer=self._renderer_post_fg,
-                )
-            )
-            self._obj_meshes.append(renderable[-1].mesh)
-
-        if self._world.dropped.items:
-            renderable.append(
-                ObjectRenderable(
-                    mesh=self._renderer_post_fg.build(
-                        self._world.dropped.items,
-                        icon_scale=0.5,
-                        overlay_scale=1,
-                        pos_offset=vec2(-8, -8),
-                        flags=ObjectRenderer.Flags.ORDER_BY_UID,
-                    ),
-                    renderer=self._renderer_post_fg,
-                )
-            )
-            self._obj_meshes.append(renderable[-1].mesh)
-
-        flag = ObjectRenderer.Flags.NO_OVERLAY | ObjectRenderer.Flags.NO_SHADOW | ObjectRenderer.Flags.NO_TEXT
-        if icons["easel"]:
-            renderable.append(
-                ObjectRenderable(
-                    mesh=self._renderer_post_fg.build(icons["easel"], flags=flag, icon_scale=0.5, pos_offset=vec2(-2, 3)),
-                    renderer=self._renderer_post_fg,
-                    rotation=0.2,
-                    pixel_scale=1.2,
-                )
-            )
-            self._obj_meshes.append(renderable[-1].mesh)
-            renderable.append(
-                ObjectRenderable(
-                    mesh=self._renderer_post_fg.build(icons["easel_mark"], flags=flag, icon_scale=1.1, tex_offset=ivec2(0, 1), tint=(0.3, 0.3, 0.3)),
-                    renderer=self._renderer_post_fg,
-                    rotation=0.1,
-                    z_offset=0.001,
-                )
-            )
-            self._obj_meshes.append(renderable[-1].mesh)
-
-        if icons["vending"]:
-            renderable.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["vending"], flags=flag, icon_scale=0.5), renderer=self._renderer_post_fg))
-            self._obj_meshes.append(renderable[-1].mesh)
-
-        if icons["shelf"]:
-            renderable.append(ObjectRenderable(mesh=self._renderer_post_fg.build(icons["shelf"], flags=flag, icon_scale=0.3), renderer=self._renderer_post_fg))
-            self._obj_meshes.append(renderable[-1].mesh)
-
-        return renderable
-
     def _init_render_order(self) -> None:
         self._render_order.clear()
-        for mesh in self._obj_meshes:
-            mesh.delete()
-        self._obj_meshes.clear()
-
-        obj_renderable = self._build_object_renderable()
 
         self._render_order.add(
             "Obj Shadows",
-            lambda cam, cull: self._draw_obj_group_shadows_2d(cam, obj_renderable),
-            lambda cam3d, s: self._draw_obj_group_shadows_3d(cam3d, s, obj_renderable),
+            lambda cam, cull: self._draw_obj_shadows_2d(cam, cull),
+            lambda cam3d, s: self._draw_obj_shadows_3d(cam3d, s),
         )
 
         self._render_order.add(
@@ -551,11 +410,10 @@ class WorldRenderer:
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_before"),
         )
 
-        pre_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_pre_fg]
         self._render_order.add(
             "Obj pre-FG",
-            lambda cam, cull: self._draw_obj_group_main_2d(cam, pre_fg_tasks),
-            lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, pre_fg_tasks),
+            lambda cam, cull: self._tile_renderer.draw_objects_pre_foreground(cam, cull),
+            lambda cam3d, s: self._tile_renderer.draw_objects_pre_foreground_3d(cam3d, s),
         )
 
         self._render_order.add(
@@ -569,11 +427,10 @@ class WorldRenderer:
             lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_after"),
         )
 
-        post_fg_tasks = [t for t in obj_renderable if t.renderer == self._renderer_post_fg]
         self._render_order.add(
             "Obj Post-FG",
-            lambda cam, cull: self._draw_obj_group_main_2d(cam, post_fg_tasks),
-            lambda cam3d, s: self._draw_obj_group_main_3d(cam3d, s, post_fg_tasks),
+            lambda cam, cull: self._tile_renderer.draw_objects_post_foreground(cam, cull),
+            lambda cam3d, s: self._tile_renderer.draw_objects_post_foreground_3d(cam3d, s),
         )
 
         self._render_order.add(
@@ -586,6 +443,12 @@ class WorldRenderer:
             "NPCs",
             lambda camera, cull: self._npc_renderer.draw(camera, list(self._world.npcs.values())),
             lambda camera3d, layer_spread: self._npc_renderer.draw_3d(camera3d, layer_spread, list(self._world.npcs.values())),
+        )
+
+        self._render_order.add(
+            "Dropped Objects",
+            lambda cam, cull: self._dropped_object_renderer.draw(cam, cull),
+            lambda cam3d, s: self._dropped_object_renderer.draw_3d(cam3d, s),
         )
 
         self._render_order.add(
@@ -611,7 +474,6 @@ class WorldRenderer:
             lambda camera3d, layer_spread: self._highlight_renderer.draw_playhead_3d(camera3d, self._sheet, self._world.width, layer_spread),
         )
 
-        self._tile_overlay_mesh = None
         self._render_order.add(
             "Tile Overlay",
             lambda camera, cull: self._render_tile_overlay and self._tile_overlay_mesh and self._tile_overlay_renderer.draw(camera, self._tile_overlay_mesh),
@@ -620,25 +482,19 @@ class WorldRenderer:
             and self._tile_overlay_renderer.draw_3d(camera3d, layer_spread, self._tile_overlay_mesh),
         )
 
-    def _draw_obj_group_shadows_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
+    def _draw_obj_shadows_2d(self, camera: Camera2D, culling_camera: Camera2D | None) -> None:
         glDepthMask(GL_FALSE)
-        for task in tasks:
-            task.renderer.draw_shadow(camera, task.mesh, z_offset=task.z_offset)
+        self._tile_renderer.draw_objects_pre_foreground_shadow(camera, culling_camera)
+        self._tile_renderer.draw_objects_post_foreground_shadow(camera, culling_camera)
+        self._dropped_object_renderer.draw_shadow(camera, culling_camera)
         glDepthMask(GL_TRUE)
 
-    def _draw_obj_group_shadows_3d(self, camera3d: Camera3D, layer_spread: float, tasks: list[ObjectRenderable]) -> None:
+    def _draw_obj_shadows_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
         glDepthMask(GL_FALSE)
-        for task in tasks:
-            task.renderer.draw_shadow_3d(camera3d, task.mesh, layer_spread, z_offset=task.z_offset)
+        self._tile_renderer.draw_objects_pre_foreground_shadow_3d(camera3d, layer_spread)
+        self._tile_renderer.draw_objects_post_foreground_shadow_3d(camera3d, layer_spread)
+        self._dropped_object_renderer.draw_shadow_3d(camera3d, layer_spread)
         glDepthMask(GL_TRUE)
-
-    def _draw_obj_group_main_2d(self, camera: Camera2D, tasks: list[ObjectRenderable]) -> None:
-        for task in tasks:
-            task.renderer.draw(camera, task.mesh, rotation=task.rotation, pixel_scale=task.pixel_scale, z_offset=task.z_offset)
-
-    def _draw_obj_group_main_3d(self, camera3d: Camera3D, layer_spread: float, tasks: list[ObjectRenderable]) -> None:
-        for task in tasks:
-            task.renderer.draw_3d(camera3d, task.mesh, layer_spread, rotation=task.rotation, pixel_scale=task.pixel_scale, z_offset=task.z_offset)
 
     def _on_tile_update(self, x: int, y: int) -> None:
         with self._tile_update_lock:
@@ -658,7 +514,8 @@ class WorldRenderer:
             self._tile_overlay_update = True
 
     def _on_dropped_update(self) -> None:
-        self._needs_obj_rebuild = True
+        with self._dropped_update_lock:
+            self._dropped_update = True
         self._dirty = True
 
     def _on_player_update(self) -> None:
@@ -678,14 +535,10 @@ class WorldRenderer:
         self._mixer.stop()
 
         self._tile_renderer.delete()
-        for mesh in self._obj_meshes:
-            mesh.delete()
-        self._obj_meshes.clear()
 
         self._render_order.clear()
 
-        self._renderer_pre_fg.delete()
-        self._renderer_post_fg.delete()
+        self._dropped_object_renderer.delete()
 
         self._fbo.delete()
         self._highlight_renderer.delete()
@@ -813,7 +666,7 @@ class WorldRenderer:
     def rebuild_mesh(self) -> None:
         self._tile_renderer.load(self._world)
 
-        self._needs_obj_rebuild = True
+        self._dropped_object_renderer.sync(self._world.dropped.items)
 
         if self._tile_overlay_mesh:
             self._tile_overlay_mesh.delete()
@@ -985,9 +838,10 @@ class WorldRenderer:
                 self._camera3d.resize(cw, ch)
                 self._dirty = True
 
-            if self._needs_obj_rebuild:
-                self._init_render_order()
-                self._needs_obj_rebuild = False
+            with self._dropped_update_lock:
+                if self._dropped_update:
+                    self._dropped_object_renderer.sync(self._world.dropped.items)
+                    self._dropped_update = False
 
             if self._render_tile_overlay and (self._tile_overlay_mesh is None or self._dirty):
                 self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
@@ -1305,8 +1159,8 @@ class WorldRenderer:
 
         imgui.spacing()
         imgui.text(f"Textures: {self._tile_renderer.texture_count}")
-        imgui.text(f"Objects: {len(self._world.dropped.items)}")
-        imgui.text(f"Tile Objects: {self.tile_objects}")
+        imgui.text(f"Dropped Objects: L={self.dropped_objects_visible} T={self.dropped_objects}")
+        imgui.text(f"Tile Objects: L={self.tile_objects_visible} T={self.tile_objects}")
         imgui.end_group()
 
         min_p = imgui.get_item_rect_min()

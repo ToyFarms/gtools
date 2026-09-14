@@ -1,3 +1,4 @@
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,10 @@ class Character:
 
 
 class FontManager:
+    _cache: dict[tuple, "FontManager"] = {}
+    _refcounts: dict[tuple, int] = {}
+    _lock = threading.Lock()
+
     def __init__(
         self,
         font_path: str | Path,
@@ -53,7 +58,51 @@ class FontManager:
         self.atlas_tex: int | None = None
         self._sdf_pixel_range_hi = float(sdf_pixel_range)
         self._sdf_pixel_range = self._sdf_pixel_range_hi / self.raster_scale
+        self._cache_key: tuple | None = None
         self._load_ascii_sdf()
+
+    @classmethod
+    def _make_key(
+        cls,
+        font_path: str | Path,
+        size: int,
+        sdf_pixel_range: float,
+        raster_scale: int,
+        atlas_min_size: int,
+    ) -> tuple:
+        return (
+            str(Path(font_path)),
+            int(size),
+            float(sdf_pixel_range),
+            max(1, int(raster_scale)),
+            max(64, int(atlas_min_size)),
+        )
+
+    @classmethod
+    def acquire(
+        cls,
+        font_path: str | Path,
+        size: int = 16,
+        sdf_pixel_range: float = 12.0,
+        raster_scale: int = 4,
+        atlas_min_size: int = 1024,
+    ) -> "FontManager":
+        key = cls._make_key(font_path, size, sdf_pixel_range, raster_scale, atlas_min_size)
+        with cls._lock:
+            instance = cls._cache.get(key)
+            if instance is None:
+                instance = cls(
+                    font_path,
+                    size=size,
+                    sdf_pixel_range=sdf_pixel_range,
+                    raster_scale=raster_scale,
+                    atlas_min_size=atlas_min_size,
+                )
+                instance._cache_key = key
+                cls._cache[key] = instance
+                cls._refcounts[key] = 0
+            cls._refcounts[key] += 1
+        return instance
 
     def _to_sdf(self, alpha: np.ndarray, padding: int) -> np.ndarray:
         source = alpha.astype(np.float32) / 255.0
@@ -177,5 +226,18 @@ class FontManager:
         return self.chars.get(char, self.chars[" "])
 
     def delete(self) -> None:
+        key = self._cache_key
+        if key is not None:
+            cls = type(self)
+            with cls._lock:
+                remaining = cls._refcounts.get(key, 1) - 1
+                if remaining > 0:
+                    cls._refcounts[key] = remaining
+                    return
+                cls._refcounts.pop(key, None)
+                cls._cache.pop(key, None)
+            self._cache_key = None
+
         if self.atlas_tex:
             glDeleteTextures(1, [self.atlas_tex])
+            self.atlas_tex = None

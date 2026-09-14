@@ -16,6 +16,7 @@ from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib import layer
 from gtools.gui.lib.chunked_renderer import ChunkedRenderer, ChunkKey
+from gtools.gui.lib.tile_object_renderer import TileObjectRenderer
 from gtools.gui.lib.tree_renderer import TreeRenderer
 from gtools.gui.opengl import Mesh, ShaderProgram, Uniform
 from gtools.gui.texture import GLTexManager, TextureArray
@@ -73,6 +74,7 @@ class TileRenderer(ChunkedRenderer):
         self._opacity3d = self._shader3d.get_uniform("u_opacity")
 
         self._tree_renderer = TreeRenderer()
+        self._tile_objects = TileObjectRenderer()
         self._chunk_meshes: dict[ChunkKey, list[tuple[str, TextureArray, Mesh]]] = {}
 
     def load(self, world: World) -> None:
@@ -80,7 +82,7 @@ class TileRenderer(ChunkedRenderer):
         self._tex_mgr.flush()
 
     def any(self) -> bool:
-        return any(rl.chunks for rl in self._layers.values()) or self._tree_renderer.any()
+        return any(rl.chunks for rl in self._layers.values()) or self._tree_renderer.any() or self._tile_objects.total_items > 0
 
     @property
     def texture_count(self) -> int:
@@ -115,8 +117,41 @@ class TileRenderer(ChunkedRenderer):
             self._draw_layers(None, self._tex3d, self._layer3d, self._opacity3d)
             self._tree_renderer.draw_3d(camera3d, layer_spread)
 
+    @property
+    def tile_object_count(self) -> int:
+        return self._tile_objects.total_items
+
+    @property
+    def visible_count(self) -> int:
+        return self._tile_objects.visible_count
+
+    def draw_objects_pre_foreground(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
+        self._tile_objects.draw_pre_foreground(camera, culling_camera)
+
+    def draw_objects_post_foreground(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
+        self._tile_objects.draw_post_foreground(camera, culling_camera)
+
+    def draw_objects_pre_foreground_shadow(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
+        self._tile_objects.draw_pre_foreground_shadow(camera, culling_camera)
+
+    def draw_objects_post_foreground_shadow(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
+        self._tile_objects.draw_post_foreground_shadow(camera, culling_camera)
+
+    def draw_objects_pre_foreground_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+        self._tile_objects.draw_pre_foreground_3d(camera3d, layer_spread)
+
+    def draw_objects_post_foreground_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+        self._tile_objects.draw_post_foreground_3d(camera3d, layer_spread)
+
+    def draw_objects_pre_foreground_shadow_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+        self._tile_objects.draw_pre_foreground_shadow_3d(camera3d, layer_spread)
+
+    def draw_objects_post_foreground_shadow_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+        self._tile_objects.draw_post_foreground_shadow_3d(camera3d, layer_spread)
+
     def delete(self) -> None:
         self._tree_renderer.delete()
+        self._tile_objects.delete()
 
         for chunk_list in self._chunk_meshes.values():
             for _, _, mesh in chunk_list:
@@ -172,6 +207,7 @@ class TileRenderer(ChunkedRenderer):
 
     def delete_chunk(self, chunk_key: ChunkKey) -> None:
         self._tree_renderer.delete_chunk(chunk_key)
+        self._tile_objects.delete_chunk(chunk_key)
 
         if chunk_key not in self._chunk_meshes:
             return
@@ -187,6 +223,7 @@ class TileRenderer(ChunkedRenderer):
     def build_chunk(self, world: World, chunk_x: int, chunk_y: int) -> None:
         # layer -> tex_array -> list[float]
         instances: dict[str, dict[TextureArray, list[float]]] = {key: defaultdict(list) for key in self._layers}
+        object_tiles: list[Tile] = []
 
         start_x, start_y, end_x, end_y = self.chunk_tile_range(world, chunk_x, chunk_y)
 
@@ -195,6 +232,9 @@ class TileRenderer(ChunkedRenderer):
                 tile = world.get_tile(x, y)
                 if not tile:
                     continue
+
+                if tile.extra:
+                    object_tiles.append(tile)
 
                 item = item_database.get(tile.fg_id)
 
@@ -307,6 +347,7 @@ class TileRenderer(ChunkedRenderer):
                 self._chunk_meshes[chunk_key].append((layer_key, tex_array, mesh))
 
         self._tree_renderer.build_chunk(world, chunk_x, chunk_y)
+        self._tile_objects.sync_chunk_tiles((chunk_x, chunk_y), object_tiles)
 
     def _tile_instance_data(self, tile: Tile, item_id: int, tex_index: int) -> tuple[TextureArray, list[float]]:
         item = item_database.get(item_id)
