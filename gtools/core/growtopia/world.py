@@ -2720,13 +2720,23 @@ class Dropped:
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Dropped) -> "Dropped":
-        d = cls(nb_items=proto.nb_items, last_uid=proto.last_uid)
+        groups: defaultdict[int, DroppedGroup] = defaultdict(DroppedGroup)
+        id_reference: dict[int, int] = {}
 
         for proto_item in proto.items:
             item = DroppedItem.from_proto(proto_item)
-            d.load_item(item)
+            group = groups[item.id]
 
-        return d
+            group.items[item.uid] = item
+            group.total += item.amount
+            id_reference[item.uid] = item.id
+
+        return cls(
+            nb_items=proto.nb_items,
+            last_uid=proto.last_uid,
+            groups=groups,
+            id_reference=id_reference,
+        )
 
     def to_proto(self) -> growtopia_pb2.Dropped:
         return growtopia_pb2.Dropped(
