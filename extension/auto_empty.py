@@ -24,7 +24,7 @@ from gtools.protogen.extension_pb2 import (
     InterestTileChangeRequest,
     PendingPacket,
 )
-from gtools.proxy.extension.client.sdk import Extension, dispatch
+from gtools.proxy.extension.client.sdk import Extension, dispatch, register_thread
 from gtools.proxy.extension.client.sdk_utils import helper
 from gtools.proxy.state import Status
 from thirdparty.enet.bindings import ENetPacketFlag
@@ -179,16 +179,11 @@ class AutoEmpty(Extension):
 
         self._begin_sucker(delay=BACKOFF_DELAY)
 
-    @dispatch(
-        Interest(
-            interest=INTEREST_STATE_UPDATE,
-            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
-            id=s.auto,
-        ),
-    )
-    def _on_state_update(self, _event: PendingPacket) -> PendingPacket | None:
-        self._tick()
-        return None
+    @register_thread
+    def _on_state_update(self) -> None:
+        while True:
+            self._tick()
+            time.sleep(0.1)
 
     def _begin_sucker(self, *, delay: tuple[float, float] = RETRY_DELAY) -> None:
         self._drop = None
@@ -234,7 +229,7 @@ class AutoEmpty(Extension):
 
         if b"currently empty" in text:
             if carrying > 0:
-                self.console_log(f"dropping {carrying} {self._name(item_id)} before stopping")
+                self.console_log(f"dropping {carrying} {self._item_name(item_id)} before stopping")
                 self._begin_drop(DropJob(item_id=item_id, stop_after=True))
             else:
                 self.console_log("machine is empty, nothing to retrieve")
@@ -243,7 +238,7 @@ class AutoEmpty(Extension):
             return
 
         if carrying >= 200:
-            self.console_log(f"inventory full of {self._name(item_id)}, dropping to make room")
+            self.console_log(f"inventory full of {self._item_name(item_id)}, dropping to make room")
             self._begin_drop(DropJob(item_id=item_id, stop_after=False))
 
             return
@@ -269,7 +264,7 @@ class AutoEmpty(Extension):
             amount = room
 
         if amount <= 0:
-            self.console_log(f"no room for {self._name(self.item_id)}, dropping instead")
+            self.console_log(f"no room for {self._item_name(self.item_id)}, dropping instead")
             self._begin_drop(DropJob(item_id=self.item_id, stop_after=False))
 
             return
@@ -320,7 +315,7 @@ class AutoEmpty(Extension):
         self._drop = None
 
         if confirmed:
-            self.console_log(f"dropped {self._name(self.item_id)}, retrying sucker")
+            self.console_log(f"dropped {self._item_name(self.item_id)}, retrying sucker")
         else:
             self.console_log("drop unconfirmed, re-reading sucker")
 
@@ -410,7 +405,7 @@ class AutoEmpty(Extension):
         self._retries = 0
 
         if self.phase is Phase.SUCKER_CONFIRM:
-            self.console_log(f"retrieved {self._name(self.item_id)}")
+            self.console_log(f"retrieved {self._item_name(self.item_id)}")
             self._begin_sucker(delay=RETRY_DELAY)
         else:
             self._finish_drop(confirmed=True)
@@ -530,7 +525,7 @@ class AutoEmpty(Extension):
         )
 
     @staticmethod
-    def _name(item_id: int) -> str:
+    def _item_name(item_id: int) -> str:
         return item_database.get(item_id).name.decode()
 
     def destroy(self) -> None:
