@@ -29,7 +29,8 @@
 
 
 > [!NOTE]
-> clone with submodule: `git submodule update --init --recursive`
+> clone with submodule (if already cloned): `git submodule update --init --recursive`
+> clone with submodule: `git clone --recurse-submodules https://github.com/ToyFarms/gtools`
 
 ```
 prerequisites:
@@ -98,4 +99,11 @@ simply ctrl+c, it will automatically unregister
 
 broker/extension is restart-resistant, meaning it will automatically recover if any of them goes down
 so you can safely interrupt to make some change
+
+LEGAL AND ETHICS
+
+proxy is considered illegal in Growtopia, however almost all the player now uses some kind of external help, be it proxy, botting, rmt.
+its almost impossible to keep up with other player if you play legit (if u have a life, if not then maybe).
+THUS, i conclude that the boundary for moral in this regard is a proxy, designed to automate repetitive action for a SINGLE player.
+NOT, a multi botting application that is designed to bring down the whole economy.
 ```
