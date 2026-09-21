@@ -24,14 +24,24 @@ class DroppedObjectRenderer:
     def any(self) -> bool:
         return self._renderer.any()
 
+    def _build_kwargs(self) -> dict:
+        return {
+            "icon_scale": 0.5,
+            "overlay_scale": 1,
+            "pos_offset": vec2(-8, -8),
+            "flags": ObjectRenderer.Flags.ORDER_BY_UID,
+        }
+
     def sync(self, items: Iterable[DroppedItem]) -> None:
-        self._renderer.sync(
-            items,
-            icon_scale=0.5,
-            overlay_scale=1,
-            pos_offset=vec2(-8, -8),
-            flags=ObjectRenderer.Flags.ORDER_BY_UID,
-        )
+        self._renderer.sync(items, **self._build_kwargs())
+
+    def sync_diff(
+        self,
+        added: Iterable[DroppedItem],
+        removed: Iterable[DroppedItem],
+        modified: Iterable[DroppedItem],
+    ) -> None:
+        self._renderer.sync_diff(added, removed, modified, **self._build_kwargs())
 
     def draw(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
         self._renderer.draw_chunks(camera, culling_camera)

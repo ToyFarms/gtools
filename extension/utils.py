@@ -2,6 +2,7 @@ import random
 import time
 from typing import Iterator
 
+from gtools.core.growtopia.create import call_function
 from pyglm.glm import ivec2
 
 from gtools.baked.items import DIGIVEND_MACHINE, VENDING_MACHINE
@@ -13,13 +14,17 @@ from gtools.core.growtopia.world import Tile, VendingMachineTile
 from gtools.core.task_scheduler import schedule_task
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
+    BLOCKING_MODE_ONESHOT_AND_CANCEL,
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
     DIRECTION_SERVER_TO_CLIENT,
     INTEREST_CALL_FUNCTION,
+    INTEREST_GENERIC_TEXT,
+    INTEREST_SET_ICON_STATE,
     Interest,
     InterestCallFunction,
     InterestGameMessage,
+    InterestGenericText,
     InterestType,
     PendingPacket,
 )
@@ -68,6 +73,7 @@ class UtilityExtension(Extension):
         self.intercept_warp = True
         self.fast_drop_amt = 200
         self.world_switch: tuple[str, str] | None = None
+        self.block_icon_state = False
 
     @dispatch(s.command("/wset", s.auto))
     def _wset(self, event: PendingPacket) -> PendingPacket | None:
@@ -293,16 +299,77 @@ class UtilityExtension(Extension):
                 item = self.get_item_id(id)
                 self.console_log(f"{item.name}: {self.state.world.dropped.get_total(item.id)}")
             else:
-                x: set[int] = set()
-                for item in self.state.world.dropped.items:
-                    x.add(item.id)
-
                 out: list[str] = []
-                for id in x:
-                    out.append(f"{item_database.get(id).name.decode()}: {self.state.world.dropped.get_total(id)}")
+                for id, group in self.state.world.dropped.groups.items():
+                    out.append(f"{item_database.get(id).name.decode()}: {group.total}")
+
                 self.console_log(" ".join(out))
 
         return self.cancel()
+
+    @dispatch(s.command("/gs", s.auto))
+    def _gs(self, event: PendingPacket) -> PendingPacket | None:
+        dialog = StrKV()
+        dialog.append(["set_border_color", "255,0,0,255", ""])
+        dialog.append(["set_bg_color", "30,30,30,255", ""])
+        dialog.append(["add_label", "small", "Growscan", "left"])
+        dialog.append(["add_spacer", "big", ""])
+        if self.state.world:
+            for id, group in self.state.world.dropped.groups.items():
+                dialog.append([f"add_label_with_icon", "small", f"`w{item_database.get(id).name.decode()} ({group.total:,})``", "left", id, ""])
+        dialog.append(["add_spacer", "big", ""])
+        dialog.append(["end_dialog", "CUSTOMDIALOG", "", "Exit", ""])
+        dialog.append(["add_quick_exit", ""])
+
+        self.block_icon_state = True
+        self.send_dialog(dialog)
+        return self.cancel()
+
+    def send_dialog(self, dialog: StrKV) -> None:
+        tank = call_function(b"OnDialogRequest", Variant.vstr(dialog.serialize()))
+        tank.net_id = -1
+
+        self.push(
+            PreparedPacket(
+                NetPacket(NetType.TANK_PACKET, tank),
+                DIRECTION_SERVER_TO_CLIENT,
+                ENetPacketFlag.RELIABLE,
+            )
+        )
+
+    @dispatch(
+        Interest(
+            interest=INTEREST_SET_ICON_STATE,
+            blocking_mode=BLOCKING_MODE_BLOCK,
+            direction=DIRECTION_CLIENT_TO_SERVER,
+            id=s.auto,
+        )
+    )
+    def _intercept_icon_state(self, event: PendingPacket) -> PendingPacket | None:
+        pkt = NetPacket.deserialize(event.buf)
+        if pkt.tank.int_x != 0 and self.block_icon_state:
+            return self.cancel()
+
+        if pkt.tank.int_x == 0 and self.block_icon_state:
+            self.block_icon_state = False
+            return self.cancel()
+
+    @dispatch(
+        Interest(
+            interest=INTEREST_GENERIC_TEXT,
+            generic_text=InterestGenericText(
+                where=[
+                    s.strkv[b"action", 1] == b"dialog_return",
+                    s.strkv[b"dialog_name", 1] == b"CUSTOMDIALOG",
+                ]
+            ),
+            blocking_mode=BLOCKING_MODE_ONESHOT_AND_CANCEL,
+            direction=DIRECTION_CLIENT_TO_SERVER,
+            id=s.auto,
+        )
+    )
+    def _intercept_dialog_return(self, event: PendingPacket) -> PendingPacket | None:
+        pass
 
     @dispatch(s.command("/search", s.auto))
     def _search(self, event: PendingPacket) -> PendingPacket | None:

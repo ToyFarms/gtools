@@ -94,7 +94,7 @@ class TileObjectRenderer:
     GROUPS: ClassVar[dict[str, TileIconGroup]] = {
         "sucker": TileIconGroup(pre_foreground=True, icon_scale=0.5),
         "display": TileIconGroup(pre_foreground=True, icon_scale=1.0),
-        "tree": TileIconGroup(pre_foreground=False, icon_scale=0.30),
+        "tree": TileIconGroup(pre_foreground=False, icon_scale=0.25),
         "easel": TileIconGroup(
             pre_foreground=False,
             icon_scale=0.5,

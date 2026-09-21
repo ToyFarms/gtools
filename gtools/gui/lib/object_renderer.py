@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from enum import IntFlag, auto
 from typing import Callable, ClassVar, Iterable
 
-from OpenGL.GL import GL_FALSE, GL_TRUE, GL_UNSIGNED_INT, glDepthMask
+from OpenGL.GL import GL_DYNAMIC_DRAW, GL_FALSE, GL_TRUE, GL_UNSIGNED_INT, glDepthMask
 from pyglm.glm import ivec2, vec2
 
 from gtools import setting
@@ -158,6 +158,8 @@ class ObjectRenderer:
 
         # bound, mesh, count, signature
         self._chunks: dict[ChunkKey, tuple[ChunkBounds, ObjectRenderMesh, int, int | None]] = {}
+        self._item_to_chunk: dict[int, ChunkKey] = {}
+        self._chunk_items: dict[ChunkKey, dict[int, DroppedItem]] = {}
 
         self._visible_count = 0
 
@@ -194,29 +196,107 @@ class ObjectRenderer:
         self._chunks[chunk_key] = (self._chunk_bounds(*chunk_key), mesh, len(items), None)
 
     def sync(self, items: Iterable[DroppedItem], **build_kwargs) -> None:
+        self._item_to_chunk.clear()
+        self._chunk_items.clear()
+
         buckets: dict[ChunkKey, list[DroppedItem]] = defaultdict(list)
         for item in items:
-            buckets[self._chunk_key_for_pos(item.pos.x, item.pos.y)].append(item)
+            key = self._chunk_key_for_pos(item.pos.x, item.pos.y)
+            buckets[key].append(item)
+            self._item_to_chunk[item.uid] = key
+            self._chunk_items.setdefault(key, {})[item.uid] = item
 
         for key in set(self._chunks.keys()) - buckets.keys():
             self._delete_chunk(key)
 
         for key, chunk_items in buckets.items():
-            signature = self._signature(chunk_items)
-            existing = self._chunks.get(key)
-            if existing is not None:
-                if existing[2] == hash(signature):
-                    continue
-                existing[1].delete()
+            self._rebuild_chunk(key, chunk_items, **build_kwargs)
 
-            mesh = self.build(chunk_items, **build_kwargs)
-            self._chunks[key] = (self._chunk_bounds(*key), mesh, len(chunk_items), hash(signature))
+    def sync_diff(
+        self,
+        added: Iterable[DroppedItem],
+        removed: Iterable[DroppedItem],
+        modified: Iterable[DroppedItem],
+        **build_kwargs,
+    ) -> None:
+        dirty_chunks: set[ChunkKey] = set()
+
+        for item in removed:
+            key = self._item_to_chunk.pop(item.uid, None)
+            if key is None:
+                continue
+
+            chunk = self._chunk_items.get(key)
+            if chunk is None:
+                continue
+
+            chunk.pop(item.uid, None)
+            dirty_chunks.add(key)
+            if not chunk:
+                self._delete_chunk(key)
+                self._chunk_items.pop(key, None)
+                dirty_chunks.discard(key)
+
+        for item in added:
+            key = self._chunk_key_for_pos(item.pos.x, item.pos.y)
+            self._item_to_chunk[item.uid] = key
+            self._chunk_items.setdefault(key, {})[item.uid] = item
+            dirty_chunks.add(key)
+
+        for item in modified:
+            old_key = self._item_to_chunk.get(item.uid)
+            new_key = self._chunk_key_for_pos(item.pos.x, item.pos.y)
+            if old_key is None:
+                self._item_to_chunk[item.uid] = new_key
+                self._chunk_items.setdefault(new_key, {})[item.uid] = item
+                dirty_chunks.add(new_key)
+                continue
+
+            if old_key != new_key:
+                old_chunk = self._chunk_items.get(old_key)
+                if old_chunk is not None:
+                    old_chunk.pop(item.uid, None)
+                    dirty_chunks.add(old_key)
+                    if not old_chunk:
+                        self._delete_chunk(old_key)
+                        self._chunk_items.pop(old_key, None)
+                        dirty_chunks.discard(old_key)
+
+                self._item_to_chunk[item.uid] = new_key
+                self._chunk_items.setdefault(new_key, {})[item.uid] = item
+                dirty_chunks.add(new_key)
+            else:
+                self._chunk_items[new_key][item.uid] = item
+                dirty_chunks.add(new_key)
+
+        for key in dirty_chunks:
+            chunk = self._chunk_items.get(key)
+            if chunk is None:
+                continue
+
+            self._rebuild_chunk(key, list(chunk.values()), **build_kwargs)
+
+    def _rebuild_chunk(self, key: ChunkKey, items: list[DroppedItem], **build_kwargs) -> None:
+        signature = self._signature(items)
+        signature_hash = hash(signature)
+        existing = self._chunks.get(key)
+        if existing is not None and existing[3] == signature_hash:
+            return
+
+        existing_mesh = existing[1] if existing is not None else None
+        mesh = self.build(items, existing=existing_mesh, **build_kwargs)
+        self._chunks[key] = (self._chunk_bounds(*key), mesh, len(items), signature_hash)
 
     def _delete_chunk(self, key: ChunkKey) -> None:
         entry = self._chunks.pop(key, None)
         if entry is not None:
             _, mesh, _, _ = entry
             mesh.delete()
+
+        chunk = self._chunk_items.pop(key, None)
+        if chunk is not None:
+            for uid in chunk:
+                self._item_to_chunk.pop(uid, None)
 
     def delete(self) -> None:
         for key in list(self._chunks.keys()):
@@ -424,6 +504,7 @@ class ObjectRenderer:
         icon_scale: float = 1,
         flags: "ObjectRenderer.Flags" = Flags(0),
         tint: tuple[float, float, float] = (1, 1, 1),
+        existing: ObjectRenderMesh | None = None,
     ) -> ObjectRenderMesh:
         region_counters: dict[tuple[int, int], int] = defaultdict(int)
         bucketed: defaultdict[int, list[DroppedItem]] = defaultdict(list)
@@ -553,14 +634,20 @@ class ObjectRenderer:
 
         self._tex_mgr.flush()
 
-        if text_renderer is not None:
+        if text_renderer:
             text_renderer.build()
 
+        if existing is not None:
+            if existing.seed_mesh is not None:
+                existing.seed_mesh.delete()
+            if existing.text_renderer is not None:
+                existing.text_renderer.delete()
+
         return ObjectRenderMesh(
-            dropped_meshes=self._make_meshes(icons),
-            pickup_overlay=self._make_meshes(overlay),
-            icon_shadows=self._make_meshes(icon_shadows),
-            overlay_shadows=self._make_meshes(overlay_shadows),
+            dropped_meshes=self._make_or_update_meshes(existing.dropped_meshes if existing else None, icons),
+            pickup_overlay=self._make_or_update_meshes(existing.pickup_overlay if existing else None, overlay),
+            icon_shadows=self._make_or_update_meshes(existing.icon_shadows if existing else None, icon_shadows),
+            overlay_shadows=self._make_or_update_meshes(existing.overlay_shadows if existing else None, overlay_shadows),
             seed_mesh=self._seed_renderer.build(seeds, pos_offset) if seeds else None,
             text_renderer=text_renderer,
         )
@@ -657,18 +744,42 @@ class ObjectRenderer:
         self,
         src: dict[TextureArray, list[float]],
     ) -> dict[TextureArray, Mesh]:
+        return self._make_or_update_meshes(None, src)
+
+    def _make_or_update_meshes(
+        self,
+        existing: dict[TextureArray, Mesh] | None,
+        src: dict[TextureArray, list[float]],
+    ) -> dict[TextureArray, Mesh]:
         dtype = np.dtype([("v", np.float32, 8), ("v2", np.uint32)])
-        return {
-            arr: Mesh(
-                Mesh.RECT_WITH_UV_VERTS,
-                self.LAYOUT,
-                Mesh.RECT_INDICES,
-                instance_data=self._to_instance_array(inst, dtype),
-                instance_layout=self.INSTANCE_LAYOUT,
-                instance_attrib_base=2,
-            )
-            for arr, inst in src.items()
-        }
+        result: dict[TextureArray, Mesh] = {}
+
+        for arr, inst in src.items():
+            data = self._to_instance_array(inst, dtype)
+            if existing is not None and arr in existing:
+                mesh = existing[arr]
+                mesh.update_instance_data(data)
+                mesh.set_instance_count(len(data))
+                result[arr] = mesh
+            else:
+                capacity = max(len(data), 16)
+                result[arr] = Mesh(
+                    Mesh.RECT_WITH_UV_VERTS,
+                    self.LAYOUT,
+                    Mesh.RECT_INDICES,
+                    usage=GL_DYNAMIC_DRAW,
+                    instance_data=data,
+                    instance_layout=self.INSTANCE_LAYOUT,
+                    instance_attrib_base=2,
+                    instance_capacity=capacity,
+                )
+
+        if existing is not None:
+            for arr, mesh in existing.items():
+                if arr not in result:
+                    mesh.delete()
+
+        return result
 
     @staticmethod
     def _to_instance_array(inst: list[float], dtype: np.dtype) -> np.ndarray:

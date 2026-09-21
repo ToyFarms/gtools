@@ -109,8 +109,7 @@ class TextRenderer(Renderer):
         self._mesh: Mesh | None = None
         self._shadow_mesh: Mesh | None = None
 
-    def delete(self) -> None:
-        self.font.delete()
+    def reset(self) -> None:
         self._batch_data.clear()
         self._shadow_batch_data.clear()
         if self._mesh:
@@ -119,6 +118,10 @@ class TextRenderer(Renderer):
         if self._shadow_mesh:
             self._shadow_mesh.delete()
             self._shadow_mesh = None
+
+    def delete(self) -> None:
+        self.font.delete()
+        self.reset()
 
     @lru_cache(maxsize=512)
     def get_text_size(self, text: str, scale: float = 1.0) -> tuple[float, float]:
@@ -176,10 +179,14 @@ class TextRenderer(Renderer):
             current_x += glyph.advance * scale
 
     def build(self) -> None:
-        if self._batch_data:
-            if self._mesh:
-                self._mesh.delete()
+        if self._mesh:
+            self._mesh.delete()
+            self._mesh = None
+        if self._shadow_mesh:
+            self._shadow_mesh.delete()
+            self._shadow_mesh = None
 
+        if self._batch_data:
             instance_data = np.array(self._batch_data, dtype=np.float32)
             self._mesh = Mesh(
                 Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES,
@@ -190,8 +197,6 @@ class TextRenderer(Renderer):
             self._batch_data.clear()
 
         if self._shadow_batch_data:
-            if self._shadow_mesh:
-                self._shadow_mesh.delete()
             shadow_instance_data = np.array(self._shadow_batch_data, dtype=np.float32)
             self._shadow_mesh = Mesh(
                 Mesh.RECT_WITH_UV_VERTS, [2, 2], Mesh.RECT_INDICES,

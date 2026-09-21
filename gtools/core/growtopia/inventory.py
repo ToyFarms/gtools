@@ -116,8 +116,8 @@ class Inventory(Serializable):
 
         return item
 
-    def get(self, id: int, default: Item | None = None) -> Item | None:
-        return self.items_map.get(id, default)
+    def get(self, id: int) -> Item:
+        return self.items_map.get(id, Item())
 
     def clear_ghost_item(self) -> None:
         self.items_map = OrderedDict((k, v) for k, v in self.items_map.items() if not self._is_ghost_item(v.id))

@@ -377,7 +377,7 @@ class AutoBreakExtension(Extension):
             return
 
         rate = items_per_cycle / avg_cycle_time
-        total_items = self.state.world.dropped.get_total(self.item_id) if self.state.world else None
+        total_items = self.state.world.dropped.get_total(self.item_id) + self.state.inventory.get(self.item_id).amount if self.state.world else None
         if total_items is None:
             self.console_log(f"cycle avg: {avg_cycle_time:.2f}s for {items_per_cycle} items ({rate:.2f} items/s)")
             return

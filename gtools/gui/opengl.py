@@ -546,6 +546,7 @@ class Mesh:
         instance_data: npt.NDArray | None = None,
         instance_layout: Sequence[int | tuple[int, int]] | None = None,
         instance_attrib_base: int | None = None,
+        instance_capacity: int | None = None,
     ) -> None:
         self._vao = glGenVertexArrays(1)
         glBindVertexArray(self._vao)
@@ -574,16 +575,30 @@ class Mesh:
 
         self._instance_vbo = None
         self._instance_count = 0
+        self._instance_stride = 0
+        self._instance_capacity = 0
         if instance_data is not None and instance_layout is not None:
             if instance_attrib_base is None:
                 raise ValueError("please supply instance_attrib_base (where the instance data begins)")
 
             self._instance_vbo = glGenBuffers(1)
             glBindBuffer(GL_ARRAY_BUFFER, self._instance_vbo)
-            glBufferData(GL_ARRAY_BUFFER, instance_data.nbytes, instance_data.tobytes(), usage)
 
             instance_stride = self._setup_attribs(instance_layout, instance_attrib_base, is_instance=True)
-            self._instance_count = int(instance_data.nbytes // instance_stride)
+            self._instance_stride = instance_stride
+            count = int(instance_data.nbytes // instance_stride)
+            capacity = max(instance_capacity or count, count)
+            self._instance_capacity = capacity
+
+            if capacity > count:
+                padded = np.zeros(capacity, dtype=instance_data.dtype)
+                padded[:count] = instance_data
+                upload = padded
+            else:
+                upload = instance_data
+
+            glBufferData(GL_ARRAY_BUFFER, capacity * instance_stride, upload.tobytes(), usage)
+            self._instance_count = count
 
         glBindVertexArray(0)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -606,6 +621,33 @@ class Mesh:
         else:
             glDrawArraysInstanced(mode, 0, self._vertex_count, self._instance_count)
         glBindVertexArray(0)
+
+    def set_instance_count(self, count: int) -> None:
+        self._instance_count = count
+
+    def update_instance_data(self, instance_data: npt.NDArray, offset: int = 0) -> None:
+        if self._instance_vbo is None:
+            raise ValueError("mesh has no instance buffer")
+
+        count = len(instance_data)
+        needed = offset + count
+        byte_offset = offset * self._instance_stride
+
+        glBindBuffer(GL_ARRAY_BUFFER, self._instance_vbo)
+        if needed > self._instance_capacity:
+            new_capacity = max(needed, self._instance_capacity * 2, 16)
+            if count < new_capacity:
+                padded = np.zeros(new_capacity, dtype=instance_data.dtype)
+                padded[:count] = instance_data
+                upload = padded
+            else:
+                upload = instance_data
+            glBufferData(GL_ARRAY_BUFFER, new_capacity * self._instance_stride, upload.tobytes(), GL_DYNAMIC_DRAW)
+            self._instance_capacity = new_capacity
+        else:
+            glBufferSubData(GL_ARRAY_BUFFER, byte_offset, instance_data.nbytes, instance_data.tobytes())
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def delete(self) -> None:
         glDeleteBuffers(1, [self._vbo])

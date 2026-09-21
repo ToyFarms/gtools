@@ -202,6 +202,7 @@ class Proxy:
             self.state.emit_event(self.broker, pkt)
         except Exception as e:
             self.logger.error(f"FAILED UPDATING STATE: {e}")
+            traceback.print_exc()
 
         try:
             if self.logger.isEnabledFor(logging.DEBUG):

@@ -33,6 +33,7 @@ from gtools import setting
 from gtools.core import ndialog
 from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import (
+    DroppedChanges,
     DroppedItem,
     Tile,
     World,
@@ -245,7 +246,7 @@ class WorldRenderer:
         self._smoothed_times_last_update: float = 0.0
         self._SMOOTHED_TIMES_INTERVAL = 0.1
 
-        self._dropped_object_renderer.sync(self._world.dropped.items)
+        self._dropped_object_renderer.sync(self._world.dropped)
         self._init_render_order()
 
         self._tile_updates: set[tuple[int, int]] = set()
@@ -257,11 +258,11 @@ class WorldRenderer:
         self._entity_update: bool = False
         self._entity_update_lock = threading.Lock()
 
-        self._dropped_update: bool = False
+        self._dropped_pending = DroppedChanges()
         self._dropped_update_lock = threading.Lock()
 
         self._world.subscribe(WorldEvent.TILE_UPDATE, batch=self._on_tile_update_batch)
-        self._world.subscribe(WorldEvent.DROPPED_UPDATE, single=self._on_dropped_update)
+        self._world.subscribe(WorldEvent.DROPPED_UPDATE, single=self._on_dropped_update, batch=self._on_dropped_update_batch)
         self._world.subscribe(WorldEvent.PLAYER_UPDATE, single=self._on_player_update)
         self._world.subscribe(WorldEvent.NPC_UPDATE, single=self._on_npc_update)
 
@@ -500,23 +501,33 @@ class WorldRenderer:
         with self._tile_update_lock:
             self._tile_updates.add((x, y))
 
-        with self._tile_overlay_update_lock:
-            self._tile_overlay_update = True
-
     def _on_tile_update_batch(self, tiles: list[tuple[int, int]]) -> None:
         with self._tile_update_lock:
             self._tile_updates |= set(tiles)
 
-        with self._tile_overlay_update_lock:
-            self._tile_overlay_update = True
+    def _merge_dropped_changes(
+        self,
+        added: list[DroppedItem],
+        removed: list[DroppedItem],
+        modified: list[DroppedItem],
+    ) -> None:
+        self._dropped_pending.added.extend(added)
+        self._dropped_pending.removed.extend(removed)
+        self._dropped_pending.modified.extend(modified)
 
-        with self._tile_overlay_update_lock:
-            self._tile_overlay_update = True
-
-    def _on_dropped_update(self) -> None:
+    def _on_dropped_update(
+        self,
+        added: list[DroppedItem],
+        removed: list[DroppedItem],
+        modified: list[DroppedItem],
+    ) -> None:
         with self._dropped_update_lock:
-            self._dropped_update = True
-        self._dirty = True
+            self._merge_dropped_changes(added, removed, modified)
+
+    def _on_dropped_update_batch(self, calls: list[tuple[list[DroppedItem], list[DroppedItem], list[DroppedItem]]]) -> None:
+        with self._dropped_update_lock:
+            for added, removed, modified in calls:
+                self._merge_dropped_changes(added, removed, modified)
 
     def _on_player_update(self) -> None:
         with self._entity_update_lock:
@@ -528,7 +539,7 @@ class WorldRenderer:
 
     def delete(self) -> None:
         self._world.unsubscribe(WorldEvent.TILE_UPDATE, batch=self._on_tile_update_batch)
-        self._world.unsubscribe(WorldEvent.DROPPED_UPDATE, single=self._on_dropped_update)
+        self._world.unsubscribe(WorldEvent.DROPPED_UPDATE, single=self._on_dropped_update, batch=self._on_dropped_update_batch)
         self._world.unsubscribe(WorldEvent.PLAYER_UPDATE, single=self._on_player_update)
         self._world.unsubscribe(WorldEvent.NPC_UPDATE, single=self._on_npc_update)
 
@@ -666,7 +677,7 @@ class WorldRenderer:
     def rebuild_mesh(self) -> None:
         self._tile_renderer.load(self._world)
 
-        self._dropped_object_renderer.sync(self._world.dropped.items)
+        self._dropped_object_renderer.sync(self._world.dropped)
 
         if self._tile_overlay_mesh:
             self._tile_overlay_mesh.delete()
@@ -839,9 +850,11 @@ class WorldRenderer:
                 self._dirty = True
 
             with self._dropped_update_lock:
-                if self._dropped_update:
-                    self._dropped_object_renderer.sync(self._world.dropped.items)
-                    self._dropped_update = False
+                if self._dropped_pending.added or self._dropped_pending.removed or self._dropped_pending.modified:
+                    pending = self._dropped_pending
+                    self._dropped_pending = DroppedChanges()
+                    self._dropped_object_renderer.sync_diff(pending.added, pending.removed, pending.modified)
+                    self._dirty = True
 
             if self._render_tile_overlay and (self._tile_overlay_mesh is None or self._dirty):
                 self._tile_overlay_mesh = self._tile_overlay_renderer.build(self._world, (x for x in self._world.tiles.values()))
@@ -1546,7 +1559,7 @@ class WorldRenderer:
 
     def _select_dropped_items_in_rect(self, min_x: float, min_y: float, max_x: float, max_y: float) -> None:
         pad = 8.0
-        self._selected_dropped_items = [item for item in self._world.dropped.items if (min_x - pad) <= item.pos.x <= (max_x + pad) and (min_y - pad) <= item.pos.y <= (max_y + pad)]
+        self._selected_dropped_items = [item for item in self._world.dropped if (min_x - pad) <= item.pos.x <= (max_x + pad) and (min_y - pad) <= item.pos.y <= (max_y + pad)]
         self._dirty = True
 
     @property

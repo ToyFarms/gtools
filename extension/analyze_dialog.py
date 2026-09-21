@@ -44,6 +44,7 @@ class AnalyzeDialog(Extension):
             for id, amount in all.items():
                 dialog.append([f"add_label_with_icon", "small", f"`w{item_database.get(id).name.decode()} ({amount})``", "left", id, ""])
         dialog.append(["add_spacer", "big", ""])
+        dialog.append(["end_dialog", "CUSTOMDIALOG", "", "Exit", ""])
         dialog.append(["add_quick_exit", ""])
 
         self.send_dialog(dialog)

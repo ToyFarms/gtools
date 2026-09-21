@@ -42,25 +42,24 @@ def test_world_dropped_events() -> None:
     world = World()
     world.name = b"TEST"
 
-    events_called = 0
+    events: list[tuple[list, list, list]] = []
 
-    def on_dropped_update() -> None:
-        nonlocal events_called
-        events_called += 1
+    def on_dropped_update(added, removed, modified) -> None:
+        events.append((added, removed, modified))
 
     world.subscribe(WorldEvent.DROPPED_UPDATE, single=on_dropped_update)
 
     world.create_dropped(2, vec2(100, 200), 10, 0)
-    if events_called != 1:
-        raise AssertionError(f"create_dropped: events_called is {events_called}, expected 1")
+    if len(events) != 1 or len(events[0][0]) != 1:
+        raise AssertionError(f"create_dropped: expected 1 added item, got {events}")
 
-    uid = world.dropped.items[0].uid
+    uid = next(iter(world.dropped)).uid
     world.remove_dropped(uid)
-    if events_called != 2:
-        raise AssertionError(f"remove_dropped: events_called is {events_called}, expected 2")
+    if len(events) != 2 or len(events[1][1]) != 1:
+        raise AssertionError(f"remove_dropped: expected 1 removed item, got {events}")
 
     world.create_dropped(3, vec2(300, 400), 5, 0)
-    uid = world.dropped.items[0].uid
+    uid = next(iter(world.dropped)).uid
     world.set_dropped(uid, 10)
-    if events_called != 4:
-        raise AssertionError(f"set_dropped: events_called is {events_called}, expected 4")
+    if len(events) != 4 or len(events[3][2]) != 1:
+        raise AssertionError(f"set_dropped: expected 1 modified item, got {events}")

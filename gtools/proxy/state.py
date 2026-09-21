@@ -225,12 +225,7 @@ class State:
                             broker,
                             StateUpdate(
                                 what=STATE_APPLY_DAMAGE,
-                                apply_damage=ApplyDamage(
-                                    x=pkt.tank.int_x,
-                                    y=pkt.tank.int_y,
-                                    damage=pkt.tank.value,
-                                    dice_extra=pkt.tank.animation_type
-                                ),
+                                apply_damage=ApplyDamage(x=pkt.tank.int_x, y=pkt.tank.int_y, damage=pkt.tank.value, dice_extra=pkt.tank.animation_type),
                             ),
                         )
                     case TankType.SEND_TILE_TREE_STATE:
@@ -520,12 +515,21 @@ class State:
                                     what=STATE_MODIFY_ITEM,
                                     modify_item=ModifyItem(
                                         op=ModifyItem.OP_SET_AMOUNT,
-                                        uid=pkt.tank.value,
-                                        amount=pkt.tank.jump_count,
+                                        uid=pkt.tank.target_net_id,
+                                        amount=int(pkt.tank.float_var),
                                     ),
                                 ),
                             )
                         else:  # someone took it
+                            if not self.world:
+                                self.logger.critical("WORLD DOES NOT EXISTS AT THIS POINT, SOMETHING IS REALLY WRONG")
+                                return
+
+                            item = self.world.dropped.get(pkt.tank.value)
+                            if not item:
+                                self.logger.critical(f"NO ITEM {pkt.tank}")
+                                return
+
                             self.send_state_update(
                                 broker,
                                 StateUpdate(
@@ -536,6 +540,19 @@ class State:
                                     ),
                                 ),
                             )
+
+                            if pkt.tank.net_id == self.me.net_id:
+                                fit = 200 - self.inventory.get(item.id).amount
+                                self.send_state_update(
+                                    broker,
+                                    StateUpdate(
+                                        what=STATE_MODIFY_INVENTORY,
+                                        modify_inventory=ModifyInventory(
+                                            id=item.id,
+                                            to_add=min(item.amount, fit),
+                                        ),
+                                    ),
+                                )
                     case TankType.SEND_INVENTORY_STATE:
                         self.send_state_update(
                             broker,
@@ -653,10 +670,9 @@ class State:
                             upd.modify_item.flags,
                         )
                     case ModifyItem.OP_SET_AMOUNT:
-                        self.world.set_dropped(upd.modify_item.uid, upd.modify_item.flags)
+                        self.world.set_dropped(upd.modify_item.uid, upd.modify_item.amount)
                     case ModifyItem.OP_TAKE:
-                        if item := self.world.remove_dropped(upd.modify_item.uid):
-                            self.inventory.add(item.id, item.amount)
+                        self.world.remove_dropped(upd.modify_item.uid)
             case StateUpdateWhat.STATE_SET_MY_PLAYER:
                 self.me.net_id = upd.set_my_player
             case StateUpdateWhat.STATE_SET_CHARACTER_STATE:

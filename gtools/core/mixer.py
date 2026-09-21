@@ -1,4 +1,5 @@
 from collections import deque
+import traceback
 from typing import Optional
 import numpy as np
 import sounddevice as sd
@@ -74,19 +75,26 @@ class AudioMixer:
     def __init__(self, *, blocksize: int = 512, latency: str = "low", device: Optional[int | str] = None) -> None:
         self._pending: deque[_PlaybackHandle] = deque()
         self._streams: list[_PlaybackHandle] = []
-        self.stream = sd.OutputStream(
-            samplerate=TARGET_SR,
-            channels=CHANNELS,
-            dtype="float32",
-            blocksize=blocksize,
-            latency=latency,
-            device=device,
-            callback=self._callback,
-        )
+        try:
+            self.stream = sd.OutputStream(
+                samplerate=TARGET_SR,
+                channels=CHANNELS,
+                dtype="float32",
+                blocksize=blocksize,
+                latency=latency,
+                device=device,
+                callback=self._callback,
+            )
+        except:
+            traceback.print_exc()
+            self.stream = None
+
         self.master_gain = 1.0
         self._peaks = np.zeros(CHANNELS, dtype=np.float32)
         self._rms = np.zeros(CHANNELS, dtype=np.float32)
-        self.stream.start()
+
+        if self.stream:
+            self.stream.start()
 
     @property
     def peaks(self) -> np.ndarray:
@@ -108,8 +116,9 @@ class AudioMixer:
         self._pending.appendleft(sound.get_handle(gain))
 
     def stop(self) -> None:
-        self.stream.stop()
-        self.stream.close()
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
 
     def _callback(
         self,

@@ -24,7 +24,6 @@ from gtools.baked.items import (
     AUDIO_GEAR,
     AUDIO_RACK,
     AUTO_SURGEON_STATION,
-    BALLOON_JAMMER,
     BATTLE_PET_CAGE,
     BEDROCK,
     BEDROCK_CANDY,
@@ -69,7 +68,6 @@ from gtools.baked.items import (
     GREAT_TURRET_OF_GROWTOPIA,
     GREAT_WALL_OF_GROWTOPIA,
     GROWMOJI_TURKEY_SEED,
-    GUARDIAN_PINEAPPLE,
     GUILD_FLAG_POLE_SPEAR,
     GUILD_FLAG_POLE_WINGS,
     GUILD_FLAG_SHIELD_OPEN_DIVISION_CLOSE_SEED,
@@ -2629,7 +2627,7 @@ class DroppedItem:
     pos: vec2 = field(default_factory=vec2)
     amount: int = 0
     flags: int = 0
-    uid: int = 0
+    uid: int = -1
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.DroppedItem) -> "DroppedItem":
@@ -2653,33 +2651,106 @@ class DroppedItem:
 
 
 @dataclass(slots=True)
+class DroppedGroup:
+    items: dict[int, DroppedItem] = field(default_factory=dict)  # uid -> dropped item
+    total: int = 0
+
+
+@dataclass(slots=True)
 class Dropped:
     nb_items: int = 0
     last_uid: int = 0
-    items: list[DroppedItem] = field(default_factory=list)
+    groups: defaultdict[int, DroppedGroup] = field(default_factory=lambda: defaultdict(DroppedGroup))
+    id_reference: dict[int, int] = field(default_factory=dict)  # mapping from uid -> id
+
+    def __iter__(self) -> Iterator[DroppedItem]:
+        for group in self.groups.values():
+            for item in group.items.values():
+                yield item
+
+    def get(self, uid: int) -> DroppedItem | None:
+        if uid not in self.id_reference:
+            return
+
+        id = self.id_reference[uid]
+        if id not in self.groups:
+            return
+
+        group = self.groups[id]
+        return group.items.get(uid, None)
 
     def get_total(self, id: int) -> int:
-        total = 0
-        for item in self.items:
-            if item.id == id:
-                total += item.amount
+        group = self.groups.get(id)
+        return group.total if group is not None else 0
 
-        return total
+    def add_item(self, item: DroppedItem) -> DroppedGroup:
+        item.uid = self.last_uid
+        group = self.groups[item.id]
+        group.items[item.uid] = item
+        group.total += item.amount
+        self.id_reference[item.uid] = item.id
+        self.last_uid += 1
+        self.nb_items += 1
+
+        return group
+
+    def load_item(self, item: DroppedItem) -> None:
+        group = self.groups[item.id]
+        group.items[item.uid] = item
+        group.total += item.amount
+        self.id_reference[item.uid] = item.id
+
+    def remove_item(self, uid: int) -> DroppedItem:
+        group = self.groups[self.id_reference[uid]]
+        item = group.items.pop(uid)
+        group.total -= item.amount
+        self.id_reference.pop(item.uid)
+        self.nb_items -= 1
+
+        return item
+
+    def set_amount(self, uid: int, amount: int) -> DroppedItem:
+        group = self.groups[self.id_reference[uid]]
+        item = group.items[uid]
+
+        group.total += amount - item.amount
+        item.amount = amount
+
+        return item
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Dropped) -> "Dropped":
-        return cls(
-            nb_items=proto.nb_items,
-            last_uid=proto.last_uid,
-            items=list(map(lambda x: DroppedItem.from_proto(x), proto.items)),
-        )
+        d = cls(nb_items=proto.nb_items, last_uid=proto.last_uid)
+
+        for proto_item in proto.items:
+            item = DroppedItem.from_proto(proto_item)
+            d.load_item(item)
+
+        return d
 
     def to_proto(self) -> growtopia_pb2.Dropped:
         return growtopia_pb2.Dropped(
             nb_items=self.nb_items,
             last_uid=self.last_uid,
-            items=list(map(lambda x: x.to_proto(), self.items)),
+            items=[item.to_proto() for group in self.groups.values() for item in group.items.values()],
         )
+
+
+@dataclass(slots=True)
+class DroppedChanges:
+    added: list[DroppedItem] = field(default_factory=list)
+    removed: list[DroppedItem] = field(default_factory=list)
+    modified: list[DroppedItem] = field(default_factory=list)
+
+    def merge(self, other: "DroppedChanges") -> None:
+        self.added.extend(other.added)
+        self.removed.extend(other.removed)
+        self.modified.extend(other.modified)
+
+    def clear(self) -> None:
+        self.added.clear()
+        self.removed.clear()
+        self.modified.clear()
 
 
 class NpcType(IntEnum):
@@ -2830,7 +2901,13 @@ class World:
     live: bool = False
 
     @overload
-    def subscribe(self, event: Literal[WorldEvent.DROPPED_UPDATE], *, single: Callable[[], Any] | None = None, batch: Callable[[], Any] | None = None) -> None: ...
+    def subscribe(
+        self,
+        event: Literal[WorldEvent.DROPPED_UPDATE],
+        *,
+        single: Callable[[list[DroppedItem], list[DroppedItem], list[DroppedItem]], Any] | None = None,
+        batch: Callable[[list[tuple[list[DroppedItem], list[DroppedItem], list[DroppedItem]]]], Any] | None = None,
+    ) -> None: ...
     @overload
     def subscribe(
         self, event: Literal[WorldEvent.TILE_UPDATE], *, single: Callable[[int, int], Any] | None = None, batch: Callable[[list[tuple[int, int]]], Any] | None = None
@@ -3348,6 +3425,7 @@ class World:
             if tile.extra.type == TileExtraType.LOCK_TILE and tile.fg_id != fg:
                 self.remove_locked(tile)
             tile.extra = None
+            tile._extra_raw = b""
         tile.fg_id = fg
         tile.fg_tex_index = connection
 
@@ -3754,31 +3832,17 @@ class World:
             pos=pos,
             amount=amount,
             flags=flags,
-            uid=self.dropped.last_uid + 1,
         )
-        self.dropped.last_uid += 1
-        self.dropped.items.append(dropped)
-        self.dropped.nb_items += 1
+        self.dropped.add_item(dropped)
+        self.broadcast(WorldEvent.DROPPED_UPDATE, [dropped], [], [])
 
-        self.broadcast(WorldEvent.DROPPED_UPDATE)
-
-    def remove_dropped(self, uid: int) -> DroppedItem | None:
-        for i, item in enumerate(self.dropped.items):
-            if item.uid != uid:
-                continue
-
-            self.dropped.items.pop(i)
-            self.dropped.nb_items -= 1
-            self.broadcast(WorldEvent.DROPPED_UPDATE)
-            return item
+    def remove_dropped(self, uid: int) -> None:
+        item = self.dropped.remove_item(uid)
+        self.broadcast(WorldEvent.DROPPED_UPDATE, [], [item], [])
 
     def set_dropped(self, uid: int, amount: int) -> None:
-        for item in self.dropped.items:
-            if item.uid != uid:
-                continue
-
-            item.amount = amount
-            self.broadcast(WorldEvent.DROPPED_UPDATE)
+        item = self.dropped.set_amount(uid, amount)
+        self.broadcast(WorldEvent.DROPPED_UPDATE, [], [], [item])
 
     @classmethod
     def from_tank(cls, tank: TankPacket | bytes) -> "World":
@@ -3823,7 +3887,7 @@ class World:
         s.write_u32(self.dropped.nb_items)
         s.write_u32(self.dropped.last_uid)
 
-        for item in self.dropped.items:
+        for item in self.dropped:
             s.write_u16(item.id)
             s.write_f32(item.pos.x)
             s.write_f32(item.pos.y)
@@ -3905,8 +3969,7 @@ class World:
                         if not (-margin < item.pos.x < world.width * 32 + margin) or not (-margin < item.pos.y < world.height * 32 + margin):
                             break
 
-                        world.dropped.items.append(item)
-                        world.dropped.nb_items += 1
+                        world.dropped.load_item(item)
 
                         with s.temp():
                             maybe_last_uid = s.read_u32()
@@ -3916,7 +3979,6 @@ class World:
                                 break
 
                     world.unk4 = s.read_bytes(12)
-                world.dropped.items.reverse()
             except Exception as e:
                 # failed to parse dropped for some reason, whatever
                 cls.logger.warning(f"failed to parse dropped item from the back: {e}")
@@ -3934,7 +3996,7 @@ class World:
             item.flags = s.read_u8()
             item.uid = s.read_u32()
 
-            world.dropped.items.append(item)
+            world.dropped.load_item(item)
 
         world.default_weather = WeatherType(s.read_u16())
         world.terraform = TerraformType(s.read_u16())
@@ -5127,7 +5189,7 @@ def handle_smart_cling_connection(world: World, tile: Tile, _a3: int) -> int:
         if item.collision_type == ItemInfoCollisionType.COLLIDE_IF_ON and neighbor.flags & TileFlags.IS_ON != 0:
             return True
 
-        return item_database.get(neighbor.fg_id).collision_type == ItemInfoCollisionType.FULL
+        return item.collision_type == ItemInfoCollisionType.FULL
 
     x, y = tile.pos.x, tile.pos.y
 
