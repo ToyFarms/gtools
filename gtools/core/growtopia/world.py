@@ -2684,7 +2684,7 @@ class Dropped:
         return group.total if group is not None else 0
 
     def add_item(self, item: DroppedItem) -> DroppedGroup:
-        item.uid = self.last_uid
+        item.uid = self.last_uid + 1
         group = self.groups[item.id]
         group.items[item.uid] = item
         group.total += item.amount
@@ -2720,23 +2720,13 @@ class Dropped:
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.Dropped) -> "Dropped":
-        groups: defaultdict[int, DroppedGroup] = defaultdict(DroppedGroup)
-        id_reference: dict[int, int] = {}
+        d = cls(nb_items=proto.nb_items, last_uid=proto.last_uid)
 
         for proto_item in proto.items:
             item = DroppedItem.from_proto(proto_item)
-            group = groups[item.id]
+            d.load_item(item)
 
-            group.items[item.uid] = item
-            group.total += item.amount
-            id_reference[item.uid] = item.id
-
-        return cls(
-            nb_items=proto.nb_items,
-            last_uid=proto.last_uid,
-            groups=groups,
-            id_reference=id_reference,
-        )
+        return d
 
     def to_proto(self) -> growtopia_pb2.Dropped:
         return growtopia_pb2.Dropped(
