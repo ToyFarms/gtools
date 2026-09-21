@@ -109,8 +109,7 @@ class AutoEmpty(Extension):
         pending = "-" if self._step is None else f"{max(0.0, self._step.run_at - time.monotonic()):.2f}s"
         waiting = "-" if self._deadline is None else f"{max(0.0, self._deadline - time.monotonic()):.2f}s"
         self.console_log(
-            f"enabled={self.enabled} state={self.phase.name} target={self.target} "
-            f"item={name} ({self.item_id}) step_in={pending} timeout_in={waiting} retries={self._retries}"
+            f"enabled={self.enabled} state={self.phase.name} target={self.target} item={name} ({self.item_id}) step_in={pending} timeout_in={waiting} retries={self._retries}"
         )
 
         return self.cancel()
@@ -487,7 +486,7 @@ class AutoEmpty(Extension):
                 ["action", "dialog_return"],
                 ["dialog_name", "drop_item"],
                 ["itemID", item_id, ""],
-                ["count", count],
+                ["count", min(count, self.state.inventory.get(item_id).amount)],
             ]
         )
 
