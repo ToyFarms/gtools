@@ -486,7 +486,7 @@ class AutoEmpty(Extension):
                 ["action", "dialog_return"],
                 ["dialog_name", "drop_item"],
                 ["itemID", item_id, ""],
-                ["count", min(count, self.state.inventory.get(item_id).amount)],
+                ["count", count],
             ]
         )
 
