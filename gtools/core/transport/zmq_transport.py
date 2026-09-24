@@ -116,13 +116,15 @@ class _ZmqTransport[Send, Recv](ABC, Transport[Send, Recv]):
         return self.recv(block=False)
 
     def _map_event(self, msg: zmq.utils.monitor._MonitorMessage) -> Event:
-        if msg["event"] == zmq.EVENT_CONNECTED:
+        if msg["event"] == zmq.EVENT_HANDSHAKE_SUCCEEDED:
             return Event.CONNECTED
         elif msg["event"] in (
             zmq.EVENT_DISCONNECTED,
             zmq.EVENT_MONITOR_STOPPED,
             zmq.EVENT_ACCEPT_FAILED,
             zmq.EVENT_HANDSHAKE_FAILED_NO_DETAIL,
+            zmq.EVENT_HANDSHAKE_FAILED_PROTOCOL,
+            zmq.EVENT_HANDSHAKE_FAILED_AUTH,
         ):
             return Event.DISCONNECTED
         else:
@@ -272,6 +274,7 @@ class Router(_ZmqTransport[RouterSend, RouterRecv]):
 
     def _setup_socket(self) -> None:
         assert self._socket
+        self._socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
         self._socket.bind(self._addr)
 
     def _recv_message(self) -> RouterRecv:
@@ -301,6 +304,7 @@ class Dealer(_ZmqTransport[DealerSend, DealerRecv]):
         self._socket.setsockopt(zmq.IDENTITY, self.id)
         self._socket.setsockopt(zmq.RECONNECT_IVL, 50)
         self._socket.setsockopt(zmq.RECONNECT_IVL_MAX, 500)
+        self._socket.setsockopt(zmq.IMMEDIATE, 1)
         self._socket.connect(self._addr)
 
     def _recv_message(self) -> DealerRecv:
@@ -327,6 +331,7 @@ class Push(_ZmqTransport[PushSend, PushRecv]):
         assert self._socket
         self._socket.setsockopt(zmq.RECONNECT_IVL, 50)
         self._socket.setsockopt(zmq.RECONNECT_IVL_MAX, 500)
+        self._socket.setsockopt(zmq.IMMEDIATE, 1)
         self._socket.connect(self._addr)
 
     def _recv_message(self) -> PushRecv:

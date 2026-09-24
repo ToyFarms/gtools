@@ -91,7 +91,6 @@ class Extension(ExtensionUtility):
         self._last_heartbeat = 0
 
         self._suppress_log = False
-        self.__push_fallback_called = 0
         self.__push_fallback_warned = False
         self._running = False
 
@@ -102,10 +101,9 @@ class Extension(ExtensionUtility):
         pending._rtt_ns = time.monotonic_ns()
 
         if not self.push_connected:
-            if not self.__push_fallback_warned and self.__push_fallback_called > 10:
+            if not self.__push_fallback_warned:
                 self.logger.warning("push/pull socket is not enabled, fallback to a slower path using broker")
                 self.__push_fallback_warned = True
-            self.__push_fallback_called += 1
 
             self._send(Packet(type=Packet.TYPE_PUSH_PACKET, push_packet=pending))
         else:

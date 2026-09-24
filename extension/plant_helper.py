@@ -92,7 +92,7 @@ class PlantHelper(Extension):
             if tile.flags & TileFlags.WAS_SPLICED != 0:
                 return False
 
-        below = self.state.world.get_tile(tile.pos.x, tile.pos.y + 1)
+        below = self.state.world.get_tile(tile.pos.x, tile.pos.y + 1, log=False)
         if not below:
             return False
 
@@ -135,7 +135,7 @@ class PlantHelper(Extension):
                     if (tile := self.state.world.get_tile(target)) and self.can_plant(tile):
                         self.send_particle(ParticleID.LBOT_PLACE, tile=target)
 
-            time.sleep(0.1)
+            time.sleep(0.5)
 
     def destroy(self) -> None:
         pass
