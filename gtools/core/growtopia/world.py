@@ -547,6 +547,7 @@ class TileExtra:
         extra = _TILE_EXTRA_REGISTRY.get(type)
         if not extra:
             raise NotImplementedError(f"no tile extra for id {type}")
+        extra.type = type
         return extra()
 
     def get[T](self, expect: Type[T]) -> T:
@@ -561,12 +562,9 @@ class TileExtra:
     def int__serialize_into(self, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> None: ...
 
 
-# i hate this, should've just be one big switch statement, but python being python doesn't have efficient big branch optimization
-# another thing is duplicate logic for serialize/deserialize, ideally it would just be one schema used for both, but whatever it rarely changes anyway
-
-
 @dataclass(slots=True)
 class DoorTile(TileExtra):
+    type: TileExtraType = TileExtraType.DOOR_TILE
     text: bytes = b""
     unk1: int = 0  # u8
 
@@ -585,6 +583,7 @@ class DoorTile(TileExtra):
 
 @dataclass(slots=True)
 class SignTile(TileExtra):
+    type: TileExtraType = TileExtraType.SIGN_TILE
     text: bytes = b""
     unk1: int = 0  # i32
 
@@ -603,6 +602,7 @@ class SignTile(TileExtra):
 
 @dataclass(slots=True)
 class LockTile(TileExtra):
+    type: TileExtraType = TileExtraType.LOCK_TILE
     flags: int = 0  # u8
     owner_uid: int = 0  # u32
     access_count: int = 0  # u32
@@ -662,6 +662,7 @@ class LockTile(TileExtra):
 
 @dataclass(slots=True)
 class SeedTile(TileExtra):
+    type: TileExtraType = TileExtraType.SEED_TILE
     time_passed: int = 0  # u32
     item_on_tree: int = 0  # u8
 
@@ -681,6 +682,7 @@ class SeedTile(TileExtra):
 # id 5, never seen it, no mention in the source (world: START)
 @dataclass(slots=True)
 class ScrollBulletinTile(TileExtra):
+    type: TileExtraType = TileExtraType.UNK_SCROLL_BULETTIN
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "ScrollBulletinTile":
@@ -694,6 +696,7 @@ class ScrollBulletinTile(TileExtra):
 
 @dataclass(slots=True)
 class MailboxTile(TileExtra):
+    type: TileExtraType = TileExtraType.MAILBOX_TILE
     unk1: bytes = b""
     unk2: bytes = b""
     unk3: bytes = b""
@@ -718,6 +721,7 @@ class MailboxTile(TileExtra):
 
 @dataclass(slots=True)
 class BulletinTile(TileExtra):
+    type: TileExtraType = TileExtraType.BULLETIN_TILE
     unk1: bytes = b""
     unk2: bytes = b""
     unk3: bytes = b""
@@ -742,6 +746,7 @@ class BulletinTile(TileExtra):
 
 @dataclass(slots=True)
 class DiceTile(TileExtra):
+    type: TileExtraType = TileExtraType.DICE_TILE
     symbol: int = 0  # u8
 
     @classmethod
@@ -757,6 +762,7 @@ class DiceTile(TileExtra):
 
 @dataclass(slots=True)
 class ProviderTile(TileExtra):
+    type: TileExtraType = TileExtraType.PROVIDER
     time_passed: int = 0  # u32
     time_ms: int = 0  # u32
 
@@ -778,6 +784,7 @@ class ProviderTile(TileExtra):
 
 @dataclass(slots=True)
 class AchievementBlockTile(TileExtra):
+    type: TileExtraType = TileExtraType.ACHIEVEMENT_BLOCK_TILE
     unk1: int = 0  # u32
     tile_type: int = 0  # u8
 
@@ -796,6 +803,7 @@ class AchievementBlockTile(TileExtra):
 
 @dataclass(slots=True)
 class HeartMonitorTile(TileExtra):
+    type: TileExtraType = TileExtraType.HEART_MONITOR_TILE
     unk1: int = 0  # u32
     player_name: bytes = b""
 
@@ -814,6 +822,7 @@ class HeartMonitorTile(TileExtra):
 
 @dataclass(slots=True)
 class DonationBoxTile(TileExtra):
+    type: TileExtraType = TileExtraType.DONATION_BOX_TILE
     unk1: bytes = b""
     unk2: bytes = b""
     unk3: bytes = b""
@@ -838,6 +847,7 @@ class DonationBoxTile(TileExtra):
 
 @dataclass(slots=True)
 class StuffForToysTile(TileExtra):
+    type: TileExtraType = TileExtraType.STUFF_FOR_TOYS_TILE
     unk1: bytes = b""
     unk2: bytes = b""
     unk3: bytes = b""
@@ -862,6 +872,7 @@ class StuffForToysTile(TileExtra):
 
 @dataclass(slots=True)
 class MannequinTile(TileExtra):
+    type: TileExtraType = TileExtraType.MANNEQUIN_TILE
     text: bytes = b""
     unk1: int = 0  # u8
     unk2: int = 0  # u32
@@ -910,6 +921,7 @@ class MannequinTile(TileExtra):
 
 @dataclass(slots=True)
 class BunnyEggTile(TileExtra):
+    type: TileExtraType = TileExtraType.BUNNY_EGG_TILE
     eggs_placed: int = 0  # u32
 
     @classmethod
@@ -925,6 +937,7 @@ class BunnyEggTile(TileExtra):
 
 @dataclass(slots=True)
 class TeamTile(TileExtra):
+    type: TileExtraType = TileExtraType.TEAM_TILE
     team: int = 0  # u8
 
     @classmethod
@@ -940,6 +953,7 @@ class TeamTile(TileExtra):
 
 @dataclass(slots=True)
 class GameGeneratorTile(TileExtra):
+    type: TileExtraType = TileExtraType.GAME_GENERATOR_TILE
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "GameGeneratorTile":
         t = cls()
@@ -952,6 +966,7 @@ class GameGeneratorTile(TileExtra):
 
 @dataclass(slots=True)
 class XenoniteCrystalTile(TileExtra):
+    type: TileExtraType = TileExtraType.XENONITE_CRYSTAL_TILE
     unk1: int = 0  # u8
     unk2: int = 0  # u32
 
@@ -970,6 +985,7 @@ class XenoniteCrystalTile(TileExtra):
 
 @dataclass(slots=True)
 class PhoneBoothTile(TileExtra):
+    type: TileExtraType = TileExtraType.PHONE_BOOTH_TILE
     hair: int = 0  # u16
     shirt: int = 0  # u16
     pants: int = 0  # u16
@@ -1009,6 +1025,7 @@ class PhoneBoothTile(TileExtra):
 
 @dataclass(slots=True)
 class CrystalTile(TileExtra):
+    type: TileExtraType = TileExtraType.CRYSTAL_TILE
     unk1: bytes = b""
 
     @classmethod
@@ -1024,6 +1041,7 @@ class CrystalTile(TileExtra):
 
 @dataclass(slots=True)
 class CrimeInProgressTile(TileExtra):
+    type: TileExtraType = TileExtraType.CRIME_IN_PROGRESS_TILE
     unk1: bytes = b""
     unk2: int = 0  # u32
     unk3: int = 0  # u8
@@ -1044,6 +1062,7 @@ class CrimeInProgressTile(TileExtra):
 
 @dataclass(slots=True)
 class DisplayBlockTile(TileExtra):
+    type: TileExtraType = TileExtraType.DISPLAY_BLOCK_TILE
     item_id: int = 0  # u32
 
     @classmethod
@@ -1059,6 +1078,7 @@ class DisplayBlockTile(TileExtra):
 
 @dataclass(slots=True)
 class VendingMachineTile(TileExtra):
+    type: TileExtraType = TileExtraType.VENDING_MACHINE_TILE
     item_id: int = 0  # u32
     price: int = 0  # i32
 
@@ -1077,6 +1097,7 @@ class VendingMachineTile(TileExtra):
 
 @dataclass(slots=True)
 class GivingTreeTile(TileExtra):
+    type: TileExtraType = TileExtraType.GIVING_TREE_TILE
     unk1: int = 0  # u16
     unk2: int = 0  # u32
 
@@ -1094,6 +1115,7 @@ class GivingTreeTile(TileExtra):
 
 @dataclass(slots=True)
 class CountryFlagTile(TileExtra):
+    type: TileExtraType = TileExtraType.COUNTRY_FLAG_TILE
     country: bytes = b""
 
     @classmethod
@@ -1109,6 +1131,7 @@ class CountryFlagTile(TileExtra):
 
 @dataclass(slots=True)
 class WeatherMachineTile(TileExtra):
+    type: TileExtraType = TileExtraType.WEATHER_MACHINE_TILE
     item_id: int = 0  # u32
 
     @classmethod
@@ -1124,6 +1147,7 @@ class WeatherMachineTile(TileExtra):
 
 @dataclass(slots=True)
 class DataBedrockTile(TileExtra):
+    type: TileExtraType = TileExtraType.DATA_BEDROCK_TILE
     unk1: int = 0  # u8
     unk2: int = 0  # u32
     unk3: int = 0  # u32
@@ -1157,6 +1181,7 @@ class DataBedrockTile(TileExtra):
 
 @dataclass(slots=True)
 class SpotlightTile(TileExtra):
+    type: TileExtraType = TileExtraType.SPOTLIGHT_TILE
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "SpotlightTile":
@@ -1170,6 +1195,7 @@ class SpotlightTile(TileExtra):
 
 @dataclass(slots=True)
 class FishTankPortTile(TileExtra):
+    type: TileExtraType = TileExtraType.FISH_TANK_PORT_TILE
     flags: int = 0  # u8
     fishes: list[FishInfo] = field(default_factory=list)
 
@@ -1192,6 +1218,7 @@ class FishTankPortTile(TileExtra):
 
 @dataclass(slots=True)
 class SolarCollectorTile(TileExtra):
+    type: TileExtraType = TileExtraType.SOLAR_COLLECTOR_TILE
     unk1: int = 0  # u8
     unk2: int = 0  # u32
 
@@ -1210,6 +1237,7 @@ class SolarCollectorTile(TileExtra):
 
 @dataclass(slots=True)
 class ForgeTile(TileExtra):
+    type: TileExtraType = TileExtraType.FORGE_TILE
     temperature: int = 0  # u32
     unk1: int = 0  # u8
     unk2: int = 0  # u16
@@ -1231,6 +1259,7 @@ class ForgeTile(TileExtra):
 
 @dataclass(slots=True)
 class SteamOrganTile(TileExtra):
+    type: TileExtraType = TileExtraType.STEAM_ORGAN_TILE
     instrument_type: int = 0  # u8
     note: int = 0  # u32
 
@@ -1249,6 +1278,7 @@ class SteamOrganTile(TileExtra):
 
 @dataclass(slots=True)
 class SilkwormTile(TileExtra):
+    type: TileExtraType = TileExtraType.SILKWORM_TILE
     flags: int = 0  # u8
     name: bytes = b""
     age: int = 0  # u32
@@ -1292,6 +1322,7 @@ class SilkwormTile(TileExtra):
 
 @dataclass(slots=True)
 class SewingMachineTile(TileExtra):
+    type: TileExtraType = TileExtraType.SEWING_MACHINE_TILE
     bolt_id_list: list[int] = field(default_factory=list)  # Vec<u32>
 
     @classmethod
@@ -1311,6 +1342,7 @@ class SewingMachineTile(TileExtra):
 
 @dataclass(slots=True)
 class LobsterTrapTile(TileExtra):
+    type: TileExtraType = TileExtraType.LOBSTER_TRAP_TILE
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "LobsterTrapTile":
@@ -1324,6 +1356,7 @@ class LobsterTrapTile(TileExtra):
 
 @dataclass(slots=True)
 class PaintingEaselTile(TileExtra):
+    type: TileExtraType = TileExtraType.PAINTING_EASEL_TILE
     item_id: int = 0  # u32
     label: bytes = b""
 
@@ -1342,6 +1375,7 @@ class PaintingEaselTile(TileExtra):
 
 @dataclass(slots=True)
 class PetBattleCageTile(TileExtra):
+    type: TileExtraType = TileExtraType.PET_BATTLE_CAGE_TILE
     name: bytes = b""
     unk1: bytes = b""
 
@@ -1359,6 +1393,7 @@ class PetBattleCageTile(TileExtra):
 
 @dataclass(slots=True)
 class PetTrainerTile(TileExtra):
+    type: TileExtraType = TileExtraType.PET_TRAINER_TILE
     name: bytes = b""
     pet_count: int = 0  # u32
     unk1: int = 0  # u32
@@ -1386,6 +1421,7 @@ class PetTrainerTile(TileExtra):
 
 @dataclass(slots=True)
 class SteamEngineTile(TileExtra):
+    type: TileExtraType = TileExtraType.STEAM_ENGINE_TILE
     temperature: int = 0  # u32
 
     @classmethod
@@ -1401,6 +1437,7 @@ class SteamEngineTile(TileExtra):
 
 @dataclass(slots=True)
 class LockBotTile(TileExtra):
+    type: TileExtraType = TileExtraType.LOCK_BOT_TILE
     time_passed: int = 0  # u32
 
     @classmethod
@@ -1416,6 +1453,7 @@ class LockBotTile(TileExtra):
 
 @dataclass(slots=True)
 class SpiritStorageUnitTile(TileExtra):
+    type: TileExtraType = TileExtraType.SPIRIT_STORAGE_UNIT_TILE
     ghost_jar_count: int = 0  # u32
 
     @classmethod
@@ -1431,6 +1469,7 @@ class SpiritStorageUnitTile(TileExtra):
 
 @dataclass(slots=True)
 class ShelfTile(TileExtra):
+    type: TileExtraType = TileExtraType.SHELF_TILE
     top_left_item_id: int = 0  # u32
     top_right_item_id: int = 0  # u32
     bottom_left_item_id: int = 0  # u32
@@ -1455,6 +1494,7 @@ class ShelfTile(TileExtra):
 
 @dataclass(slots=True)
 class VipEntranceTile(TileExtra):
+    type: TileExtraType = TileExtraType.VIP_ENTRANCE_TILE
     unk1: int = 0  # u8
     owner_uid: int = 0  # u32
     access_uids: list[int] = field(default_factory=list)  # Vec<u32>
@@ -1480,6 +1520,7 @@ class VipEntranceTile(TileExtra):
 
 @dataclass(slots=True)
 class ChallengeTimerTile(TileExtra):
+    type: TileExtraType = TileExtraType.CHALLENGE_TIMER_TILE
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "ChallengeTimerTile":
@@ -1493,6 +1534,7 @@ class ChallengeTimerTile(TileExtra):
 
 @dataclass(slots=True)
 class FishWallMountTile(TileExtra):
+    type: TileExtraType = TileExtraType.FISH_WALL_MOUNT_TILE
     label: bytes = b""
     item_id: int = 0  # u32
     lb: int = 0  # u8
@@ -1514,6 +1556,7 @@ class FishWallMountTile(TileExtra):
 
 @dataclass(slots=True)
 class PortraitTile(TileExtra):
+    type: TileExtraType = TileExtraType.PORTRAIT_TILE
     label: bytes = b""
     unk1: int = 0
     unk2: int = 0
@@ -1573,6 +1616,7 @@ class PortraitTile(TileExtra):
 
 @dataclass(slots=True)
 class GuildWeatherMachineTile(TileExtra):
+    type: TileExtraType = TileExtraType.GUILD_WEATHER_MACHINE_TILE
     cycle_time_ms: int = 0  # u32
     gravity: int = 0  # u32
     flags: int = 0  # u8
@@ -1594,6 +1638,7 @@ class GuildWeatherMachineTile(TileExtra):
 
 @dataclass(slots=True)
 class FossilPrepStationTile(TileExtra):
+    type: TileExtraType = TileExtraType.FOSSIL_PREP_STATION_TILE
     unk1: int = 0  # u32
 
     @classmethod
@@ -1608,6 +1653,7 @@ class FossilPrepStationTile(TileExtra):
 
 @dataclass(slots=True)
 class DnaExtractorTile(TileExtra):
+    type: TileExtraType = TileExtraType.DNA_EXTRACTOR_TILE
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "DnaExtractorTile":
@@ -1621,6 +1667,7 @@ class DnaExtractorTile(TileExtra):
 
 @dataclass(slots=True)
 class BlasterTile(TileExtra):
+    type: TileExtraType = TileExtraType.BLASTER_TILE
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "BlasterTile":
@@ -1633,6 +1680,7 @@ class BlasterTile(TileExtra):
 
 @dataclass(slots=True)
 class ChemsynthTankTile(TileExtra):
+    type: TileExtraType = TileExtraType.CHEMSYNTH_TANK_TILE
     current_chem: int = 0  # u32
     target_chem: int = 0  # u32
 
@@ -1651,6 +1699,7 @@ class ChemsynthTankTile(TileExtra):
 
 @dataclass(slots=True)
 class StorageBlockTile(TileExtra):
+    type: TileExtraType = TileExtraType.STORAGE_BLOCK_TILE
     items: list[StorageBlockItemInfo] = field(default_factory=list)
 
     @classmethod
@@ -1669,6 +1718,7 @@ class StorageBlockTile(TileExtra):
 
 @dataclass(slots=True)
 class CookingOvenTile(TileExtra):
+    type: TileExtraType = TileExtraType.COOKING_OVEN_TILE
     temperature_level: int = 0  # u32
     ingredients: list[CookingOvenIngredientInfo] = field(default_factory=list)
     unk1: int = 0  # u32
@@ -1701,6 +1751,7 @@ class CookingOvenTile(TileExtra):
 
 @dataclass(slots=True)
 class AudioRackTile(TileExtra):
+    type: TileExtraType = TileExtraType.AUDIO_RACK_TILE
     note: bytes = b""
     volume: int = 0  # u32
 
@@ -1719,6 +1770,7 @@ class AudioRackTile(TileExtra):
 
 @dataclass(slots=True)
 class GeigerChargerTile(TileExtra):
+    type: TileExtraType = TileExtraType.GEIGER_CHARGER_TILE
     unk1: int = 0  # u32
 
     @classmethod
@@ -1733,6 +1785,7 @@ class GeigerChargerTile(TileExtra):
 
 @dataclass(slots=True)
 class AdventureBeginsTile(TileExtra):
+    type: TileExtraType = TileExtraType.ADVENTURE_BEGINS_TILE
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "AdventureBeginsTile":
@@ -1746,6 +1799,7 @@ class AdventureBeginsTile(TileExtra):
 
 @dataclass(slots=True)
 class TombRobberTile(TileExtra):
+    type: TileExtraType = TileExtraType.TOMB_ROBBER_TILE
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "TombRobberTile":
@@ -1759,6 +1813,7 @@ class TombRobberTile(TileExtra):
 
 @dataclass(slots=True)
 class BalloonOMaticTile(TileExtra):
+    type: TileExtraType = TileExtraType.BALLOON_O_MATIC_TILE
     total_rarity: int = 0  # u32
     team_type: int = 0  # u8
 
@@ -1777,6 +1832,7 @@ class BalloonOMaticTile(TileExtra):
 
 @dataclass(slots=True)
 class TrainingPortTile(TileExtra):
+    type: TileExtraType = TileExtraType.TRAINING_PORT_TILE
     fish_lb: int = 0  # u32
     fish_status: int = 0  # u16
     fish_id: int = 0  # u32
@@ -1810,6 +1866,7 @@ class TrainingPortTile(TileExtra):
 
 @dataclass(slots=True)
 class ItemSuckerTile(TileExtra):
+    type: TileExtraType = TileExtraType.ITEM_SUCKER_TILE
     item_id: int = 0  # u32
     item_amount: int = 0  # u32
     flags: int = 0  # u16
@@ -1834,6 +1891,7 @@ class ItemSuckerTile(TileExtra):
 
 @dataclass(slots=True)
 class CybotTile(TileExtra):
+    type: TileExtraType = TileExtraType.CYBOT_TILE
     commands: list[CyBotCommandData] = field(default_factory=list)
     sync_timer: int = 0  # u32
     activated: int = 0  # u32
@@ -1860,6 +1918,7 @@ class CybotTile(TileExtra):
 
 @dataclass(slots=True)
 class GuildItemTile(TileExtra):
+    type: TileExtraType = TileExtraType.GUILD_ITEM_TILE
     unk1: int = 0  # u8
     unk2: int = 0  # u32
     unk3: int = 0  # u32
@@ -1889,6 +1948,7 @@ class GuildItemTile(TileExtra):
 
 @dataclass(slots=True)
 class GrowscanTile(TileExtra):
+    type: TileExtraType = TileExtraType.GROWSCAN_TILE
     unk1: int = 0  # u8
 
     @classmethod
@@ -1903,6 +1963,7 @@ class GrowscanTile(TileExtra):
 
 @dataclass(slots=True)
 class ContainmentFieldPowerNodeTile(TileExtra):
+    type: TileExtraType = TileExtraType.CONTAINMENT_FIELD_POWER_NODE_TILE
     time_ms: int = 0  # u32
     unk1: list[int] = field(default_factory=list)  # Vec<u32>
 
@@ -1923,6 +1984,7 @@ class ContainmentFieldPowerNodeTile(TileExtra):
 
 @dataclass(slots=True)
 class SpiritBoardTile(TileExtra):
+    type: TileExtraType = TileExtraType.SPIRIT_STORAGE_UNIT_TILE
     unk1: int = 0  # u32
     unk2: bytes = b""
     unk3: bytes = b""
@@ -1949,6 +2011,7 @@ class SpiritBoardTile(TileExtra):
 
 @dataclass(slots=True)
 class TesseractManipulatorTile(TileExtra):
+    type: TileExtraType = TileExtraType.TESSERACT_MANIPULATOR_TILE
     gems: int = 0  # u32
     next_update_ms: int = 0  # u32
     item_id: int = 0  # u32
@@ -1975,6 +2038,7 @@ class TesseractManipulatorTile(TileExtra):
 
 @dataclass(slots=True)
 class HeartOfGaiaTile(TileExtra):
+    type: TileExtraType = TileExtraType.HEART_OF_GAIA_TILE
     gems: int = 0  # u32
     next_update_ms: int = 0  # u32
     item_id: int = 0  # u32
@@ -2001,6 +2065,7 @@ class HeartOfGaiaTile(TileExtra):
 
 @dataclass(slots=True)
 class TechnoOrganicEngineTile(TileExtra):
+    type: TileExtraType = TileExtraType.TECHNO_ORGANIC_ENGINE_TILE
     unk1: int = 0  # u32
     unk2: int = 0  # u32
     item_id: int = 0  # u32
@@ -2045,6 +2110,7 @@ class TechnoOrganicEngineTile(TileExtra):
 
 @dataclass(slots=True)
 class StormyCloudTile(TileExtra):
+    type: TileExtraType = TileExtraType.STORMY_CLOUD_TILE
     sting_duration: int = 0  # u32
     is_solid: int = 0  # u32
     non_solid_duration: int = 0  # u32
@@ -2066,6 +2132,7 @@ class StormyCloudTile(TileExtra):
 
 @dataclass(slots=True)
 class TemporaryPlatformTile(TileExtra):
+    type: TileExtraType = TileExtraType.TEMPORARY_PLATFORM_TILE
     time_ms: int = 0  # u32
 
     @classmethod
@@ -2080,6 +2147,7 @@ class TemporaryPlatformTile(TileExtra):
 
 @dataclass(slots=True)
 class SafeVaultTile(TileExtra):
+    type: TileExtraType = TileExtraType.SAFE_VAULT_TILE
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "SafeVaultTile":
@@ -2092,6 +2160,7 @@ class SafeVaultTile(TileExtra):
 
 @dataclass(slots=True)
 class AngelicCountingCloudTile(TileExtra):
+    type: TileExtraType = TileExtraType.ANGELIC_COUNTING_CLOUD_TILE
     is_raffling: int = 0  # u32
     ascii: bytes = b""
 
@@ -2203,6 +2272,7 @@ class PveNpcData:
 
 @dataclass(slots=True)
 class PveNpcTile(TileExtra):
+    type: TileExtraType = TileExtraType.PVE_NPC_TILE
     arr: list[PveNpcData] = field(default_factory=list)  # len 3
 
     @classmethod
@@ -2220,6 +2290,7 @@ class PveNpcTile(TileExtra):
 
 @dataclass(slots=True)
 class InfinityWeatherMachineTile(TileExtra):
+    type: TileExtraType = TileExtraType.INFINITY_WEATHER_MACHINE_TILE
     cycle_time_ms: int = 0  # u32
     weather_machine_list: list[int] = field(default_factory=list)  # Vec<u32>
 
@@ -2241,6 +2312,7 @@ class InfinityWeatherMachineTile(TileExtra):
 
 @dataclass(slots=True)
 class CompletionistTile(TileExtra):
+    type: TileExtraType = TileExtraType.COMPLETIONIST_TILE
     unk1: int = 0  # u32
 
     @classmethod
@@ -2256,6 +2328,7 @@ class CompletionistTile(TileExtra):
 
 @dataclass(slots=True)
 class PineappleGuzzlerTile(TileExtra):
+    type: TileExtraType = TileExtraType.PINEAPPLE_GUZZLER_TILE
     pineapple_fed: int = 0  # u32
 
     @classmethod
@@ -2271,6 +2344,7 @@ class PineappleGuzzlerTile(TileExtra):
 
 @dataclass(slots=True)
 class KrankenGalaticBlockTile(TileExtra):
+    type: TileExtraType = TileExtraType.KRANKEN_GALATIC_BLOCK_TILE
     pattern_index: int = 0  # u8
     unk1: int = 0  # u32
     r: int = 0  # u8
@@ -2298,6 +2372,7 @@ class KrankenGalaticBlockTile(TileExtra):
 
 @dataclass(slots=True)
 class FriendsEntranceTile(TileExtra):
+    type: TileExtraType = TileExtraType.FRIENDS_ENTRANCE_TILE
     owner_uid: int = 0  # u32
     unk1: int = 0  # u16
     unk2: int = 0  # u16

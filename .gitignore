@@ -19,3 +19,4 @@ out/
 *.obj
 *.pdb
 .cmodcache/
+sample/

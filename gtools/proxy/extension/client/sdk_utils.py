@@ -24,7 +24,7 @@ from gtools.protogen.strkv_pb2 import Clause, FindCol, FindRow, Query
 from gtools.protogen.tank_pb2 import Field, FieldValue
 from gtools.protogen.variant_pb2 import VariantClause
 from gtools.proxy.state import State
-from pyglm.glm import ivec2, vec2
+from pyglm.glm import ivec2, ivec4, vec2, vec4
 
 from thirdparty.enet.bindings import ENetPacketFlag
 
@@ -400,7 +400,29 @@ class ExtensionUtility(ABC):
 
         return TankFlags.FACING_LEFT if self.state.me.pos.x > target.x else TankFlags.NONE
 
+    # def in_range(self, p2: ivec2, punch: bool) -> bool:
+    #     range = self.state.me.state.punch_range if punch else self.state.me.state.build_range
+    #     d = abs(ivec2(self.state.me.pos // 32) - p2)
+    #     return d.x <= range and d.y <= range
+
     def in_range(self, p2: ivec2, punch: bool) -> bool:
-        range = self.state.me.state.punch_range if punch else self.state.me.state.build_range
-        d = abs(ivec2(self.state.me.pos // 32) - p2)
-        return d.x <= range and d.y <= range
+        reach = self.state.me.state.punch_range if punch else self.state.me.state.build_range
+
+        player_tile = ivec2(self.state.me.pos // 32)
+        rel = self.state.me.pos % 32
+
+        colrect = vec4(0, 0, 20, 20)
+        if self.state.world and (player := self.state.world.get_player(self.state.me.net_id)):
+            colrect = player.colrect
+
+        in_middle = ivec2(rel.x > 32 - colrect.w, rel.y > 32 - colrect.z)
+
+        dx = abs(player_tile.x - p2.x)
+        dy = abs(player_tile.y - p2.y)
+
+        if in_middle.x and p2.x > player_tile.x:
+            dx = max(0, dx - 1)
+        if in_middle.y and p2.y > player_tile.y:
+            dy = max(0, dy - 1)
+
+        return dx <= reach and dy <= reach

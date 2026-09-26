@@ -1,20 +1,25 @@
+import random
 import time
 
 from pyglm.glm import ivec2
 from gtools.core.growtopia.items_dat import Item, ItemInfoCollisionType, ItemInfoType, item_database
-from gtools.core.growtopia.packet import NetPacket, TankFlags
+from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
 from gtools.core.growtopia.world import SeedTile, Tile, TileFlags
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_SEND_AND_FORGET,
     DIRECTION_CLIENT_TO_SERVER,
+    DIRECTION_SERVER_TO_CLIENT,
     INTEREST_STATE,
+    INTEREST_TILE_CHANGE_REQUEST,
     Interest,
     InterestState,
     PendingPacket,
 )
 from gtools.proxy.extension.client.sdk import Extension, dispatch, register_thread
 from gtools.proxy.extension.client.sdk_utils import helper
+from gtools.proxy.state import Status
+from thirdparty.enet.bindings import ENetPacketFlag
 
 s = helper()
 
@@ -26,6 +31,14 @@ class PlantHelper(Extension):
         self.seed_id = 0
         self.record_next_plant = False
         self.enabled = False
+
+        self.place_pending: dict[ivec2, float] = {}
+        self.placing_state = False
+
+        self.plant_delay_min = 0.08
+        self.plant_delay_max = 0.11
+        self.next_plant_allowed = 0.0
+        self.last_plant = time.monotonic()
 
     def get_item_id(self, id_or_name: int | str | bytes) -> Item:
         if isinstance(id_or_name, int):
@@ -44,6 +57,9 @@ class PlantHelper(Extension):
         cmd = s.parse_command(event)
         if cmd:
             item = self.get_item_id(cmd)
+            if not item.is_seed():
+                item = item_database.get(item.id + 1)
+
             self.console_log(f"seed id set to {item.id} ({item.name})")
             self.seed_id = item.id
         else:
@@ -81,7 +97,7 @@ class PlantHelper(Extension):
 
         return self.cancel()
 
-    def can_plant(self, tile: Tile) -> bool:
+    def can_plant_at(self, tile: Tile) -> bool:
         if not self.state.world:
             return False
 
@@ -114,28 +130,134 @@ class PlantHelper(Extension):
 
         return True
 
+    def plant(self, target: ivec2) -> bool:
+        if not self.state.world or self.state.status != Status.IN_WORLD:
+            return False
+
+        if self.seed_id == 0 or self.state.inventory.get(self.seed_id) is None:
+            return False
+
+        facing_left = self.facing_left(tile=target)
+
+        self.push(
+            PreparedPacket(
+                packet=NetPacket(
+                    type=NetType.TANK_PACKET,
+                    data=TankPacket(
+                        type=TankType.TILE_CHANGE_REQUEST,
+                        value=self.seed_id,
+                        vector_x=self.state.me.pos.x,
+                        vector_y=self.state.me.pos.y,
+                        int_x=target.x,
+                        int_y=target.y,
+                        flags=facing_left,
+                    ),
+                ),
+                direction=DIRECTION_CLIENT_TO_SERVER,
+                flags=ENetPacketFlag.RELIABLE,
+            )
+        )
+        self.push(
+            PreparedPacket(
+                packet=NetPacket(
+                    type=NetType.TANK_PACKET,
+                    data=TankPacket(
+                        type=TankType.STATE,
+                        value=self.seed_id,
+                        vector_x=self.state.me.pos.x,
+                        vector_y=self.state.me.pos.y,
+                        int_x=target.x,
+                        int_y=target.y,
+                        flags=facing_left | TankFlags.STANDING | TankFlags.PLACE | TankFlags.TILE_CHANGE,
+                    ),
+                ),
+                direction=DIRECTION_CLIENT_TO_SERVER,
+                flags=ENetPacketFlag.NONE,
+            )
+        )
+
+        self.placing_state = True
+        return True
+
+    def reset_state(self) -> None:
+        if not self.placing_state or self.state.status != Status.IN_WORLD:
+            return
+
+        facing_left = self.state.me.flags & TankFlags.FACING_LEFT
+        pkt = NetPacket(
+            type=NetType.TANK_PACKET,
+            data=TankPacket(
+                type=TankType.STATE,
+                vector_x=self.state.me.pos.x,
+                vector_y=self.state.me.pos.y,
+                int_x=-1,
+                int_y=-1,
+                flags=facing_left | TankFlags.STANDING,
+            ),
+        )
+        self.push(PreparedPacket(packet=pkt, flags=ENetPacketFlag.NONE, direction=DIRECTION_CLIENT_TO_SERVER))
+        time.sleep(random.uniform(0.19, 0.21))
+        self.push(PreparedPacket(packet=pkt, flags=ENetPacketFlag.RELIABLE, direction=DIRECTION_CLIENT_TO_SERVER))
+        self.placing_state = False
+
+    @dispatch(
+        Interest(
+            interest=INTEREST_TILE_CHANGE_REQUEST,
+            direction=DIRECTION_SERVER_TO_CLIENT,
+            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
+            id=s.auto,
+        ),
+    )
+    def _tile_change_confirm(self, event: PendingPacket) -> PendingPacket | None:
+        if self.place_pending:
+            pkt = NetPacket.deserialize(event.buf)
+            target = ivec2(pkt.tank.int_x, pkt.tank.int_y)
+            self.place_pending.pop(target, None)
+
     @register_thread
     def worker(self) -> None:
         while True:
-            if not self.enabled or not self.state.world:
-                time.sleep(0.1)
-                continue
+            while self.enabled and self.state.world and self.state.status == Status.IN_WORLD and self.seed_id != 0:
+                if not (player := self.state.world.get_player(self.state.me.net_id)):
+                    time.sleep(0.1)
+                    continue
 
-            if not (player := self.state.world.get_player(self.state.me.net_id)):
-                time.sleep(0.5)
-                continue
+                if self.state.inventory.get(self.seed_id).amount <= 0:
+                    break
 
-            rel = player.pos % 32
-            in_middle = ivec2(rel.x > 32 - player.colrect.w, rel.y > 32 - player.colrect.z)
-            for x in range(-player.state.build_range, player.state.build_range + 1 + in_middle.x):
-                for y in range(-player.state.build_range, player.state.build_range + 1 + in_middle.y):
+                now = time.monotonic()
+                self.place_pending = {k: v for k, v in self.place_pending.items() if now - v < 0.5}
+
+                for x_off in range(self.state.me.state.build_range + 5):
                     target = ivec2(player.pos // 32)
-                    target += ivec2(x, y)
+                    if player.flags & TankFlags.FACING_LEFT:
+                        target.x -= x_off
+                    else:
+                        target.x += x_off
 
-                    if (tile := self.state.world.get_tile(target)) and self.can_plant(tile):
+                    if (
+                        (tile := self.state.world.get_tile(target))
+                        and self.can_plant_at(tile)
+                        and self.in_range(target, punch=False)
+                        and self.state.inventory.get(self.seed_id).amount > 0
+                        and target not in self.place_pending
+                    ):
+                        wait = self.next_plant_allowed - time.monotonic()
+                        if wait > 0:
+                            break
+
                         self.send_particle(ParticleID.LBOT_PLACE, tile=target)
+                        if self.plant(target):
+                            self.last_plant = time.monotonic()
+                            self.place_pending[target] = time.monotonic()
+                            self.next_plant_allowed = time.monotonic() + random.uniform(self.plant_delay_min, self.plant_delay_max)
 
-            time.sleep(0.5)
+                time.sleep(1 / 60)
+                # if time.monotonic() - self.last_plant > 0.2:
+                #     break
+
+            # self.reset_state()
+            # time.sleep(0.2)
 
     def destroy(self) -> None:
         pass
