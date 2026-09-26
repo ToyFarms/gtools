@@ -544,11 +544,12 @@ class TileExtra:
 
     @classmethod
     def new(cls, type: TileExtraType) -> "TileExtra":
-        extra = _TILE_EXTRA_REGISTRY.get(type)
-        if not extra:
+        handler = _TILE_EXTRA_REGISTRY.get(type)
+        if not handler:
             raise NotImplementedError(f"no tile extra for id {type}")
+        extra = handler()
         extra.type = type
-        return extra()
+        return extra
 
     def get[T](self, expect: Type[T]) -> T:
         if not isinstance(self, expect):
