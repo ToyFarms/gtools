@@ -367,3 +367,42 @@ class TouchDevice(HIDDevice):
             )
 
         return contacts
+
+"""
+dear future me,
+
+maybe you think some days you could go back in time to change it.
+maybe you think that everything could be so different today.
+but what you did is correct.
+your feeling is correct.
+you did exactly what you are supposed to do.
+nothing is wrong, no one is wrong.
+
+how are you today? feeling better?
+i'm sorry if this brought back your memories.
+but those are your first memories :)
+your first genuine feeling :)
+the one that changed everything about you.
+so don't forget, even if it hurts :)
+even if she forgets about it.
+at least it still lived on your memories.
+
+there are so many things i regret recently.
+but i have no shame,
+i have no shame that i still love her
+even after all those things
+even if she's different,
+even if she doesn't feel the same,
+it truly doesn't matter, i still love her.
+let me love her silently, from afar.
+
+are you happy? are you with someone right now?
+hope you chose someone that truly loves you :)
+but i have a request for you, a really selfish one.
+go check up on her for me, for one last time.
+make sure she's okay, she's happy,
+everything else doesn't matter.
+
+26/09/2026
+ts corny as hell, but hey, this the only way i can feel better right now so fuck it :)
+"""

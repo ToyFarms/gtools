@@ -35,8 +35,7 @@ class PlantHelper(Extension):
         self.place_pending: dict[ivec2, float] = {}
         self.placing_state = False
 
-        self.plant_delay_min = 0.08
-        self.plant_delay_max = 0.11
+        self.plant_delay = 0.08
         self.next_plant_allowed = 0.0
         self.last_plant = time.monotonic()
 
@@ -116,9 +115,6 @@ class PlantHelper(Extension):
             return False
 
         item = item_database.get(below.fg_id)
-        if item.item_type == ItemInfoType.SWITCHEROO and below.flags & TileFlags.IS_ON != 0:
-            return False
-
         if item.collision_type == ItemInfoCollisionType.NONE:
             return False
 
@@ -226,9 +222,9 @@ class PlantHelper(Extension):
                     break
 
                 now = time.monotonic()
-                self.place_pending = {k: v for k, v in self.place_pending.items() if now - v < 0.5}
+                self.place_pending = {k: v for k, v in self.place_pending.items() if now - v < 0.3}
 
-                for x_off in range(self.state.me.state.build_range + 5):
+                for x_off in range(-self.state.me.state.build_range, self.state.me.state.build_range + 5):
                     target = ivec2(player.pos // 32)
                     if player.flags & TankFlags.FACING_LEFT:
                         target.x -= x_off
@@ -250,9 +246,9 @@ class PlantHelper(Extension):
                         if self.plant(target):
                             self.last_plant = time.monotonic()
                             self.place_pending[target] = time.monotonic()
-                            self.next_plant_allowed = time.monotonic() + random.uniform(self.plant_delay_min, self.plant_delay_max)
+                            self.next_plant_allowed = time.monotonic() + self.plant_delay
 
-                time.sleep(1 / 60)
+                time.sleep(1 / 120)
                 # if time.monotonic() - self.last_plant > 0.2:
                 #     break
 
@@ -264,4 +260,5 @@ class PlantHelper(Extension):
 
 
 if __name__ == "__main__":
-    PlantHelper().standalone()
+    print("DO NOT USE THIS PIECE OF SHIT SCRIPT, WILL MAKE YOU PERMA BANNED")
+    # PlantHelper().standalone()

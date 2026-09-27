@@ -385,7 +385,7 @@ class ExtensionUtility(ABC):
         if not pos:
             return
 
-        self.push(PreparedPacket(particle(id, pos[0], pos[1], alternate), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.RELIABLE))
+        self.push(PreparedPacket(particle(id, pos[0], pos[1], alternate), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.NONE))
 
     def facing_left(self, *, abs: vec2 | None = None, tile: ivec2 | None = None) -> TankFlags:
         if abs:
@@ -400,11 +400,6 @@ class ExtensionUtility(ABC):
 
         return TankFlags.FACING_LEFT if self.state.me.pos.x > target.x else TankFlags.NONE
 
-    # def in_range(self, p2: ivec2, punch: bool) -> bool:
-    #     range = self.state.me.state.punch_range if punch else self.state.me.state.build_range
-    #     d = abs(ivec2(self.state.me.pos // 32) - p2)
-    #     return d.x <= range and d.y <= range
-
     def in_range(self, p2: ivec2, punch: bool) -> bool:
         reach = self.state.me.state.punch_range if punch else self.state.me.state.build_range
 
@@ -415,7 +410,7 @@ class ExtensionUtility(ABC):
         if self.state.world and (player := self.state.world.get_player(self.state.me.net_id)):
             colrect = player.colrect
 
-        in_middle = ivec2(rel.x > 32 - colrect.w, rel.y > 32 - colrect.z)
+        in_middle = ivec2(rel.x > (32 - colrect.w), rel.y > (32 - colrect.z))
 
         dx = abs(player_tile.x - p2.x)
         dy = abs(player_tile.y - p2.y)

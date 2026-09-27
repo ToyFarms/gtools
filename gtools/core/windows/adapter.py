@@ -175,3 +175,13 @@ def get_computer_mac() -> str:
     primary = get_primary_adapter(adapters)
 
     return primary.mac_address if primary else "WINNONE"
+
+"""
+just when i thought it couldn't get any worse
+i got perma banned, kinda my fault but whatever
+just want to throw that
+i lose most of my fortune,
+but at least i didn't lose it all.
+
+27/09/2026
+"""
