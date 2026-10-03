@@ -12,7 +12,7 @@ import numpy as np
 
 from pyglm.glm import ivec2
 from gtools.baked.items import BEDROCK
-from gtools.core.growtopia.items_dat import item_database
+from gtools.core.growtopia.items_dat import Item, item_database
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket, TankFlags, TankPacket, TankType
 from gtools.core.growtopia.particles import ParticleID
 from gtools.core.growtopia.player import CharacterFlags
@@ -56,6 +56,7 @@ s = helper()
 if sys.platform == "win32":
     try:
         import wave, winsound
+
         _SAMPLE_RATE = 44100
 
         _NOISE_POOL = array.array("d", [random.uniform(-1, 1) for _ in range(_SAMPLE_RATE)])
@@ -147,7 +148,7 @@ else:
         _noise_cursor = 0
 
         @lru_cache(maxsize=512)
-        def _bake_waveform(freq: float, duration_ms: int, freq_end: float | None, waveform: str, drive: float) -> np.ndarray:
+        def _bake_sound(freq: float, duration_ms: int, freq_end: float | None, waveform: str, drive: float) -> Sound:
             n_samples = int(_SAMPLE_RATE * duration_ms / 1000)
             t = np.arange(n_samples) / _SAMPLE_RATE
             if freq_end is not None and freq_end != freq:
@@ -159,8 +160,7 @@ else:
             if waveform == "square":
                 wave_vals = np.sign(np.sin(phase))
             elif waveform == "saw":
-                x = (phase / (2 * math.pi)) % 1.0
-                wave_vals = 2 * x - 1
+                wave_vals = 2 * ((phase / (2 * math.pi)) % 1.0) - 1
             else:
                 wave_vals = np.sin(phase)
 
@@ -168,27 +168,18 @@ else:
                 k_drive = 1 + drive * 5
                 wave_vals = np.tanh(wave_vals * k_drive) / math.tanh(k_drive)
 
-            return wave_vals.astype(np.float32)
+            return Sound(wave_vals.astype(np.float32), sample_rate=_SAMPLE_RATE)
 
-        def beep(
-            freq: int = 440,
-            duration_ms: int = 80,
-            volume: float = 0.3,
-            freq_end: int | None = None,
-            waveform: str = "sine",
-            drive: float = 0.0,
-        ) -> None:
-            shape = _bake_waveform(
-                float(freq),
-                int(duration_ms),
+        def beep(freq=440, duration_ms=80, volume=0.3, freq_end=None, waveform="sine", drive=0.0) -> None:
+            sound = _bake_sound(
+                float(freq), int(duration_ms),
                 float(freq_end) if freq_end is not None else None,
-                waveform,
-                round(drive, 2),
+                waveform, round(drive, 2),
             )
-            pcm = shape * np.float32(volume)
-            _mixer.play(Sound(pcm, sample_rate=_SAMPLE_RATE), gain=1.0)
+            _mixer.play(sound, gain=volume)
+            time.sleep(duration_ms / 1000)
 
-        def click(duration_ms: int = 20, volume: float = 0.4) -> None:
+        def click(duration_ms=20, volume=0.4) -> None:
             global _noise_cursor
             n_samples = int(_SAMPLE_RATE * duration_ms / 1000)
             start = _noise_cursor
@@ -199,8 +190,8 @@ else:
                 chunk = np.concatenate((_NOISE_POOL[start:], _NOISE_POOL[: end - len(_NOISE_POOL)]))
             _noise_cursor = end % len(_NOISE_POOL)
 
-            pcm = chunk * np.float32(volume)  # pyright: ignore[reportOperatorIssue]
-            _mixer.play(Sound(pcm, sample_rate=_SAMPLE_RATE), gain=1.0)
+            _mixer.play(Sound(chunk, sample_rate=_SAMPLE_RATE), gain=volume)
+            time.sleep(duration_ms / 1000)
 
     except Exception:
 
@@ -519,17 +510,31 @@ class AutoBreakExtension(Extension):
     def _template(self, event: PendingPacket) -> PendingPacket | None:
         self.enabled = False
 
+        max_range = min(self.state.me.state.build_range, self.state.me.state.punch_range)
+
         template = s.parse_command(event)
         if template == "bfg":
             self.target.clear()
-            for x in range(2):
+            for x in range(max_range):
                 sign = -1 if self.state.me.flags & TankFlags.FACING_LEFT else 1
                 target = ivec2(self.state.me.pos // 32) + ((x + 1) * sign, 0)
                 self.target.append(target)
                 self.send_particle(ParticleID.LBOT_PLACE, tile=target)
+        elif template == "up":
+            self.target.clear()
+            for x in range(-max_range, max_range + 1):
+                target = ivec2(self.state.me.pos // 32) + (x, -2)
+                self.target.append(target)
+                self.send_particle(ParticleID.LBOT_PLACE, tile=target)
+        elif template == "down":
+            self.target.clear()
+            for x in range(-max_range, max_range + 1):
+                target = ivec2(self.state.me.pos // 32) + (x, 2)
+                self.target.append(target)
+                self.send_particle(ParticleID.LBOT_PLACE, tile=target)
         else:
-            self._set_id_to_next = True
             if not self.recording:
+                self._set_id_to_next = True
                 self.target.clear()
                 self.recording = True
                 self.console_log("now recording action, invoke this command again to complete")
@@ -571,12 +576,25 @@ class AutoBreakExtension(Extension):
             self.console_log(f"recorded at {pos.x}, {pos.y}")
             self.send_particle(ParticleID.LBOT_PLACE, tile=pos)
 
+    def get_item_id(self, id_or_name: int | str | bytes) -> Item:
+        if isinstance(id_or_name, int):
+            return item_database.get(id_or_name)
+        else:
+            if isinstance(id_or_name, bytes):
+                id_or_name = id_or_name.decode()
+
+            if id_or_name.isnumeric():
+                return item_database.get(int(id_or_name))
+            else:
+                return item_database.search(id_or_name, n=1)[0]
+
     @dispatch(s.command("/id", id=s.auto))
     def _set_id(self, event: PendingPacket) -> PendingPacket | None:
         id = s.parse_command(event)
         if id:
-            self.item_id = int(id)
-            self.console_log(f"item_id set to {self.item_id} ({item_database.get(self.item_id).name.decode()})")
+            item = self.get_item_id(id)
+            self.item_id = item.id
+            self.console_log(f"item_id set to {self.item_id} ({item.name.decode()})")
         else:
             self._set_id_to_next = True
         return self.cancel()
