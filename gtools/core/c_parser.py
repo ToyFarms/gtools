@@ -1205,7 +1205,7 @@ def preprocess(c: str) -> str:
 def ctopy(c: str, setting: Setting | None = None) -> str:
     c = preprocess(c)
     lex = CLexer(error_func=lambda *a, **k: None, on_lbrace_func=lambda: None, on_rbrace_func=lambda: None, type_lookup_func=lambda typ: False)
-    # lex.build()
+    lex.build()
     lex.input(c)
 
     tokens = []
@@ -1225,7 +1225,7 @@ def ctopy(c: str, setting: Setting | None = None) -> str:
 def ctopy_ast(c: str, setting: Setting | None = None) -> ast.Module:
     c = preprocess(c)
     lex = CLexer(error_func=lambda *a, **k: None, on_lbrace_func=lambda: None, on_rbrace_func=lambda: None, type_lookup_func=lambda typ: False)
-    # lex.build()
+    lex.build()
     lex.input(c)
 
     tokens = []
