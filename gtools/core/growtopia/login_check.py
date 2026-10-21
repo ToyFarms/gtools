@@ -5,13 +5,11 @@ import hashlib
 import json
 import logging
 import re
-from pathlib import Path
 import threading
 from typing import Any
 
 from gtools.core.growtopia.crypto import generate_klv, proton_hash
 from gtools.core.growtopia.strkv import StrKV
-from gtools.core.wsl import is_running_wsl, windows_home
 from gtools.setting import setting
 
 VERSION_DB_PATH = setting.appdir / "login_checks.json"
@@ -114,7 +112,7 @@ def _local_vsn() -> str | None:
         return None
 
 
-def validate(pkt: StrKV, gt_path: Path | None = None) -> list[str]:
+def validate(pkt: StrKV) -> list[str]:
     errors: list[str] = []
 
     def fail(field: str, message: str) -> None:
@@ -135,11 +133,12 @@ def validate(pkt: StrKV, gt_path: Path | None = None) -> list[str]:
             fail(key.decode("ascii", "backslashreplace"), "duplicate field")
         seen.add(key)
 
+    gt_path = setting.gt_path / "Growtopia.exe"
     try:
-        gt_bytes: bytes | None = setting.gt_path.read_bytes()
+        gt_bytes: bytes | None = gt_path.read_bytes()
     except OSError as e:
         gt_bytes = None
-        fail("growtopia.exe", f"cannot read {setting.gt_path}: {e}")
+        fail("growtopia.exe", f"cannot read {gt_path}: {e}")
 
     local_mac = _local_mac()
     local_guid = _local_machine_guid()
