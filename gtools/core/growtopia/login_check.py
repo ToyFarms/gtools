@@ -67,7 +67,6 @@ _DOOR_RE = re.compile(rb"^(?:0|[A-Za-z0-9]{1,16})?$")
 _MAC_RE = re.compile(rb"^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 _HEX32_RE = re.compile(rb"^[0-9A-F]{32}$")
 _HEX64_RE = re.compile(rb"^[0-9a-f]{64}$")
-_ZF_RE = re.compile(rb"^(-?\d+)lmode\|(-?\d+)$")
 
 
 def _get(pkt: StrKV, key: bytes) -> bytes | None:
@@ -194,16 +193,12 @@ def validate(pkt: StrKV) -> list[str]:
     if zf is None:
         fail("zf", "missing value")
     else:
-        match = _ZF_RE.fullmatch(zf)
-        if match is None:
-            fail("zf", "expected <proton_hash>lmode|<mode>")
-        else:
-            zf_hash = int(match.group(1))
-            lmode = int(match.group(2))
-            if lmode < 0:
-                fail("zf", "lmode must be non-negative")
+        try:
+            zf_hash = int(zf.split(b"lmode")[0].decode())
             if gt_bytes is not None and zf_hash != proton_hash(gt_bytes):
-                fail("zf", f"expected {proton_hash(gt_bytes)}lmode|{lmode}")
+                fail("zf", f"expected {proton_hash(gt_bytes)}")
+        except:
+            fail("zf", f"unexpected format: {zf}")
 
     klv = _get(pkt, b"klv")
     if klv is None:
