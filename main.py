@@ -11,6 +11,7 @@ import traceback
 
 from gtools import flags
 from gtools.core.block_sigint import block_sigint
+from gtools.core.dll_loader import DLL
 from gtools.core.growtopia.world_renderer_cpu import RenderOptions, render_world_image
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.strkv import StrKV
@@ -19,7 +20,7 @@ from gtools.core.hosts import HostsFileManager
 from gtools.core.log import setup_logger
 from gtools.core.mixer import AudioMixer
 from gtools.core.network import is_up, resolve_doh
-from gtools.core.privilege import elevate, is_elevated, is_elevated_child
+from gtools.core.privilege import elevate, is_elevated
 from gtools.core.wsl import is_running_wsl
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
@@ -40,6 +41,9 @@ from thirdparty.enet.bindings import ENetPacketFlag
 from gtools import setting
 from gtools.setting import Setting
 from extension.utils import UtilityExtension
+
+
+logger = logging.getLogger("main")
 
 
 def get_host_mgr() -> HostsFileManager:
@@ -150,21 +154,26 @@ def check_hosts() -> None:
 
 
 def run_proxy() -> None:
-    try:
-        check_hosts()
-        if is_elevated_child():
-            print("waiting 1s to sync up")
-            time.sleep(1)
-            exit(0)
-    except PermissionError:
-        elevate(wait_for_child=True)
-
     server = setup_http_proxy()
     t = threading.Thread(target=lambda: server.serve_forever())
     t.start()
+
+    hook = DLL("gtools/hooks/injector", "injector")
+    payload = Path("gtools/hooks/hook.dll")
+    if hook.supported and payload.exists():
+        logger.info("hook supported, will try to inject dll")
+        hook.inject("Growtopia.exe", str(payload))
+        err = hook.last_error()
+        if err:
+            logger.error(err)
+    else:
+        logger.info("hook unsupported")
+
     Proxy().start(block=True)
 
     with block_sigint():
+        if hook.supported:
+            hook.cleanup()
         server.shutdown()
         server.server_close()
         t.join()

@@ -8,6 +8,7 @@ import traceback
 from typing import Any, Callable, Generator, NamedTuple, cast
 
 from gtools.core.eventbus import subscribe
+from gtools.core.growtopia import login_check
 from gtools.core.growtopia.crypto import generate_klv
 from gtools.core.growtopia.packet import NetType, PreparedPacket, TankType
 from gtools.core.growtopia.strkv import StrKV
@@ -167,6 +168,72 @@ class Proxy:
 
         self.proxy_server.send(pkt.as_raw, pkt.flags)
 
+    def _check_login(self, pkt: PreparedPacket) -> None:
+        kv = pkt.as_net.generic_text
+        try:
+            version = bytes(kv["game_version", 1]).decode()
+            protocol = int(bytes(kv["protocol", 1]))
+        except (KeyError, IndexError, ValueError, UnicodeDecodeError):
+            self.logger.warning("login packet has an invalid game_version/protocol")
+            return
+
+        if login_check.is_version_known(version, protocol):
+            self.logger.debug(f"login validation skipped for known version {version}|{protocol}")
+            return
+
+        try:
+            errors = login_check.validate(kv)
+        except Exception:
+            self.logger.exception(f"login validation failed for version {version}|{protocol}")
+            return
+
+        if errors:
+            self.logger.warning(f"login validation failed for new version {version}|{protocol}:")
+            for error in errors:
+                self.logger.warning(f"  {error}")
+            return
+
+        login_check.mark_version_known(version, protocol)
+        self.logger.info(f"login validation passed for new version {version}|{protocol}")
+
+    def _spoof_hwident(self, pkt: PreparedPacket) -> None:
+        orig = pkt.as_net.generic_text.copy()
+        acc = None
+        try:
+            name = orig.get("tankIDName", 1)
+            if name:
+                acc = AccountManager.get(bytes(name))
+            elif self.account_name:
+                # from OnSendToServer
+                acc = AccountManager.get(self.account_name)
+            else:
+                # absolute last resort, use last if exists or default account
+                acc = AccountManager.last()
+        except KeyError:
+            pass
+
+        if not acc:
+            acc = AccountManager.default()
+
+        for field, value in acc["ident"].items():
+            if field not in pkt.as_net.generic_text:
+                self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
+                continue
+
+            self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
+            pkt.as_net.generic_text[field] = value
+
+        if (rid := acc["ident"].get("rid")) is not None and self.client_version:
+            field = b"klv"
+            if field in pkt.as_net.generic_text:
+                self.logger.info(f"computing klv with protocol={self.client_version.protocol} version={self.client_version.version} rid={rid}")
+                value = generate_klv(str(self.client_version.protocol).encode(), self.client_version.version.encode(), rid.encode())
+
+                self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
+                pkt.as_net.generic_text[field] = value
+            else:
+                self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
+
     def _handle(self, pkt: PreparedPacket, *, fabricated: bool) -> None:
         modified = False
         if not fabricated:
@@ -219,49 +286,14 @@ class Proxy:
                     return
             elif pkt.as_net.type == NetType.GENERIC_TEXT:
                 if (
-                    setting.spoof_hwident
-                    and pkt.direction == DIRECTION_CLIENT_TO_SERVER
+                    pkt.direction == DIRECTION_CLIENT_TO_SERVER
                     and pkt.as_net.type == NetType.GENERIC_TEXT
                     and (b"mac" in pkt.as_net.generic_text or b"hash" in pkt.as_net.generic_text or b"hash2" in pkt.as_net.generic_text or b"wk" in pkt.as_net.generic_text)
                 ):
-                    orig = pkt.as_net.generic_text.copy()
-                    acc = None
-                    try:
-                        name = orig.get("tankIDName", 1)
-                        if name:
-                            acc = AccountManager.get(bytes(name))
-                        elif self.account_name:
-                            # from OnSendToServer
-                            acc = AccountManager.get(self.account_name)
-                        else:
-                            # absolute last resort, use last if exists or default account
-                            acc = AccountManager.last()
-                    except KeyError:
-                        pass
-
-                    if not acc:
-                        acc = AccountManager.default()
-
-                    for field, value in acc["ident"].items():
-                        if field not in pkt.as_net.generic_text:
-                            self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
-                            continue
-
-                        self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
-                        pkt.as_net.generic_text[field] = value
-
-                    if (rid := acc["ident"].get("rid")) is not None and self.client_version:
-                        field = b"klv"
-                        if field in pkt.as_net.generic_text:
-                            self.logger.info(f"computing klv with protocol={self.client_version.protocol} version={self.client_version.version} rid={rid}")
-                            value = generate_klv(str(self.client_version.protocol).encode(), self.client_version.version.encode(), rid.encode())
-
-                            self.logger.info(f"spoofing {field} for {acc['name']}, {orig[field]} -> {value}")
-                            pkt.as_net.generic_text[field] = value
-                        else:
-                            self.logger.warning(f"skipping spoof for {field} because it does not exists originally")
-
-                    self.logger.info(f"spoofed login: {pkt.as_net.generic_text}")
+                    self._check_login(pkt)
+                    if setting.spoof_hwident:
+                        self._spoof_hwident(pkt)
+                        self.logger.info(f"spoofed login: {pkt.as_net.generic_text}")
             elif pkt.as_net.type == NetType.GAME_MESSAGE:
                 if pkt.as_net.game_message["action", 1] == b"quit":
                     self._should_reconnect.set()
