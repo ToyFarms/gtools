@@ -874,6 +874,7 @@ class Item:
     hit_fx: bytes = b""  # lpstr
     hit_duration_ms: int = 0  # lpstr
     unk10: int = 0  # u8
+    immortal_related: bytes = b""  # lpstr
 
     def is_seed(self) -> bool:
         return is_seed(self.id)
@@ -1003,6 +1004,8 @@ class Item:
             item.hit_duration_ms = s.read_u32()
         if version >= 26:
             item.unk10 = s.read_u8()
+        if version >= 27:
+            item.immortal_related = s.read_pascal_bytes("H")
 
         return item
 
