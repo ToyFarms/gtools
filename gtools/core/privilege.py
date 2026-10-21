@@ -32,20 +32,21 @@ def is_elevated() -> bool:
         return False
 
 
-def elevate(wait_for_child: bool = False, timeout: float | None = None) -> bool:
+def elevate(wait_for_child: bool = False, timeout: float | None = None, argv: list[str] | None = None) -> bool:
     if is_elevated():
         return True
 
     system = platform.system()
     token = uuid.uuid4().hex
+    target_argv = argv if argv is not None else [sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]]
 
     try:
         if system == "Windows":
-            result = _launch_elevated_windows(token)
+            result = _launch_elevated_windows(token, target_argv)
         elif system == "Darwin":
-            result = _launch_elevated_macos(token)
+            result = _launch_elevated_macos(token, target_argv)
         elif system == "Linux":
-            result = _launch_elevated_linux(token)
+            result = _launch_elevated_linux(token, target_argv)
         else:
             return False
 
@@ -54,19 +55,26 @@ def elevate(wait_for_child: bool = False, timeout: float | None = None) -> bool:
 
         child_handle = result.proc_handle
 
-        if wait_for_child and child_handle is not None:
-            _wait_for_process_handle(child_handle, timeout)
-            return False
-        elif wait_for_child and child_handle is None:
-            return False
-        else:
-            return False
+        if wait_for_child:
+            if child_handle is None:
+                return False
+            return _wait_for_process_handle(child_handle, timeout)
+
+        if child_handle is not None and platform.system() == "Windows":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            kernel32.CloseHandle(child_handle)
+        return True
 
     except Exception:
         return False
 
 
-def _launch_elevated_windows(token: str) -> ElevationResult:
+def _launch_elevated_windows(token: str, target_argv: list[str]) -> ElevationResult:
     try:
         import ctypes
         from ctypes import wintypes
@@ -95,7 +103,7 @@ def _launch_elevated_windows(token: str) -> ElevationResult:
 
         this_script = os.path.abspath(__file__)
 
-        param_list = [this_script, sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:], f"{ELEVATE_FLAG}{token}"]
+        param_list = [this_script, *target_argv, f"{ELEVATE_FLAG}{token}"]
 
         params = subprocess.list2cmdline(param_list)
 
@@ -123,10 +131,10 @@ def _launch_elevated_windows(token: str) -> ElevationResult:
         return ElevationResult(False)
 
 
-def _launch_elevated_macos(token: str) -> ElevationResult:
+def _launch_elevated_macos(token: str, target_argv: list[str]) -> ElevationResult:
     try:
         this_script = os.path.abspath(__file__)
-        param_list = [sys.executable, this_script, sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:], f"{ELEVATE_FLAG}{token}"]
+        param_list = [sys.executable, this_script, *target_argv, f"{ELEVATE_FLAG}{token}"]
         cmd = " ".join(shlex.quote(p) for p in param_list)
         applescript = f'do shell script "{cmd}" with administrator privileges'
         popen = subprocess.Popen(["osascript", "-e", applescript], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -135,10 +143,10 @@ def _launch_elevated_macos(token: str) -> ElevationResult:
         return ElevationResult(False)
 
 
-def _launch_elevated_linux(token: str) -> ElevationResult:
+def _launch_elevated_linux(token: str, target_argv: list[str]) -> ElevationResult:
     try:
         this_script = os.path.abspath(__file__)
-        param_list = [sys.executable, this_script, sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:], f"{ELEVATE_FLAG}{token}"]
+        param_list = [sys.executable, this_script, *target_argv, f"{ELEVATE_FLAG}{token}"]
 
         elevation_commands = ["pkexec", "gksu", "kdesudo", "sudo"]
 
@@ -174,12 +182,19 @@ def _wait_for_process_handle(handle, timeout: float | None) -> bool:
     if system == "Windows":
         try:
             import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel32.WaitForSingleObject.restype = wintypes.DWORD
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
 
             INFINITE = 0xFFFFFFFF
             WAIT_OBJECT_0 = 0x00000000
             ms = INFINITE if timeout is None else int(timeout * 1000)
-            res = ctypes.windll.kernel32.WaitForSingleObject(handle, ms)
-            ctypes.windll.kernel32.CloseHandle(handle)
+            res = kernel32.WaitForSingleObject(handle, ms)
+            kernel32.CloseHandle(handle)
             return res == WAIT_OBJECT_0
         except Exception:
             return False
@@ -217,7 +232,14 @@ def _exec_elevated_target_windows(target_argv: list[str], extra_env: dict[str, s
     import ctypes
     from ctypes import wintypes
 
-    kernel32 = ctypes.windll.kernel32
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CreateProcessW.restype = wintypes.BOOL
     CREATE_UNICODE_ENVIRONMENT = 0x00000400
     INFINITE = 0xFFFFFFFF
     WAIT_FAILED = 0xFFFFFFFF

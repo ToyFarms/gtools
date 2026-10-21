@@ -18,5 +18,4 @@ UseTab: Never
 IndentWidth: 4
 PointerAlignment: Right
 SpaceAroundPointerQualifiers: After
-AllowShortBlocksOnASingleLine: true
-ReflowComments: false
+AllowShortBlocksOnASingleLine: Never

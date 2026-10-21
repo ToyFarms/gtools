@@ -1,233 +1,403 @@
+#define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <tlhelp32.h>
+
+#include <errno.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdarg.h>
-#include <errno.h>
+#include <tlhelp32.h>
+
+#include "hook_protocol.h"
 
 #if defined(_MSC_VER)
-#pragma comment(lib, "advapi32.lib")
-#define EXPORT __declspec(dllexport)
+#  pragma comment(lib, "advapi32.lib")
+#  define EXPORT __declspec(dllexport)
 #else
-#define EXPORT __attribute__((visibility("default")))
+#  define EXPORT __attribute__((visibility("default")))
 #endif
 
-#define PATCH_LEN 14
-#define HS_WAIT_TRIES 60
-#define HS_WAIT_MS 500
+#define HANDSHAKE_WAIT_TRIES 60
+#define HANDSHAKE_WAIT_MS    500
 
-static char g_last_err[1024] = {0};
-static void set_err(const char* fmt, ...) {
-    va_list ap; va_start(ap, fmt);
-    vsnprintf(g_last_err, sizeof(g_last_err), fmt, ap);
-    va_end(ap);
+enum InjectResult
+{
+    INJECT_OK = 0,
+    INJECT_ERR_ALREADY_INJECTED = -1,
+    INJECT_ERR_BAD_ARGS = -2,
+    INJECT_ERR_TARGET_NOT_FOUND = -3,
+    INJECT_ERR_BAD_DLL_PATH = -4,
+    INJECT_ERR_OPEN_PROCESS = -5,
+    INJECT_ERR_ALLOCATE_REMOTE = -6,
+    INJECT_ERR_WRITE_REMOTE = -7,
+    INJECT_ERR_CREATE_REMOTE_THREAD = -8,
+    INJECT_ERR_MODULE_NOT_FOUND = -9,
+    INJECT_ERR_HANDSHAKE_MISSING = -10,
+    INJECT_ERR_OPEN_PROCESS_PATCH = -11,
+    INJECT_ERR_HANDSHAKE_INVALID = -12,
+    INJECT_ERR_NO_HOOKS = -13,
+};
+
+static char g_lastError[1024] = {0};
+
+static void set_error(const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    vsnprintf(g_lastError, sizeof(g_lastError), format, args);
+    va_end(args);
 }
 
-static DWORD find_pid(const char* exe) {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return 0;
+static DWORD find_process_id(const char *executable)
+{
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return 0;
+
     DWORD pid = 0;
-    PROCESSENTRY32 pe; memset(&pe, 0, sizeof(pe)); pe.dwSize = sizeof(pe);
-    if (Process32First(snap, &pe)) {
-        do {
-            if (_stricmp(pe.szExeFile, exe) == 0) { pid = pe.th32ProcessID; break; }
-        } while (Process32Next(snap, &pe));
+    PROCESSENTRY32 entry;
+    memset(&entry, 0, sizeof(entry));
+    entry.dwSize = sizeof(entry);
+    if (Process32First(snapshot, &entry))
+    {
+        do
+        {
+            if (_stricmp(entry.szExeFile, executable) == 0)
+            {
+                pid = entry.th32ProcessID;
+                break;
+            }
+        } while (Process32Next(snapshot, &entry));
     }
-    CloseHandle(snap);
+    CloseHandle(snapshot);
     return pid;
 }
 
-static HMODULE find_remote_module(DWORD pid, const char* base_name) {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
-    if (snap == INVALID_HANDLE_VALUE) return NULL;
-    HMODULE mod = NULL;
-    MODULEENTRY32 me; memset(&me, 0, sizeof(me)); me.dwSize = sizeof(me);
-    if (Module32First(snap, &me)) {
-        do {
-            if (_stricmp(me.szModule, base_name) == 0) { mod = me.hModule; break; }
-        } while (Module32Next(snap, &me));
+static HMODULE find_remote_module(DWORD pid, const char *module_name)
+{
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return NULL;
+
+    HMODULE module = NULL;
+    MODULEENTRY32 entry;
+    memset(&entry, 0, sizeof(entry));
+    entry.dwSize = sizeof(entry);
+    if (Module32First(snapshot, &entry))
+    {
+        do
+        {
+            if (_stricmp(entry.szModule, module_name) == 0)
+            {
+                module = entry.hModule;
+                break;
+            }
+        } while (Module32Next(snapshot, &entry));
     }
-    CloseHandle(snap);
-    return mod;
+    CloseHandle(snapshot);
+
+    return module;
 }
 
-static const char* base_name_of(const char* path) {
-    const char* p = strrchr(path, '\\');
-    if (!p) p = strrchr(path, '/');
-    return p ? p + 1 : path;
+static const char *file_base_name(const char *path)
+{
+    const char *separator = strrchr(path, '\\');
+    if (!separator)
+        separator = strrchr(path, '/');
+
+    return separator ? separator + 1 : path;
 }
 
-static DWORD g_pid = 0;
-static HANDLE g_proc = NULL;
-static LPVOID g_remote_mem = NULL;
-static HMODULE g_remote_mod = NULL;
-static char g_hs_path[MAX_PATH] = {0};
-static uintptr_t g_targets[5] = {0};
-static uintptr_t g_hooks[5] = {0};
-static unsigned char g_originals[5][PATCH_LEN];
-static int g_patched[5] = {0};
-static int g_injected = 0;
+static bool read_handshake(const char *path, struct HookHandshake *out)
+{
+    FILE *file = fopen(path, "rb");
+    if (!file)
+        return false;
 
-static int read_handshake(const char* path) {
-    FILE* f = fopen(path, "r");
-    if (!f) return 0;
-    char line[512];
-
-    const char* keys[5] = {"target_logprintf","target_lograw","target_connect","target_onresponse","target_httppost"};
-    uintptr_t* dests[5] = {&g_targets[1],&g_targets[2],&g_targets[0],&g_targets[3],&g_targets[4]};
-
-    const char* hkeys[5] = {"hook_logprintf","hook_lograw","hook_connect","hook_onresponse","hook_httppost"};
-    uintptr_t* hdests[5] = {&g_hooks[1],&g_hooks[2],&g_hooks[0],&g_hooks[3],&g_hooks[4]};
-    while (fgets(line, sizeof(line), f)) {
-        if (line[0] == '#') continue;
-        char* eq = strchr(line, '=');
-        if (!eq) continue;
-        *eq = 0;
-        char* k = line; char* v = eq + 1;
-
-        while (*k == ' ' || *k == '\t') k++;
-        char* e = k + strlen(k);
-        while (e > k && (e[-1]==' '||e[-1]=='\t'||e[-1]=='\r'||e[-1]=='\n')) *--e=0;
-        while (*v == ' ' || *v == '\t') v++;
-        e = v + strlen(v);
-        while (e > v && (e[-1]==' '||e[-1]=='\t'||e[-1]=='\r'||e[-1]=='\n')) *--e=0;
-        unsigned long long val = strtoull(v, NULL, 0);
-        for (int i = 0; i < 5; i++) {
-            if (strcmp(k, keys[i]) == 0) *dests[i] = (uintptr_t)val;
-            if (strcmp(k, hkeys[i]) == 0) *hdests[i] = (uintptr_t)val;
-        }
+    bool valid = false;
+    if (fread(out, sizeof(*out), 1, file) == 1)
+    {
+        valid = out->magic == HOOK_PROTOCOL_MAGIC && out->version == HOOK_PROTOCOL_VERSION &&
+                out->entryCount <= HOOK_MAX_ENTRIES;
     }
-    fclose(f);
-    return (g_targets[0] && g_hooks[0]);
+    fclose(file);
+
+    return valid;
 }
 
-static void put_abs_jump(unsigned char* p, unsigned long long dest) {
-    p[0]=0xFF; p[1]=0x25; p[2]=p[3]=p[4]=p[5]=0;
-    memcpy(p+6, &dest, 8);
+static bool wait_for_handshake(const char *path, uint64_t expected_dll_base, struct HookHandshake *out)
+{
+    for (int attempt = 0; attempt < HANDSHAKE_WAIT_TRIES; attempt++)
+    {
+        Sleep(HANDSHAKE_WAIT_MS);
+        if (!read_handshake(path, out))
+            continue;
+
+        if (expected_dll_base && out->dllBase != expected_dll_base)
+            continue;
+
+        return true;
+    }
+    return false;
 }
 
-EXPORT int inject(const char* target, const char* dll_path, const char* handshake_path) {
-    if (g_injected) { set_err("already injected"); return -1; }
-    if (!target || !dll_path) { set_err("bad args"); return -2; }
-    const char* hs = handshake_path ? handshake_path : "gtdump_hook.handshake";
+static void write_absolute_jump(unsigned char *buffer, uint64_t destination)
+{
+    buffer[0] = 0xFF;
+    buffer[1] = 0x25;
+    buffer[2] = 0;
+    buffer[3] = 0;
+    buffer[4] = 0;
+    buffer[5] = 0;
+    memcpy(buffer + 6, &destination, sizeof(destination));
+}
+
+static HANDLE g_process = NULL;
+static DWORD g_processId = 0;
+static HMODULE g_remoteModule = NULL;
+static char g_handshakePath[MAX_PATH] = {0};
+static struct HookEntry g_patchedEntries[HOOK_MAX_ENTRIES];
+static unsigned char g_originalBytes[HOOK_MAX_ENTRIES][HOOK_ENTRY_PATCH_BYTES];
+static int g_patchedCount = 0;
+static bool g_injected = false;
+
+EXPORT int inject(const char *target, const char *dll_path, const char *handshake_path)
+{
+    if (g_injected)
+    {
+        set_error("already injected");
+        return INJECT_ERR_ALREADY_INJECTED;
+    }
+    if (!target || !dll_path)
+    {
+        set_error("bad args");
+        return INJECT_ERR_BAD_ARGS;
+    }
+
+    const char *handshake = handshake_path && handshake_path[0] ? handshake_path : "gtdump_hook.handshake";
 
     DWORD pid = 0;
-    char* end = NULL; errno = 0;
-    long v = strtol(target, &end, 10);
-    if (end && *end == '\0' && v > 0 && errno == 0) pid = (DWORD)v;
-    else pid = find_pid(target);
-    if (!pid) { set_err("process not found: %s", target); return -3; }
-
-    char full[MAX_PATH]; memset(full,0,sizeof(full));
-    DWORD n = GetFullPathNameA(dll_path, MAX_PATH, full, NULL);
-    if (n == 0 || n >= MAX_PATH) { set_err("bad dll path"); return -4; }
-
-    DeleteFileA(hs);
-
-    HANDLE proc = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
-                              PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
-                              FALSE, pid);
-    if (!proc) { set_err("OpenProcess failed %lu", GetLastError()); return -5; }
-
-    // inject DLL
-    size_t len = strlen(full) + 1;
-    LPVOID remote = VirtualAllocEx(proc, NULL, len, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!remote) { set_err("VirtualAllocEx failed"); CloseHandle(proc); return -6; }
-    if (!WriteProcessMemory(proc, remote, full, len, NULL)) { set_err("WPM path failed"); VirtualFreeEx(proc,remote,0,MEM_RELEASE); CloseHandle(proc); return -7; }
-    FARPROC loadLib = GetProcAddress(GetModuleHandleA("kernel32.dll"), "LoadLibraryA");
-    HANDLE th = CreateRemoteThread(proc, NULL, 0, (LPTHREAD_START_ROUTINE)loadLib, remote, 0, NULL);
-    if (!th) { set_err("CreateRemoteThread failed"); VirtualFreeEx(proc,remote,0,MEM_RELEASE); CloseHandle(proc); return -8; }
-    WaitForSingleObject(th, 10000);
-    DWORD rc = 0; GetExitCodeThread(th, &rc);
-    CloseHandle(th);
-    VirtualFreeEx(proc, remote, 0, MEM_RELEASE);
-
-    // find module base in target
-    HMODULE mod = find_remote_module(pid, base_name_of(full));
-    if (!mod) { set_err("module not found in target"); CloseHandle(proc); return -9; }
-
-    // wait handshake
-    int got = 0;
-    for (int i = 0; i < HS_WAIT_TRIES && !got; i++) {
-        Sleep(HS_WAIT_MS);
-        got = read_handshake(hs);
+    char *end = NULL;
+    errno = 0;
+    long parsed = strtol(target, &end, 10);
+    if (end && *end == '\0' && parsed > 0 && errno == 0)
+        pid = (DWORD)parsed;
+    else
+        pid = find_process_id(target);
+    if (!pid)
+    {
+        set_error("process not found: %s", target);
+        return INJECT_ERR_TARGET_NOT_FOUND;
     }
-    if (!got) { set_err("handshake never appeared"); CloseHandle(proc); return -10; }
 
-    // patch
-    HANDLE pproc = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
-    if (!pproc) { set_err("OpenProcess patch failed"); CloseHandle(proc); return -11; }
+    char fullPath[MAX_PATH];
+    memset(fullPath, 0, sizeof(fullPath));
+    DWORD pathLength = GetFullPathNameA(dll_path, MAX_PATH, fullPath, NULL);
+    if (pathLength == 0 || pathLength >= MAX_PATH)
+    {
+        set_error("bad dll path");
+        return INJECT_ERR_BAD_DLL_PATH;
+    }
 
-    for (int i = 0; i < 5; i++) {
-        g_patched[i] = 0;
-        if (!g_targets[i] || !g_hooks[i]) continue;
-        // read original
-        SIZE_T gotb = 0;
-        ReadProcessMemory(pproc, (void*)g_targets[i], g_originals[i], PATCH_LEN, &gotb);
-        // patch
-        unsigned char patch[PATCH_LEN];
-        put_abs_jump(patch, (unsigned long long)g_hooks[i]);
-        DWORD oldp = 0;
-        if (VirtualProtectEx(pproc, (void*)g_targets[i], PATCH_LEN, PAGE_EXECUTE_READWRITE, &oldp)) {
-            SIZE_T w = 0;
-            if (WriteProcessMemory(pproc, (void*)g_targets[i], patch, PATCH_LEN, &w) && w == PATCH_LEN) {
-                DWORD d = 0;
-                VirtualProtectEx(pproc, (void*)g_targets[i], PATCH_LEN, oldp, &d);
-                g_patched[i] = 1;
-            }
+    DeleteFileA(handshake);
+
+    HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
+                                     PROCESS_VM_WRITE | PROCESS_VM_READ,
+                                 FALSE, pid);
+    if (!process)
+    {
+        set_error("OpenProcess failed %lu", GetLastError());
+        return INJECT_ERR_OPEN_PROCESS;
+    }
+
+    size_t pathBytes = strlen(fullPath) + 1;
+    LPVOID remote = VirtualAllocEx(process, NULL, pathBytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!remote)
+    {
+        set_error("VirtualAllocEx failed %lu", GetLastError());
+        CloseHandle(process);
+        return INJECT_ERR_ALLOCATE_REMOTE;
+    }
+    if (!WriteProcessMemory(process, remote, fullPath, pathBytes, NULL))
+    {
+        set_error("WriteProcessMemory failed %lu", GetLastError());
+        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        CloseHandle(process);
+        return INJECT_ERR_WRITE_REMOTE;
+    }
+
+    FARPROC loadLibrary = GetProcAddress(GetModuleHandleA("kernel32.dll"), "LoadLibraryA");
+    HANDLE thread = CreateRemoteThread(process, NULL, 0, (LPTHREAD_START_ROUTINE)loadLibrary, remote, 0, NULL);
+    if (!thread)
+    {
+        set_error("CreateRemoteThread failed %lu", GetLastError());
+        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        CloseHandle(process);
+        return INJECT_ERR_CREATE_REMOTE_THREAD;
+    }
+    WaitForSingleObject(thread, 10000);
+    DWORD exitCode = 0;
+    GetExitCodeThread(thread, &exitCode);
+    CloseHandle(thread);
+    VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+
+    HMODULE remoteModule = find_remote_module(pid, file_base_name(fullPath));
+    if (!remoteModule)
+    {
+        set_error("the dll is not loaded in the target");
+        CloseHandle(process);
+        return INJECT_ERR_MODULE_NOT_FOUND;
+    }
+
+    struct HookHandshake handshakeData;
+    memset(&handshakeData, 0, sizeof(handshakeData));
+    if (!wait_for_handshake(handshake, (uint64_t)(uintptr_t)remoteModule, &handshakeData))
+    {
+        set_error("the handshake file never appeared");
+        CloseHandle(process);
+        return INJECT_ERR_HANDSHAKE_MISSING;
+    }
+    if (handshakeData.entryCount == 0)
+    {
+        set_error("the dll did not find any hook to install");
+        CloseHandle(process);
+        return INJECT_ERR_NO_HOOKS;
+    }
+
+    HANDLE patchProcess =
+        OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+    if (!patchProcess)
+    {
+        set_error("OpenProcess for patching failed %lu", GetLastError());
+        CloseHandle(process);
+        return INJECT_ERR_OPEN_PROCESS_PATCH;
+    }
+
+    g_patchedCount = 0;
+    for (uint32_t i = 0; i < handshakeData.entryCount && i < HOOK_MAX_ENTRIES; i++)
+    {
+        const struct HookEntry *entry = &handshakeData.entries[i];
+        if (!entry->target || !entry->detour)
+            continue;
+        if (entry->entryPatchBytes != HOOK_ENTRY_PATCH_BYTES)
+        {
+            set_error("%s expects a %u byte patch but only %d bytes are supported", entry->name, entry->entryPatchBytes,
+                      HOOK_ENTRY_PATCH_BYTES);
+            continue;
         }
+
+        int slot = g_patchedCount;
+        SIZE_T readBytes = 0;
+        if (!ReadProcessMemory(patchProcess, (void *)entry->target, g_originalBytes[slot], HOOK_ENTRY_PATCH_BYTES,
+                               &readBytes) ||
+            readBytes != HOOK_ENTRY_PATCH_BYTES)
+        {
+            set_error("cannot read the original bytes of %s", entry->name);
+            continue;
+        }
+
+        unsigned char patch[HOOK_ENTRY_PATCH_BYTES];
+        write_absolute_jump(patch, entry->detour);
+
+        DWORD oldProtection = 0;
+        if (!VirtualProtectEx(patchProcess, (void *)entry->target, HOOK_ENTRY_PATCH_BYTES, PAGE_EXECUTE_READWRITE,
+                              &oldProtection))
+        {
+            set_error("VirtualProtectEx failed for %s (%lu)", entry->name, GetLastError());
+            continue;
+        }
+
+        SIZE_T written = 0;
+        bool patched =
+            WriteProcessMemory(patchProcess, (void *)entry->target, patch, HOOK_ENTRY_PATCH_BYTES, &written) &&
+            written == HOOK_ENTRY_PATCH_BYTES;
+        DWORD ignored = 0;
+        VirtualProtectEx(patchProcess, (void *)entry->target, HOOK_ENTRY_PATCH_BYTES, oldProtection, &ignored);
+
+        if (!patched)
+        {
+            set_error("cannot patch %s", entry->name);
+            continue;
+        }
+
+        g_patchedEntries[g_patchedCount++] = *entry;
     }
 
-    g_pid = pid;
-    g_proc = pproc;
-    g_remote_mem = NULL;
-    g_remote_mod = mod;
-    snprintf(g_hs_path, sizeof(g_hs_path), "%s", hs);
-    g_injected = 1;
+    g_process = patchProcess;
+    g_processId = pid;
+    g_remoteModule = remoteModule;
+    snprintf(g_handshakePath, sizeof(g_handshakePath), "%s", handshake);
+    g_injected = true;
 
-    CloseHandle(proc);
-    set_err("ok");
-    return 0;
+    CloseHandle(process);
+
+    if (g_patchedCount == 0)
+    {
+        set_error("no hook could be patched");
+        return INJECT_ERR_NO_HOOKS;
+    }
+
+    set_error("ok");
+    return INJECT_OK;
 }
 
-EXPORT int cleanup(void) {
-    if (!g_injected) { set_err("not injected"); return -1; }
-    // restore originals
-    if (g_proc) {
-        for (int i = 0; i < 5; i++) {
-            if (!g_patched[i] || !g_targets[i]) continue;
-            DWORD oldp = 0;
-            if (VirtualProtectEx(g_proc, (void*)g_targets[i], PATCH_LEN, PAGE_EXECUTE_READWRITE, &oldp)) {
-                SIZE_T w = 0;
-                WriteProcessMemory(g_proc, (void*)g_targets[i], g_originals[i], PATCH_LEN, &w);
-                DWORD d = 0;
-                VirtualProtectEx(g_proc, (void*)g_targets[i], PATCH_LEN, PAGE_EXECUTE_READ, &d);
-            }
-            g_patched[i] = 0;
-        }
-        // unload module remotely
-        if (g_remote_mod) {
-            FARPROC freeLib = GetProcAddress(GetModuleHandleA("kernel32.dll"), "FreeLibrary");
-            HANDLE th = CreateRemoteThread(g_proc, NULL, 0, (LPTHREAD_START_ROUTINE)freeLib, (LPVOID)g_remote_mod, 0, NULL);
-            if (th) { WaitForSingleObject(th, 5000); CloseHandle(th); }
-        }
-        CloseHandle(g_proc);
-        g_proc = NULL;
+EXPORT int cleanup(void)
+{
+    if (!g_injected)
+    {
+        set_error("not injected");
+        return INJECT_ERR_ALREADY_INJECTED;
     }
-    if (g_remote_mem) { /* none tracked */ }
-    if (g_hs_path[0]) { DeleteFileA(g_hs_path); g_hs_path[0] = 0; }
-    g_injected = 0;
-    g_pid = 0;
-    g_remote_mod = NULL;
-    set_err("ok");
-    return 0;
+
+    if (g_process)
+    {
+        for (int i = 0; i < g_patchedCount; i++)
+        {
+            const struct HookEntry *entry = &g_patchedEntries[i];
+            DWORD oldProtection = 0;
+            if (!VirtualProtectEx(g_process, (void *)entry->target, HOOK_ENTRY_PATCH_BYTES, PAGE_EXECUTE_READWRITE,
+                                  &oldProtection))
+                continue;
+            SIZE_T written = 0;
+            WriteProcessMemory(g_process, (void *)entry->target, g_originalBytes[i], HOOK_ENTRY_PATCH_BYTES, &written);
+            DWORD ignored = 0;
+            VirtualProtectEx(g_process, (void *)entry->target, HOOK_ENTRY_PATCH_BYTES, oldProtection, &ignored);
+        }
+        g_patchedCount = 0;
+
+        if (g_remoteModule)
+        {
+            FARPROC freeLibrary = GetProcAddress(GetModuleHandleA("kernel32.dll"), "FreeLibrary");
+            HANDLE thread = CreateRemoteThread(g_process, NULL, 0, (LPTHREAD_START_ROUTINE)freeLibrary,
+                                               (LPVOID)g_remoteModule, 0, NULL);
+            if (thread)
+            {
+                WaitForSingleObject(thread, 5000);
+                CloseHandle(thread);
+            }
+        }
+        CloseHandle(g_process);
+        g_process = NULL;
+    }
+
+    if (g_handshakePath[0])
+    {
+        DeleteFileA(g_handshakePath);
+        g_handshakePath[0] = 0;
+    }
+
+    g_injected = false;
+    g_processId = 0;
+    g_remoteModule = NULL;
+    set_error("ok");
+    return INJECT_OK;
 }
 
-EXPORT const char* last_error(void) {
-    return g_last_err;
+EXPORT const char *last_error(void)
+{
+    return g_lastError;
 }

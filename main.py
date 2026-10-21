@@ -11,7 +11,6 @@ import traceback
 
 from gtools import flags
 from gtools.core.block_sigint import block_sigint
-from gtools.core.dll_loader import DLL
 from gtools.core.growtopia.world_renderer_cpu import RenderOptions, render_world_image
 from gtools.core.growtopia.packet import NetPacket, NetType, PreparedPacket
 from gtools.core.growtopia.strkv import StrKV
@@ -20,8 +19,10 @@ from gtools.core.hosts import HostsFileManager
 from gtools.core.log import setup_logger
 from gtools.core.mixer import AudioMixer
 from gtools.core.network import is_up, resolve_doh
+from gtools.core.pipe import PipeError
 from gtools.core.privilege import elevate, is_elevated
 from gtools.core.wsl import is_running_wsl
+from gtools.hooks import hook
 from gtools.protogen.extension_pb2 import (
     BLOCKING_MODE_BLOCK,
     DIRECTION_SERVER_TO_CLIENT,
@@ -41,7 +42,6 @@ from thirdparty.enet.bindings import ENetPacketFlag
 from gtools import setting
 from gtools.setting import Setting
 from extension.utils import UtilityExtension
-
 
 logger = logging.getLogger("main")
 
@@ -154,29 +154,45 @@ def check_hosts() -> None:
 
 
 def run_proxy() -> None:
+    proxy = Proxy()
+
+    hook_ctl = None
+    hook_listener_stop = None
+    hook_listener_thread = None
+
+    hook_ctl = hook.ensure_hook()
+    if hook_ctl is not None:
+        try:
+            hook.apply_hook_settings(hook_ctl)
+            hook.publish_hook_state(hook_ctl.status())
+
+            hook_listener_stop = threading.Event()
+            hook_listener_thread = threading.Thread(
+                target=hook.listen_hook_events,
+                args=(hook_ctl, hook_listener_stop),
+                daemon=True,
+            )
+            hook_listener_thread.start()
+        except PipeError:
+            logger.exception("hook control pipe disappeared during setup")
+            hook_ctl = None
+
     server = setup_http_proxy()
-    t = threading.Thread(target=lambda: server.serve_forever())
+    t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
 
-    hook = DLL("gtools/hooks/injector", "injector")
-    payload = Path("gtools/hooks/hook.dll")
-    if hook.supported and payload.exists():
-        logger.info("hook supported, will try to inject dll")
-        hook.inject("Growtopia.exe", str(payload))
-        err = hook.last_error()
-        if err:
-            logger.error(err)
-    else:
-        logger.info("hook unsupported")
-
-    Proxy().start(block=True)
+    proxy.start(block=True)
 
     with block_sigint():
-        if hook.supported:
-            hook.cleanup()
         server.shutdown()
         server.server_close()
         t.join()
+        if hook_listener_stop is not None:
+            hook_listener_stop.set()
+        if hook_listener_thread is not None:
+            hook_listener_thread.join(timeout=3)
+        if hook_ctl is not None:
+            hook_ctl.close()
 
 
 def run_server() -> None:
