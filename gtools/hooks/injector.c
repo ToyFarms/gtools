@@ -71,8 +71,6 @@ static void CopyText(char *destination, size_t destinationSize, const char *sour
     destination[length] = 0;
 }
 
-/* ---------- process and module discovery ---------- */
-
 static DWORD find_process_id(const char *executable)
 {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -134,9 +132,6 @@ static const char *file_base_name(const char *path)
     return separator ? separator + 1 : path;
 }
 
-/* resolve a named export from a PE file on disk without loading it into this
-   process; only the rva of the shim's static buffer is needed, everything the
-   shim publishes travels from there */
 static uint32_t RvaToFileOffset(const uint8_t *image, size_t imageSize, uint32_t rva)
 {
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)image;
@@ -156,12 +151,10 @@ static uint32_t RvaToFileOffset(const uint8_t *image, size_t imageSize, uint32_t
         uint32_t end = start + section[i].Misc.VirtualSize;
         if (rva >= start && rva < end)
         {
-            /* a mapped section can be aligned differently from its file data;
-               sections built by the usual linkers keep rva and raw together but
-               the general conversion is required to stay correct */
             uint32_t delta = rva - start;
             if (delta >= section[i].SizeOfRawData)
                 return 0;
+
             return section[i].PointerToRawData + delta;
         }
     }
@@ -251,8 +244,6 @@ static bool ExportRvaFromFile(const char *path, const char *name, uint32_t *outR
     return found;
 }
 
-/* ---------- cross process serialization ---------- */
-
 static int ProcessIsHooked(DWORD pid)
 {
     char name[64];
@@ -286,11 +277,10 @@ static void ReleaseHookLock(HANDLE mutex)
 {
     if (!mutex)
         return;
+
     ReleaseMutex(mutex);
     CloseHandle(mutex);
 }
-
-/* ---------- the shim's static buffer, mirrored over read/write memory ---------- */
 
 static uint32_t g_selfRva = 0;
 static int g_selfRvaValid = 0;
@@ -311,9 +301,6 @@ static uint64_t ResolveSelfRemote(uint64_t moduleBase)
     return moduleBase + g_selfRva;
 }
 
-/* the shim boots only once a whole settings mirror has landed; writes are
-   seqlocked through settingsRevision, mirror writes use WriteProcessMemory,
-   the same api contact the entry patching always had */
 static int WriteShimSettings(HANDLE process, uint64_t selfRemote, const struct HookSettings *settings)
 {
     if (!selfRemote)
@@ -377,8 +364,6 @@ static int WaitShimReady(HANDLE process, uint64_t selfRemote, int configuredDela
     }
 }
 
-/* ---------- injector state ---------- */
-
 static HANDLE g_process = NULL;
 static DWORD g_processId = 0;
 static HMODULE g_remoteModule = NULL;
@@ -406,8 +391,6 @@ static void ResetState(void)
     g_patchedCount = 0;
     g_injected = false;
 }
-
-/* ---------- patching (the proven out of process path) ---------- */
 
 static void write_abs_jump(unsigned char *buffer, uint64_t destination)
 {
@@ -468,8 +451,6 @@ static int PatchEntry(HANDLE process, const struct HookEntry *entry, int index)
     return 1;
 }
 
-/* ---------- dll loading into the target ---------- */
-
 static int LoadRemoteLibrary(HANDLE process, const char *fullPath)
 {
     size_t pathBytes = strlen(fullPath) + 1;
@@ -500,10 +481,6 @@ static int LoadRemoteLibrary(HANDLE process, const char *fullPath)
     return 1;
 }
 
-/* ---------- exported api ---------- */
-
-/* the agent provides the settings it owns so the shim boots with the right
-   values; without a configuration the defaults are mirrored */
 EXPORT int configure(const void *settings, uint32_t size)
 {
     if (size != sizeof(struct HookSettings))
@@ -521,7 +498,6 @@ EXPORT int inject(const char *target, const char *dll_path)
 {
     if (g_injected)
     {
-        /* self heal when the tracked process is gone */
         if (g_process && WaitForSingleObject(g_process, 0) == WAIT_OBJECT_0)
             ResetState();
         else
@@ -536,7 +512,6 @@ EXPORT int inject(const char *target, const char *dll_path)
         return INJECT_ERR_BAD_ARGS;
     }
 
-    /* the target is either a process id or an executable name */
     DWORD pid = 0;
     char *end = NULL;
     errno = 0;
@@ -580,8 +555,6 @@ EXPORT int inject(const char *target, const char *dll_path)
         return INJECT_ERR_BAD_DLL_PATH;
     }
 
-    /* resolve the shim's static buffer from the payload file before loading,
-       an export missing there means the payload is not a compatible shim */
     RememberPayload(fullPath);
     if (!g_selfRvaValid)
     {
@@ -624,8 +597,6 @@ EXPORT int inject(const char *target, const char *dll_path)
         return INJECT_ERR_EXPORT_MISSING;
     }
 
-    /* mirror the settings before the shim boots: its worker spins until a
-       whole mirror lands, then it honors start_delay_ms and scans */
     struct HookSettings settings;
     if (g_pendingValid)
     {
@@ -655,9 +626,6 @@ EXPORT int inject(const char *target, const char *dll_path)
         return INJECT_ERR_HANDSHAKE_MISSING;
     }
 
-    /* the shim did the scan and the trampoline building in process; this side
-       only completes the entry points, the contact profile of the previous
-       design (opening a handle, patching, verifying, keeping it around) */
     struct HookEntry entries[HOOK_MAX_ENTRIES];
     if (!ReadShimEntries(process, selfRemote, entries))
     {
@@ -687,7 +655,6 @@ EXPORT int inject(const char *target, const char *dll_path)
         g_patchedCount++;
     }
 
-    /* the shim owns the process handle lifetime for the cleanup call */
     g_process = process;
     g_processId = pid;
     g_remoteModule = remoteModule;
@@ -732,7 +699,6 @@ EXPORT int apply_settings(const char *target, const char *dll_path, const void *
         return INJECT_ERR_EXPORT_MISSING;
     }
 
-    /* the target is either a process id or an executable name */
     DWORD pid = 0;
     char *end = NULL;
     errno = 0;
@@ -761,8 +727,6 @@ EXPORT int apply_settings(const char *target, const char *dll_path, const void *
         return INJECT_ERR_EXPORT_MISSING;
     }
 
-    /* a short lived handle for the sync, the contact matches the patching
-       pattern that was always invisible to the target */
     HANDLE process = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, FALSE, pid);
     if (!process)
     {

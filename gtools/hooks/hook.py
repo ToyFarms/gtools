@@ -40,7 +40,6 @@ def agent_running() -> bool:
 
 
 def spawn_agent(timeout: float = 2.0) -> bool:
-    """start the host process (rundll32 agent.dll,AgentMain) unless one is already running"""
     if agent_running():
         return True
 
@@ -49,8 +48,6 @@ def spawn_agent(timeout: float = 2.0) -> bool:
     if not rundll32.exists():
         return False
 
-    # the agent owns the pipe and hooks the game on its own, it must outlive
-    # this process
     DETACHED_PROCESS = 0x00000008
     CREATE_NO_WINDOW = 0x08000000
     try:
@@ -175,9 +172,6 @@ def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
             status["debug_privilege"] = str(int(enabled))
             status["debug_error"] = str(debug_error)
 
-            # the agent owns the pipe and it is the single injector: after the
-            # UAC prompt its watch dog hooks the game roughly a second later,
-            # injecting here in parallel would only fight over the pid lock
             status["agent"] = str(int(spawn_agent()))
             if not agent_running():
                 status["error"] = "the rundll32 agent is not running"
@@ -191,9 +185,6 @@ def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
                     status["error"] = "the agent watch dog injected the hook"
                     return status
 
-            # fallback: the agent watch dog did not come through (missing or
-            # broken injector exports); do it here the classic way, the lock
-            # serializes with the watch dog if it happens to be mid inject
             injector = ctypes.CDLL(str(HOOK_INJECTOR_DLL))
             injector.inject.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
             injector.inject.restype = ctypes.c_int
@@ -273,8 +264,6 @@ def target_running() -> bool:
 
 
 def _hooks_installed(ctl: HookControl) -> bool:
-    """the agent serves the pipe even before the game is hooked, only a
-    STATUS that reports installed hooks means the pipe belongs to a live hook"""
     try:
         pairs = ctl.status(0.5)
     except Exception:
@@ -284,8 +273,6 @@ def _hooks_installed(ctl: HookControl) -> bool:
 
 
 def _wait_hooks_installed(timeout: float) -> HookControl | None:
-    """poll the agent pipe until a status reports installed hooks; the returned
-    control stays connected, the caller owns it"""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         ctl = HookControl()
@@ -298,13 +285,13 @@ def _wait_hooks_installed(timeout: float) -> HookControl | None:
         ctl.close()
         time.sleep(0.25)
 
-    return None
+    return
 
 
 def _ensure_hook_once() -> HookControl | None:
     if not hook_available():
         logger.info("hook unsupported")
-        return None
+        return
 
     ctl = HookControl()
     if ctl.connect(0.25) and _hooks_installed(ctl):
@@ -313,11 +300,8 @@ def _ensure_hook_once() -> HookControl | None:
     ctl.close()
 
     if not target_running():
-        return None
+        return
 
-    # the agent watch dog hooks the game by itself roughly a second after the
-    # game shows up; give it the chance before elevating again, otherwise the
-    # first run after every restart pays a UAC prompt and a lock race
     if agent_running():
         fresh = _wait_hooks_installed(60.0)
         if fresh is not None:
@@ -325,7 +309,7 @@ def _ensure_hook_once() -> HookControl | None:
             return fresh
 
     if not inject_hook():
-        return None
+        return
 
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
@@ -337,7 +321,7 @@ def _ensure_hook_once() -> HookControl | None:
 
     logger.error("the hook was injected but its control pipe did not report installed hooks")
 
-    return None
+    return
 
 
 def ensure_hook(wait_forever: bool = True) -> HookControl | None:
@@ -402,7 +386,6 @@ def inject_hook() -> bool:
         logger.error("failed to start the hook agent (rundll32)")
 
     if status.get("rc") == "-1":
-        # the agent watch dog or a previous injector run got there first
         logger.info("the hook is already injected")
         return True
 

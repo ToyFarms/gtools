@@ -1,13 +1,6 @@
 // BUILD_FLAGS[gcc, clang]: -O2 -shared -fPIC -mwindows
 // BUILD_FLAGS[msvc]: /O2 /LD /TC /Gy
 // BUILD_FLAGS[gcc(mingw)]: -O2 -shared -fPIC -mwindows
-//
-// The host process (launch with: rundll32 agent.dll,AgentMain). It owns every
-// part of the hook that does not have to live inside the game: the named pipe,
-// the settings, the state diff, the game watch dog and crash reporting. The
-// shim publishes its view in its own static buffer (said contact profile is
-// ReadProcessMemory only, the same api the entry patching always used), this
-// process mirrors it here and never maps anything into the game.
 
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
@@ -41,18 +34,20 @@
 #define PID_MUTEX_WAIT_TRIES    200
 #define PID_MUTEX_WAIT_STEP_MS  100
 
-/* the agent lives while the proxy (its pipe clients) or the game live; when
-   both are gone for the idle grace it terminates itself, no matter which of
-   the two was closed first. the bootstrap window covers an agent that was
-   spawned but whose proxy never connected. */
 #ifndef AGENT_IDLE_GRACE_MS
-#define AGENT_IDLE_GRACE_MS 15000
+#  define AGENT_IDLE_GRACE_MS 5000
 #endif
 #ifndef AGENT_BOOTSTRAP_EXIT_MS
-#define AGENT_BOOTSTRAP_EXIT_MS 180000
+#  define AGENT_BOOTSTRAP_EXIT_MS 180000
 #endif
 
-#define RING_DRAIN_PASSES 5 /* the log ring is read every 100 ms, the head every pass */
+#define RING_DRAIN_PASSES 5
+
+#if defined(_MSC_VER)
+#  define EXPORT __declspec(dllexport)
+#else
+#  define EXPORT __attribute__((visibility("default")))
+#endif
 
 typedef int (*FnRemoteInject)(const char *target, const char *dll_path);
 typedef const char *(*FnRemoteLastError)(void);
@@ -84,7 +79,6 @@ static void CopyText(char *destination, size_t destinationSize, const char *sour
     destination[length] = 0;
 }
 
-/* replace spaces, the wire format treats them as separators */
 static void ReplaceSpacesImpl(char *text)
 {
     for (char *cursor = text; *cursor; cursor++)
@@ -93,8 +87,6 @@ static void ReplaceSpacesImpl(char *text)
             *cursor = '_';
     }
 }
-
-/* ---------- settings (owned by the agent, mirrored into the shim) ---------- */
 
 static struct HookSettings g_settings;
 static struct HookCapture g_capture;
@@ -111,8 +103,6 @@ static void SetDefaultSettings(void)
     g_settings.streamGameLogs = 0;
     ZeroMemory(&g_capture, sizeof(g_capture));
 }
-
-/* ---------- text buffers and pipe plumbing ---------- */
 
 struct TextBuffer
 {
@@ -361,8 +351,6 @@ static void AppendSingleLine(struct TextBuffer *buffer, const char *text)
     }
 }
 
-/* ---------- the shim's static buffer, mirrored over ReadProcessMemory ---------- */
-
 static DWORD g_gamePid = 0;
 static HANDLE g_memoryProcess = NULL;
 static uint64_t g_selfRemote = 0;
@@ -371,10 +359,10 @@ static int g_selfRvaValid = 0;
 static volatile LONG g_everHadClient = 0;
 static ULONGLONG g_agentStartedAt = 0;
 
-static struct ShimShared g_shimHead; /* everything before the log ring */
+static struct ShimShared g_shimHead;
 static int g_shimValid = 0;
 static LONG g_consumedTicket = 0;
-static struct HookSettings g_syncedSettings; /* what the shim currently holds */
+static struct HookSettings g_syncedSettings;
 static int g_patchedAnnounced = 0;
 
 static void InvalidateShimCaches(void)
@@ -416,7 +404,6 @@ static HMODULE find_remote_module(DWORD pid, const char *module_name)
     return module;
 }
 
-/* resolve a named export from a PE file on disk without loading it */
 static uint32_t RvaToFileOffset(const uint8_t *image, size_t imageSize, uint32_t rva)
 {
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)image;
@@ -548,7 +535,6 @@ static void ForgetTarget(void)
     InvalidateShimCaches();
 }
 
-/* refresh the agent's mirror of the shim's static buffer */
 static void RefreshSnapshot(void)
 {
     if (!g_selfRvaValid)
@@ -585,13 +571,11 @@ static void RefreshSnapshot(void)
     LeaveCriticalSection(&g_stateLock);
 }
 
-/* ---------- settings ---------- */
-
 struct SettingDescriptor
 {
     const char *name;
     int kind;
-    int base; /* 0 = struct HookSettings, 1 = struct HookCapture */
+    int base;
     size_t offset;
     size_t capacity;
     long minimum;
@@ -606,22 +590,22 @@ struct SettingDescriptor
 
 static const struct SettingDescriptor g_descriptors[] = {
     {"proxy_host",       SETTING_TEXT,   BASE_SETTINGS, offsetof(struct HookSettings, proxyHost),
-     sizeof(((struct HookSettings *)0)->proxyHost), 0, 0, 1},
-    {"proxy_port",       SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, proxyPort),    0, 1, 65535,  1},
-    {"start_delay_ms",   SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, startDelayMs), 0, 0, 600000, 1},
-    {"log_level",        SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, logLevel),     0, 0, 2,      1},
-    {"allow_any_module", SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, allowAnyModule),  0, 0, 1,   1},
-    {"stream_game_logs", SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, streamGameLogs),  0, 0, 1,   1},
+     sizeof(((struct HookSettings *)0)->proxyHost),                                                       0, 0,      1},
+    {"proxy_port",       SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, proxyPort),      0, 1, 65535,  1},
+    {"start_delay_ms",   SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, startDelayMs),   0, 0, 600000, 1},
+    {"log_level",        SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, logLevel),       0, 0, 2,      1},
+    {"allow_any_module", SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, allowAnyModule), 0, 0, 1,      1},
+    {"stream_game_logs", SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, streamGameLogs), 0, 0, 1,      1},
 
-    {"client_version",   SETTING_TEXT,   BASE_CAPTURE, offsetof(struct HookCapture, clientVersion),
-     sizeof(((struct HookCapture *)0)->clientVersion), 0, 0, 0},
-    {"client_protocol",  SETTING_TEXT,   BASE_CAPTURE, offsetof(struct HookCapture, clientProtocol),
-     sizeof(((struct HookCapture *)0)->clientProtocol), 0, 0, 0},
-    {"client_platform",  SETTING_TEXT,   BASE_CAPTURE, offsetof(struct HookCapture, clientPlatform),
-     sizeof(((struct HookCapture *)0)->clientPlatform), 0, 0, 0},
-    {"real_server",      SETTING_TEXT,   BASE_CAPTURE, offsetof(struct HookCapture, realServer),
-     sizeof(((struct HookCapture *)0)->realServer), 0, 0, 0},
-    {"real_port",        SETTING_NUMBER, BASE_CAPTURE, offsetof(struct HookCapture, realPort), 0, 0, 65535,  0},
+    {"client_version",   SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientVersion),
+     sizeof(((struct HookCapture *)0)->clientVersion),                                                    0, 0,      0},
+    {"client_protocol",  SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientProtocol),
+     sizeof(((struct HookCapture *)0)->clientProtocol),                                                   0, 0,      0},
+    {"client_platform",  SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientPlatform),
+     sizeof(((struct HookCapture *)0)->clientPlatform),                                                   0, 0,      0},
+    {"real_server",      SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  realServer),
+     sizeof(((struct HookCapture *)0)->realServer),                                                       0, 0,      0},
+    {"real_port",        SETTING_NUMBER, BASE_CAPTURE,  offsetof(struct HookCapture,  realPort),       0, 0, 65535,  0},
 };
 
 #define SETTING_COUNT ((int)(sizeof(g_descriptors) / sizeof(g_descriptors[0])))
@@ -646,7 +630,6 @@ static void *SettingPointer(const struct SettingDescriptor *descriptor)
     return base + descriptor->offset;
 }
 
-/* the caller holds the state lock */
 static void FormatSetting(const struct SettingDescriptor *descriptor, char *out, size_t outSize)
 {
     if (!descriptor || !out || outSize == 0)
@@ -658,7 +641,6 @@ static void FormatSetting(const struct SettingDescriptor *descriptor, char *out,
         CopyText(out, outSize, (const char *)pointer);
 }
 
-/* the caller holds the state lock */
 static int ApplySetting(const struct SettingDescriptor *descriptor, const char *value, char *error, size_t errorSize)
 {
     if (!descriptor)
@@ -700,8 +682,6 @@ static int ApplySetting(const struct SettingDescriptor *descriptor, const char *
     return 1;
 }
 
-/* push a settings change into the shim's mirror, through the injector's
-   short lived handle, the same contact profile as the entry patching */
 static void SyncShimSettings(void)
 {
     if (!g_applySettingsFn || !g_gamePid || !g_shimValid)
@@ -721,11 +701,8 @@ static void SyncShimSettings(void)
     if (rc == 0)
         g_syncedSettings = outbound;
     else
-        AgentLog("[hook] agent: the settings sync failed (rc=%d: %s)", rc,
-                  g_lastErrorFn ? g_lastErrorFn() : "unknown");
+        AgentLog("[hook] agent: the settings sync failed (rc=%d: %s)", rc, g_lastErrorFn ? g_lastErrorFn() : "unknown");
 }
-
-/* ---------- status, state and handshake built from the mirror ---------- */
 
 static void BuildStatusLine(struct TextBuffer *buffer)
 {
@@ -748,7 +725,6 @@ static void BuildStatusLine(struct TextBuffer *buffer)
     for (int i = 0; i < SETTING_COUNT; i++)
     {
         char value[MAX_LOG_MESSAGE];
-        /* read from the same local copies for a coherent line */
         if (g_descriptors[i].base == BASE_CAPTURE)
         {
             const void *pointer = (const char *)&captureLocal + g_descriptors[i].offset;
@@ -796,8 +772,8 @@ static void BuildStatusLine(struct TextBuffer *buffer)
 
     for (int i = 0; i < HOOK_INDEX_COUNT && i < HOOK_MAX_ENTRIES; i++)
     {
-        LONG value = (shimValidLocal && i < (int)shimLocal.entryCount) ? shimLocal.entries[i].status
-                                                                      : (LONG)HOOK_STATUS_MISSING;
+        LONG value =
+            (shimValidLocal && i < (int)shimLocal.entryCount) ? shimLocal.entries[i].status : (LONG)HOOK_STATUS_MISSING;
         const char *status = "missing";
         if (value == HOOK_STATUS_PATCHED)
             status = "patched";
@@ -807,9 +783,9 @@ static void BuildStatusLine(struct TextBuffer *buffer)
         snprintf(scratch, sizeof(scratch), " hook_%s=%s", HOOK_IDENTITIES[i].key, status);
         BufferAppendText(buffer, scratch);
 
-        snprintf(scratch, sizeof(scratch), " target_%s=0x%llX", HOOK_IDENTITIES[i].key,
-                 (unsigned long long)((shimValidLocal && i < (int)shimLocal.entryCount) ? shimLocal.entries[i].target
-                                                                                       : 0));
+        snprintf(
+            scratch, sizeof(scratch), " target_%s=0x%llX", HOOK_IDENTITIES[i].key,
+            (unsigned long long)((shimValidLocal && i < (int)shimLocal.entryCount) ? shimLocal.entries[i].target : 0));
         BufferAppendText(buffer, scratch);
     }
 }
@@ -836,9 +812,8 @@ static void PublishStateEvent(void)
     ReplaceSpacesImpl(server);
 
     char text[MAX_EVENT_TEXT];
-    snprintf(text, sizeof(text),
-             "client_version=%s client_protocol=%s client_platform=%s real_server=%s real_port=%d", version, protocol,
-             platform, server, port);
+    snprintf(text, sizeof(text), "client_version=%s client_protocol=%s client_platform=%s real_server=%s real_port=%d",
+             version, protocol, platform, server, port);
     QueueEvent("state", text);
 }
 
@@ -885,8 +860,6 @@ static void BuildHandshake(struct HookHandshake *out)
     }
     out->entryCount = count;
 }
-
-/* ---------- pipe commands ---------- */
 
 static int HandlePipeCommand(HANDLE pipe, const char *line)
 {
@@ -1180,8 +1153,6 @@ static DWORD WINAPI PipeServerThread(LPVOID unused)
     }
 }
 
-/* ---------- log ring drain (by ticket, the agent is the only consumer) ---------- */
-
 static int g_streamGate = 0;
 static int g_levelGate = HOOK_LOG_INFO;
 
@@ -1196,8 +1167,6 @@ static void DrainLogRing(void)
     LeaveCriticalSection(&g_stateLock);
 
     LONG ticket = g_shimHead.logTicket;
-    /* the ring only holds HOOK_LOG_SLOTS lines; do not chase tickets that are
-       already overwritten */
     LONG oldest = ticket - HOOK_LOG_SLOTS;
     if (g_consumedTicket < oldest)
         g_consumedTicket = oldest;
@@ -1214,7 +1183,7 @@ static void DrainLogRing(void)
     {
         const struct HookSlot *slot = &slots[(size_t)((ULONG)sequence % HOOK_LOG_SLOTS)];
         if (slot->sequence != sequence)
-            continue; /* torn read or overwritten line, drop it */
+            continue;
         if (slot->state != HOOK_SLOT_READY)
             continue;
 
@@ -1231,8 +1200,6 @@ static void DrainLogRing(void)
 
     g_consumedTicket = ticket;
 }
-
-/* ---------- state diff and status watch ---------- */
 
 static int g_lastStateValid = 0;
 static struct HookCapture g_lastCapture;
@@ -1254,7 +1221,8 @@ static void DiffState(void)
     if (strcmp(g_lastCapture.clientVersion, captureLocal.clientVersion) != 0 ||
         strcmp(g_lastCapture.clientProtocol, captureLocal.clientProtocol) != 0 ||
         strcmp(g_lastCapture.clientPlatform, captureLocal.clientPlatform) != 0 ||
-        strcmp(g_lastCapture.realServer, captureLocal.realServer) != 0 || g_lastCapture.realPort != captureLocal.realPort)
+        strcmp(g_lastCapture.realServer, captureLocal.realServer) != 0 ||
+        g_lastCapture.realPort != captureLocal.realPort)
     {
         g_lastCapture = captureLocal;
         PublishStateEvent();
@@ -1277,8 +1245,6 @@ static void WatchStatuses(void)
         }
     }
 }
-
-/* ---------- game watch dog ---------- */
 
 static HANDLE g_targetProcess = NULL;
 static ULONGLONG g_lastFailLog = 0;
@@ -1329,7 +1295,6 @@ static void AdoptPid(DWORD pid)
 
 static void MonitorTarget(void)
 {
-    /* crash and exit reporting for the process we injected */
     if (g_targetProcess)
     {
         if (WaitForSingleObject(g_targetProcess, 0) == WAIT_OBJECT_0)
@@ -1352,7 +1317,6 @@ static void MonitorTarget(void)
         ForgetTarget();
     }
 
-    /* only hunt for the game once per interval */
     static ULONGLONG lastHunt = 0;
     ULONGLONG now = GetTickCount64();
     if (lastHunt && now - lastHunt < TARGET_HUNT_INTERVAL_MS)
@@ -1365,7 +1329,6 @@ static void MonitorTarget(void)
 
     if (PidIsHooked(pid))
     {
-        /* injected by another path (python), start the crash monitor anyway */
         AdoptPid(pid);
         g_targetProcess = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
         return;
@@ -1381,7 +1344,6 @@ static void MonitorTarget(void)
         return;
     }
 
-    /* hand the injector the settings the agent owns */
     struct HookSettings outbound;
     EnterCriticalSection(&g_stateLock);
     outbound = g_settings;
@@ -1409,10 +1371,6 @@ static void MonitorTarget(void)
     }
 }
 
-/* ---------- agent entry ---------- */
-
-/* ---------- self termination when both the proxy and the game are gone ---------- */
-
 static void MaybeShutdown(void)
 {
     int clients = 0;
@@ -1424,9 +1382,6 @@ static void MaybeShutdown(void)
     }
     LeaveCriticalSection(&g_clientLock);
 
-    /* the proxy holds one persistent pipe client, so zero clients for the
-       grace period means the proxy is gone; brief reconnect and probe gaps
-       never reach the grace window */
     static ULONGLONG idleSince = 0;
     ULONGLONG now = GetTickCount64();
     if (clients > 0)
@@ -1442,9 +1397,6 @@ static void MaybeShutdown(void)
     if (now - idleSince < AGENT_IDLE_GRACE_MS)
         return;
 
-    /* the game check is cheap but the idle state only justifies it once per
-       second; a hooked game keeps its own tracked handle and a running game
-       keeps the watch dog busy, so neither lets the countdown stand */
     static ULONGLONG lastGameCheck = 0;
     if (lastGameCheck && now - lastGameCheck < 1000)
         return;
@@ -1455,10 +1407,7 @@ static void MaybeShutdown(void)
     if (FindTargetPid(HOOK_AGENT_TARGET))
         return;
 
-    /* an agent the proxy never connected to exits after the bootstrap
-       window instead of living forever */
-    if (!InterlockedCompareExchange(&g_everHadClient, 0, 0) &&
-        now - g_agentStartedAt < AGENT_BOOTSTRAP_EXIT_MS)
+    if (!InterlockedCompareExchange(&g_everHadClient, 0, 0) && now - g_agentStartedAt < AGENT_BOOTSTRAP_EXIT_MS)
         return;
 
     AgentLog("[agent] the proxy and %s are both gone, terminating", HOOK_AGENT_TARGET);
@@ -1479,8 +1428,7 @@ static HANDLE AgentAcquireSingleton(void)
 }
 
 static void RunAgent(void);
-
-__declspec(dllexport) void CALLBACK AgentMain(HWND window, HINSTANCE instance, LPSTR commandLine, int showCommand);
+EXPORT void CALLBACK AgentMain(HWND window, HINSTANCE instance, LPSTR commandLine, int showCommand);
 
 static void LoadInjector(void)
 {
@@ -1577,7 +1525,7 @@ static void RunAgent(void)
     }
 }
 
-__declspec(dllexport) void CALLBACK AgentMain(HWND window, HINSTANCE instance, LPSTR commandLine, int showCommand)
+EXPORT void CALLBACK AgentMain(HWND window, HINSTANCE instance, LPSTR commandLine, int showCommand)
 {
     (void)window;
     (void)instance;
@@ -1593,5 +1541,6 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
     (void)reserved;
     if (reason == DLL_PROCESS_ATTACH)
         DisableThreadLibraryCalls(module);
+
     return TRUE;
 }

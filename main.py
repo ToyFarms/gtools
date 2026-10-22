@@ -164,10 +164,6 @@ def run_proxy() -> None:
             hook.apply_hook_settings(hook_ctl)
             hook.publish_hook_state(hook_ctl.status())
         except PipeError:
-            # the listener keeps watching for the pipe and reattaches on a
-            # break, it reapplies the settings itself once the hook is back,
-            # do not drop to a hook-less proxy because one setup window raced
-            # a shutdown
             logger.exception("hook control pipe disappeared during setup")
 
     hook_listener_thread = threading.Thread(

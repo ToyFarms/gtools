@@ -1,16 +1,6 @@
 // BUILD_FLAGS[gcc, clang]: -O2 -shared -fPIC
 // BUILD_FLAGS[msvc]: /O2 /LD /TC /Gy
 // BUILD_FLAGS[gcc(mingw)]: -O2 -shared -fPIC -mwindows
-//
-// Thin in-process shim. It runs no threads beyond its one boot worker, no
-// pipe server and no exception hooks: it scans the game image and builds the
-// trampolines in process (plain VirtualAlloc, the same contact the previous
-// design used), publishes its whole view of the world into a single static
-// buffer (private memory, exported so the external process can read it with
-// ReadProcessMemory and patch the entries with WriteProcessMemory) and
-// performs the minimal in-place rewrite of the server_data response.
-// Everything else (the pipe server, the settings engine, the state diff, the
-// watch dog) happens in external processes (agent.c, injector.c).
 
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
@@ -50,8 +40,13 @@
 
 #define PATTERN_MAX 512
 
-/* the one shared view, it is static data of this module */
-__declspec(dllexport) struct ShimShared g_self;
+#if defined(_MSC_VER)
+#  define EXPORT __declspec(dllexport)
+#else
+#  define EXPORT __attribute__((visibility("default")))
+#endif
+
+EXPORT struct ShimShared g_self;
 
 static void CopyText(char *destination, size_t destinationSize, const char *source)
 {
@@ -68,8 +63,6 @@ static void CopyText(char *destination, size_t destinationSize, const char *sour
     memcpy(destination, source, length);
     destination[length] = 0;
 }
-
-/* ---------- read only game types ---------- */
 
 struct SSO
 {
@@ -104,8 +97,6 @@ static void CopyGameString(char *destination, size_t destinationSize, const stru
     destination[length] = 0;
 }
 
-/* ---------- settings mirror ---------- */
-
 static void CopyShimDefaultSettings(struct HookSettings *settings)
 {
     ZeroMemory(settings, sizeof(*settings));
@@ -117,8 +108,6 @@ static void CopyShimDefaultSettings(struct HookSettings *settings)
     settings->streamGameLogs = 0;
 }
 
-/* the injector maintains the mirror from outside with WriteProcessMemory and
-   the writer marks flights through settingsRevision, read a stable copy */
 static int SelfSettingsSnapshot(struct HookSettings *out)
 {
     for (int attempt = 0; attempt < 16; attempt++)
@@ -151,8 +140,6 @@ static struct HookSettings *SettingsSnapshot(void)
     return &g_settingsCache;
 }
 
-/* ---------- log ring (read by the agent through ReadProcessMemory) ---------- */
-
 static void PublishLine(int level, const char *format, ...)
 {
     char text[HOOK_LOG_LINE];
@@ -165,9 +152,10 @@ static void PublishLine(int level, const char *format, ...)
     if ((size_t)written >= sizeof(text))
         text[sizeof(text) - 1] = 0;
 
-    LONG ticket = (LONG)(InterlockedIncrement(&g_self.logTicket) - 1);    struct HookSlot *slot = &g_self.log[(size_t)ticket % HOOK_LOG_SLOTS];
+    LONG ticket = (LONG)(InterlockedIncrement(&g_self.logTicket) - 1);
+    struct HookSlot *slot = &g_self.log[(size_t)ticket % HOOK_LOG_SLOTS];
     if (InterlockedCompareExchange(&slot->state, HOOK_SLOT_CLAIMED, HOOK_SLOT_EMPTY) != HOOK_SLOT_EMPTY)
-        return; /* the ring is contended, drop this line */
+        return;
 
     size_t length = strlen(text);
     if (length >= HOOK_LOG_LINE)
@@ -180,8 +168,6 @@ static void PublishLine(int level, const char *format, ...)
 
     InterlockedExchange(&slot->state, HOOK_SLOT_READY);
 }
-
-/* ---------- process bookkeeping ---------- */
 
 static HANDLE g_processMutex = NULL;
 
@@ -214,8 +200,6 @@ static size_t ImageSizeOf(uint8_t *base)
     return nt->OptionalHeader.SizeOfImage;
 }
 
-/* ---------- signature scanning, in process ---------- */
-
 struct HookSpec
 {
     const char *name;
@@ -233,10 +217,10 @@ static const struct HookSpec g_hookSpecs[HOOK_INDEX_COUNT] = {
      "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 50 28 00 00 48 8B D9 33 D2 48 8D 4C 24 40 41", STOLEN_LOG_BYTES      },
     {"OnServerDataResponse", "server_data_response",
      "40 55 56 48 83 EC 28 81 BA ?? ?? ?? ?? C8 00 00 00 48 8B EA 48 8B 41 08 48 8B F1 75 1D C7 80 ?? ?? ?? ?? 00 "
-     "00 00 00",                                                                       STOLEN_RESPONSE_BYTES },
+     "00 00 00",                                                                         STOLEN_RESPONSE_BYTES },
     {"HttpClient_Post",      "http_client_post",
      "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 48 FD FF FF 48 81 EC B8 03 00 00 48 8B 05 ?? ?? ?? ?? 48 "
-     "33 C4 48 89 85 A0 02 00 00 4C 89 4C 24 40 45 8B E0 4C 8B FA 4C 8B E9",            STOLEN_HTTP_POST_BYTES},
+     "33 C4 48 89 85 A0 02 00 00 4C 89 4C 24 40 45 8B E0 4C 8B FA 4C 8B E9",             STOLEN_HTTP_POST_BYTES},
 };
 
 struct PatternBytes
@@ -336,8 +320,6 @@ static uint8_t *FindUniquePattern(const char *pattern, uint8_t *imageBase, size_
     return count == 1 ? found : NULL;
 }
 
-/* ---------- trampoline building, in process ---------- */
-
 static void write_abs_jump(unsigned char *buffer, uint64_t destination)
 {
     buffer[0] = 0xFF;
@@ -384,8 +366,6 @@ static void *BuildTrampoline(const struct HookSpec *spec, uint8_t *target)
     return trampoline;
 }
 
-/* ---------- detours ---------- */
-
 typedef long long(FASTCALL *FnGameLog)(const char *format, ...);
 typedef void(FASTCALL *FnServerDataResponse)(void *closure, void *response);
 typedef uintptr_t(FASTCALL *FnHttpClientPost)(void *client, void *url, int isTls, void *dictionary, void *callback);
@@ -397,8 +377,6 @@ static void *EntryTrampoline(int index)
 
 static void EmitGameLog(const char *line)
 {
-    /* always hand the line to the agent; it owns the streaming and level
-       decisions, this side never reads the settings in a hot path */
     PublishLine(HOOK_LOG_GAME, "%s", line);
 }
 
@@ -444,8 +422,6 @@ static long long FASTCALL Hook_GameLogRaw(const char *format, ...)
     return GameLogForward(HOOK_INDEX_GAME_LOG_RAW, line);
 }
 
-/* ---------- server data rewrite (in place, never allocates) ---------- */
-
 struct Rewrite
 {
     char *data;
@@ -490,9 +466,6 @@ static void SnapshotProxy(char *host, size_t hostSize, int *port)
     *port = settings->proxyPort;
 }
 
-/* the rewrite only writes inside the existing buffer, if the new body does
-   not fit the old capacity the rewrite is refused and the game keeps the
-   original response */
 static int ApplyRewrite(struct SSO *target, const char *data, size_t length)
 {
     if (!target || !data)
@@ -611,9 +584,8 @@ static void FASTCALL Hook_ServerDataResponse(void *closure, void *response)
                 if (output.length)
                 {
                     if (ApplyRewrite(body, output.data, output.length))
-                        PublishLine(HOOK_LOG_TRACE,
-                                    "[hook] server_data rewritten: server|%s port|%d (%zu bytes)", proxyHost,
-                                    proxyPort, output.length);
+                        PublishLine(HOOK_LOG_TRACE, "[hook] server_data rewritten: server|%s port|%d (%zu bytes)",
+                                    proxyHost, proxyPort, output.length);
                     else
                         PublishLine(HOOK_LOG_ERROR,
                                     "[hook] the server_data rewrite failed, the game will connect to the real server");
@@ -625,8 +597,6 @@ static void FASTCALL Hook_ServerDataResponse(void *closure, void *response)
     if (trampoline)
         ((FnServerDataResponse)trampoline)(closure, response);
 }
-
-/* ---------- http client post (read only capture) ---------- */
 
 static void CaptureRequestParameters(void *dictionary)
 {
@@ -689,8 +659,6 @@ static uintptr_t FASTCALL Hook_HttpClientPost(void *client, void *url, int isTls
     return trampoline(client, url, isTls, dictionary, callback);
 }
 
-/* ---------- boot: scan, build trampolines, publish ---------- */
-
 static const void *const g_detours[HOOK_INDEX_COUNT] = {
     (const void *)&Hook_GameLogPrintf,
     (const void *)&Hook_GameLogRaw,
@@ -746,7 +714,8 @@ static void PublishEntries(uint64_t processId, uint64_t imageBase, uint64_t dllB
         entry->trampoline = (uint64_t)(uintptr_t)trampoline;
         entry->status = HOOK_STATUS_READY;
 
-        PublishLine(HOOK_LOG_INFO, "[hook] %s: trampoline at %p for %p", spec->name, trampoline, (void *)(uintptr_t)target);
+        PublishLine(HOOK_LOG_INFO, "[hook] %s: trampoline at %p for %p", spec->name, trampoline,
+                    (void *)(uintptr_t)target);
     }
 
     InterlockedExchange(&g_self.entryCount, HOOK_INDEX_COUNT);
@@ -761,8 +730,6 @@ static DWORD WINAPI ShimWorker(LPVOID unused)
 
     AcquireProcessHookMutex();
 
-    /* the injector mirrors the settings into our static buffer right after
-       loading us; revision stays 0 until a whole write has landed */
     for (int attempt = 0; attempt < HOOK_BOOT_SETTINGS_SPIN_MS / 100 && g_self.settingsRevision == 0; attempt++)
         Sleep(100);
 
