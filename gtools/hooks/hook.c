@@ -3,12 +3,14 @@
 // BUILD_FLAGS[gcc(mingw)]: -O2 -shared -fPIC -mwindows
 //
 // Thin in-process shim. It runs no threads beyond its one boot worker, no
-// pipe server, no scanner and no exception hooks: it publishes runtime facts
-// (image base, detour addresses) into a shared section, forwards game log
-// lines into the same section and performs the minimal in-place rewrite of
-// the server_data response. Everything else (the pipe server, settings,
-// signature scanning, trampoline building, patching, patch watching) happens
-// in external processes (agent.c, injector.c).
+// pipe server and no exception hooks: it scans the game image and builds the
+// trampolines in process (plain VirtualAlloc, the same contact the previous
+// design used), publishes its whole view of the world into a single static
+// buffer (private memory, exported so the external process can read it with
+// ReadProcessMemory and patch the entries with WriteProcessMemory) and
+// performs the minimal in-place rewrite of the server_data response.
+// Everything else (the pipe server, the settings engine, the state diff, the
+// watch dog) happens in external processes (agent.c, injector.c).
 
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
@@ -40,8 +42,16 @@
 
 #define GAME_STRING_INLINE_CAPACITY 16
 
-#define REWRITE_SCRATCH_MAX  4096
-#define SECTION_OPEN_RETRIES 100 /* 10 s, 100 ms steps */
+#define REWRITE_SCRATCH_MAX 4096
+
+#define STOLEN_LOG_BYTES       27
+#define STOLEN_RESPONSE_BYTES  17
+#define STOLEN_HTTP_POST_BYTES 21
+
+#define PATTERN_MAX 512
+
+/* the one shared view, it is static data of this module */
+__declspec(dllexport) struct ShimShared g_self;
 
 static void CopyText(char *destination, size_t destinationSize, const char *source)
 {
@@ -94,27 +104,55 @@ static void CopyGameString(char *destination, size_t destinationSize, const stru
     destination[length] = 0;
 }
 
-/* ---------- shared section ---------- */
+/* ---------- settings mirror ---------- */
 
-static struct HookShared *g_shm = NULL;
-static HANDLE g_shmMapping = NULL;
-
-static int AcquireSettings(void)
+static void CopyShimDefaultSettings(struct HookSettings *settings)
 {
-    if (!g_shm)
-        return 0;
-    while (InterlockedCompareExchange(&g_shm->settingsLock, 1, 0) != 0)
+    ZeroMemory(settings, sizeof(*settings));
+    CopyText(settings->proxyHost, sizeof(settings->proxyHost), "127.0.0.1");
+    settings->proxyPort = 16999;
+    settings->startDelayMs = 2500;
+    settings->logLevel = HOOK_LOG_INFO;
+    settings->allowAnyModule = 0;
+    settings->streamGameLogs = 0;
+}
+
+/* the injector maintains the mirror from outside with WriteProcessMemory and
+   the writer marks flights through settingsRevision, read a stable copy */
+static int SelfSettingsSnapshot(struct HookSettings *out)
+{
+    for (int attempt = 0; attempt < 16; attempt++)
+    {
+        LONG revision = g_self.settingsRevision;
+        if (revision == 0)
+        {
+            Sleep(0);
+            continue;
+        }
+        *out = g_self.settings;
+        if (g_self.settingsRevision == revision)
+            return 1;
         Sleep(0);
-    return 1;
+    }
+    return 0;
 }
 
-static void ReleaseSettings(void)
+static struct HookSettings g_settingsCache;
+static int g_settingsCacheValid = 0;
+
+static struct HookSettings *SettingsSnapshot(void)
 {
-    if (g_shm)
-        InterlockedExchange(&g_shm->settingsLock, 0);
+    if (SelfSettingsSnapshot(&g_settingsCache))
+        g_settingsCacheValid = 1;
+
+    if (!g_settingsCacheValid)
+        CopyShimDefaultSettings(&g_settingsCache);
+
+    return &g_settingsCache;
 }
 
-/* hand one log line to the agent through the shared section */
+/* ---------- log ring (read by the agent through ReadProcessMemory) ---------- */
+
 static void PublishLine(int level, const char *format, ...)
 {
     char text[HOOK_LOG_LINE];
@@ -127,14 +165,7 @@ static void PublishLine(int level, const char *format, ...)
     if ((size_t)written >= sizeof(text))
         text[sizeof(text) - 1] = 0;
 
-    if (!g_shm)
-    {
-        OutputDebugStringA(text);
-        return;
-    }
-
-    LONG ticket = InterlockedIncrement(&g_shm->logTicket) - 1;
-    struct HookSlot *slot = &g_shm->log[(size_t)ticket % HOOK_LOG_SLOTS];
+    LONG ticket = (LONG)(InterlockedIncrement(&g_self.logTicket) - 1);    struct HookSlot *slot = &g_self.log[(size_t)ticket % HOOK_LOG_SLOTS];
     if (InterlockedCompareExchange(&slot->state, HOOK_SLOT_CLAIMED, HOOK_SLOT_EMPTY) != HOOK_SLOT_EMPTY)
         return; /* the ring is contended, drop this line */
 
@@ -148,43 +179,6 @@ static void PublishLine(int level, const char *format, ...)
     slot->level = level;
 
     InterlockedExchange(&slot->state, HOOK_SLOT_READY);
-}
-
-static struct HookShared *MapSharedSection(int retries)
-{
-    for (int attempt = 0; attempt < retries; attempt++)
-    {
-        HANDLE mapping = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, HOOK_SECTION_NAME);
-        if (!mapping)
-        {
-            Sleep(100);
-            continue;
-        }
-
-        void *view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 0);
-        if (!view)
-        {
-            CloseHandle(mapping);
-            Sleep(100);
-            continue;
-        }
-
-        struct HookShared *memory = (struct HookShared *)view;
-        if (memory->magic != HOOK_PROTOCOL_MAGIC || memory->version != HOOK_PROTOCOL_VERSION)
-        {
-            UnmapViewOfFile(view);
-            CloseHandle(mapping);
-            OutputDebugStringA("[hook] the shared section has a foreign version\n");
-            return NULL;
-        }
-
-        /* keep the mapping handle open: it keeps the section alive even if
-           the agent process dies before the exit of the game */
-        g_shmMapping = mapping;
-        return memory;
-    }
-
-    return NULL;
 }
 
 /* ---------- process bookkeeping ---------- */
@@ -220,6 +214,176 @@ static size_t ImageSizeOf(uint8_t *base)
     return nt->OptionalHeader.SizeOfImage;
 }
 
+/* ---------- signature scanning, in process ---------- */
+
+struct HookSpec
+{
+    const char *name;
+    const char *key;
+    const char *signature;
+    uint32_t stolenBytes;
+};
+
+static const struct HookSpec g_hookSpecs[HOOK_INDEX_COUNT] = {
+    {"GameLog_Printf",       "game_log_printf",
+     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 88 10 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
+     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 70 10 00 00 48 8B D9 33 D2 48 8D 4C 24 70 41", STOLEN_LOG_BYTES      },
+    {"GameLog_Raw",          "game_log_raw",
+     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 68 28 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
+     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 50 28 00 00 48 8B D9 33 D2 48 8D 4C 24 40 41", STOLEN_LOG_BYTES      },
+    {"OnServerDataResponse", "server_data_response",
+     "40 55 56 48 83 EC 28 81 BA ?? ?? ?? ?? C8 00 00 00 48 8B EA 48 8B 41 08 48 8B F1 75 1D C7 80 ?? ?? ?? ?? 00 "
+     "00 00 00",                                                                       STOLEN_RESPONSE_BYTES },
+    {"HttpClient_Post",      "http_client_post",
+     "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 48 FD FF FF 48 81 EC B8 03 00 00 48 8B 05 ?? ?? ?? ?? 48 "
+     "33 C4 48 89 85 A0 02 00 00 4C 89 4C 24 40 45 8B E0 4C 8B FA 4C 8B E9",            STOLEN_HTTP_POST_BYTES},
+};
+
+struct PatternBytes
+{
+    uint8_t bytes[PATTERN_MAX];
+    uint8_t mask[PATTERN_MAX];
+    size_t length;
+};
+
+static int HexNibble(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+static int ParsePattern(const char *pattern, struct PatternBytes *out)
+{
+    out->length = 0;
+    if (!pattern)
+        return 0;
+
+    const char *cursor = pattern;
+    while (*cursor)
+    {
+        while (*cursor == ' ' || *cursor == '\t' || *cursor == '\n' || *cursor == '\r')
+            cursor++;
+        if (!*cursor)
+            break;
+        if (out->length >= sizeof(out->bytes))
+            return 0;
+        if (cursor[0] == '?' && cursor[1] == '?')
+        {
+            out->mask[out->length] = 0;
+            out->bytes[out->length] = 0;
+            cursor += 2;
+        }
+        else
+        {
+            int high = HexNibble(cursor[0]);
+            int low = (high >= 0) ? HexNibble(cursor[1]) : -1;
+            if (high < 0 || low < 0)
+                return 0;
+
+            out->mask[out->length] = 0xFF;
+            out->bytes[out->length] = (uint8_t)((high << 4) | low);
+            cursor += 2;
+        }
+        out->length++;
+    }
+
+    return out->length > 0;
+}
+
+static int PatternMatches(const uint8_t *memory, const struct PatternBytes *pattern)
+{
+    for (size_t i = 0; i < pattern->length; i++)
+    {
+        if (pattern->mask[i] && memory[i] != pattern->bytes[i])
+            return 0;
+    }
+
+    return 1;
+}
+
+static uint8_t *FindUniquePattern(const char *pattern, uint8_t *imageBase, size_t imageSize, int *matchCount)
+{
+    if (matchCount)
+        *matchCount = 0;
+    if (!imageBase || !imageSize)
+        return NULL;
+
+    struct PatternBytes parsed;
+    if (!ParsePattern(pattern, &parsed))
+        return NULL;
+
+    uint8_t *end = imageBase + imageSize;
+    uint8_t *found = NULL;
+    int count = 0;
+    for (uint8_t *cursor = imageBase; cursor + parsed.length <= end; ++cursor)
+    {
+        if (!PatternMatches(cursor, &parsed))
+            continue;
+        count++;
+        if (!found)
+            found = cursor;
+        if (count > 1)
+            break;
+    }
+    if (matchCount)
+        *matchCount = count;
+
+    return count == 1 ? found : NULL;
+}
+
+/* ---------- trampoline building, in process ---------- */
+
+static void write_abs_jump(unsigned char *buffer, uint64_t destination)
+{
+    buffer[0] = 0xFF;
+    buffer[1] = 0x25;
+    buffer[2] = 0;
+    buffer[3] = 0;
+    buffer[4] = 0;
+    buffer[5] = 0;
+    memcpy(buffer + 6, &destination, sizeof(destination));
+}
+
+static void *BuildTrampoline(const struct HookSpec *spec, uint8_t *target)
+{
+    size_t length = spec->stolenBytes;
+    size_t size = length + HOOK_ENTRY_PATCH_BYTES;
+
+    void *trampoline = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!trampoline)
+    {
+        DWORD error = GetLastError();
+        trampoline = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!trampoline)
+        {
+            PublishLine(HOOK_LOG_ERROR, "[hook] %s: cannot allocate a trampoline (err=%lu)", spec->name, error);
+            return NULL;
+        }
+        DWORD oldProtection = 0;
+        if (!VirtualProtect(trampoline, size, PAGE_EXECUTE_READ, &oldProtection))
+        {
+            PublishLine(HOOK_LOG_ERROR, "[hook] %s: cannot make the trampoline executable (err=%lu)", spec->name,
+                        GetLastError());
+            VirtualFree(trampoline, 0, MEM_RELEASE);
+            return NULL;
+        }
+        PublishLine(HOOK_LOG_INFO, "[hook] %s: rwx allocation denied (%lu), using rw plus promote", spec->name, error);
+    }
+
+    memcpy(trampoline, target, length);
+
+    uint64_t returnAddress = (uint64_t)(uintptr_t)(target + length);
+    write_abs_jump((unsigned char *)trampoline + length, returnAddress);
+
+    FlushInstructionCache(GetCurrentProcess(), trampoline, size);
+    return trampoline;
+}
+
 /* ---------- detours ---------- */
 
 typedef long long(FASTCALL *FnGameLog)(const char *format, ...);
@@ -228,22 +392,14 @@ typedef uintptr_t(FASTCALL *FnHttpClientPost)(void *client, void *url, int isTls
 
 static void *EntryTrampoline(int index)
 {
-    if (!g_shm)
-        return NULL;
-    return (void *)(uintptr_t)g_shm->entries[index].trampoline;
+    return (void *)(uintptr_t)g_self.entries[index].trampoline;
 }
 
 static void EmitGameLog(const char *line)
 {
-    if (!g_shm)
-    {
-        OutputDebugStringA(line);
-        return;
-    }
-    if (g_shm->settings.streamGameLogs)
-        PublishLine(HOOK_LOG_GAME, "%s", line);
-    else if (g_shm->settings.logLevel >= HOOK_LOG_TRACE)
-        OutputDebugStringA(line);
+    /* always hand the line to the agent; it owns the streaming and level
+       decisions, this side never reads the settings in a hot path */
+    PublishLine(HOOK_LOG_GAME, "%s", line);
 }
 
 static long long GameLogForward(int index, char *line)
@@ -329,13 +485,9 @@ static void AppendRewriteFormat(struct Rewrite *buffer, const char *format, ...)
 
 static void SnapshotProxy(char *host, size_t hostSize, int *port)
 {
-    host[0] = 0;
-    *port = 0;
-    if (!AcquireSettings())
-        return;
-    CopyText(host, hostSize, g_shm->settings.proxyHost);
-    *port = g_shm->settings.proxyPort;
-    ReleaseSettings();
+    struct HookSettings *settings = SettingsSnapshot();
+    CopyText(host, hostSize, settings->proxyHost);
+    *port = settings->proxyPort;
 }
 
 /* the rewrite only writes inside the existing buffer, if the new body does
@@ -450,11 +602,10 @@ static void FASTCALL Hook_ServerDataResponse(void *closure, void *response)
                     }
                 }
 
-                if (captured && AcquireSettings())
+                if (captured)
                 {
-                    CopyText(g_shm->settings.realServer, sizeof(g_shm->settings.realServer), realServer);
-                    g_shm->settings.realPort = realPort;
-                    ReleaseSettings();
+                    CopyText(g_self.capture.realServer, sizeof(g_self.capture.realServer), realServer);
+                    g_self.capture.realPort = realPort;
                 }
 
                 if (output.length)
@@ -514,13 +665,9 @@ static void CaptureRequestParameters(void *dictionary)
         node = *(uint8_t **)node;
     }
 
-    if (AcquireSettings())
-    {
-        CopyText(g_shm->settings.clientVersion, sizeof(g_shm->settings.clientVersion), version);
-        CopyText(g_shm->settings.clientProtocol, sizeof(g_shm->settings.clientProtocol), protocol);
-        CopyText(g_shm->settings.clientPlatform, sizeof(g_shm->settings.clientPlatform), platform);
-        ReleaseSettings();
-    }
+    CopyText(g_self.capture.clientVersion, sizeof(g_self.capture.clientVersion), version);
+    CopyText(g_self.capture.clientProtocol, sizeof(g_self.capture.clientProtocol), protocol);
+    CopyText(g_self.capture.clientPlatform, sizeof(g_self.capture.clientPlatform), platform);
 
     PublishLine(HOOK_LOG_INFO, "[hook] request parameters: version=%s protocol=%s platform=%s", version, protocol,
                 platform);
@@ -542,7 +689,7 @@ static uintptr_t FASTCALL Hook_HttpClientPost(void *client, void *url, int isTls
     return trampoline(client, url, isTls, dictionary, callback);
 }
 
-/* ---------- boot ---------- */
+/* ---------- boot: scan, build trampolines, publish ---------- */
 
 static const void *const g_detours[HOOK_INDEX_COUNT] = {
     (const void *)&Hook_GameLogPrintf,
@@ -551,46 +698,99 @@ static const void *const g_detours[HOOK_INDEX_COUNT] = {
     (const void *)&Hook_HttpClientPost,
 };
 
+static void PublishEntries(uint64_t processId, uint64_t imageBase, uint64_t dllBase, size_t imageSize)
+{
+    for (int i = 0; i < HOOK_INDEX_COUNT; i++)
+    {
+        const struct HookSpec *spec = &g_hookSpecs[i];
+        struct HookEntry *entry = &g_self.entries[i];
+
+        CopyText(entry->name, sizeof(entry->name), spec->name);
+        CopyText(entry->key, sizeof(entry->key), HOOK_IDENTITIES[i].key);
+        entry->stolenBytes = spec->stolenBytes;
+        entry->entryPatchBytes = HOOK_ENTRY_PATCH_BYTES;
+        entry->detour = (uint64_t)(uintptr_t)g_detours[i];
+        entry->target = 0;
+        entry->trampoline = 0;
+        entry->status = HOOK_STATUS_MISSING;
+    }
+
+    g_self.processId = processId;
+    g_self.imageBase = imageBase;
+    g_self.imageSize = imageSize;
+    g_self.dllBase = dllBase;
+    g_self.bootTick = (uint64_t)GetTickCount64();
+
+    for (int i = 0; i < HOOK_INDEX_COUNT; i++)
+    {
+        const struct HookSpec *spec = &g_hookSpecs[i];
+        struct HookEntry *entry = &g_self.entries[i];
+
+        int matchCount = 0;
+        uint8_t *target = FindUniquePattern(spec->signature, (uint8_t *)imageBase, imageSize, &matchCount);
+        if (!target)
+        {
+            if (matchCount > 1)
+                PublishLine(HOOK_LOG_ERROR, "[hook] %s: the signature matches %d places, refusing to patch", spec->name,
+                            matchCount);
+            else
+                PublishLine(HOOK_LOG_ERROR, "[hook] %s: signature not found", spec->name);
+            continue;
+        }
+
+        void *trampoline = BuildTrampoline(spec, target);
+        if (!trampoline)
+            continue;
+
+        entry->target = (uint64_t)(uintptr_t)target;
+        entry->trampoline = (uint64_t)(uintptr_t)trampoline;
+        entry->status = HOOK_STATUS_READY;
+
+        PublishLine(HOOK_LOG_INFO, "[hook] %s: trampoline at %p for %p", spec->name, trampoline, (void *)(uintptr_t)target);
+    }
+
+    InterlockedExchange(&g_self.entryCount, HOOK_INDEX_COUNT);
+}
+
 static DWORD WINAPI ShimWorker(LPVOID unused)
 {
     (void)unused;
 
+    InterlockedExchange(&g_self.magic, (LONG)HOOK_PROTOCOL_MAGIC);
+    g_self.version = HOOK_PROTOCOL_VERSION;
+
     AcquireProcessHookMutex();
 
-    g_shm = MapSharedSection(SECTION_OPEN_RETRIES);
-    if (!g_shm)
-    {
-        OutputDebugStringA("[hook] the shared section is missing, the shim stays idle\n");
-        return 0;
-    }
+    /* the injector mirrors the settings into our static buffer right after
+       loading us; revision stays 0 until a whole write has landed */
+    for (int attempt = 0; attempt < HOOK_BOOT_SETTINGS_SPIN_MS / 100 && g_self.settingsRevision == 0; attempt++)
+        Sleep(100);
 
-    /* honor the configured start delay, the agent serves the settings while
-       the shim waits, matching the timing of the previous design */
-    int delay = g_shm->settings.startDelayMs;
-    if (delay < 0)
-        delay = 0;
-    if (delay > 0)
-        Sleep((DWORD)delay);
+    struct HookSettings settings;
+    if (!SelfSettingsSnapshot(&settings))
+        CopyShimDefaultSettings(&settings);
+
+    if (settings.startDelayMs > 0)
+        Sleep((DWORD)settings.startDelayMs);
 
     HMODULE self = NULL;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                        (LPCWSTR)&ShimWorker, &self);
 
     uint8_t *image = (uint8_t *)GetModuleHandleA("Growtopia.exe");
-    if (!image && g_shm->settings.allowAnyModule)
+    if (!image && settings.allowAnyModule)
         image = (uint8_t *)GetModuleHandleA(NULL);
     size_t imageSize = ImageSizeOf(image);
 
-    g_shm->processId = (uint64_t)GetCurrentProcessId();
-    g_shm->dllBase = (uint64_t)(uintptr_t)self;
-    g_shm->imageBase = (uint64_t)(uintptr_t)image;
-    g_shm->imageSize = (uint64_t)imageSize;
-    g_shm->bootTick = (uint64_t)GetTickCount64();
+    if (!image)
+    {
+        PublishLine(HOOK_LOG_ERROR, "[hook] the game image could not be resolved, the shim stays idle");
+        return 0;
+    }
 
-    for (int i = 0; i < HOOK_INDEX_COUNT; i++)
-        g_shm->entries[i].detour = (uint64_t)(uintptr_t)g_detours[i];
-    InterlockedExchange(&g_shm->entryCount, HOOK_INDEX_COUNT);
-    InterlockedExchange(&g_shm->ready, 1);
+    PublishEntries((uint64_t)GetCurrentProcessId(), (uint64_t)(uintptr_t)image, (uint64_t)(uintptr_t)self, imageSize);
+
+    InterlockedExchange(&g_self.ready, 1);
 
     PublishLine(HOOK_LOG_INFO, "[hook] shim ready: pid %lu image %p (size 0x%zX) dll %p",
                 (unsigned long)GetCurrentProcessId(), (void *)(uintptr_t)image, imageSize, (void *)(uintptr_t)self);
@@ -610,8 +810,6 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
     {
         if (g_processMutex)
             CloseHandle(g_processMutex);
-        if (g_shmMapping)
-            CloseHandle(g_shmMapping);
     }
     return TRUE;
 }
