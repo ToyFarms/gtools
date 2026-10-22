@@ -1,6 +1,7 @@
 import ctypes
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -20,9 +21,53 @@ logger = logging.getLogger("hook")
 HOOKS_DIR = Path(__file__).resolve().parent
 HOOK_INJECTOR_DLL = HOOKS_DIR / "injector.dll"
 HOOK_PAYLOAD = HOOKS_DIR / "hook.dll"
+HOOK_AGENT_DLL = HOOKS_DIR / "agent.dll"
 HOOK_STATUS = setting.appdir / "inject.status"
 
 TARGET = b"Growtopia.exe"
+
+AGENT_MUTEX = r"Global\gtools_hook_agent"
+
+
+def agent_running() -> bool:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    SYNCHRONIZE = 0x00100000
+    handle = kernel32.OpenMutexA(SYNCHRONIZE, False, AGENT_MUTEX.encode())
+    if not handle:
+        return False
+    kernel32.CloseHandle(handle)
+    return True
+
+
+def spawn_agent(timeout: float = 2.0) -> bool:
+    """start the host process (rundll32 hook.dll,AgentMain) unless one is already running"""
+    if agent_running():
+        return True
+
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    rundll32 = Path(windir) / "System32" / "rundll32.exe"
+    if not rundll32.exists():
+        return False
+
+    # the agent owns the pipe and the shared section, it must outlive this process
+    DETACHED_PROCESS = 0x00000008
+    CREATE_NO_WINDOW = 0x08000000
+    try:
+        subprocess.Popen(
+            [str(rundll32), f"{HOOK_AGENT_DLL.resolve()},AgentMain"],
+            creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+            close_fds=True,
+        )
+    except OSError:
+        return False
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if agent_running():
+            return True
+        time.sleep(0.05)
+
+    return agent_running()
 
 
 class LUID(ctypes.Structure):
@@ -108,6 +153,7 @@ def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
         "elevated": str(int(is_elevated())),
         "debug_privilege": "0",
         "debug_error": "0",
+        "agent": "0",
         "rc": "-1",
         "error": "injector did not run",
     }
@@ -119,12 +165,21 @@ def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
             status["error"] = f"missing {HOOK_INJECTOR_DLL}"
         elif not HOOK_PAYLOAD.exists():
             status["error"] = f"missing {HOOK_PAYLOAD}"
+        elif not HOOK_AGENT_DLL.exists():
+            status["error"] = f"missing {HOOK_AGENT_DLL}"
         elif not is_elevated():
             status["error"] = "injector is not elevated"
         else:
             enabled, debug_error = enable_debug_privilege()
             status["debug_privilege"] = str(int(enabled))
             status["debug_error"] = str(debug_error)
+
+            # the agent owns the pipe and the shared section, it has to be up
+            # before the shim boots inside the game
+            status["agent"] = str(int(spawn_agent()))
+            if not agent_running():
+                status["error"] = "the rundll32 agent is not running"
+                return status
 
             injector = ctypes.CDLL(str(HOOK_INJECTOR_DLL))
             injector.inject.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
@@ -162,7 +217,7 @@ def read_inject_status() -> dict[str, str]:
 
 
 def hook_available() -> bool:
-    return HOOK_INJECTOR_DLL.exists() and HOOK_PAYLOAD.exists()
+    return HOOK_INJECTOR_DLL.exists() and HOOK_PAYLOAD.exists() and HOOK_AGENT_DLL.exists()
 
 
 def target_running() -> bool:
@@ -204,33 +259,45 @@ def target_running() -> bool:
     return False
 
 
-def _ensure_hook_once() -> HookControl | None:
-    ctl = HookControl()
-    if ctl.connect(0.25):
-        logger.info("attached to existing hook DLL")
-        return ctl
+def _hooks_installed(ctl: HookControl) -> bool:
+    """the agent serves the pipe even before the game is hooked, only a
+    STATUS that reports installed hooks means the pipe belongs to a live hook"""
+    try:
+        pairs = ctl.status(0.5)
+    except Exception:
+        return False
 
+    return any(value in ("ready", "patched") for key, value in pairs.items() if key.startswith("hook_"))
+
+
+def _ensure_hook_once() -> HookControl | None:
     if not hook_available():
         logger.info("hook unsupported")
-        return
+        return None
+
+    ctl = HookControl()
+    if ctl.connect(0.25) and _hooks_installed(ctl):
+        logger.info("attached to the running hook")
+        return ctl
+    ctl.close()
 
     if not target_running():
-        return
+        return None
 
     if not inject_hook():
-        return
+        return None
 
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        if ctl.connect(0.25):
-            logger.info("hook control connected")
-            return ctl
-
+        fresh = HookControl()
+        if fresh.connect(0.25) and _hooks_installed(fresh):
+            return fresh
+        fresh.close()
         time.sleep(0.05)
 
-    logger.error("hook was injected but its control pipe did not appear")
+    logger.error("the hook was injected but its control pipe did not report installed hooks")
 
-    return
+    return None
 
 
 def ensure_hook(wait_forever: bool = True) -> HookControl | None:
@@ -290,6 +357,14 @@ def inject_hook() -> bool:
 
     if status.get("debug_privilege") != "1":
         logger.warning(f"failed to enable SeDebugPrivilege (error {status.get('debug_error', '?')})")
+
+    if status.get("agent") != "1":
+        logger.error("failed to start the hook agent (rundll32)")
+
+    if status.get("rc") == "-1":
+        # the agent watch dog or a previous injector run got there first
+        logger.info("the hook is already injected")
+        return True
 
     if status.get("rc") != "0":
         logger.error(f"failed to inject hook (rc={status.get('rc', '?')}): {status.get('error', 'unknown error')}")

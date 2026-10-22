@@ -1,25 +1,29 @@
-// BUILD_FLAGS[gcc, clang]: -O3 -march=native -ffast-math -funroll-loops -shared -fPIC
-// BUILD_FLAGS[gcc]: -fopenmp -fomit-frame-pointer -falign-functions=32 -falign-loops=32
-// BUILD_FLAGS[msvc]: /O2 /arch:AVX2 /fp:fast /openmp /GL /Gy /TC
+// BUILD_FLAGS[gcc, clang]: -O2 -shared -fPIC
+// BUILD_FLAGS[msvc]: /O2 /LD /TC /Gy
 // BUILD_FLAGS[gcc(mingw)]: -O2 -shared -fPIC -mwindows
+//
+// Thin in-process shim. It runs no threads beyond its one boot worker, no
+// pipe server, no scanner and no exception hooks: it publishes runtime facts
+// (image base, detour addresses) into a shared section, forwards game log
+// lines into the same section and performs the minimal in-place rewrite of
+// the server_data response. Everything else (the pipe server, settings,
+// signature scanning, trampoline building, patching, patch watching) happens
+// in external processes (agent.c, injector.c).
 
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#include <sddl.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <tlhelp32.h>
 
 #include "hook_protocol.h"
 
 #pragma comment(lib, "user32.lib")
-#pragma comment(lib, "advapi32.lib")
 
 #if defined(_MSC_VER)
 #  define FASTCALL __fastcall
@@ -34,49 +38,10 @@
 #define DICT_NODE_KEY_OFFSET   0x10
 #define DICT_NODE_VALUE_OFFSET 0x30
 
-#define STOLEN_LOG_BYTES       27
-#define STOLEN_RESPONSE_BYTES  17
-#define STOLEN_HTTP_POST_BYTES 21
-
-#define HOOK_AGENT_MUTEX_NAME "Global\\gtools_hook_agent"
-#define HOOK_PID_MUTEX_PREFIX "Global\\gtools_hook_pid_"
-
 #define GAME_STRING_INLINE_CAPACITY 16
 
-#define MAX_LOG_LINE          8192
-#define MAX_LOG_MESSAGE       1024
-#define MAX_EVENT_TEXT        512
-#define MAX_PIPE_LINE         4096
-#define PIPE_POLL_INTERVAL_MS 20
-#define MAX_HOST_LENGTH       128
-#define MAX_VERSION_LENGTH    64
-#define MAX_SERVER_LENGTH     64
-
-#define MAX_PIPE_CLIENTS      4
-#define CLIENT_EVENT_CAPACITY 64
-
-#define LOG_BACKLOG_CAPACITY 128
-#define LOG_BACKLOG_LINE     512
-
-enum LogLevel
-{
-    LOG_LEVEL_ERROR = 0,
-    LOG_LEVEL_INFO = 1,
-    LOG_LEVEL_TRACE = 2,
-};
-
-static uint8_t *g_imageBase = NULL;
-static size_t g_imageSize = 0;
-static uint8_t *g_selfBase = NULL;
-static size_t g_selfSize = 0;
-static HMODULE g_selfModule = NULL;
-static ULONGLONG g_startTick = 0;
-static HANDLE g_processMutex = NULL;
-
-static struct HookHandshake g_handshake;
-static volatile LONG g_handshakeReady = 0;
-
-static void QueueEvent(const char *name, const char *text);
+#define REWRITE_SCRATCH_MAX  4096
+#define SECTION_OPEN_RETRIES 100 /* 10 s, 100 ms steps */
 
 static void CopyText(char *destination, size_t destinationSize, const char *source)
 {
@@ -94,95 +59,7 @@ static void CopyText(char *destination, size_t destinationSize, const char *sour
     destination[length] = 0;
 }
 
-static char g_logBacklog[LOG_BACKLOG_CAPACITY][LOG_BACKLOG_LINE];
-static size_t g_logBacklogHead = 0;
-static size_t g_logBacklogCount = 0;
-static CRITICAL_SECTION g_logLock;
-static volatile LONG g_logLockReady = 0;
-static volatile LONG g_logLevel = LOG_LEVEL_INFO;
-
-static int CurrentLogLevel(void)
-{
-    return (int)InterlockedCompareExchange(&g_logLevel, 0, 0);
-}
-
-static void LogEmit(const char *message, int keep)
-{
-    if (!message)
-        return;
-
-    char line[MAX_LOG_MESSAGE + 128];
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    int written = snprintf(line, sizeof(line), "[%02u:%02u:%02u.%03u][tid %5lu] %s\n", st.wHour, st.wMinute, st.wSecond,
-                           st.wMilliseconds, (unsigned long)GetCurrentThreadId(), message);
-    if (written < 0)
-        return;
-    if ((size_t)written >= sizeof(line))
-        line[sizeof(line) - 1] = 0;
-
-    OutputDebugStringA(line);
-
-    if (keep && g_logLockReady)
-    {
-        EnterCriticalSection(&g_logLock);
-        CopyText(g_logBacklog[g_logBacklogHead], LOG_BACKLOG_LINE, line);
-        g_logBacklogHead = (g_logBacklogHead + 1) % LOG_BACKLOG_CAPACITY;
-        if (g_logBacklogCount < LOG_BACKLOG_CAPACITY)
-            g_logBacklogCount++;
-        LeaveCriticalSection(&g_logLock);
-    }
-
-    QueueEvent("log", message);
-}
-
-static void LogError(const char *format, ...)
-{
-    char message[MAX_LOG_MESSAGE];
-    va_list args;
-    va_start(args, format);
-    int written = vsnprintf(message, sizeof(message), format, args);
-    va_end(args);
-    if (written < 0)
-        return;
-    if ((size_t)written >= sizeof(message))
-        message[sizeof(message) - 1] = 0;
-    LogEmit(message, 1);
-}
-
-static void LogInfo(const char *format, ...)
-{
-    if (CurrentLogLevel() < LOG_LEVEL_INFO)
-        return;
-
-    char message[MAX_LOG_MESSAGE];
-    va_list args;
-    va_start(args, format);
-    int written = vsnprintf(message, sizeof(message), format, args);
-    va_end(args);
-    if (written < 0)
-        return;
-    if ((size_t)written >= sizeof(message))
-        message[sizeof(message) - 1] = 0;
-    LogEmit(message, 1);
-}
-
-static void LogTrace(const char *format, ...)
-{
-    if (CurrentLogLevel() < LOG_LEVEL_TRACE)
-        return;
-
-    char message[MAX_LOG_MESSAGE];
-    va_list args;
-    va_start(args, format);
-    int written = vsnprintf(message, sizeof(message), format, args);
-    va_end(args);
-    if (written < 0)
-        return;
-    if ((size_t)written >= sizeof(message))
-        message[sizeof(message) - 1] = 0;
-    LogEmit(message, 0);
-}
+/* ---------- read only game types ---------- */
 
 struct SSO
 {
@@ -217,1394 +94,117 @@ static void CopyGameString(char *destination, size_t destinationSize, const stru
     destination[length] = 0;
 }
 
-static int ApplySSO(struct SSO *target, const char *data, size_t length)
+/* ---------- shared section ---------- */
+
+static struct HookShared *g_shm = NULL;
+static HANDLE g_shmMapping = NULL;
+
+static int AcquireSettings(void)
 {
-    if (!target || !data)
+    if (!g_shm)
         return 0;
-
-    if (target->capacity > 0xF)
-    {
-        if (length + 1 > target->capacity)
-        {
-            size_t capacity = length + 0x40;
-            char *buffer = (char *)malloc(capacity);
-            if (!buffer)
-                return 0;
-            memcpy(buffer, data, length + 1);
-            free(target->buffer);
-            target->buffer = buffer;
-            target->capacity = capacity;
-        }
-        else
-        {
-            memcpy(target->buffer, data, length + 1);
-        }
-        target->size = length;
-        return 1;
-    }
-
-    if (length + 1 <= GAME_STRING_INLINE_CAPACITY)
-    {
-        memcpy(target, data, length + 1);
-        target->size = length;
-        return 1;
-    }
-
-    size_t capacity = length + 0x40;
-    char *buffer = (char *)malloc(capacity);
-    if (!buffer)
-        return 0;
-
-    memcpy(buffer, data, length + 1);
-    target->buffer = buffer;
-    target->capacity = capacity;
-    target->size = length;
-
+    while (InterlockedCompareExchange(&g_shm->settingsLock, 1, 0) != 0)
+        Sleep(0);
     return 1;
 }
 
-struct TextBuffer
+static void ReleaseSettings(void)
 {
-    char *data;
-    size_t length;
-    size_t capacity;
-};
-
-static void BufferReserve(struct TextBuffer *buffer, size_t extra)
-{
-    if (buffer->length + extra + 1 <= buffer->capacity)
-        return;
-    size_t capacity = buffer->capacity ? buffer->capacity : 256;
-    while (capacity < buffer->length + extra + 1)
-        capacity *= 2;
-    char *data = (char *)realloc(buffer->data, capacity);
-    if (!data)
-        return;
-    buffer->data = data;
-    buffer->capacity = capacity;
+    if (g_shm)
+        InterlockedExchange(&g_shm->settingsLock, 0);
 }
 
-static void BufferAppend(struct TextBuffer *buffer, const char *text, size_t length)
+/* hand one log line to the agent through the shared section */
+static void PublishLine(int level, const char *format, ...)
 {
-    if (!text || length == 0)
-        return;
-    BufferReserve(buffer, length);
-    if (!buffer->data)
-        return;
-    memcpy(buffer->data + buffer->length, text, length);
-    buffer->length += length;
-    buffer->data[buffer->length] = 0;
-}
-
-static void BufferAppendText(struct TextBuffer *buffer, const char *text)
-{
-    if (!text)
-        return;
-    BufferAppend(buffer, text, strlen(text));
-}
-
-static void BufferAppendFormat(struct TextBuffer *buffer, const char *format, ...)
-{
-    char scratch[MAX_LOG_MESSAGE];
+    char text[HOOK_LOG_LINE];
     va_list args;
     va_start(args, format);
-    int written = vsnprintf(scratch, sizeof(scratch), format, args);
+    int written = vsnprintf(text, sizeof(text), format, args);
     va_end(args);
     if (written < 0)
         return;
-    if ((size_t)written >= sizeof(scratch))
-        written = (int)sizeof(scratch) - 1;
-    BufferAppend(buffer, scratch, (size_t)written);
-}
+    if ((size_t)written >= sizeof(text))
+        text[sizeof(text) - 1] = 0;
 
-static void BufferFree(struct TextBuffer *buffer)
-{
-    free(buffer->data);
-    buffer->data = NULL;
-    buffer->length = 0;
-    buffer->capacity = 0;
-}
-
-struct HookState
-{
-    char proxyHost[MAX_HOST_LENGTH];
-    int proxyPort;
-    int startDelayMs;
-    int logLevel;
-    int allowAnyModule;
-    int streamGameLogs;
-
-    char clientVersion[MAX_VERSION_LENGTH];
-    char clientProtocol[MAX_VERSION_LENGTH];
-    char clientPlatform[MAX_VERSION_LENGTH];
-    char realServer[MAX_SERVER_LENGTH];
-    int realPort;
-};
-
-enum SettingKind
-{
-    SETTING_TEXT,
-    SETTING_NUMBER,
-};
-
-struct SettingDescriptor
-{
-    const char *name;
-    enum SettingKind kind;
-    size_t offset;
-    size_t capacity;
-    long minimum;
-    long maximum;
-    int writable;
-};
-
-#define TEXT_FIELD(field) offsetof(struct HookState, field), sizeof(((struct HookState *)0)->field), 0, 0
-
-#define NUMBER_FIELD(field, low, high) offsetof(struct HookState, field), 0, (low), (high)
-
-static const struct SettingDescriptor g_settings[] = {
-    {"proxy_host", SETTING_TEXT, TEXT_FIELD(proxyHost), 1},
-    {"proxy_port", SETTING_NUMBER, NUMBER_FIELD(proxyPort, 1, 65535), 1},
-    {"start_delay_ms", SETTING_NUMBER, NUMBER_FIELD(startDelayMs, 0, 600000), 1},
-    {"log_level", SETTING_NUMBER, NUMBER_FIELD(logLevel, 0, 2), 1},
-    {"allow_any_module", SETTING_NUMBER, NUMBER_FIELD(allowAnyModule, 0, 1), 1},
-    {"stream_game_logs", SETTING_NUMBER, NUMBER_FIELD(streamGameLogs, 0, 1), 1},
-
-    {"client_version", SETTING_TEXT, TEXT_FIELD(clientVersion), 0},
-    {"client_protocol", SETTING_TEXT, TEXT_FIELD(clientProtocol), 0},
-    {"client_platform", SETTING_TEXT, TEXT_FIELD(clientPlatform), 0},
-    {"real_server", SETTING_TEXT, TEXT_FIELD(realServer), 0},
-    {"real_port", SETTING_NUMBER, NUMBER_FIELD(realPort, 0, 65535), 0},
-};
-
-#define SETTING_COUNT ((int)(sizeof(g_settings) / sizeof(g_settings[0])))
-
-static CRITICAL_SECTION g_stateLock;
-static volatile LONG g_stateLockReady = 0;
-
-static struct HookState g_state;
-
-static void LockState(void)
-{
-    if (g_stateLockReady)
-        EnterCriticalSection(&g_stateLock);
-}
-
-static void UnlockState(void)
-{
-    if (g_stateLockReady)
-        LeaveCriticalSection(&g_stateLock);
-}
-
-static const struct SettingDescriptor *FindSetting(const char *name)
-{
-    if (!name)
-        return NULL;
-
-    for (int i = 0; i < SETTING_COUNT; i++)
+    if (!g_shm)
     {
-        if (_stricmp(g_settings[i].name, name) == 0)
-            return &g_settings[i];
+        OutputDebugStringA(text);
+        return;
+    }
+
+    LONG ticket = InterlockedIncrement(&g_shm->logTicket) - 1;
+    struct HookSlot *slot = &g_shm->log[(size_t)ticket % HOOK_LOG_SLOTS];
+    if (InterlockedCompareExchange(&slot->state, HOOK_SLOT_CLAIMED, HOOK_SLOT_EMPTY) != HOOK_SLOT_EMPTY)
+        return; /* the ring is contended, drop this line */
+
+    size_t length = strlen(text);
+    if (length >= HOOK_LOG_LINE)
+        length = HOOK_LOG_LINE - 1;
+    memcpy(slot->text, text, length);
+    slot->text[length] = 0;
+    slot->sequence = ticket;
+    slot->threadId = GetCurrentThreadId();
+    slot->level = level;
+
+    InterlockedExchange(&slot->state, HOOK_SLOT_READY);
+}
+
+static struct HookShared *MapSharedSection(int retries)
+{
+    for (int attempt = 0; attempt < retries; attempt++)
+    {
+        HANDLE mapping = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, HOOK_SECTION_NAME);
+        if (!mapping)
+        {
+            Sleep(100);
+            continue;
+        }
+
+        void *view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+        if (!view)
+        {
+            CloseHandle(mapping);
+            Sleep(100);
+            continue;
+        }
+
+        struct HookShared *memory = (struct HookShared *)view;
+        if (memory->magic != HOOK_PROTOCOL_MAGIC || memory->version != HOOK_PROTOCOL_VERSION)
+        {
+            UnmapViewOfFile(view);
+            CloseHandle(mapping);
+            OutputDebugStringA("[hook] the shared section has a foreign version\n");
+            return NULL;
+        }
+
+        /* keep the mapping handle open: it keeps the section alive even if
+           the agent process dies before the exit of the game */
+        g_shmMapping = mapping;
+        return memory;
     }
 
     return NULL;
 }
 
-static void *SettingPointer(const struct SettingDescriptor *descriptor)
-{
-    return (char *)&g_state + descriptor->offset;
-}
+/* ---------- process bookkeeping ---------- */
 
-static void FormatSetting(const struct SettingDescriptor *descriptor, char *out, size_t outSize)
+static HANDLE g_processMutex = NULL;
+
+static void AcquireProcessHookMutex(void)
 {
-    if (!descriptor || !out || outSize == 0)
+    char name[64];
+    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)GetCurrentProcessId());
+
+    HANDLE mutex = CreateMutexA(NULL, TRUE, name);
+    if (!mutex)
         return;
-    void *pointer = SettingPointer(descriptor);
-    if (descriptor->kind == SETTING_NUMBER)
-        snprintf(out, outSize, "%d", *(int *)pointer);
-    else
-        CopyText(out, outSize, (const char *)pointer);
-}
-
-static int ApplySetting(const struct SettingDescriptor *descriptor, const char *value, char *error, size_t errorSize)
-{
-    if (!descriptor)
-        return 0;
-
-    if (!descriptor->writable)
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
     {
-        snprintf(error, errorSize, "%s is read only", descriptor->name);
-        return 0;
-    }
-    if (!value)
-    {
-        snprintf(error, errorSize, "missing value");
-        return 0;
-    }
-
-    void *pointer = SettingPointer(descriptor);
-    if (descriptor->kind == SETTING_NUMBER)
-    {
-        char *end = NULL;
-        long parsed = strtol(value, &end, 10);
-        if (!end || *end != 0 || parsed < descriptor->minimum || parsed > descriptor->maximum)
-        {
-            snprintf(error, errorSize, "%s expects a number between %ld and %ld", descriptor->name, descriptor->minimum,
-                     descriptor->maximum);
-            return 0;
-        }
-        *(int *)pointer = (int)parsed;
-        return 1;
-    }
-
-    if (strlen(value) >= descriptor->capacity)
-    {
-        snprintf(error, errorSize, "%s is too long", descriptor->name);
-        return 0;
-    }
-    memcpy(pointer, value, strlen(value) + 1);
-
-    return 1;
-}
-
-static void ApplyLogLevelSetting(void)
-{
-    InterlockedExchange(&g_logLevel, g_state.logLevel);
-}
-
-struct QueuedEvent
-{
-    char name[32];
-    char text[MAX_EVENT_TEXT];
-};
-
-struct PipeReader
-{
-    char buffer[MAX_PIPE_LINE * 2];
-    size_t length;
-    size_t position;
-};
-
-struct PipeClient
-{
-    HANDLE pipe;
-    struct PipeReader reader;
-    struct QueuedEvent events[CLIENT_EVENT_CAPACITY];
-    size_t head;
-    size_t tail;
-    size_t count;
-    volatile LONG active;
-};
-
-static struct PipeClient g_clients[MAX_PIPE_CLIENTS];
-static CRITICAL_SECTION g_clientLock;
-static volatile LONG g_clientLockReady = 0;
-
-static void QueueEvent(const char *name, const char *text)
-{
-    if (!name || !text || !g_clientLockReady)
-        return;
-
-    EnterCriticalSection(&g_clientLock);
-    for (int i = 0; i < MAX_PIPE_CLIENTS; i++)
-    {
-        struct PipeClient *client = &g_clients[i];
-        if (!client->active)
-            continue;
-        if (client->count == CLIENT_EVENT_CAPACITY)
-        {
-            client->tail = (client->tail + 1) % CLIENT_EVENT_CAPACITY;
-            client->count--;
-        }
-        struct QueuedEvent *slot = &client->events[client->head];
-        CopyText(slot->name, sizeof(slot->name), name);
-        CopyText(slot->text, sizeof(slot->text), text);
-        client->head = (client->head + 1) % CLIENT_EVENT_CAPACITY;
-        client->count++;
-    }
-    LeaveCriticalSection(&g_clientLock);
-}
-
-static int PopEvent(struct PipeClient *client, struct QueuedEvent *out)
-{
-    if (!client || !out || !g_clientLockReady)
-        return 0;
-
-    EnterCriticalSection(&g_clientLock);
-    if (client->count == 0)
-    {
-        LeaveCriticalSection(&g_clientLock);
-        return 0;
-    }
-    *out = client->events[client->tail];
-    client->tail = (client->tail + 1) % CLIENT_EVENT_CAPACITY;
-    client->count--;
-    LeaveCriticalSection(&g_clientLock);
-    return 1;
-}
-
-typedef long long(FASTCALL *FnGameLog)(const char *format, ...);
-typedef void(FASTCALL *FnServerDataResponse)(void *closure, void *response);
-typedef uintptr_t(FASTCALL *FnHttpClientPost)(void *client, void *url, int isTls, void *dictionary, void *callback);
-
-static FnGameLog g_trampolineLogPrintf = NULL;
-static FnGameLog g_trampolineLogRaw = NULL;
-static FnServerDataResponse g_trampolineServerDataResponse = NULL;
-static FnHttpClientPost g_trampolineHttpClientPost = NULL;
-
-enum HookStatus
-{
-    HOOK_STATUS_MISSING = 0,
-    HOOK_STATUS_READY = 1,
-    HOOK_STATUS_PATCHED = 2,
-};
-
-struct HookSpec
-{
-    const char *name;
-    const char *key;
-    char signature[256];
-    uint32_t stolenBytes;
-    void *detour;
-    void (*bindTrampoline)(void *address);
-};
-
-struct HookRuntime
-{
-    uint8_t *target;
-    void *trampoline;
-    enum HookStatus status;
-};
-
-static long long FASTCALL Hook_GameLogPrintf(const char *format, ...);
-static long long FASTCALL Hook_GameLogRaw(const char *format, ...);
-static void FASTCALL Hook_ServerDataResponse(void *closure, void *response);
-static uintptr_t FASTCALL Hook_HttpClientPost(void *client, void *url, int isTls, void *dictionary, void *callback);
-
-static void BindLogPrintfTrampoline(void *address);
-static void BindLogRawTrampoline(void *address);
-static void BindServerDataResponseTrampoline(void *address);
-static void BindHttpClientPostTrampoline(void *address);
-
-static struct HookSpec g_hookSpecs[] = {
-    {"GameLog_Printf",       "game_log_printf",
-     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 88 10 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
-     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 70 10 00 00 48 8B D9 33 D2 48 8D 4C 24 70 41", STOLEN_LOG_BYTES,       NULL, BindLogPrintfTrampoline         },
-    {"GameLog_Raw",          "game_log_raw",
-     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 68 28 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
-     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 50 28 00 00 48 8B D9 33 D2 48 8D 4C 24 40 41", STOLEN_LOG_BYTES,       NULL, BindLogRawTrampoline            },
-    {"OnServerDataResponse", "server_data_response",
-     "40 55 56 48 83 EC 28 81 BA ?? ?? ?? ?? C8 00 00 00 48 8B EA 48 8B 41 08 48 8B F1 75 1D C7 80 ?? ?? ?? ?? 00 "
-     "00 00 00",                                                                         STOLEN_RESPONSE_BYTES,  NULL, BindServerDataResponseTrampoline},
-    {"HttpClient_Post",      "http_client_post",
-     "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 48 FD FF FF 48 81 EC B8 03 00 00 48 8B 05 ?? ?? ?? ?? 48 "
-     "33 C4 48 89 85 A0 02 00 00 4C 89 4C 24 40 45 8B E0 4C 8B FA 4C 8B E9",             STOLEN_HTTP_POST_BYTES, NULL, BindHttpClientPostTrampoline    },
-};
-
-#define HOOK_COUNT ((int)(sizeof(g_hookSpecs) / sizeof(g_hookSpecs[0])))
-
-static struct HookRuntime g_hookRuntime[HOOK_COUNT];
-
-static void InitializeHookSpecs(void)
-{
-    g_hookSpecs[0].detour = (void *)(uintptr_t)Hook_GameLogPrintf;
-    g_hookSpecs[1].detour = (void *)(uintptr_t)Hook_GameLogRaw;
-    g_hookSpecs[2].detour = (void *)(uintptr_t)Hook_ServerDataResponse;
-    g_hookSpecs[3].detour = (void *)(uintptr_t)Hook_HttpClientPost;
-}
-
-struct PatternBytes
-{
-    uint8_t bytes[512];
-    uint8_t mask[512];
-    size_t length;
-};
-
-static int HexNibble(char c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-    return -1;
-}
-
-static int ParsePattern(const char *pattern, struct PatternBytes *out)
-{
-    out->length = 0;
-    if (!pattern)
-        return 0;
-
-    const char *cursor = pattern;
-    while (*cursor)
-    {
-        while (*cursor == ' ' || *cursor == '\t' || *cursor == '\n' || *cursor == '\r')
-            cursor++;
-        if (!*cursor)
-            break;
-        if (out->length >= sizeof(out->bytes))
-            return 0;
-        if (cursor[0] == '?' && cursor[1] == '?')
-        {
-            out->mask[out->length] = 0;
-            out->bytes[out->length] = 0;
-            cursor += 2;
-        }
-        else
-        {
-            int high = HexNibble(cursor[0]);
-            int low = (high >= 0) ? HexNibble(cursor[1]) : -1;
-            if (high < 0 || low < 0)
-                return 0;
-
-            out->mask[out->length] = 0xFF;
-            out->bytes[out->length] = (uint8_t)((high << 4) | low);
-            cursor += 2;
-        }
-        out->length++;
-    }
-
-    return out->length > 0;
-}
-
-static int PatternMatches(const uint8_t *memory, const struct PatternBytes *pattern)
-{
-    for (size_t i = 0; i < pattern->length; i++)
-    {
-        if (pattern->mask[i] && memory[i] != pattern->bytes[i])
-            return 0;
-    }
-
-    return 1;
-}
-
-static uint8_t *FindUniquePattern(const char *pattern, int *matchCount)
-{
-    if (matchCount)
-        *matchCount = 0;
-    if (!g_imageBase || !g_imageSize)
-        return NULL;
-
-    struct PatternBytes parsed;
-    if (!ParsePattern(pattern, &parsed))
-        return NULL;
-
-    uint8_t *end = g_imageBase + g_imageSize;
-    uint8_t *found = NULL;
-    int count = 0;
-    for (uint8_t *cursor = g_imageBase; cursor + parsed.length <= end; ++cursor)
-    {
-        if (!PatternMatches(cursor, &parsed))
-            continue;
-        count++;
-        if (!found)
-            found = cursor;
-        if (count > 1)
-            break;
-    }
-    if (matchCount)
-        *matchCount = count;
-
-    return count == 1 ? found : NULL;
-}
-
-static void *BuildTrampoline(const struct HookSpec *spec, uint8_t *target)
-{
-    size_t length = spec->stolenBytes;
-    size_t size = length + HOOK_ENTRY_PATCH_BYTES;
-
-    uint8_t *trampoline = (uint8_t *)VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!trampoline)
-    {
-        DWORD error = GetLastError();
-        trampoline = (uint8_t *)VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        if (!trampoline)
-        {
-            LogError("[hook] %s: cannot allocate a trampoline (err=%lu)", spec->name, error);
-            return NULL;
-        }
-        DWORD oldProtection = 0;
-        if (!VirtualProtect(trampoline, size, PAGE_EXECUTE_READ, &oldProtection))
-        {
-            LogError("[hook] %s: cannot make the trampoline executable (err=%lu)", spec->name, GetLastError());
-            VirtualFree(trampoline, 0, MEM_RELEASE);
-            return NULL;
-        }
-        LogInfo("[hook] %s: rwx allocation denied (%lu), using rw plus promote", spec->name, error);
-    }
-
-    memcpy(trampoline, target, length);
-
-    trampoline[length + 0] = 0xFF;
-    trampoline[length + 1] = 0x25;
-    trampoline[length + 2] = 0;
-    trampoline[length + 3] = 0;
-    trampoline[length + 4] = 0;
-    trampoline[length + 5] = 0;
-    uint64_t returnAddress = (uint64_t)(uintptr_t)(target + length);
-    memcpy(trampoline + length + 6, &returnAddress, sizeof(returnAddress));
-
-    FlushInstructionCache(GetCurrentProcess(), trampoline, size);
-    return trampoline;
-}
-
-static void ReplaceSpaces(char *text)
-{
-    for (char *cursor = text; *cursor; cursor++)
-    {
-        if (*cursor == ' ')
-            *cursor = '_';
-    }
-}
-
-static void PublishStateEvent(void)
-{
-    char version[MAX_VERSION_LENGTH];
-    char protocol[MAX_VERSION_LENGTH];
-    char platform[MAX_VERSION_LENGTH];
-    char server[MAX_SERVER_LENGTH];
-    int port = 0;
-
-    LockState();
-    CopyText(version, sizeof(version), g_state.clientVersion);
-    CopyText(protocol, sizeof(protocol), g_state.clientProtocol);
-    CopyText(platform, sizeof(platform), g_state.clientPlatform);
-    CopyText(server, sizeof(server), g_state.realServer);
-    port = g_state.realPort;
-    UnlockState();
-
-    ReplaceSpaces(version);
-    ReplaceSpaces(protocol);
-    ReplaceSpaces(platform);
-    ReplaceSpaces(server);
-
-    char text[MAX_EVENT_TEXT];
-    snprintf(text, sizeof(text),
-             "client_version=%s client_protocol=%s client_platform=%s "
-             "real_server=%s real_port=%d",
-             version, protocol, platform, server, port);
-    QueueEvent("state", text);
-}
-
-static long long FASTCALL Hook_GameLogPrintf(const char *format, ...)
-{
-    char line[MAX_LOG_LINE];
-    va_list args;
-    va_start(args, format);
-    int written = vsnprintf(line, sizeof(line), format, args);
-    va_end(args);
-    if (written < 0)
-        return 0;
-    if ((size_t)written >= sizeof(line))
-        line[sizeof(line) - 1] = 0;
-
-    LockState();
-    int streaming = g_state.streamGameLogs;
-    UnlockState();
-    if (streaming)
-        LogEmit(line, 0);
-    else if (CurrentLogLevel() >= LOG_LEVEL_TRACE)
-        OutputDebugStringA(line);
-
-    if (g_trampolineLogPrintf)
-        return g_trampolineLogPrintf("%s", line);
-
-    return 0;
-}
-
-static long long FASTCALL Hook_GameLogRaw(const char *format, ...)
-{
-    char line[MAX_LOG_LINE];
-    va_list args;
-    va_start(args, format);
-    int written = vsnprintf(line, sizeof(line), format, args);
-    va_end(args);
-    if (written < 0)
-        return 0;
-    if ((size_t)written >= sizeof(line))
-        line[sizeof(line) - 1] = 0;
-
-    LockState();
-    int streaming = g_state.streamGameLogs;
-    UnlockState();
-    if (streaming)
-        LogEmit(line, 0);
-    else if (CurrentLogLevel() >= LOG_LEVEL_TRACE)
-        OutputDebugStringA(line);
-
-    if (g_trampolineLogRaw)
-        return g_trampolineLogRaw("%s", line);
-
-    return 0;
-}
-
-static void HandleServerDataBody(struct SSO *body)
-{
-    const char *source = SSOData(body);
-    if (!source || body->size == 0)
-        return;
-
-    char proxyHost[MAX_HOST_LENGTH];
-    int proxyPort = 0;
-    LockState();
-    CopyText(proxyHost, sizeof(proxyHost), g_state.proxyHost);
-    proxyPort = g_state.proxyPort;
-    UnlockState();
-
-    char realServer[MAX_SERVER_LENGTH];
-    int realPort = 0;
-    int captured = 0;
-
-    struct TextBuffer output;
-    memset(&output, 0, sizeof(output));
-
-    size_t offset = 0;
-    size_t size = body->size;
-    while (offset < size)
-    {
-        size_t start = offset;
-        while (offset < size && source[offset] != '\n')
-            offset++;
-        size_t lineLength = offset - start;
-        int hasNewline = offset < size;
-        if (hasNewline)
-            offset++;
-
-        if (lineLength >= 7 && memcmp(source + start, "server|", 7) == 0)
-        {
-            size_t valueLength = lineLength - 7;
-            if (valueLength && source[start + 7 + valueLength - 1] == '\r')
-                valueLength--;
-            if (valueLength >= sizeof(realServer))
-                valueLength = sizeof(realServer) - 1;
-            memcpy(realServer, source + start + 7, valueLength);
-            realServer[valueLength] = 0;
-            captured = 1;
-            BufferAppendFormat(&output, "server|%s\n", proxyHost);
-        }
-        else if (lineLength >= 5 && memcmp(source + start, "port|", 5) == 0)
-        {
-            char value[16];
-            size_t valueLength = lineLength - 5;
-            if (valueLength >= sizeof(value))
-                valueLength = sizeof(value) - 1;
-            memcpy(value, source + start + 5, valueLength);
-            value[valueLength] = 0;
-            realPort = atoi(value);
-            captured = 1;
-            BufferAppendFormat(&output, "port|%d\n", proxyPort);
-        }
-        else
-        {
-            BufferAppend(&output, source + start, lineLength);
-            if (hasNewline)
-                BufferAppend(&output, "\n", 1);
-        }
-    }
-
-    if (captured)
-    {
-        LockState();
-        CopyText(g_state.realServer, sizeof(g_state.realServer), realServer);
-        g_state.realPort = realPort;
-        UnlockState();
-        PublishStateEvent();
-    }
-
-    if (output.data)
-    {
-        if (ApplySSO(body, output.data, output.length))
-            LogTrace("[hook] server_data rewritten: server|%s port|%d (%zu bytes)", proxyHost, proxyPort,
-                     output.length);
-        else
-            LogError("[hook] the server_data rewrite failed, the game will connect to the real server");
-    }
-    BufferFree(&output);
-}
-
-static void FASTCALL Hook_ServerDataResponse(void *closure, void *response)
-{
-    if (!response)
-    {
-        if (g_trampolineServerDataResponse)
-            g_trampolineServerDataResponse(closure, response);
+        CloseHandle(mutex);
         return;
     }
-
-    uint32_t status = *(uint32_t *)((uint8_t *)response + RESPONSE_STATUS_OFFSET);
-    LogTrace("[hook] server_data response status=%u", status);
-
-    if (status == 200)
-    {
-        struct SSO *body = (struct SSO *)((uint8_t *)response + RESPONSE_BODY_OFFSET);
-        HandleServerDataBody(body);
-    }
-    else
-    {
-        LogInfo("[hook] server_data response status=%u, nothing to rewrite", status);
-    }
-
-    if (g_trampolineServerDataResponse)
-        g_trampolineServerDataResponse(closure, response);
-}
-
-static void CaptureRequestParameters(void *dictionary)
-{
-    if (!dictionary)
-        return;
-
-    uint8_t *sentinel = *(uint8_t **)((uint8_t *)dictionary + DICT_SENTINEL_OFFSET);
-    if (!sentinel)
-        return;
-
-    char version[MAX_VERSION_LENGTH];
-    char protocol[MAX_VERSION_LENGTH];
-    char platform[MAX_VERSION_LENGTH];
-    version[0] = 0;
-    protocol[0] = 0;
-    platform[0] = 0;
-
-    struct TextBuffer dump;
-    memset(&dump, 0, sizeof(dump));
-
-    uint8_t *node = *(uint8_t **)sentinel;
-    while (node && node != sentinel)
-    {
-        struct SSO *key = (struct SSO *)(node + DICT_NODE_KEY_OFFSET);
-        struct SSO *value = (struct SSO *)(node + DICT_NODE_VALUE_OFFSET);
-        if (key && key->size)
-        {
-            const char *keyText = SSOData(key);
-            if (keyText)
-            {
-                size_t keyLength = key->size;
-                if (keyLength == 7 && memcmp(keyText, "version", 7) == 0)
-                    CopyGameString(version, sizeof(version), value);
-                else if (keyLength == 8 && memcmp(keyText, "protocol", 8) == 0)
-                    CopyGameString(protocol, sizeof(protocol), value);
-                else if (keyLength == 8 && memcmp(keyText, "platform", 8) == 0)
-                    CopyGameString(platform, sizeof(platform), value);
-
-                if (dump.length)
-                    BufferAppendText(&dump, " ");
-                BufferAppend(&dump, keyText, keyLength);
-                BufferAppendText(&dump, "=");
-                if (value && value->size)
-                {
-                    const char *valueText = SSOData(value);
-                    if (valueText)
-                        BufferAppend(&dump, valueText, value->size);
-                }
-            }
-        }
-        node = *(uint8_t **)node;
-    }
-
-    LockState();
-    CopyText(g_state.clientVersion, sizeof(g_state.clientVersion), version);
-    CopyText(g_state.clientProtocol, sizeof(g_state.clientProtocol), protocol);
-    CopyText(g_state.clientPlatform, sizeof(g_state.clientPlatform), platform);
-    UnlockState();
-
-    LogInfo("[hook] request parameters: %s", dump.data ? dump.data : "(none)");
-    BufferFree(&dump);
-
-    PublishStateEvent();
-}
-
-static uintptr_t FASTCALL Hook_HttpClientPost(void *client, void *url, int isTls, void *dictionary, void *callback)
-{
-    struct SSO *urlString = (struct SSO *)url;
-    const char *urlText = (urlString && urlString->size) ? SSOData(urlString) : NULL;
-    if (urlText && strstr(urlText, "server_data.php"))
-    {
-        LogTrace("[hook] server_data request captured");
-        CaptureRequestParameters(dictionary);
-    }
-
-    if (g_trampolineHttpClientPost)
-        return g_trampolineHttpClientPost(client, url, isTls, dictionary, callback);
-
-    LogError("[hook] http post called before the trampoline was ready");
-    return 0;
-}
-
-static void BindLogPrintfTrampoline(void *address)
-{
-    g_trampolineLogPrintf = (FnGameLog)address;
-}
-
-static void BindLogRawTrampoline(void *address)
-{
-    g_trampolineLogRaw = (FnGameLog)address;
-}
-
-static void BindServerDataResponseTrampoline(void *address)
-{
-    g_trampolineServerDataResponse = (FnServerDataResponse)address;
-}
-
-static void BindHttpClientPostTrampoline(void *address)
-{
-    g_trampolineHttpClientPost = (FnHttpClientPost)address;
-}
-
-static void WritePipeLine(HANDLE pipe, const char *text)
-{
-    if (!pipe || !text)
-        return;
-    char line[MAX_PIPE_LINE + 2];
-    int written = snprintf(line, sizeof(line), "%s\n", text);
-    if (written < 0)
-        return;
-    if ((size_t)written >= sizeof(line))
-        written = (int)sizeof(line) - 1;
-    DWORD writtenBytes = 0;
-    if (!WriteFile(pipe, line, (DWORD)written, &writtenBytes, NULL))
-        LogTrace("[pipe] the write failed, the client is gone");
-}
-
-static int PipeFill(HANDLE pipe, struct PipeReader *reader)
-{
-    DWORD available = 0;
-    if (!PeekNamedPipe(pipe, NULL, 0, NULL, &available, NULL))
-        return -1;
-    if (available == 0)
-        return 0;
-
-    size_t space = sizeof(reader->buffer) - reader->length;
-    if (space == 0)
-        return 1;
-    DWORD toRead = available < space ? available : (DWORD)space;
-    DWORD readBytes = 0;
-    if (!ReadFile(pipe, reader->buffer + reader->length, toRead, &readBytes, NULL) || readBytes == 0)
-        return -1;
-    reader->length += readBytes;
-    return 1;
-}
-
-static int ReadPipeLine(HANDLE pipe, struct PipeReader *reader, char *out, size_t outSize)
-{
-    size_t position = 0;
-    ULONGLONG deadline = GetTickCount64() + PIPE_POLL_INTERVAL_MS;
-    for (;;)
-    {
-        while (reader->position < reader->length)
-        {
-            char c = reader->buffer[reader->position++];
-            if (c == '\n')
-            {
-                out[position] = 0;
-                return 1;
-            }
-            if (c == '\r' || c == '\0')
-                continue;
-            if (position + 1 < outSize)
-                out[position++] = c;
-        }
-        reader->position = 0;
-        reader->length = 0;
-
-        int filled = PipeFill(pipe, reader);
-        if (filled < 0)
-            return -1;
-        if (filled == 0)
-        {
-            if (GetTickCount64() >= deadline)
-            {
-                out[position] = 0;
-                return 0;
-            }
-            Sleep(5);
-        }
-    }
-}
-
-static void AppendSanitized(struct TextBuffer *buffer, const char *text)
-{
-    for (const char *cursor = text; *cursor; cursor++)
-        BufferAppend(buffer, (*cursor == ' ') ? "_" : cursor, 1);
-}
-
-static void AppendSingleLine(struct TextBuffer *buffer, const char *text)
-{
-    for (const char *cursor = text; *cursor; cursor++)
-    {
-        char c = *cursor;
-        if (c == '\r' || c == '\n' || c == '\t')
-            c = ' ';
-        BufferAppend(buffer, &c, 1);
-    }
-}
-
-static void BuildStatusLine(struct TextBuffer *buffer)
-{
-    BufferAppendText(buffer, "DATA");
-
-    LockState();
-    for (int i = 0; i < SETTING_COUNT; i++)
-    {
-        char value[MAX_LOG_MESSAGE];
-        FormatSetting(&g_settings[i], value, sizeof(value));
-        BufferAppendText(buffer, " ");
-        BufferAppendText(buffer, g_settings[i].name);
-        BufferAppendText(buffer, "=");
-        AppendSanitized(buffer, value);
-    }
-    UnlockState();
-
-    char scratch[64];
-    snprintf(scratch, sizeof(scratch), " pid=%lu", (unsigned long)GetCurrentProcessId());
-    BufferAppendText(buffer, scratch);
-
-    snprintf(scratch, sizeof(scratch), " image_base=0x%llX", (unsigned long long)(uintptr_t)g_imageBase);
-    BufferAppendText(buffer, scratch);
-
-    snprintf(scratch, sizeof(scratch), " image_size=0x%llX", (unsigned long long)g_imageSize);
-    BufferAppendText(buffer, scratch);
-
-    snprintf(scratch, sizeof(scratch), " dll_base=0x%llX", (unsigned long long)(uintptr_t)g_selfBase);
-    BufferAppendText(buffer, scratch);
-
-    ULONGLONG uptime = 0;
-    if (g_startTick && GetTickCount64() >= g_startTick)
-        uptime = GetTickCount64() - g_startTick;
-    snprintf(scratch, sizeof(scratch), " uptime_ms=%llu", (unsigned long long)uptime);
-    BufferAppendText(buffer, scratch);
-
-    for (int i = 0; i < HOOK_COUNT; i++)
-    {
-        const char *status = "missing";
-        if (g_hookRuntime[i].status == HOOK_STATUS_PATCHED)
-            status = "patched";
-        else if (g_hookRuntime[i].status == HOOK_STATUS_READY)
-            status = "ready";
-
-        snprintf(scratch, sizeof(scratch), " hook_%s=%s", g_hookSpecs[i].key, status);
-        BufferAppendText(buffer, scratch);
-
-        snprintf(scratch, sizeof(scratch), " target_%s=0x%llX", g_hookSpecs[i].key,
-                 (unsigned long long)(uintptr_t)g_hookRuntime[i].target);
-        BufferAppendText(buffer, scratch);
-    }
-}
-
-static void HexEncode(const uint8_t *data, size_t length, char *out, size_t outSize)
-{
-    static const char digits[] = "0123456789abcdef";
-    size_t position = 0;
-    for (size_t i = 0; i < length && position + 2 < outSize; i++)
-    {
-        out[position++] = digits[data[i] >> 4];
-        out[position++] = digits[data[i] & 0xF];
-    }
-    if (position < outSize)
-        out[position] = 0;
-}
-
-static int HandlePipeCommand(HANDLE pipe, const char *line)
-{
-    char command[64];
-    char argument[MAX_PIPE_LINE];
-    argument[0] = 0;
-
-    const char *cursor = line;
-    while (*cursor == ' ' || *cursor == '\t')
-        cursor++;
-    size_t index = 0;
-    while (cursor[index] && cursor[index] != ' ' && cursor[index] != '\t' && index + 1 < sizeof(command))
-    {
-        command[index] = cursor[index];
-        index++;
-    }
-    command[index] = 0;
-
-    cursor += index;
-    while (*cursor == ' ' || *cursor == '\t')
-        cursor++;
-    CopyText(argument, sizeof(argument), cursor);
-
-    if (_stricmp(command, "PING") == 0)
-    {
-        WritePipeLine(pipe, "OK pong");
-        return 0;
-    }
-    if (_stricmp(command, "QUIT") == 0)
-    {
-        WritePipeLine(pipe, "OK bye");
-        return -1;
-    }
-    if (_stricmp(command, "STATUS") == 0)
-    {
-        struct TextBuffer status;
-        memset(&status, 0, sizeof(status));
-        BuildStatusLine(&status);
-        WritePipeLine(pipe, status.data ? status.data : "DATA");
-        BufferFree(&status);
-        return 0;
-    }
-    if (_stricmp(command, "HANDSHAKE") == 0)
-    {
-        if (!InterlockedCompareExchange(&g_handshakeReady, 0, 0))
-        {
-            WritePipeLine(pipe, "ERR the hooks are not installed yet");
-            return 0;
-        }
-        char hex[MAX_PIPE_LINE];
-        HexEncode((const uint8_t *)&g_handshake, sizeof(g_handshake), hex, sizeof(hex));
-        struct TextBuffer reply;
-        memset(&reply, 0, sizeof(reply));
-        BufferAppendText(&reply, "HANDSHAKE ");
-        BufferAppendText(&reply, hex);
-        WritePipeLine(pipe, reply.data ? reply.data : "HANDSHAKE");
-        BufferFree(&reply);
-        return 0;
-    }
-    if (_stricmp(command, "GET") == 0)
-    {
-        const struct SettingDescriptor *descriptor = FindSetting(argument);
-        if (!descriptor)
-        {
-            WritePipeLine(pipe, "ERR unknown key");
-            return 0;
-        }
-        char value[MAX_LOG_MESSAGE];
-        LockState();
-        FormatSetting(descriptor, value, sizeof(value));
-        UnlockState();
-        struct TextBuffer reply;
-        memset(&reply, 0, sizeof(reply));
-        BufferAppendText(&reply, "VALUE ");
-        BufferAppendText(&reply, descriptor->name);
-        BufferAppendText(&reply, " ");
-        BufferAppendText(&reply, value);
-        WritePipeLine(pipe, reply.data ? reply.data : "VALUE");
-        BufferFree(&reply);
-        return 0;
-    }
-    if (_stricmp(command, "SET") == 0)
-    {
-        char *separator = strchr(argument, ' ');
-        if (!separator)
-        {
-            WritePipeLine(pipe, "ERR missing value");
-            return 0;
-        }
-        *separator = 0;
-        char *value = separator + 1;
-        while (*value == ' ' || *value == '\t')
-            value++;
-
-        const struct SettingDescriptor *descriptor = FindSetting(argument);
-        if (!descriptor)
-        {
-            WritePipeLine(pipe, "ERR unknown key");
-            return 0;
-        }
-        char error[128];
-        LockState();
-        int applied = ApplySetting(descriptor, value, error, sizeof(error));
-        if (applied && strcmp(descriptor->name, "log_level") == 0)
-            ApplyLogLevelSetting();
-        UnlockState();
-        if (!applied)
-        {
-            WritePipeLine(pipe, error[0] ? error : "ERR invalid value");
-            return 0;
-        }
-        WritePipeLine(pipe, "OK");
-        return 0;
-    }
-
-    WritePipeLine(pipe, "ERR unknown command");
-    return 0;
-}
-
-static void SendLogBacklog(HANDLE pipe)
-{
-    if (!g_logLockReady)
-        return;
-
-    char lines[LOG_BACKLOG_CAPACITY][LOG_BACKLOG_LINE];
-    size_t count = 0;
-
-    EnterCriticalSection(&g_logLock);
-    count = g_logBacklogCount;
-    size_t start = (g_logBacklogHead + LOG_BACKLOG_CAPACITY - count) % LOG_BACKLOG_CAPACITY;
-    for (size_t i = 0; i < count; i++)
-        CopyText(lines[i], LOG_BACKLOG_LINE, g_logBacklog[(start + i) % LOG_BACKLOG_CAPACITY]);
-    LeaveCriticalSection(&g_logLock);
-
-    for (size_t i = 0; i < count; i++)
-    {
-        struct TextBuffer message;
-        memset(&message, 0, sizeof(message));
-        BufferAppendText(&message, "EVENT log ");
-        AppendSingleLine(&message, lines[i]);
-        WritePipeLine(pipe, message.data ? message.data : "EVENT");
-        BufferFree(&message);
-    }
-}
-
-static DWORD WINAPI PipeClientThread(LPVOID raw)
-{
-    int slot = (int)(intptr_t)raw;
-    if (slot < 0 || slot >= MAX_PIPE_CLIENTS)
-        return 0;
-
-    struct PipeClient *client = &g_clients[slot];
-    HANDLE pipe = client->pipe;
-
-    SendLogBacklog(pipe);
-    PublishStateEvent();
-
-    char line[MAX_PIPE_LINE];
-    for (;;)
-    {
-        struct QueuedEvent event;
-        while (PopEvent(client, &event))
-        {
-            struct TextBuffer message;
-            memset(&message, 0, sizeof(message));
-            BufferAppendText(&message, "EVENT ");
-            BufferAppendText(&message, event.name);
-            if (event.text[0])
-            {
-                BufferAppendText(&message, " ");
-                AppendSingleLine(&message, event.text);
-            }
-            WritePipeLine(pipe, message.data ? message.data : "EVENT");
-            BufferFree(&message);
-        }
-
-        int result = ReadPipeLine(pipe, &client->reader, line, sizeof(line));
-        if (result < 0)
-            break;
-        if (result == 0)
-            continue;
-        if (HandlePipeCommand(pipe, line) < 0)
-            break;
-    }
-
-    EnterCriticalSection(&g_clientLock);
-    client->active = 0;
-    client->pipe = NULL;
-    LeaveCriticalSection(&g_clientLock);
-
-    DisconnectNamedPipe(pipe);
-    CloseHandle(pipe);
-    return 0;
-}
-
-static int RegisterClient(HANDLE pipe)
-{
-    int slot = -1;
-    EnterCriticalSection(&g_clientLock);
-    for (int i = 0; i < MAX_PIPE_CLIENTS; i++)
-    {
-        if (!g_clients[i].active)
-        {
-            g_clients[i].active = 1;
-            g_clients[i].pipe = pipe;
-            g_clients[i].head = 0;
-            g_clients[i].tail = 0;
-            g_clients[i].count = 0;
-            g_clients[i].reader.length = 0;
-            g_clients[i].reader.position = 0;
-            slot = i;
-            break;
-        }
-    }
-    LeaveCriticalSection(&g_clientLock);
-    return slot;
-}
-
-static DWORD WINAPI PipeServerThread(LPVOID unused)
-{
-    (void)unused;
-
-    SECURITY_ATTRIBUTES attributes;
-    PSECURITY_DESCRIPTOR descriptor = NULL;
-    ZeroMemory(&attributes, sizeof(attributes));
-    attributes.nLength = sizeof(attributes);
-    if (ConvertStringSecurityDescriptorToSecurityDescriptorA("D:(A;;GA;;;IU)(A;;GA;;;SY)(A;;GA;;;BA)S:(ML;;NW;;;ME)",
-                                                             SDDL_REVISION_1, &descriptor, NULL))
-    {
-        attributes.lpSecurityDescriptor = descriptor;
-    }
-    else
-    {
-        LogError("[pipe] cannot create the security descriptor, using the process default");
-    }
-
-    LogInfo("[pipe] listening on %s", HOOK_PIPE_NAME);
-
-    for (;;)
-    {
-        HANDLE pipe = CreateNamedPipeA(HOOK_PIPE_NAME, PIPE_ACCESS_DUPLEX,
-                                       PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                                       PIPE_UNLIMITED_INSTANCES, 8192, 8192, 0, descriptor ? &attributes : NULL);
-        if (pipe == INVALID_HANDLE_VALUE)
-        {
-            LogError("[pipe] cannot create the pipe (err=%lu)", GetLastError());
-            Sleep(1000);
-            continue;
-        }
-
-        BOOL connected = ConnectNamedPipe(pipe, NULL);
-        if (!connected && GetLastError() == ERROR_PIPE_CONNECTED)
-            connected = TRUE;
-
-        if (!connected)
-        {
-            CloseHandle(pipe);
-            continue;
-        }
-
-        int slot = RegisterClient(pipe);
-        if (slot < 0)
-        {
-            LogInfo("[pipe] too many clients, refusing the connection");
-            DisconnectNamedPipe(pipe);
-            CloseHandle(pipe);
-            continue;
-        }
-
-        HANDLE thread = CreateThread(NULL, 0, PipeClientThread, (LPVOID)(intptr_t)slot, 0, NULL);
-        if (!thread)
-        {
-            LogError("[pipe] cannot start the client thread (err=%lu)", GetLastError());
-            EnterCriticalSection(&g_clientLock);
-            g_clients[slot].active = 0;
-            g_clients[slot].pipe = NULL;
-            LeaveCriticalSection(&g_clientLock);
-            DisconnectNamedPipe(pipe);
-            CloseHandle(pipe);
-            continue;
-        }
-        CloseHandle(thread);
-    }
-}
-
-static void StartPipeServer(void)
-{
-    HANDLE thread = CreateThread(NULL, 0, PipeServerThread, NULL, 0, NULL);
-    if (thread)
-        CloseHandle(thread);
-    else
-        LogError("[pipe] cannot start the pipe thread (err=%lu)", GetLastError());
-}
-
-static void PublishHandshake(void)
-{
-    memset(&g_handshake, 0, sizeof(g_handshake));
-    g_handshake.magic = HOOK_PROTOCOL_MAGIC;
-    g_handshake.version = HOOK_PROTOCOL_VERSION;
-    g_handshake.processId = (uint64_t)GetCurrentProcessId();
-    g_handshake.imageBase = (uint64_t)(uintptr_t)g_imageBase;
-    g_handshake.imageSize = (uint64_t)g_imageSize;
-    g_handshake.dllBase = (uint64_t)(uintptr_t)g_selfBase;
-
-    uint32_t count = 0;
-    for (int i = 0; i < HOOK_COUNT && count < HOOK_MAX_ENTRIES; i++)
-    {
-        if (g_hookRuntime[i].status == HOOK_STATUS_MISSING)
-            continue;
-        struct HookEntry *entry = &g_handshake.entries[count++];
-        entry->target = (uint64_t)(uintptr_t)g_hookRuntime[i].target;
-        entry->detour = (uint64_t)(uintptr_t)g_hookSpecs[i].detour;
-        entry->stolenBytes = g_hookSpecs[i].stolenBytes;
-        entry->entryPatchBytes = HOOK_ENTRY_PATCH_BYTES;
-        CopyText(entry->name, sizeof(entry->name), g_hookSpecs[i].name);
-    }
-    g_handshake.entryCount = count;
-
-    InterlockedExchange(&g_handshakeReady, 1);
-    LogInfo("[hook] handshake published, %u hooks", count);
-}
-
-static void InstallHooks(void)
-{
-    for (int i = 0; i < HOOK_COUNT; i++)
-    {
-        const struct HookSpec *spec = &g_hookSpecs[i];
-
-        if (spec->stolenBytes < HOOK_ENTRY_PATCH_BYTES)
-        {
-            LogError("[hook] %s: needs at least %d relocated bytes", spec->name, HOOK_ENTRY_PATCH_BYTES);
-            continue;
-        }
-
-        int matchCount = 0;
-        uint8_t *target = FindUniquePattern(spec->signature, &matchCount);
-        if (!target)
-        {
-            if (matchCount > 1)
-                LogError("[hook] %s: the signature matches %d places, refusing to patch", spec->name, matchCount);
-            else
-                LogError("[hook] %s: signature not found", spec->name);
-            continue;
-        }
-
-        void *trampoline = BuildTrampoline(spec, target);
-        if (!trampoline)
-            continue;
-
-        g_hookRuntime[i].target = target;
-        g_hookRuntime[i].trampoline = trampoline;
-        g_hookRuntime[i].status = HOOK_STATUS_READY;
-        spec->bindTrampoline(trampoline);
-
-        LogInfo("[hook] %s: trampoline at %p for %p", spec->name, trampoline, target);
-    }
-
-    PublishHandshake();
-}
-
-static DWORD WINAPI PatchWatcherThread(LPVOID unused)
-{
-    (void)unused;
-    for (;;)
-    {
-        int patched = 0;
-        for (int i = 0; i < HOOK_COUNT; i++)
-        {
-            if (g_hookRuntime[i].status != HOOK_STATUS_READY || !g_hookRuntime[i].target)
-                continue;
-            const uint8_t *code = g_hookRuntime[i].target;
-            if (code[0] == 0xFF && code[1] == 0x25)
-            {
-                uint64_t destination = 0;
-                memcpy(&destination, code + 6, sizeof(destination));
-                if (destination == (uint64_t)(uintptr_t)g_hookSpecs[i].detour)
-                {
-                    g_hookRuntime[i].status = HOOK_STATUS_PATCHED;
-                    patched = 1;
-                }
-            }
-        }
-        if (patched)
-        {
-            LogInfo("[hook] the entry points are patched, the hook is live");
-            if (g_trampolineLogPrintf)
-                g_trampolineLogPrintf("%s", "[gtools] hook injected successfully");
-            Sleep(1000);
-            continue;
-        }
-        Sleep(50);
-    }
-}
-
-static void SetDefaultState(void)
-{
-    CopyText(g_state.proxyHost, sizeof(g_state.proxyHost), "127.0.0.1");
-    g_state.proxyPort = 16999;
-    g_state.startDelayMs = 2500;
-    g_state.logLevel = LOG_LEVEL_INFO;
-    g_state.allowAnyModule = 0;
-    g_state.streamGameLogs = 0;
+    g_processMutex = mutex;
 }
 
 static size_t ImageSizeOf(uint8_t *base)
@@ -1620,385 +220,398 @@ static size_t ImageSizeOf(uint8_t *base)
     return nt->OptionalHeader.SizeOfImage;
 }
 
-static LONG NTAPI FirstChanceLogger(PEXCEPTION_POINTERS exceptionPointers)
+/* ---------- detours ---------- */
+
+typedef long long(FASTCALL *FnGameLog)(const char *format, ...);
+typedef void(FASTCALL *FnServerDataResponse)(void *closure, void *response);
+typedef uintptr_t(FASTCALL *FnHttpClientPost)(void *client, void *url, int isTls, void *dictionary, void *callback);
+
+static void *EntryTrampoline(int index)
 {
-    if (!exceptionPointers || !exceptionPointers->ExceptionRecord || !exceptionPointers->ContextRecord)
-        return EXCEPTION_CONTINUE_SEARCH;
-    DWORD code = (DWORD)exceptionPointers->ExceptionRecord->ExceptionCode;
-    if (code != 0xC0000005 && code != 0xC000001D && code != 0xC0000096 && code != 0xC00000FD)
-        return EXCEPTION_CONTINUE_SEARCH;
-
-    if (!g_imageBase)
-        return EXCEPTION_CONTINUE_SEARCH;
-    uintptr_t rip = (uintptr_t)exceptionPointers->ContextRecord->Rip;
-    uintptr_t image = (uintptr_t)g_imageBase;
-    int inGame = (rip >= image && rip < image + g_imageSize);
-    int inSelf = g_selfBase && rip >= (uintptr_t)g_selfBase && rip < (uintptr_t)g_selfBase + g_selfSize;
-    if (!inGame && !inSelf)
-        return EXCEPTION_CONTINUE_SEARCH;
-
-    static uintptr_t seen[256];
-    static int seenCount = 0;
-    static LONG lock = 0;
-    while (InterlockedExchange(&lock, 1))
-        Sleep(0);
-    int duplicate = 0;
-    for (int i = 0; i < seenCount; i++)
-    {
-        if (seen[i] == rip)
-        {
-            duplicate = 1;
-            break;
-        }
-    }
-    if (!duplicate && seenCount < 256)
-        seen[seenCount++] = rip;
-    InterlockedExchange(&lock, 0);
-    if (duplicate)
-        return EXCEPTION_CONTINUE_SEARCH;
-
-    uintptr_t fault = 0;
-    if (code == 0xC0000005 && exceptionPointers->ExceptionRecord->NumberParameters >= 2)
-        fault = (uintptr_t)exceptionPointers->ExceptionRecord->ExceptionInformation[1];
-
-    LogInfo("[veh] code=0x%08lX rip=0x%llX fault=0x%llX tid=%lu", code, (unsigned long long)rip,
-            (unsigned long long)fault, (unsigned long)GetCurrentThreadId());
-
-    return EXCEPTION_CONTINUE_SEARCH;
+    if (!g_shm)
+        return NULL;
+    return (void *)(uintptr_t)g_shm->entries[index].trampoline;
 }
 
-static LONG WINAPI CrashFilter(EXCEPTION_POINTERS *exceptionPointers)
+static void EmitGameLog(const char *line)
 {
-    if (!exceptionPointers || !exceptionPointers->ExceptionRecord || !exceptionPointers->ContextRecord || !g_imageBase)
-        return EXCEPTION_EXECUTE_HANDLER;
-
-    EXCEPTION_RECORD *record = exceptionPointers->ExceptionRecord;
-    CONTEXT *context = exceptionPointers->ContextRecord;
-    uintptr_t rip = (uintptr_t)context->Rip;
-    uintptr_t image = (uintptr_t)g_imageBase;
-
-    LogError("[crash] code=0x%08lX address=%p rip=0x%llX (module rva 0x%llX) tid=%lu",
-             (unsigned long)record->ExceptionCode, (void *)record->ExceptionAddress, (unsigned long long)rip,
-             (unsigned long long)(rip - image), (unsigned long)GetCurrentThreadId());
-
-#if defined(_MSC_VER) && !defined(__clang__)
-    __try
+    if (!g_shm)
     {
-        const uint8_t *code = (const uint8_t *)rip;
-        LogError("[crash] code at rip: %02X %02X %02X %02X %02X %02X %02X %02X", code[0], code[1], code[2], code[3],
-                 code[4], code[5], code[6], code[7]);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        LogError("[crash] the code at rip is unreadable");
-    }
-#endif
-
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-
-static void AcquireProcessHookMutex(void)
-{
-    char name[64];
-    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)GetCurrentProcessId());
-
-    HANDLE mutex = CreateMutexA(NULL, TRUE, name);
-    if (!mutex)
-    {
-        LogError("[hook] cannot create the process hook mutex (err=%lu)", GetLastError());
+        OutputDebugStringA(line);
         return;
     }
-    if (GetLastError() == ERROR_ALREADY_EXISTS)
-    {
-        CloseHandle(mutex);
-        LogError("[hook] this process is already hooked, refusing to run again");
-        return;
-    }
-
-    g_processMutex = mutex;
+    if (g_shm->settings.streamGameLogs)
+        PublishLine(HOOK_LOG_GAME, "%s", line);
+    else if (g_shm->settings.logLevel >= HOOK_LOG_TRACE)
+        OutputDebugStringA(line);
 }
 
-BOOL FASTCALL ProcessIsHooked(void)
+static long long GameLogForward(int index, char *line)
 {
-    char name[64];
-    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)GetCurrentProcessId());
-    HANDLE existing = OpenMutexA(SYNCHRONIZE, FALSE, name);
-    if (existing)
-    {
-        CloseHandle(existing);
-        return TRUE;
-    }
-    return FALSE;
-}
-
-#define HOOK_AGENT_TARGET "Growtopia.exe"
-
-typedef int (*FnRemoteInject)(const char *target, const char *dll_path);
-typedef const char *(*FnRemoteLastError)(void);
-
-static int AgentHasProcessMutex(DWORD pid)
-{
-    char name[64];
-    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)pid);
-    HANDLE existing = OpenMutexA(SYNCHRONIZE, FALSE, name);
-    if (existing)
-    {
-        CloseHandle(existing);
-        return 1;
-    }
-    return 0;
-}
-
-static int AgentFindTargetPid(const char *target)
-{
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE)
+    FnGameLog trampoline = (FnGameLog)EntryTrampoline(index);
+    if (!trampoline)
         return 0;
-
-    int pid = 0;
-    PROCESSENTRY32 entry;
-    memset(&entry, 0, sizeof(entry));
-    entry.dwSize = sizeof(entry);
-    if (Process32First(snapshot, &entry))
-    {
-        do
-        {
-            if (_stricmp(entry.szExeFile, target) == 0)
-            {
-                pid = (int)entry.th32ProcessID;
-                break;
-            }
-        } while (Process32Next(snapshot, &entry));
-    }
-    CloseHandle(snapshot);
-    return pid;
+    return trampoline("%s", line);
 }
 
-static HANDLE AgentMarkProcessMutex(DWORD pid)
+static long long FASTCALL Hook_GameLogPrintf(const char *format, ...)
 {
-    char name[64];
-    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)pid);
-
-    return CreateMutexA(NULL, TRUE, name);
-}
-
-static BOOL GetSelfPathA(char *destination, size_t destinationSize)
-{
-    HMODULE self = NULL;
-    if (!destination || destinationSize == 0)
-        return FALSE;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            (LPCWSTR)&GetSelfPathA, &self))
-        return FALSE;
-    DWORD length = GetModuleFileNameA(self, destination, (DWORD)destinationSize);
-    return length > 0 && length < destinationSize;
-}
-
-static void AgentDebug(const char *format, ...)
-{
-    char message[MAX_LOG_MESSAGE];
-
+    char line[HOOK_LOG_LINE];
     va_list args;
     va_start(args, format);
-    int written = vsnprintf(message, sizeof(message), format, args);
+    int written = vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    if (written < 0)
+        return 0;
+    if ((size_t)written >= sizeof(line))
+        line[sizeof(line) - 1] = 0;
+
+    EmitGameLog(line);
+
+    return GameLogForward(HOOK_INDEX_GAME_LOG_PRINTF, line);
+}
+
+static long long FASTCALL Hook_GameLogRaw(const char *format, ...)
+{
+    char line[HOOK_LOG_LINE];
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    if (written < 0)
+        return 0;
+    if ((size_t)written >= sizeof(line))
+        line[sizeof(line) - 1] = 0;
+
+    EmitGameLog(line);
+
+    return GameLogForward(HOOK_INDEX_GAME_LOG_RAW, line);
+}
+
+/* ---------- server data rewrite (in place, never allocates) ---------- */
+
+struct Rewrite
+{
+    char *data;
+    size_t length;
+    size_t capacity;
+};
+
+static void AppendRewrite(struct Rewrite *buffer, const char *text, size_t length)
+{
+    if (!text || length == 0)
+        return;
+    if (buffer->length + length > buffer->capacity)
+        return;
+    memcpy(buffer->data + buffer->length, text, length);
+    buffer->length += length;
+}
+
+static void AppendRewriteText(struct Rewrite *buffer, const char *text)
+{
+    if (text)
+        AppendRewrite(buffer, text, strlen(text));
+}
+
+static void AppendRewriteFormat(struct Rewrite *buffer, const char *format, ...)
+{
+    char scratch[256];
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(scratch, sizeof(scratch), format, args);
     va_end(args);
     if (written < 0)
         return;
-    if ((size_t)written >= sizeof(message))
-        message[sizeof(message) - 1] = 0;
-    OutputDebugStringA(message);
+    if ((size_t)written >= sizeof(scratch))
+        written = (int)sizeof(scratch) - 1;
+    AppendRewrite(buffer, scratch, (size_t)written);
 }
 
-static HANDLE AgentAcquireSingleton(void)
+static void SnapshotProxy(char *host, size_t hostSize, int *port)
 {
-    HANDLE mutex = CreateMutexA(NULL, TRUE, HOOK_AGENT_MUTEX_NAME);
-    if (!mutex)
-        return NULL;
-    if (GetLastError() == ERROR_ALREADY_EXISTS)
-    {
-        CloseHandle(mutex);
-        return NULL;
-    }
-    return mutex;
-}
-
-static void AgentRun(const char *selfPath)
-{
-    HANDLE singleton = AgentAcquireSingleton();
-    if (!singleton)
+    host[0] = 0;
+    *port = 0;
+    if (!AcquireSettings())
         return;
+    CopyText(host, hostSize, g_shm->settings.proxyHost);
+    *port = g_shm->settings.proxyPort;
+    ReleaseSettings();
+}
 
-    char hookDirectory[MAX_PATH];
-    CopyText(hookDirectory, sizeof(hookDirectory), selfPath);
-    char *separator = strrchr(hookDirectory, '\\');
-    if (separator)
-        *separator = 0;
+/* the rewrite only writes inside the existing buffer, if the new body does
+   not fit the old capacity the rewrite is refused and the game keeps the
+   original response */
+static int ApplyRewrite(struct SSO *target, const char *data, size_t length)
+{
+    if (!target || !data)
+        return 0;
+
+    if (target->capacity > 0xF)
+    {
+        if (length + 1 > target->capacity)
+            return 0;
+        memcpy(target->buffer, data, length + 1);
+    }
     else
-        CopyText(hookDirectory, sizeof(hookDirectory), ".");
-
-    char injectorPath[MAX_PATH];
-    snprintf(injectorPath, sizeof(injectorPath), "%s\\injector.dll", hookDirectory);
-
-    HMODULE injector = LoadLibraryA(injectorPath);
-    if (!injector)
     {
-        AgentDebug("[hook] agent: missing %s (err=%lu)", injectorPath, GetLastError());
-        CloseHandle(singleton);
-        return;
+        if (length + 1 > GAME_STRING_INLINE_CAPACITY)
+            return 0;
+        memcpy((char *)target, data, length + 1);
     }
+    target->size = length;
+    return 1;
+}
 
-    FnRemoteInject inject = (FnRemoteInject)(void *)GetProcAddress(injector, "inject");
-    FnRemoteLastError lastError = (FnRemoteLastError)(void *)GetProcAddress(injector, "last_error");
-    if (!inject || !lastError)
+static void FASTCALL Hook_ServerDataResponse(void *closure, void *response)
+{
+    void *trampoline = EntryTrampoline(HOOK_INDEX_RESPONSE);
+
+    if (!response)
     {
-        AgentDebug("[hook] agent: injector exports are missing");
-        FreeLibrary(injector);
-        CloseHandle(singleton);
-        return;
+        PublishLine(HOOK_LOG_INFO, "[hook] server_data response is null");
     }
-
-    AgentDebug("[hook] agent: watching %s", HOOK_AGENT_TARGET);
-    for (;;)
+    else
     {
-        int pid = AgentFindTargetPid(HOOK_AGENT_TARGET);
-        if (!pid || AgentHasProcessMutex((DWORD)pid))
+        uint32_t status = *(uint32_t *)((uint8_t *)response + RESPONSE_STATUS_OFFSET);
+        if (status != 200)
         {
-            Sleep(1000);
-            continue;
-        }
-
-        int rc = inject(HOOK_AGENT_TARGET, selfPath);
-        if (rc == 0 || rc == -1)
-        {
-            AgentMarkProcessMutex((DWORD)pid);
-            AgentDebug("[hook] agent: %s is hooked (pid %d)", HOOK_AGENT_TARGET, pid);
+            PublishLine(HOOK_LOG_INFO, "[hook] server_data response status=%u, nothing to rewrite", status);
         }
         else
         {
-            const char *failure = lastError();
-            AgentDebug("[hook] agent: %s (rc=%d: %s)", HOOK_AGENT_TARGET, rc, failure ? failure : "unknown");
+            struct SSO *body = (struct SSO *)((uint8_t *)response + RESPONSE_BODY_OFFSET);
+            const char *source = SSOData(body);
+            if (!source || body->size == 0)
+            {
+                PublishLine(HOOK_LOG_TRACE, "[hook] server_data response status=%u", status);
+            }
+            else if (body->size > REWRITE_SCRATCH_MAX)
+            {
+                PublishLine(HOOK_LOG_ERROR, "[hook] server_data body is too large to rewrite (%zu bytes)",
+                            (size_t)body->size);
+            }
+            else
+            {
+                char proxyHost[HOOK_TEXT_FIELD_MAX];
+                int proxyPort = 0;
+                SnapshotProxy(proxyHost, sizeof(proxyHost), &proxyPort);
+
+                char realServer[HOOK_FIELD_MAX];
+                int realPort = 0;
+                int captured = 0;
+
+                char scratch[REWRITE_SCRATCH_MAX];
+                struct Rewrite output;
+                output.data = scratch;
+                output.length = 0;
+                output.capacity = sizeof(scratch);
+
+                size_t offset = 0;
+                size_t size = (size_t)body->size;
+                while (offset < size)
+                {
+                    size_t start = offset;
+                    while (offset < size && source[offset] != '\n')
+                        offset++;
+                    size_t lineLength = offset - start;
+                    int hasNewline = offset < size;
+                    if (hasNewline)
+                        offset++;
+
+                    if (lineLength >= 7 && memcmp(source + start, "server|", 7) == 0)
+                    {
+                        size_t valueLength = lineLength - 7;
+                        if (valueLength && source[start + 7 + valueLength - 1] == '\r')
+                            valueLength--;
+                        if (valueLength >= sizeof(realServer))
+                            valueLength = sizeof(realServer) - 1;
+                        memcpy(realServer, source + start + 7, valueLength);
+                        realServer[valueLength] = 0;
+                        captured = 1;
+                        AppendRewriteFormat(&output, "server|%s\n", proxyHost);
+                    }
+                    else if (lineLength >= 5 && memcmp(source + start, "port|", 5) == 0)
+                    {
+                        char value[16];
+                        size_t valueLength = lineLength - 5;
+                        if (valueLength >= sizeof(value))
+                            valueLength = sizeof(value) - 1;
+                        memcpy(value, source + start + 5, valueLength);
+                        value[valueLength] = 0;
+                        realPort = atoi(value);
+                        captured = 1;
+                        AppendRewriteFormat(&output, "port|%d\n", proxyPort);
+                    }
+                    else
+                    {
+                        AppendRewrite(&output, source + start, lineLength);
+                        if (hasNewline)
+                            AppendRewriteText(&output, "\n");
+                    }
+                }
+
+                if (captured && AcquireSettings())
+                {
+                    CopyText(g_shm->settings.realServer, sizeof(g_shm->settings.realServer), realServer);
+                    g_shm->settings.realPort = realPort;
+                    ReleaseSettings();
+                }
+
+                if (output.length)
+                {
+                    if (ApplyRewrite(body, output.data, output.length))
+                        PublishLine(HOOK_LOG_TRACE,
+                                    "[hook] server_data rewritten: server|%s port|%d (%zu bytes)", proxyHost,
+                                    proxyPort, output.length);
+                    else
+                        PublishLine(HOOK_LOG_ERROR,
+                                    "[hook] the server_data rewrite failed, the game will connect to the real server");
+                }
+            }
         }
-        Sleep(1000);
     }
+
+    if (trampoline)
+        ((FnServerDataResponse)trampoline)(closure, response);
 }
 
-static void SpawnAgentProcess(void)
+/* ---------- http client post (read only capture) ---------- */
+
+static void CaptureRequestParameters(void *dictionary)
 {
-    HMODULE self = NULL;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            (LPCWSTR)&SpawnAgentProcess, &self))
+    if (!dictionary)
         return;
 
-    char dllPath[MAX_PATH];
-    DWORD length = GetModuleFileNameA(self, dllPath, sizeof(dllPath));
-    if (length == 0 || length >= sizeof(dllPath))
+    uint8_t *sentinel = *(uint8_t **)((uint8_t *)dictionary + DICT_SENTINEL_OFFSET);
+    if (!sentinel)
         return;
 
-    char systemDirectory[MAX_PATH];
-    UINT systemLength = GetSystemDirectoryA(systemDirectory, sizeof(systemDirectory));
-    if (systemLength == 0 || systemLength >= sizeof(systemDirectory))
-        return;
+    char version[HOOK_FIELD_MAX];
+    char protocol[HOOK_FIELD_MAX];
+    char platform[HOOK_FIELD_MAX];
+    version[0] = 0;
+    protocol[0] = 0;
+    platform[0] = 0;
 
-    char command[MAX_PATH * 4];
-    int written = snprintf(command, sizeof(command), "\"%s\\rundll32.exe\" \"%s\",AgentMain", systemDirectory, dllPath);
-    if (written < 0 || (size_t)written >= sizeof(command))
-        return;
-
-    STARTUPINFOA startup;
-    PROCESS_INFORMATION process;
-    ZeroMemory(&startup, sizeof(startup));
-    ZeroMemory(&process, sizeof(process));
-    startup.cb = sizeof(startup);
-    startup.dwFlags = STARTF_USESHOWWINDOW;
-    startup.wShowWindow = SW_HIDE;
-
-    if (!CreateProcessA(NULL, command, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &startup, &process))
+    uint8_t *node = *(uint8_t **)sentinel;
+    while (node && node != sentinel)
     {
-        LogInfo("[hook] agent was not started (err=%lu)", GetLastError());
-        return;
+        struct SSO *key = (struct SSO *)(node + DICT_NODE_KEY_OFFSET);
+        struct SSO *value = (struct SSO *)(node + DICT_NODE_VALUE_OFFSET);
+        if (key && key->size)
+        {
+            const char *keyText = SSOData(key);
+            if (keyText)
+            {
+                if (key->size == 7 && memcmp(keyText, "version", 7) == 0)
+                    CopyGameString(version, sizeof(version), value);
+                else if (key->size == 8 && memcmp(keyText, "protocol", 8) == 0)
+                    CopyGameString(protocol, sizeof(protocol), value);
+                else if (key->size == 8 && memcmp(keyText, "platform", 8) == 0)
+                    CopyGameString(platform, sizeof(platform), value);
+            }
+        }
+        node = *(uint8_t **)node;
     }
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
+
+    if (AcquireSettings())
+    {
+        CopyText(g_shm->settings.clientVersion, sizeof(g_shm->settings.clientVersion), version);
+        CopyText(g_shm->settings.clientProtocol, sizeof(g_shm->settings.clientProtocol), protocol);
+        CopyText(g_shm->settings.clientPlatform, sizeof(g_shm->settings.clientPlatform), platform);
+        ReleaseSettings();
+    }
+
+    PublishLine(HOOK_LOG_INFO, "[hook] request parameters: version=%s protocol=%s platform=%s", version, protocol,
+                platform);
 }
 
-__declspec(dllexport) void CALLBACK AgentMain(HWND window, HINSTANCE instance, LPSTR commandLine, int showCommand)
+static uintptr_t FASTCALL Hook_HttpClientPost(void *client, void *url, int isTls, void *dictionary, void *callback)
 {
-    (void)window;
-    (void)instance;
-    (void)commandLine;
-    (void)showCommand;
+    struct SSO *urlString = (struct SSO *)url;
+    const char *urlText = (urlString && urlString->size) ? SSOData(urlString) : NULL;
+    if (urlText && strstr(urlText, "server_data.php"))
+    {
+        PublishLine(HOOK_LOG_TRACE, "[hook] server_data request captured");
+        CaptureRequestParameters(dictionary);
+    }
 
-    char selfPath[MAX_PATH];
-    if (!GetSelfPathA(selfPath, sizeof(selfPath)))
-        return;
-    AgentRun(selfPath);
+    FnHttpClientPost trampoline = (FnHttpClientPost)EntryTrampoline(HOOK_INDEX_HTTP_POST);
+    if (!trampoline)
+        return 0;
+    return trampoline(client, url, isTls, dictionary, callback);
 }
 
-static DWORD WINAPI Worker(LPVOID unused)
+/* ---------- boot ---------- */
+
+static const void *const g_detours[HOOK_INDEX_COUNT] = {
+    (const void *)&Hook_GameLogPrintf,
+    (const void *)&Hook_GameLogRaw,
+    (const void *)&Hook_ServerDataResponse,
+    (const void *)&Hook_HttpClientPost,
+};
+
+static DWORD WINAPI ShimWorker(LPVOID unused)
 {
     (void)unused;
 
-    InitializeHookSpecs();
-
     AcquireProcessHookMutex();
 
-    InitializeCriticalSection(&g_stateLock);
-    g_stateLockReady = 1;
-    InitializeCriticalSection(&g_clientLock);
-    g_clientLockReady = 1;
-    InitializeCriticalSection(&g_logLock);
-    g_logLockReady = 1;
-
-    SetDefaultState();
-
-    HMODULE self = NULL;
-    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           (LPCWSTR)&Worker, &self))
+    g_shm = MapSharedSection(SECTION_OPEN_RETRIES);
+    if (!g_shm)
     {
-        g_selfBase = (uint8_t *)self;
-        g_selfSize = ImageSizeOf(g_selfBase);
+        OutputDebugStringA("[hook] the shared section is missing, the shim stays idle\n");
+        return 0;
     }
 
-    g_startTick = GetTickCount64();
+    /* honor the configured start delay, the agent serves the settings while
+       the shim waits, matching the timing of the previous design */
+    int delay = g_shm->settings.startDelayMs;
+    if (delay < 0)
+        delay = 0;
+    if (delay > 0)
+        Sleep((DWORD)delay);
 
-    AddVectoredExceptionHandler(0, FirstChanceLogger);
-    SetUnhandledExceptionFilter(CrashFilter);
+    HMODULE self = NULL;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       (LPCWSTR)&ShimWorker, &self);
 
-    g_imageBase = (uint8_t *)GetModuleHandleA("Growtopia.exe");
-    if (!g_imageBase && g_state.allowAnyModule)
-        g_imageBase = (uint8_t *)GetModuleHandleA(NULL);
-    g_imageSize = ImageSizeOf(g_imageBase);
+    uint8_t *image = (uint8_t *)GetModuleHandleA("Growtopia.exe");
+    if (!image && g_shm->settings.allowAnyModule)
+        image = (uint8_t *)GetModuleHandleA(NULL);
+    size_t imageSize = ImageSizeOf(image);
 
-    LogInfo("[hook] loaded in pid %lu, image %p (size 0x%X), waiting %d ms", (unsigned long)GetCurrentProcessId(),
-            g_imageBase, (unsigned)g_imageSize, g_state.startDelayMs);
+    g_shm->processId = (uint64_t)GetCurrentProcessId();
+    g_shm->dllBase = (uint64_t)(uintptr_t)self;
+    g_shm->imageBase = (uint64_t)(uintptr_t)image;
+    g_shm->imageSize = (uint64_t)imageSize;
+    g_shm->bootTick = (uint64_t)GetTickCount64();
 
-    StartPipeServer();
+    for (int i = 0; i < HOOK_INDEX_COUNT; i++)
+        g_shm->entries[i].detour = (uint64_t)(uintptr_t)g_detours[i];
+    InterlockedExchange(&g_shm->entryCount, HOOK_INDEX_COUNT);
+    InterlockedExchange(&g_shm->ready, 1);
 
-    if (g_state.startDelayMs > 0)
-        Sleep((DWORD)g_state.startDelayMs);
-
-    InstallHooks();
-
-    HANDLE watcher = CreateThread(NULL, 0, PatchWatcherThread, NULL, 0, NULL);
-    if (watcher)
-        CloseHandle(watcher);
-
-    SpawnAgentProcess();
+    PublishLine(HOOK_LOG_INFO, "[hook] shim ready: pid %lu image %p (size 0x%zX) dll %p",
+                (unsigned long)GetCurrentProcessId(), (void *)(uintptr_t)image, imageSize, (void *)(uintptr_t)self);
     return 0;
 }
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
 {
     (void)reserved;
     if (reason == DLL_PROCESS_ATTACH)
     {
-        g_selfModule = hModule;
-        DisableThreadLibraryCalls(hModule);
-        CreateThread(NULL, 0, Worker, NULL, 0, NULL);
+        DisableThreadLibraryCalls(module);
+        if (!CreateThread(NULL, 0, ShimWorker, NULL, 0, NULL))
+            OutputDebugStringA("[hook] cannot start the shim worker\n");
     }
     else if (reason == DLL_PROCESS_DETACH)
     {
-        OutputDebugStringA("[hook] the dll is being unloaded\n");
+        if (g_processMutex)
+            CloseHandle(g_processMutex);
+        if (g_shmMapping)
+            CloseHandle(g_shmMapping);
     }
     return TRUE;
 }
