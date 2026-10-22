@@ -85,6 +85,16 @@ class HookControl:
 
         return response.ok
 
+    def handshake(self, timeout: float | None = None) -> bytes | None:
+        response = self._client.request("HANDSHAKE", timeout)
+        if response.kind != "HANDSHAKE":
+            return
+
+        try:
+            return bytes.fromhex(response.text.strip())
+        except ValueError:
+            return
+
     def wait_event(self, timeout: float | None = None) -> PipeEvent | None:
         return self._client.wait_event(timeout)
 

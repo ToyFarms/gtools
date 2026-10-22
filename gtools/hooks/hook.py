@@ -17,9 +17,8 @@ logger = logging.getLogger("hook")
 HOOKS_DIR = Path(__file__).resolve().parent
 HOOK_INJECTOR = HOOKS_DIR / "inject.py"
 HOOK_PAYLOAD = HOOKS_DIR / "hook.dll"
-HOOK_HANDSHAKE = HOOKS_DIR / "gtdump_hook.handshake"
-HOOK_STATUS = HOOKS_DIR / "gtdump_hook.inject.status"
-HOOK_CONFIG = HOOKS_DIR / "gtdump_hook.cfg"
+HOOK_STATUS = HOOKS_DIR / "inject.status"
+HOOK_CONFIG = HOOKS_DIR / "hook.cfg"
 
 
 def hook_available() -> bool:
@@ -29,10 +28,11 @@ def hook_available() -> bool:
 def ensure_hook_config() -> None:
     lines = HOOK_CONFIG.read_text(encoding="utf-8").splitlines() if HOOK_CONFIG.exists() else []
     managed = {
-        "handshake_file",
         "proxy_host",
         "proxy_port",
+        "handshake_file",
         "handshake",
+        "log_file",
         "out_of_process",
         "server_ip",
         "server_port",
@@ -47,7 +47,6 @@ def ensure_hook_config() -> None:
     lines += [
         f"proxy_host = {setting.proxy_server}",
         f"proxy_port = {setting.proxy_port}",
-        f"handshake_file = {HOOK_HANDSHAKE}",
     ]
     HOOK_CONFIG.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

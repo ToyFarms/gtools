@@ -21,8 +21,11 @@
 #  define EXPORT __attribute__((visibility("default")))
 #endif
 
-#define HANDSHAKE_WAIT_TRIES 60
-#define HANDSHAKE_WAIT_MS    500
+#define HANDSHAKE_WAIT_TRIES 120
+#define HANDSHAKE_WAIT_MS    250
+#define PIPE_CONNECT_TIMEOUT 250
+
+#define PIPE_LINE_MAX 4096
 
 enum InjectResult
 {
@@ -74,6 +77,7 @@ static DWORD find_process_id(const char *executable)
         } while (Process32Next(snapshot, &entry));
     }
     CloseHandle(snapshot);
+
     return pid;
 }
 
@@ -112,40 +116,165 @@ static const char *file_base_name(const char *path)
     return separator ? separator + 1 : path;
 }
 
-static bool read_handshake(const char *path, struct HookHandshake *out)
+static HANDLE pipe_connect(DWORD timeoutMs)
 {
-    FILE *file = fopen(path, "rb");
-    if (!file)
-        return false;
-
-    bool valid = false;
-    if (fread(out, sizeof(*out), 1, file) == 1)
+    ULONGLONG deadline = GetTickCount64() + timeoutMs;
+    for (;;)
     {
-        valid = out->magic == HOOK_PROTOCOL_MAGIC && out->version == HOOK_PROTOCOL_VERSION &&
-                out->entryCount <= HOOK_MAX_ENTRIES;
-    }
-    fclose(file);
+        HANDLE pipe = CreateFileA(HOOK_PIPE_NAME, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+        if (pipe != INVALID_HANDLE_VALUE)
+            return pipe;
 
-    return valid;
+        DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY)
+            return INVALID_HANDLE_VALUE;
+        if (GetTickCount64() >= deadline)
+            return INVALID_HANDLE_VALUE;
+
+        Sleep(50);
+    }
 }
 
-static bool wait_for_handshake(const char *path, uint64_t expected_dll_base, struct HookHandshake *out)
+struct PipeReader
 {
-    for (int attempt = 0; attempt < HANDSHAKE_WAIT_TRIES; attempt++)
+    char buffer[PIPE_LINE_MAX * 2];
+    size_t length;
+    size_t position;
+};
+
+static bool pipe_read_line(HANDLE pipe, struct PipeReader *reader, char *out, size_t outSize)
+{
+    size_t position = 0;
+    for (;;)
     {
-        Sleep(HANDSHAKE_WAIT_MS);
-        if (!read_handshake(path, out))
+        while (reader->position < reader->length)
+        {
+            char c = reader->buffer[reader->position++];
+            if (c == '\n')
+            {
+                out[position] = 0;
+                return true;
+            }
+            if (c == '\r' || c == '\0')
+                continue;
+            if (position + 1 < outSize)
+                out[position++] = c;
+        }
+        reader->position = 0;
+        reader->length = 0;
+
+        DWORD readBytes = 0;
+        if (!ReadFile(pipe, reader->buffer, (DWORD)sizeof(reader->buffer), &readBytes, NULL) || readBytes == 0)
+            return false;
+
+        reader->length += readBytes;
+    }
+}
+
+static bool pipe_write_line(HANDLE pipe, const char *text)
+{
+    size_t length = strlen(text);
+    char *line = (char *)malloc(length + 2);
+    if (!line)
+        return false;
+
+    memcpy(line, text, length);
+    line[length] = '\n';
+    line[length + 1] = 0;
+
+    DWORD writtenBytes = 0;
+    bool ok = WriteFile(pipe, line, (DWORD)(length + 1), &writtenBytes, NULL) != FALSE;
+    free(line);
+
+    return ok;
+}
+
+static bool pipe_command(HANDLE pipe, const char *command, char *out, size_t outSize)
+{
+    struct PipeReader reader;
+    memset(&reader, 0, sizeof(reader));
+
+    if (!pipe_write_line(pipe, command))
+        return false;
+
+    char line[PIPE_LINE_MAX];
+    for (;;)
+    {
+        if (!pipe_read_line(pipe, &reader, line, sizeof(line)))
+            return false;
+
+        if (strncmp(line, "EVENT ", 6) == 0)
             continue;
 
-        if (expected_dll_base && out->dllBase != expected_dll_base)
-            continue;
+        if (outSize)
+        {
+            size_t length = strlen(line);
+            if (length >= outSize)
+                length = outSize - 1;
+            memcpy(out, line, length);
+            out[length] = 0;
+        }
 
         return true;
     }
+}
+
+static int hex_value(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+
+    return -1;
+}
+
+static bool hex_decode(const char *hex, uint8_t *out, size_t outSize)
+{
+    size_t length = strlen(hex);
+    if (length % 2 != 0 || length / 2 > outSize)
+        return false;
+
+    for (size_t i = 0; i < length / 2; i++)
+    {
+        int high = hex_value(hex[i * 2]);
+        int low = hex_value(hex[i * 2 + 1]);
+        if (high < 0 || low < 0)
+            return false;
+
+        out[i] = (uint8_t)((high << 4) | low);
+    }
+
+    return true;
+}
+
+static bool fetch_handshake(uint64_t expected_dll_base, struct HookHandshake *out)
+{
+    for (int attempt = 0; attempt < HANDSHAKE_WAIT_TRIES; attempt++)
+    {
+        HANDLE pipe = pipe_connect(PIPE_CONNECT_TIMEOUT);
+        if (pipe != INVALID_HANDLE_VALUE)
+        {
+            char reply[PIPE_LINE_MAX];
+            bool got = pipe_command(pipe, "HANDSHAKE", reply, sizeof(reply)) &&
+                       strncmp(reply, "HANDSHAKE ", 10) == 0;
+            if (got)
+                got = hex_decode(reply + 10, (uint8_t *)out, sizeof(*out));
+            CloseHandle(pipe);
+
+            if (got && out->magic == HOOK_PROTOCOL_MAGIC && out->version == HOOK_PROTOCOL_VERSION &&
+                out->entryCount <= HOOK_MAX_ENTRIES && (!expected_dll_base || out->dllBase == expected_dll_base))
+                return true;
+        }
+        Sleep(HANDSHAKE_WAIT_MS);
+    }
+
     return false;
 }
 
-static void write_absolute_jump(unsigned char *buffer, uint64_t destination)
+static void write_abs_jump(unsigned char *buffer, uint64_t destination)
 {
     buffer[0] = 0xFF;
     buffer[1] = 0x25;
@@ -159,13 +288,12 @@ static void write_absolute_jump(unsigned char *buffer, uint64_t destination)
 static HANDLE g_process = NULL;
 static DWORD g_processId = 0;
 static HMODULE g_remoteModule = NULL;
-static char g_handshakePath[MAX_PATH] = {0};
 static struct HookEntry g_patchedEntries[HOOK_MAX_ENTRIES];
 static unsigned char g_originalBytes[HOOK_MAX_ENTRIES][HOOK_ENTRY_PATCH_BYTES];
 static int g_patchedCount = 0;
 static bool g_injected = false;
 
-EXPORT int inject(const char *target, const char *dll_path, const char *handshake_path)
+EXPORT int inject(const char *target, const char *dll_path)
 {
     if (g_injected)
     {
@@ -178,8 +306,7 @@ EXPORT int inject(const char *target, const char *dll_path, const char *handshak
         return INJECT_ERR_BAD_ARGS;
     }
 
-    const char *handshake = handshake_path && handshake_path[0] ? handshake_path : "gtdump_hook.handshake";
-
+    /* the target is either a process id or an executable name */
     DWORD pid = 0;
     char *end = NULL;
     errno = 0;
@@ -203,8 +330,6 @@ EXPORT int inject(const char *target, const char *dll_path, const char *handshak
         return INJECT_ERR_BAD_DLL_PATH;
     }
 
-    DeleteFileA(handshake);
-
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
                                      PROCESS_VM_WRITE | PROCESS_VM_READ,
                                  FALSE, pid);
@@ -214,6 +339,7 @@ EXPORT int inject(const char *target, const char *dll_path, const char *handshak
         return INJECT_ERR_OPEN_PROCESS;
     }
 
+    /* load the dll inside the target */
     size_t pathBytes = strlen(fullPath) + 1;
     LPVOID remote = VirtualAllocEx(process, NULL, pathBytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!remote)
@@ -253,23 +379,25 @@ EXPORT int inject(const char *target, const char *dll_path, const char *handshak
         return INJECT_ERR_MODULE_NOT_FOUND;
     }
 
-    struct HookHandshake handshakeData;
-    memset(&handshakeData, 0, sizeof(handshakeData));
-    if (!wait_for_handshake(handshake, (uint64_t)(uintptr_t)remoteModule, &handshakeData))
+    /* the dll publishes the functions it wants patched over its pipe */
+    struct HookHandshake handshake;
+    memset(&handshake, 0, sizeof(handshake));
+    if (!fetch_handshake((uint64_t)(uintptr_t)remoteModule, &handshake))
     {
-        set_error("the handshake file never appeared");
+        set_error("the dll never published its handshake");
         CloseHandle(process);
         return INJECT_ERR_HANDSHAKE_MISSING;
     }
-    if (handshakeData.entryCount == 0)
+    if (handshake.entryCount == 0)
     {
         set_error("the dll did not find any hook to install");
         CloseHandle(process);
         return INJECT_ERR_NO_HOOKS;
     }
 
-    HANDLE patchProcess =
-        OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+    HANDLE patchProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ |
+                                          PROCESS_QUERY_INFORMATION,
+                                      FALSE, pid);
     if (!patchProcess)
     {
         set_error("OpenProcess for patching failed %lu", GetLastError());
@@ -278,15 +406,15 @@ EXPORT int inject(const char *target, const char *dll_path, const char *handshak
     }
 
     g_patchedCount = 0;
-    for (uint32_t i = 0; i < handshakeData.entryCount && i < HOOK_MAX_ENTRIES; i++)
+    for (uint32_t i = 0; i < handshake.entryCount && i < HOOK_MAX_ENTRIES; i++)
     {
-        const struct HookEntry *entry = &handshakeData.entries[i];
+        const struct HookEntry *entry = &handshake.entries[i];
         if (!entry->target || !entry->detour)
             continue;
         if (entry->entryPatchBytes != HOOK_ENTRY_PATCH_BYTES)
         {
-            set_error("%s expects a %u byte patch but only %d bytes are supported", entry->name, entry->entryPatchBytes,
-                      HOOK_ENTRY_PATCH_BYTES);
+            set_error("%s expects a %u byte patch but only %d bytes are supported", entry->name,
+                      entry->entryPatchBytes, HOOK_ENTRY_PATCH_BYTES);
             continue;
         }
 
@@ -301,20 +429,19 @@ EXPORT int inject(const char *target, const char *dll_path, const char *handshak
         }
 
         unsigned char patch[HOOK_ENTRY_PATCH_BYTES];
-        write_absolute_jump(patch, entry->detour);
+        write_abs_jump(patch, entry->detour);
 
         DWORD oldProtection = 0;
         if (!VirtualProtectEx(patchProcess, (void *)entry->target, HOOK_ENTRY_PATCH_BYTES, PAGE_EXECUTE_READWRITE,
-                              &oldProtection))
+                               &oldProtection))
         {
             set_error("VirtualProtectEx failed for %s (%lu)", entry->name, GetLastError());
             continue;
         }
 
         SIZE_T written = 0;
-        bool patched =
-            WriteProcessMemory(patchProcess, (void *)entry->target, patch, HOOK_ENTRY_PATCH_BYTES, &written) &&
-            written == HOOK_ENTRY_PATCH_BYTES;
+        bool patched = WriteProcessMemory(patchProcess, (void *)entry->target, patch, HOOK_ENTRY_PATCH_BYTES, &written) &&
+                       written == HOOK_ENTRY_PATCH_BYTES;
         DWORD ignored = 0;
         VirtualProtectEx(patchProcess, (void *)entry->target, HOOK_ENTRY_PATCH_BYTES, oldProtection, &ignored);
 
@@ -330,7 +457,6 @@ EXPORT int inject(const char *target, const char *dll_path, const char *handshak
     g_process = patchProcess;
     g_processId = pid;
     g_remoteModule = remoteModule;
-    snprintf(g_handshakePath, sizeof(g_handshakePath), "%s", handshake);
     g_injected = true;
 
     CloseHandle(process);
@@ -360,7 +486,7 @@ EXPORT int cleanup(void)
             const struct HookEntry *entry = &g_patchedEntries[i];
             DWORD oldProtection = 0;
             if (!VirtualProtectEx(g_process, (void *)entry->target, HOOK_ENTRY_PATCH_BYTES, PAGE_EXECUTE_READWRITE,
-                                  &oldProtection))
+                                   &oldProtection))
                 continue;
             SIZE_T written = 0;
             WriteProcessMemory(g_process, (void *)entry->target, g_originalBytes[i], HOOK_ENTRY_PATCH_BYTES, &written);
@@ -372,8 +498,9 @@ EXPORT int cleanup(void)
         if (g_remoteModule)
         {
             FARPROC freeLibrary = GetProcAddress(GetModuleHandleA("kernel32.dll"), "FreeLibrary");
-            HANDLE thread = CreateRemoteThread(g_process, NULL, 0, (LPTHREAD_START_ROUTINE)freeLibrary,
-                                               (LPVOID)g_remoteModule, 0, NULL);
+            HANDLE thread =
+                CreateRemoteThread(g_process, NULL, 0, (LPTHREAD_START_ROUTINE)freeLibrary, (LPVOID)g_remoteModule, 0,
+                                   NULL);
             if (thread)
             {
                 WaitForSingleObject(thread, 5000);
@@ -382,12 +509,6 @@ EXPORT int cleanup(void)
         }
         CloseHandle(g_process);
         g_process = NULL;
-    }
-
-    if (g_handshakePath[0])
-    {
-        DeleteFileA(g_handshakePath);
-        g_handshakePath[0] = 0;
     }
 
     g_injected = false;

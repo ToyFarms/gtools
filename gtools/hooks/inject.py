@@ -8,8 +8,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 INJECTOR_DLL = HOOKS_DIR / "injector.dll"
 PAYLOAD_DLL = HOOKS_DIR / "hook.dll"
-HANDSHAKE = HOOKS_DIR / "gtdump_hook.handshake"
-STATUS = HOOKS_DIR / "gtdump_hook.inject.status"
+STATUS = HOOKS_DIR / "inject.status"
 
 TARGET = b"Growtopia.exe"
 
@@ -124,12 +123,12 @@ def main() -> int:
             status["debug_error"] = str(debug_error)
 
             injector = ctypes.CDLL(str(INJECTOR_DLL))
-            injector.inject.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
+            injector.inject.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
             injector.inject.restype = ctypes.c_int
             injector.last_error.argtypes = []
             injector.last_error.restype = ctypes.c_char_p
 
-            rc = injector.inject(TARGET, os.fsencode(str(PAYLOAD_DLL)), os.fsencode(str(HANDSHAKE)))
+            rc = injector.inject(TARGET, os.fsencode(str(PAYLOAD_DLL)))
             status["rc"] = str(rc)
             status["error"] = (injector.last_error() or b"unknown error").decode("utf-8", "replace")
             exit_code = 0 if rc == 0 else 1

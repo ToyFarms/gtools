@@ -1,7 +1,7 @@
-// BUILD_FLAGS[gcc, clang]: -O3 -march=native -ffast-math -funroll-loops -shared
-// -fPIC BUILD_FLAGS[gcc]: -fopenmp -fomit-frame-pointer -falign-functions=32
-// -falign-loops=32 BUILD_FLAGS[msvc]: /O2 /arch:AVX2 /fp:fast /openmp /GL /Gy
-// /TC BUILD_FLAGS[gcc(mingw)]: -O2 -shared -fPIC -mwindows
+// BUILD_FLAGS[gcc, clang]: -O3 -march=native -ffast-math -funroll-loops -shared -fPIC
+// BUILD_FLAGS[gcc]: -fopenmp -fomit-frame-pointer -falign-functions=32 -falign-loops=32
+// BUILD_FLAGS[msvc]: /O2 /arch:AVX2 /fp:fast /openmp /GL /Gy /TC
+// BUILD_FLAGS[gcc(mingw)]: -O2 -shared -fPIC -mwindows
 
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
@@ -43,13 +43,18 @@
 #define MAX_LOG_LINE          8192
 #define MAX_LOG_MESSAGE       1024
 #define MAX_EVENT_TEXT        512
-#define EVENT_QUEUE_CAPACITY  256
 #define MAX_PIPE_LINE         4096
 #define PIPE_POLL_INTERVAL_MS 20
 #define MAX_CONFIG_LINE       1024
 #define MAX_HOST_LENGTH       128
 #define MAX_VERSION_LENGTH    64
 #define MAX_SERVER_LENGTH     64
+
+#define MAX_PIPE_CLIENTS      4
+#define CLIENT_EVENT_CAPACITY 64
+
+#define LOG_BACKLOG_CAPACITY 128
+#define LOG_BACKLOG_LINE     512
 
 enum LogLevel
 {
@@ -64,6 +69,11 @@ static uint8_t *g_selfBase = NULL;
 static size_t g_selfSize = 0;
 static HMODULE g_selfModule = NULL;
 static ULONGLONG g_startTick = 0;
+
+static struct HookHandshake g_handshake;
+static volatile LONG g_handshakeReady = 0;
+
+static void QueueEvent(const char *name, const char *text);
 
 static void CopyText(char *destination, size_t destinationSize, const char *source)
 {
@@ -81,7 +91,9 @@ static void CopyText(char *destination, size_t destinationSize, const char *sour
     destination[length] = 0;
 }
 
-static HANDLE g_logFile = INVALID_HANDLE_VALUE;
+static char g_logBacklog[LOG_BACKLOG_CAPACITY][LOG_BACKLOG_LINE];
+static size_t g_logBacklogHead = 0;
+static size_t g_logBacklogCount = 0;
 static CRITICAL_SECTION g_logLock;
 static volatile LONG g_logLockReady = 0;
 static volatile LONG g_logLevel = LOG_LEVEL_INFO;
@@ -91,29 +103,34 @@ static int CurrentLogLevel(void)
     return (int)InterlockedCompareExchange(&g_logLevel, 0, 0);
 }
 
-static void WriteLogLine(const char *text)
+static void LogEmit(const char *message, int keep)
 {
+    if (!message)
+        return;
+
     char line[MAX_LOG_MESSAGE + 128];
     SYSTEMTIME st;
     GetLocalTime(&st);
     int written = snprintf(line, sizeof(line), "[%02u:%02u:%02u.%03u][tid %5lu] %s\n", st.wHour, st.wMinute, st.wSecond,
-                           st.wMilliseconds, (unsigned long)GetCurrentThreadId(), text ? text : "");
+                           st.wMilliseconds, (unsigned long)GetCurrentThreadId(), message);
     if (written < 0)
         return;
     if ((size_t)written >= sizeof(line))
-        written = (int)sizeof(line) - 1;
+        line[sizeof(line) - 1] = 0;
 
     OutputDebugStringA(line);
 
-    if (g_logLockReady)
-        EnterCriticalSection(&g_logLock);
-    if (g_logFile != INVALID_HANDLE_VALUE)
+    if (keep && g_logLockReady)
     {
-        DWORD writtenBytes = 0;
-        WriteFile(g_logFile, line, (DWORD)written, &writtenBytes, NULL);
-    }
-    if (g_logLockReady)
+        EnterCriticalSection(&g_logLock);
+        CopyText(g_logBacklog[g_logBacklogHead], LOG_BACKLOG_LINE, line);
+        g_logBacklogHead = (g_logBacklogHead + 1) % LOG_BACKLOG_CAPACITY;
+        if (g_logBacklogCount < LOG_BACKLOG_CAPACITY)
+            g_logBacklogCount++;
         LeaveCriticalSection(&g_logLock);
+    }
+
+    QueueEvent("log", message);
 }
 
 static void LogError(const char *format, ...)
@@ -127,7 +144,7 @@ static void LogError(const char *format, ...)
         return;
     if ((size_t)written >= sizeof(message))
         message[sizeof(message) - 1] = 0;
-    WriteLogLine(message);
+    LogEmit(message, 1);
 }
 
 static void LogInfo(const char *format, ...)
@@ -144,7 +161,7 @@ static void LogInfo(const char *format, ...)
         return;
     if ((size_t)written >= sizeof(message))
         message[sizeof(message) - 1] = 0;
-    WriteLogLine(message);
+    LogEmit(message, 1);
 }
 
 static void LogTrace(const char *format, ...)
@@ -161,7 +178,7 @@ static void LogTrace(const char *format, ...)
         return;
     if ((size_t)written >= sizeof(message))
         message[sizeof(message) - 1] = 0;
-    WriteLogLine(message);
+    LogEmit(message, 0);
 }
 
 struct SSO
@@ -313,8 +330,6 @@ struct HookState
     int logLevel;
     int allowAnyModule;
     int streamGameLogs;
-    char logFilePath[MAX_PATH];
-    char handshakePath[MAX_PATH];
 
     char clientVersion[MAX_VERSION_LENGTH];
     char clientProtocol[MAX_VERSION_LENGTH];
@@ -351,8 +366,6 @@ static const struct SettingDescriptor g_settings[] = {
     {"log_level", SETTING_NUMBER, NUMBER_FIELD(logLevel, 0, 2), 1},
     {"allow_any_module", SETTING_NUMBER, NUMBER_FIELD(allowAnyModule, 0, 1), 1},
     {"stream_game_logs", SETTING_NUMBER, NUMBER_FIELD(streamGameLogs, 0, 1), 1},
-    {"log_file", SETTING_TEXT, TEXT_FIELD(logFilePath), 1},
-    {"handshake_file", SETTING_TEXT, TEXT_FIELD(handshakePath), 1},
 
     {"client_version", SETTING_TEXT, TEXT_FIELD(clientVersion), 0},
     {"client_protocol", SETTING_TEXT, TEXT_FIELD(clientProtocol), 0},
@@ -462,47 +475,68 @@ struct QueuedEvent
     char text[MAX_EVENT_TEXT];
 };
 
-static struct QueuedEvent g_eventQueue[EVENT_QUEUE_CAPACITY];
-static size_t g_eventHead = 0;
-static size_t g_eventTail = 0;
-static size_t g_eventCount = 0;
-static CRITICAL_SECTION g_eventLock;
-static volatile LONG g_eventLockReady = 0;
+struct PipeReader
+{
+    char buffer[MAX_PIPE_LINE * 2];
+    size_t length;
+    size_t position;
+};
+
+struct PipeClient
+{
+    HANDLE pipe;
+    struct PipeReader reader;
+    struct QueuedEvent events[CLIENT_EVENT_CAPACITY];
+    size_t head;
+    size_t tail;
+    size_t count;
+    volatile LONG active;
+};
+
+static struct PipeClient g_clients[MAX_PIPE_CLIENTS];
+static CRITICAL_SECTION g_clientLock;
+static volatile LONG g_clientLockReady = 0;
 
 static void QueueEvent(const char *name, const char *text)
 {
-    if (!name || !text || !g_eventLockReady)
+    if (!name || !text || !g_clientLockReady)
         return;
 
-    EnterCriticalSection(&g_eventLock);
-    if (g_eventCount == EVENT_QUEUE_CAPACITY)
+    EnterCriticalSection(&g_clientLock);
+    for (int i = 0; i < MAX_PIPE_CLIENTS; i++)
     {
-        g_eventTail = (g_eventTail + 1) % EVENT_QUEUE_CAPACITY;
-        g_eventCount--;
+        struct PipeClient *client = &g_clients[i];
+        if (!client->active)
+            continue;
+        if (client->count == CLIENT_EVENT_CAPACITY)
+        {
+            client->tail = (client->tail + 1) % CLIENT_EVENT_CAPACITY;
+            client->count--;
+        }
+        struct QueuedEvent *slot = &client->events[client->head];
+        CopyText(slot->name, sizeof(slot->name), name);
+        CopyText(slot->text, sizeof(slot->text), text);
+        client->head = (client->head + 1) % CLIENT_EVENT_CAPACITY;
+        client->count++;
     }
-    struct QueuedEvent *slot = &g_eventQueue[g_eventHead];
-    CopyText(slot->name, sizeof(slot->name), name);
-    CopyText(slot->text, sizeof(slot->text), text);
-    g_eventHead = (g_eventHead + 1) % EVENT_QUEUE_CAPACITY;
-    g_eventCount++;
-    LeaveCriticalSection(&g_eventLock);
+    LeaveCriticalSection(&g_clientLock);
 }
 
-static int PopEvent(struct QueuedEvent *out)
+static int PopEvent(struct PipeClient *client, struct QueuedEvent *out)
 {
-    if (!out || !g_eventLockReady)
+    if (!client || !out || !g_clientLockReady)
         return 0;
 
-    EnterCriticalSection(&g_eventLock);
-    if (g_eventCount == 0)
+    EnterCriticalSection(&g_clientLock);
+    if (client->count == 0)
     {
-        LeaveCriticalSection(&g_eventLock);
+        LeaveCriticalSection(&g_clientLock);
         return 0;
     }
-    *out = g_eventQueue[g_eventTail];
-    g_eventTail = (g_eventTail + 1) % EVENT_QUEUE_CAPACITY;
-    g_eventCount--;
-    LeaveCriticalSection(&g_eventLock);
+    *out = client->events[client->tail];
+    client->tail = (client->tail + 1) % CLIENT_EVENT_CAPACITY;
+    client->count--;
+    LeaveCriticalSection(&g_clientLock);
     return 1;
 }
 
@@ -551,23 +585,17 @@ static void BindHttpClientPostTrampoline(void *address);
 
 static struct HookSpec g_hookSpecs[] = {
     {"GameLog_Printf",       "game_log_printf",
-     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 88 "
-     "10 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
-     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 70 10 00 00 48 8B D9 33 D2 48 8D 4C "
-     "24 70 41",                                                             STOLEN_LOG_BYTES,       NULL, BindLogPrintfTrampoline         },
+     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 88 10 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
+     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 70 10 00 00 48 8B D9 33 D2 48 8D 4C 24 70 41", STOLEN_LOG_BYTES,       NULL, BindLogPrintfTrampoline         },
     {"GameLog_Raw",          "game_log_raw",
-     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 68 "
-     "28 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
-     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 50 28 00 00 48 8B D9 33 D2 48 8D 4C "
-     "24 40 41",                                                             STOLEN_LOG_BYTES,       NULL, BindLogRawTrampoline            },
+     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 68 28 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
+     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 50 28 00 00 48 8B D9 33 D2 48 8D 4C 24 40 41", STOLEN_LOG_BYTES,       NULL, BindLogRawTrampoline            },
     {"OnServerDataResponse", "server_data_response",
-     "40 55 56 48 83 EC 28 81 BA ?? ?? ?? ?? C8 00 00 00 48 8B EA 48 8B 41 08 "
-     "48 8B F1 75 1D C7 80 ?? ?? ?? ?? 00 "
-     "00 00 00",                                                             STOLEN_RESPONSE_BYTES,  NULL, BindServerDataResponseTrampoline},
+     "40 55 56 48 83 EC 28 81 BA ?? ?? ?? ?? C8 00 00 00 48 8B EA 48 8B 41 08 48 8B F1 75 1D C7 80 ?? ?? ?? ?? 00 "
+     "00 00 00",                                                                         STOLEN_RESPONSE_BYTES,  NULL, BindServerDataResponseTrampoline},
     {"HttpClient_Post",      "http_client_post",
-     "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 48 FD FF FF 48 81 EC "
-     "B8 03 00 00 48 8B 05 ?? ?? ?? ?? 48 "
-     "33 C4 48 89 85 A0 02 00 00 4C 89 4C 24 40 45 8B E0 4C 8B FA 4C 8B E9", STOLEN_HTTP_POST_BYTES, NULL, BindHttpClientPostTrampoline    },
+     "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 48 FD FF FF 48 81 EC B8 03 00 00 48 8B 05 ?? ?? ?? ?? 48 "
+     "33 C4 48 89 85 A0 02 00 00 4C 89 4C 24 40 45 8B E0 4C 8B FA 4C 8B E9",             STOLEN_HTTP_POST_BYTES, NULL, BindHttpClientPostTrampoline    },
 };
 
 #define HOOK_COUNT ((int)(sizeof(g_hookSpecs) / sizeof(g_hookSpecs[0])))
@@ -758,21 +786,6 @@ static void PublishStateEvent(void)
     QueueEvent("state", text);
 }
 
-static void PublishLogEvent(const char *message)
-{
-    if (!message)
-        return;
-
-    LockState();
-    int enabled = g_state.streamGameLogs;
-    UnlockState();
-
-    if (!enabled)
-        return;
-
-    QueueEvent("log", message);
-}
-
 static long long FASTCALL Hook_GameLogPrintf(const char *format, ...)
 {
     char line[MAX_LOG_LINE];
@@ -785,10 +798,13 @@ static long long FASTCALL Hook_GameLogPrintf(const char *format, ...)
     if ((size_t)written >= sizeof(line))
         line[sizeof(line) - 1] = 0;
 
-    if (CurrentLogLevel() >= LOG_LEVEL_INFO)
-        WriteLogLine(line);
-
-    PublishLogEvent(line);
+    LockState();
+    int streaming = g_state.streamGameLogs;
+    UnlockState();
+    if (streaming)
+        LogEmit(line, 0);
+    else if (CurrentLogLevel() >= LOG_LEVEL_TRACE)
+        OutputDebugStringA(line);
 
     if (g_trampolineLogPrintf)
         return g_trampolineLogPrintf("%s", line);
@@ -808,12 +824,17 @@ static long long FASTCALL Hook_GameLogRaw(const char *format, ...)
     if ((size_t)written >= sizeof(line))
         line[sizeof(line) - 1] = 0;
 
-    if (CurrentLogLevel() >= LOG_LEVEL_INFO)
-        WriteLogLine(line);
-    PublishLogEvent(line);
+    LockState();
+    int streaming = g_state.streamGameLogs;
+    UnlockState();
+    if (streaming)
+        LogEmit(line, 0);
+    else if (CurrentLogLevel() >= LOG_LEVEL_TRACE)
+        OutputDebugStringA(line);
 
     if (g_trampolineLogRaw)
         return g_trampolineLogRaw("%s", line);
+
     return 0;
 }
 
@@ -1175,6 +1196,19 @@ static void BuildStatusLine(struct TextBuffer *buffer)
     }
 }
 
+static void HexEncode(const uint8_t *data, size_t length, char *out, size_t outSize)
+{
+    static const char digits[] = "0123456789abcdef";
+    size_t position = 0;
+    for (size_t i = 0; i < length && position + 2 < outSize; i++)
+    {
+        out[position++] = digits[data[i] >> 4];
+        out[position++] = digits[data[i] & 0xF];
+    }
+    if (position < outSize)
+        out[position] = 0;
+}
+
 static int HandlePipeCommand(HANDLE pipe, const char *line)
 {
     char command[64];
@@ -1214,6 +1248,23 @@ static int HandlePipeCommand(HANDLE pipe, const char *line)
         BuildStatusLine(&status);
         WritePipeLine(pipe, status.data ? status.data : "DATA");
         BufferFree(&status);
+        return 0;
+    }
+    if (_stricmp(command, "HANDSHAKE") == 0)
+    {
+        if (!InterlockedCompareExchange(&g_handshakeReady, 0, 0))
+        {
+            WritePipeLine(pipe, "ERR the hooks are not installed yet");
+            return 0;
+        }
+        char hex[MAX_PIPE_LINE];
+        HexEncode((const uint8_t *)&g_handshake, sizeof(g_handshake), hex, sizeof(hex));
+        struct TextBuffer reply;
+        memset(&reply, 0, sizeof(reply));
+        BufferAppendText(&reply, "HANDSHAKE ");
+        BufferAppendText(&reply, hex);
+        WritePipeLine(pipe, reply.data ? reply.data : "HANDSHAKE");
+        BufferFree(&reply);
         return 0;
     }
     if (_stricmp(command, "GET") == 0)
@@ -1276,18 +1327,49 @@ static int HandlePipeCommand(HANDLE pipe, const char *line)
     return 0;
 }
 
-static void ServePipeClient(HANDLE pipe)
+static void SendLogBacklog(HANDLE pipe)
 {
-    struct PipeReader reader;
-    memset(&reader, 0, sizeof(reader));
+    if (!g_logLockReady)
+        return;
 
+    char lines[LOG_BACKLOG_CAPACITY][LOG_BACKLOG_LINE];
+    size_t count = 0;
+
+    EnterCriticalSection(&g_logLock);
+    count = g_logBacklogCount;
+    size_t start = (g_logBacklogHead + LOG_BACKLOG_CAPACITY - count) % LOG_BACKLOG_CAPACITY;
+    for (size_t i = 0; i < count; i++)
+        CopyText(lines[i], LOG_BACKLOG_LINE, g_logBacklog[(start + i) % LOG_BACKLOG_CAPACITY]);
+    LeaveCriticalSection(&g_logLock);
+
+    for (size_t i = 0; i < count; i++)
+    {
+        struct TextBuffer message;
+        memset(&message, 0, sizeof(message));
+        BufferAppendText(&message, "EVENT log ");
+        AppendSingleLine(&message, lines[i]);
+        WritePipeLine(pipe, message.data ? message.data : "EVENT");
+        BufferFree(&message);
+    }
+}
+
+static DWORD WINAPI PipeClientThread(LPVOID raw)
+{
+    int slot = (int)(intptr_t)raw;
+    if (slot < 0 || slot >= MAX_PIPE_CLIENTS)
+        return 0;
+
+    struct PipeClient *client = &g_clients[slot];
+    HANDLE pipe = client->pipe;
+
+    SendLogBacklog(pipe);
     PublishStateEvent();
 
     char line[MAX_PIPE_LINE];
     for (;;)
     {
         struct QueuedEvent event;
-        while (PopEvent(&event))
+        while (PopEvent(client, &event))
         {
             struct TextBuffer message;
             memset(&message, 0, sizeof(message));
@@ -1302,14 +1384,46 @@ static void ServePipeClient(HANDLE pipe)
             BufferFree(&message);
         }
 
-        int result = ReadPipeLine(pipe, &reader, line, sizeof(line));
+        int result = ReadPipeLine(pipe, &client->reader, line, sizeof(line));
         if (result < 0)
-            return;
+            break;
         if (result == 0)
             continue;
         if (HandlePipeCommand(pipe, line) < 0)
-            return;
+            break;
     }
+
+    EnterCriticalSection(&g_clientLock);
+    client->active = 0;
+    client->pipe = NULL;
+    LeaveCriticalSection(&g_clientLock);
+
+    DisconnectNamedPipe(pipe);
+    CloseHandle(pipe);
+    return 0;
+}
+
+static int RegisterClient(HANDLE pipe)
+{
+    int slot = -1;
+    EnterCriticalSection(&g_clientLock);
+    for (int i = 0; i < MAX_PIPE_CLIENTS; i++)
+    {
+        if (!g_clients[i].active)
+        {
+            g_clients[i].active = 1;
+            g_clients[i].pipe = pipe;
+            g_clients[i].head = 0;
+            g_clients[i].tail = 0;
+            g_clients[i].count = 0;
+            g_clients[i].reader.length = 0;
+            g_clients[i].reader.position = 0;
+            slot = i;
+            break;
+        }
+    }
+    LeaveCriticalSection(&g_clientLock);
+    return slot;
 }
 
 static DWORD WINAPI PipeServerThread(LPVOID unused)
@@ -1348,11 +1462,34 @@ static DWORD WINAPI PipeServerThread(LPVOID unused)
         if (!connected && GetLastError() == ERROR_PIPE_CONNECTED)
             connected = TRUE;
 
-        if (connected)
-            ServePipeClient(pipe);
+        if (!connected)
+        {
+            CloseHandle(pipe);
+            continue;
+        }
 
-        DisconnectNamedPipe(pipe);
-        CloseHandle(pipe);
+        int slot = RegisterClient(pipe);
+        if (slot < 0)
+        {
+            LogInfo("[pipe] too many clients, refusing the connection");
+            DisconnectNamedPipe(pipe);
+            CloseHandle(pipe);
+            continue;
+        }
+
+        HANDLE thread = CreateThread(NULL, 0, PipeClientThread, (LPVOID)(intptr_t)slot, 0, NULL);
+        if (!thread)
+        {
+            LogError("[pipe] cannot start the client thread (err=%lu)", GetLastError());
+            EnterCriticalSection(&g_clientLock);
+            g_clients[slot].active = 0;
+            g_clients[slot].pipe = NULL;
+            LeaveCriticalSection(&g_clientLock);
+            DisconnectNamedPipe(pipe);
+            CloseHandle(pipe);
+            continue;
+        }
+        CloseHandle(thread);
     }
 }
 
@@ -1365,53 +1502,32 @@ static void StartPipeServer(void)
         LogError("[pipe] cannot start the pipe thread (err=%lu)", GetLastError());
 }
 
-static void WriteHandshakeFile(void)
+static void PublishHandshake(void)
 {
-    char path[MAX_PATH];
-    LockState();
-    CopyText(path, sizeof(path), g_state.handshakePath);
-    UnlockState();
-    if (!path[0])
-    {
-        LogInfo("[hook] no handshake file configured, the injector cannot "
-                "patch the entry points");
-        return;
-    }
-
-    struct HookHandshake handshake;
-    memset(&handshake, 0, sizeof(handshake));
-    handshake.magic = HOOK_PROTOCOL_MAGIC;
-    handshake.version = HOOK_PROTOCOL_VERSION;
-    handshake.processId = (uint64_t)GetCurrentProcessId();
-    handshake.imageBase = (uint64_t)(uintptr_t)g_imageBase;
-    handshake.imageSize = (uint64_t)g_imageSize;
-    handshake.dllBase = (uint64_t)(uintptr_t)g_selfBase;
+    memset(&g_handshake, 0, sizeof(g_handshake));
+    g_handshake.magic = HOOK_PROTOCOL_MAGIC;
+    g_handshake.version = HOOK_PROTOCOL_VERSION;
+    g_handshake.processId = (uint64_t)GetCurrentProcessId();
+    g_handshake.imageBase = (uint64_t)(uintptr_t)g_imageBase;
+    g_handshake.imageSize = (uint64_t)g_imageSize;
+    g_handshake.dllBase = (uint64_t)(uintptr_t)g_selfBase;
 
     uint32_t count = 0;
     for (int i = 0; i < HOOK_COUNT && count < HOOK_MAX_ENTRIES; i++)
     {
         if (g_hookRuntime[i].status == HOOK_STATUS_MISSING)
             continue;
-        struct HookEntry *entry = &handshake.entries[count++];
+        struct HookEntry *entry = &g_handshake.entries[count++];
         entry->target = (uint64_t)(uintptr_t)g_hookRuntime[i].target;
         entry->detour = (uint64_t)(uintptr_t)g_hookSpecs[i].detour;
         entry->stolenBytes = g_hookSpecs[i].stolenBytes;
         entry->entryPatchBytes = HOOK_ENTRY_PATCH_BYTES;
         CopyText(entry->name, sizeof(entry->name), g_hookSpecs[i].name);
     }
-    handshake.entryCount = count;
+    g_handshake.entryCount = count;
 
-    HANDLE file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE)
-    {
-        LogError("[hook] cannot write the handshake file %s (err=%lu)", path, GetLastError());
-        return;
-    }
-    DWORD writtenBytes = 0;
-    WriteFile(file, &handshake, (DWORD)sizeof(handshake), &writtenBytes, NULL);
-    CloseHandle(file);
-
-    LogInfo("[hook] handshake written to %s (%u hooks)", path, count);
+    InterlockedExchange(&g_handshakeReady, 1);
+    LogInfo("[hook] handshake published, %u hooks", count);
 }
 
 static void InstallHooks(void)
@@ -1431,9 +1547,7 @@ static void InstallHooks(void)
         if (!target)
         {
             if (matchCount > 1)
-                LogError("[hook] %s: the signature matches %d places, refusing "
-                         "to patch",
-                         spec->name, matchCount);
+                LogError("[hook] %s: the signature matches %d places, refusing to patch", spec->name, matchCount);
             else
                 LogError("[hook] %s: signature not found", spec->name);
             continue;
@@ -1451,7 +1565,7 @@ static void InstallHooks(void)
         LogInfo("[hook] %s: trampoline at %p for %p", spec->name, trampoline, target);
     }
 
-    WriteHandshakeFile();
+    PublishHandshake();
 }
 
 static DWORD WINAPI PatchWatcherThread(LPVOID unused)
@@ -1486,26 +1600,13 @@ static DWORD WINAPI PatchWatcherThread(LPVOID unused)
         Sleep(50);
     }
     LogInfo("[hook] the entry points were not patched in time");
-
     return 0;
-}
-
-static void ModuleDirectory(HMODULE module, char *out, size_t outSize)
-{
-    char path[MAX_PATH];
-    memset(path, 0, sizeof(path));
-    GetModuleFileNameA(module, path, MAX_PATH);
-    char *separator = strrchr(path, '\\');
-    if (separator)
-        *separator = 0;
-    CopyText(out, outSize, path);
 }
 
 static void TrimInPlace(char *text)
 {
     if (!text)
         return;
-
     size_t length = strlen(text);
     while (length > 0 && (text[length - 1] == ' ' || text[length - 1] == '\t' || text[length - 1] == '\r' ||
                           text[length - 1] == '\n'))
@@ -1524,46 +1625,8 @@ static void TrimInPlace(char *text)
     }
 }
 
-static int IsAbsolutePath(const char *path)
+static void ApplyConfigEntry(const char *key, const char *value)
 {
-    if (!path || !path[0])
-        return 0;
-    if (path[0] == '\\' || path[0] == '/')
-        return 1;
-    if (path[1] == ':')
-        return 1;
-    return 0;
-}
-
-static void ApplyPathSetting(const char *value, const char *directory, char *out, size_t outSize)
-{
-    if (IsAbsolutePath(value))
-        CopyText(out, outSize, value);
-    else
-        snprintf(out, outSize, "%s\\%s", directory, value);
-}
-
-static void ApplyConfigEntry(const char *key, const char *value, const char *directory)
-{
-    if (_stricmp(key, "log_file") == 0)
-    {
-        char path[MAX_PATH];
-        ApplyPathSetting(value, directory, path, sizeof(path));
-        LockState();
-        CopyText(g_state.logFilePath, sizeof(g_state.logFilePath), path);
-        UnlockState();
-        return;
-    }
-    if (_stricmp(key, "handshake_file") == 0)
-    {
-        char path[MAX_PATH];
-        ApplyPathSetting(value, directory, path, sizeof(path));
-        LockState();
-        CopyText(g_state.handshakePath, sizeof(g_state.handshakePath), path);
-        UnlockState();
-        return;
-    }
-
     const struct SettingDescriptor *descriptor = FindSetting(key);
     if (!descriptor)
     {
@@ -1601,11 +1664,11 @@ static void LoadConfig(void)
     SetDefaultState();
 
     char directory[MAX_PATH];
-    ModuleDirectory(g_selfModule, directory, sizeof(directory));
-
-    char defaultLogPath[MAX_PATH];
-    snprintf(defaultLogPath, sizeof(defaultLogPath), "%s\\gtdump_hook.log", directory);
-    CopyText(g_state.logFilePath, sizeof(g_state.logFilePath), defaultLogPath);
+    memset(directory, 0, sizeof(directory));
+    GetModuleFileNameA(g_selfModule, directory, MAX_PATH);
+    char *separator = strrchr(directory, '\\');
+    if (separator)
+        *separator = 0;
 
     char configPath[MAX_PATH];
     snprintf(configPath, sizeof(configPath), "%s\\gtdump_hook.cfg", directory);
@@ -1627,14 +1690,12 @@ static void LoadConfig(void)
             char *value = separator + 1;
             TrimInPlace(key);
             TrimInPlace(value);
-            ApplyConfigEntry(key, value, directory);
+            ApplyConfigEntry(key, value);
         }
         fclose(file);
     }
 
     char environment[MAX_PATH];
-    if (GetEnvironmentVariableA("GTD_LOG", environment, sizeof(environment)) && environment[0])
-        CopyText(g_state.logFilePath, sizeof(g_state.logFilePath), environment);
     if (GetEnvironmentVariableA("GTD_IP", environment, sizeof(environment)) && environment[0])
         CopyText(g_state.proxyHost, sizeof(g_state.proxyHost), environment);
     if (GetEnvironmentVariableA("GTD_PORT", environment, sizeof(environment)) && environment[0])
@@ -1701,6 +1762,7 @@ static LONG NTAPI FirstChanceLogger(PEXCEPTION_POINTERS exceptionPointers)
 
     LogInfo("[veh] code=0x%08lX rip=0x%llX fault=0x%llX tid=%lu", code, (unsigned long long)rip,
             (unsigned long long)fault, (unsigned long)GetCurrentThreadId());
+
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -1714,8 +1776,7 @@ static LONG WINAPI CrashFilter(EXCEPTION_POINTERS *exceptionPointers)
     uintptr_t rip = (uintptr_t)context->Rip;
     uintptr_t image = (uintptr_t)g_imageBase;
 
-    LogError("[crash] code=0x%08lX address=%p rip=0x%llX (module rva 0x%llX) "
-             "tid=%lu",
+    LogError("[crash] code=0x%08lX address=%p rip=0x%llX (module rva 0x%llX) tid=%lu",
              (unsigned long)record->ExceptionCode, (void *)record->ExceptionAddress, (unsigned long long)rip,
              (unsigned long long)(rip - image), (unsigned long)GetCurrentThreadId());
 
@@ -1732,8 +1793,6 @@ static LONG WINAPI CrashFilter(EXCEPTION_POINTERS *exceptionPointers)
     }
 #endif
 
-    if (g_logFile != INVALID_HANDLE_VALUE)
-        FlushFileBuffers(g_logFile);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -1742,14 +1801,15 @@ static DWORD WINAPI Worker(LPVOID unused)
     (void)unused;
 
     InitializeHookSpecs();
-    LoadConfig();
 
     InitializeCriticalSection(&g_stateLock);
     g_stateLockReady = 1;
-    InitializeCriticalSection(&g_eventLock);
-    g_eventLockReady = 1;
+    InitializeCriticalSection(&g_clientLock);
+    g_clientLockReady = 1;
     InitializeCriticalSection(&g_logLock);
     g_logLockReady = 1;
+
+    LoadConfig();
 
     HMODULE self = NULL;
     if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -1758,9 +1818,6 @@ static DWORD WINAPI Worker(LPVOID unused)
         g_selfBase = (uint8_t *)self;
         g_selfSize = ImageSizeOf(g_selfBase);
     }
-
-    g_logFile = CreateFileA(g_state.logFilePath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
     g_startTick = GetTickCount64();
 
@@ -1799,7 +1856,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
     }
     else if (reason == DLL_PROCESS_DETACH)
     {
-        WriteLogLine("[hook] the dll is being unloaded");
+        OutputDebugStringA("[hook] the dll is being unloaded\n");
     }
     return TRUE;
 }
