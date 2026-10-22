@@ -40,7 +40,7 @@ def agent_running() -> bool:
 
 
 def spawn_agent(timeout: float = 2.0) -> bool:
-    """start the host process (rundll32 hook.dll,AgentMain) unless one is already running"""
+    """start the host process (rundll32 agent.dll,AgentMain) unless one is already running"""
     if agent_running():
         return True
 
@@ -49,7 +49,8 @@ def spawn_agent(timeout: float = 2.0) -> bool:
     if not rundll32.exists():
         return False
 
-    # the agent owns the pipe and the shared section, it must outlive this process
+    # the agent owns the pipe and hooks the game on its own, it must outlive
+    # this process
     DETACHED_PROCESS = 0x00000008
     CREATE_NO_WINDOW = 0x08000000
     try:
@@ -174,13 +175,25 @@ def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
             status["debug_privilege"] = str(int(enabled))
             status["debug_error"] = str(debug_error)
 
-            # the agent owns the pipe and the shared section, it has to be up
-            # before the shim boots inside the game
+            # the agent owns the pipe and it is the single injector: after the
+            # UAC prompt its watch dog hooks the game roughly a second later,
+            # injecting here in parallel would only fight over the pid lock
             status["agent"] = str(int(spawn_agent()))
             if not agent_running():
                 status["error"] = "the rundll32 agent is not running"
                 return status
 
+            if target_running():
+                ctl = _wait_hooks_installed(60.0)
+                if ctl is not None:
+                    ctl.close()
+                    status["rc"] = "0"
+                    status["error"] = "the agent watch dog injected the hook"
+                    return status
+
+            # fallback: the agent watch dog did not come through (missing or
+            # broken injector exports); do it here the classic way, the lock
+            # serializes with the watch dog if it happens to be mid inject
             injector = ctypes.CDLL(str(HOOK_INJECTOR_DLL))
             injector.inject.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
             injector.inject.restype = ctypes.c_int
@@ -270,6 +283,23 @@ def _hooks_installed(ctl: HookControl) -> bool:
     return any(value in ("ready", "patched") for key, value in pairs.items() if key.startswith("hook_"))
 
 
+def _wait_hooks_installed(timeout: float) -> HookControl | None:
+    """poll the agent pipe until a status reports installed hooks"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        ctl = HookControl()
+        try:
+            if ctl.connect(0.25) and _hooks_installed(ctl):
+                return ctl
+        except Exception:
+            pass
+        finally:
+            ctl.close()
+        time.sleep(0.25)
+
+    return None
+
+
 def _ensure_hook_once() -> HookControl | None:
     if not hook_available():
         logger.info("hook unsupported")
@@ -283,6 +313,15 @@ def _ensure_hook_once() -> HookControl | None:
 
     if not target_running():
         return None
+
+    # the agent watch dog hooks the game by itself roughly a second after the
+    # game shows up; give it the chance before elevating again, otherwise the
+    # first run after every restart pays a UAC prompt and a lock race
+    if agent_running():
+        fresh = _wait_hooks_installed(60.0)
+        if fresh is not None:
+            logger.info("the agent watch dog hooked the game")
+            return fresh
 
     if not inject_hook():
         return None
@@ -323,7 +362,7 @@ def _run_elevated_injector() -> bool:
     try:
         return elevate(
             wait_for_child=True,
-            timeout=90,
+            timeout=150,
             argv=[sys.executable, "-m", "gtools.hooks.hook", str(HOOK_STATUS)],
         )
     finally:
