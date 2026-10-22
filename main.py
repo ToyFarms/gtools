@@ -156,26 +156,26 @@ def check_hosts() -> None:
 def run_proxy() -> None:
     proxy = Proxy()
 
-    hook_ctl = None
-    hook_listener_stop = None
-    hook_listener_thread = None
-
     hook_ctl = hook.ensure_hook()
+    hook_listener_stop = threading.Event()
+
     if hook_ctl is not None:
         try:
             hook.apply_hook_settings(hook_ctl)
             hook.publish_hook_state(hook_ctl.status())
-
-            hook_listener_stop = threading.Event()
-            hook_listener_thread = threading.Thread(
-                target=hook.listen_hook_events,
-                args=(hook_ctl, hook_listener_stop),
-                daemon=True,
-            )
-            hook_listener_thread.start()
         except PipeError:
+            # the listener keeps watching for the pipe and reattaches on a
+            # break, it reapplies the settings itself once the hook is back,
+            # do not drop to a hook-less proxy because one setup window raced
+            # a shutdown
             logger.exception("hook control pipe disappeared during setup")
-            hook_ctl = None
+
+    hook_listener_thread = threading.Thread(
+        target=hook.listen_hook_events,
+        args=(hook_ctl if hook_ctl is not None else hook.HookControl(), hook_listener_stop),
+        daemon=True,
+    )
+    hook_listener_thread.start()
 
     server = setup_http_proxy()
     t = threading.Thread(target=server.serve_forever, daemon=True)

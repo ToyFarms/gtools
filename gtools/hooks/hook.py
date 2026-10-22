@@ -284,17 +284,18 @@ def _hooks_installed(ctl: HookControl) -> bool:
 
 
 def _wait_hooks_installed(timeout: float) -> HookControl | None:
-    """poll the agent pipe until a status reports installed hooks"""
+    """poll the agent pipe until a status reports installed hooks; the returned
+    control stays connected, the caller owns it"""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         ctl = HookControl()
         try:
-            if ctl.connect(0.25) and _hooks_installed(ctl):
-                return ctl
+            connected = ctl.connect(0.25)
         except Exception:
-            pass
-        finally:
-            ctl.close()
+            connected = False
+        if connected and _hooks_installed(ctl):
+            return ctl
+        ctl.close()
         time.sleep(0.25)
 
     return None

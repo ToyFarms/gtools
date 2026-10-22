@@ -41,6 +41,17 @@
 #define PID_MUTEX_WAIT_TRIES    200
 #define PID_MUTEX_WAIT_STEP_MS  100
 
+/* the agent lives while the proxy (its pipe clients) or the game live; when
+   both are gone for the idle grace it terminates itself, no matter which of
+   the two was closed first. the bootstrap window covers an agent that was
+   spawned but whose proxy never connected. */
+#ifndef AGENT_IDLE_GRACE_MS
+#define AGENT_IDLE_GRACE_MS 15000
+#endif
+#ifndef AGENT_BOOTSTRAP_EXIT_MS
+#define AGENT_BOOTSTRAP_EXIT_MS 180000
+#endif
+
 #define RING_DRAIN_PASSES 5 /* the log ring is read every 100 ms, the head every pass */
 
 typedef int (*FnRemoteInject)(const char *target, const char *dll_path);
@@ -357,6 +368,8 @@ static HANDLE g_memoryProcess = NULL;
 static uint64_t g_selfRemote = 0;
 static uint32_t g_selfRva = 0;
 static int g_selfRvaValid = 0;
+static volatile LONG g_everHadClient = 0;
+static ULONGLONG g_agentStartedAt = 0;
 
 static struct ShimShared g_shimHead; /* everything before the log ring */
 static int g_shimValid = 0;
@@ -1094,6 +1107,8 @@ static int RegisterClient(HANDLE pipe)
             break;
         }
     }
+    if (slot >= 0)
+        InterlockedExchange(&g_everHadClient, 1);
     LeaveCriticalSection(&g_clientLock);
     return slot;
 }
@@ -1396,6 +1411,60 @@ static void MonitorTarget(void)
 
 /* ---------- agent entry ---------- */
 
+/* ---------- self termination when both the proxy and the game are gone ---------- */
+
+static void MaybeShutdown(void)
+{
+    int clients = 0;
+    EnterCriticalSection(&g_clientLock);
+    for (int i = 0; i < MAX_PIPE_CLIENTS; i++)
+    {
+        if (g_clients[i].active)
+            clients++;
+    }
+    LeaveCriticalSection(&g_clientLock);
+
+    /* the proxy holds one persistent pipe client, so zero clients for the
+       grace period means the proxy is gone; brief reconnect and probe gaps
+       never reach the grace window */
+    static ULONGLONG idleSince = 0;
+    ULONGLONG now = GetTickCount64();
+    if (clients > 0)
+    {
+        idleSince = 0;
+        return;
+    }
+    if (!idleSince)
+    {
+        idleSince = now;
+        return;
+    }
+    if (now - idleSince < AGENT_IDLE_GRACE_MS)
+        return;
+
+    /* the game check is cheap but the idle state only justifies it once per
+       second; a hooked game keeps its own tracked handle and a running game
+       keeps the watch dog busy, so neither lets the countdown stand */
+    static ULONGLONG lastGameCheck = 0;
+    if (lastGameCheck && now - lastGameCheck < 1000)
+        return;
+    lastGameCheck = now;
+
+    if (g_gamePid)
+        return;
+    if (FindTargetPid(HOOK_AGENT_TARGET))
+        return;
+
+    /* an agent the proxy never connected to exits after the bootstrap
+       window instead of living forever */
+    if (!InterlockedCompareExchange(&g_everHadClient, 0, 0) &&
+        now - g_agentStartedAt < AGENT_BOOTSTRAP_EXIT_MS)
+        return;
+
+    AgentLog("[agent] the proxy and %s are both gone, terminating", HOOK_AGENT_TARGET);
+    ExitProcess(0);
+}
+
 static HANDLE AgentAcquireSingleton(void)
 {
     HANDLE mutex = CreateMutexA(NULL, TRUE, HOOK_AGENT_MUTEX_NAME);
@@ -1465,6 +1534,8 @@ static void RunAgent(void)
     if (!singleton)
         return;
 
+    g_agentStartedAt = GetTickCount64();
+
     InitializeCriticalSection(&g_clientLock);
     g_clientLockReady = 1;
     InitializeCriticalSection(&g_logLock);
@@ -1498,6 +1569,7 @@ static void RunAgent(void)
         SyncShimSettings();
         DiffState();
         WatchStatuses();
+        MaybeShutdown();
         if (pass % RING_DRAIN_PASSES == 0)
             DrainLogRing();
         pass++;
