@@ -1,13 +1,15 @@
+import ctypes
 import logging
-from pathlib import Path
-import subprocess
+import os
 import sys
 import threading
 import time
+import traceback
+from ctypes import wintypes
+from pathlib import Path
 
-from gtools.core.privilege import elevate
+from gtools.core.privilege import elevate, is_elevated
 from gtools.hooks.control import HookControl
-from gtools.hooks.inject import is_elevated
 from gtools.proxy.event import UpdateClientVersion, UpdateServerData
 from gtools.setting import setting
 
@@ -15,13 +17,132 @@ logger = logging.getLogger("hook")
 
 
 HOOKS_DIR = Path(__file__).resolve().parent
-HOOK_INJECTOR = HOOKS_DIR / "inject.py"
+HOOK_INJECTOR_DLL = HOOKS_DIR / "injector.dll"
 HOOK_PAYLOAD = HOOKS_DIR / "hook.dll"
 HOOK_STATUS = setting.appdir / "inject.status"
 
+TARGET = b"Growtopia.exe"
 
-def hook_available() -> bool:
-    return (HOOKS_DIR / "injector.dll").exists() and HOOK_PAYLOAD.exists() and HOOK_INJECTOR.exists()
+
+class LUID(ctypes.Structure):
+    _fields_ = [
+        ("LowPart", wintypes.DWORD),
+        ("HighPart", wintypes.LONG),
+    ]
+
+
+class LUID_AND_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [
+        ("Luid", LUID),
+        ("Attributes", wintypes.DWORD),
+    ]
+
+
+class TOKEN_PRIVILEGES(ctypes.Structure):
+    _fields_ = [
+        ("PrivilegeCount", wintypes.DWORD),
+        ("Privileges", LUID_AND_ATTRIBUTES * 1),
+    ]
+
+
+def enable_debug_privilege() -> tuple[bool, int]:
+    TOKEN_ADJUST_PRIVILEGES = 0x0020
+    TOKEN_QUERY = 0x0008
+    SE_PRIVILEGE_ENABLED = 0x0002
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi32.OpenProcessToken.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.LookupPrivilegeValueW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        ctypes.POINTER(LUID),
+    ]
+    advapi32.LookupPrivilegeValueW.restype = wintypes.BOOL
+    advapi32.AdjustTokenPrivileges.argtypes = [
+        wintypes.HANDLE,
+        wintypes.BOOL,
+        ctypes.POINTER(TOKEN_PRIVILEGES),
+        wintypes.DWORD,
+        ctypes.POINTER(TOKEN_PRIVILEGES),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    advapi32.AdjustTokenPrivileges.restype = wintypes.BOOL
+
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, ctypes.byref(token)):
+        return False, ctypes.get_last_error()
+
+    try:
+        luid = LUID()
+        if not advapi32.LookupPrivilegeValueW(None, "SeDebugPrivilege", ctypes.byref(luid)):
+            return False, ctypes.get_last_error()
+
+        privileges = TOKEN_PRIVILEGES()
+        privileges.PrivilegeCount = 1
+        privileges.Privileges[0].Luid = luid
+        privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED
+
+        ctypes.set_last_error(0)
+        ok = advapi32.AdjustTokenPrivileges(token, False, ctypes.byref(privileges), 0, None, None)
+        return bool(ok) and ctypes.get_last_error() == 0, ctypes.get_last_error()
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def write_status(status: dict[str, str], path: Path = HOOK_STATUS) -> None:
+    path.write_text("\n".join(f"{key}={value}" for key, value in status.items()) + "\n", encoding="utf-8")
+
+
+def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
+    status = {
+        "elevated": str(int(is_elevated())),
+        "debug_privilege": "0",
+        "debug_error": "0",
+        "rc": "-1",
+        "error": "injector did not run",
+    }
+
+    try:
+        if sys.maxsize <= 2**32:
+            status["error"] = "injector must run under 64-bit Python"
+        elif not HOOK_INJECTOR_DLL.exists():
+            status["error"] = f"missing {HOOK_INJECTOR_DLL}"
+        elif not HOOK_PAYLOAD.exists():
+            status["error"] = f"missing {HOOK_PAYLOAD}"
+        elif not is_elevated():
+            status["error"] = "injector is not elevated"
+        else:
+            enabled, debug_error = enable_debug_privilege()
+            status["debug_privilege"] = str(int(enabled))
+            status["debug_error"] = str(debug_error)
+
+            injector = ctypes.CDLL(str(HOOK_INJECTOR_DLL))
+            injector.inject.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+            injector.inject.restype = ctypes.c_int
+            injector.last_error.argtypes = []
+            injector.last_error.restype = ctypes.c_char_p
+
+            rc = injector.inject(TARGET, os.fsencode(str(HOOK_PAYLOAD)))
+            status["rc"] = str(rc)
+            status["error"] = (injector.last_error() or b"unknown error").decode("utf-8", "replace")
+    except Exception:
+        status["error"] = traceback.format_exc().replace("\n", " | ")
+    finally:
+        try:
+            write_status(status, status_path)
+        except Exception:
+            pass
+
+    return status
 
 
 def read_inject_status() -> dict[str, str]:
@@ -39,26 +160,43 @@ def read_inject_status() -> dict[str, str]:
     return status
 
 
+def hook_available() -> bool:
+    return HOOK_INJECTOR_DLL.exists() and HOOK_PAYLOAD.exists()
+
+
+def _run_elevated_injector() -> bool:
+    project_root = str(HOOKS_DIR.parent.parent)
+    previous = os.environ.get("PYTHONPATH")
+    os.environ["PYTHONPATH"] = project_root + (os.pathsep + previous if previous else "")
+    try:
+        return elevate(
+            wait_for_child=True,
+            timeout=90,
+            argv=[sys.executable, "-m", "gtools.hooks.hook", str(HOOK_STATUS)],
+        )
+    finally:
+        if previous is None:
+            os.environ.pop("PYTHONPATH", None)
+        else:
+            os.environ["PYTHONPATH"] = previous
+
+
 def inject_hook() -> bool:
     try:
         HOOK_STATUS.unlink()
     except FileNotFoundError:
         pass
 
-    argv = [sys.executable, str(HOOK_INJECTOR)]
-
     if is_elevated():
-        result = subprocess.run(argv, check=False)
-        if result.returncode != 0 and not HOOK_STATUS.exists():
-            logger.error(f"injector helper exited with code {result.returncode}")
+        status = run_injector()
+    else:
+        if not _run_elevated_injector():
+            logger.error("failed to start elevated injector (UAC cancelled or timed out)")
             return False
-    elif not elevate(wait_for_child=True, timeout=90, argv=argv):
-        logger.error("failed to start elevated injector (UAC cancelled or timed out)")
-        return False
+        status = read_inject_status()
 
-    status = read_inject_status()
     if not status:
-        logger.error("injector helper did not write a status file")
+        logger.error("injector did not write a status file")
         return False
 
     if status.get("elevated") != "1":
@@ -157,3 +295,18 @@ def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
             publish_hook_state(event.fields)
         elif event.name == "log":
             logger.info("[game] %s", event.payload)
+
+
+def inject_main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    status_path = Path(argv[0]) if argv else HOOK_STATUS
+    status = run_injector(status_path)
+    print(
+        f"[hook injector] elevated={status['elevated']} debug={status['debug_privilege']} rc={status['rc']}: {status['error']}",
+        flush=True,
+    )
+    return 0 if status["rc"] == "0" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(inject_main())
