@@ -1526,7 +1526,13 @@ static void TrimInPlace(char *text)
 
 static int IsAbsolutePath(const char *path)
 {
-    return path && (strchr(path, '\\') || strchr(path, '/') || strchr(path, ':'));
+    if (!path || !path[0])
+        return 0;
+    if (path[0] == '\\' || path[0] == '/')
+        return 1;
+    if (path[1] == ':')
+        return 1;
+    return 0;
 }
 
 static void ApplyPathSetting(const char *value, const char *directory, char *out, size_t outSize)

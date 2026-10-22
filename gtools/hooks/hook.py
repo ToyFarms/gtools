@@ -14,7 +14,7 @@ from gtools.setting import setting
 logger = logging.getLogger("hook")
 
 
-HOOKS_DIR = Path(__file__).resolve().parent / "gtools" / "hooks"
+HOOKS_DIR = Path(__file__).resolve().parent
 HOOK_INJECTOR = HOOKS_DIR / "inject.py"
 HOOK_PAYLOAD = HOOKS_DIR / "hook.dll"
 HOOK_HANDSHAKE = HOOKS_DIR / "gtdump_hook.handshake"
