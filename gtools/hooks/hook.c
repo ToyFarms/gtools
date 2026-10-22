@@ -38,6 +38,9 @@
 #define STOLEN_RESPONSE_BYTES  17
 #define STOLEN_HTTP_POST_BYTES 21
 
+#define HOOK_AGENT_MUTEX_NAME "Global\\gtools_hook_agent"
+#define HOOK_PID_MUTEX_PREFIX "Global\\gtools_hook_pid_"
+
 #define GAME_STRING_INLINE_CAPACITY 16
 
 #define MAX_LOG_LINE          8192
@@ -68,6 +71,7 @@ static uint8_t *g_selfBase = NULL;
 static size_t g_selfSize = 0;
 static HMODULE g_selfModule = NULL;
 static ULONGLONG g_startTick = 0;
+static HANDLE g_processMutex = NULL;
 
 static struct HookHandshake g_handshake;
 static volatile LONG g_handshakeReady = 0;
@@ -733,7 +737,6 @@ static void *BuildTrampoline(const struct HookSpec *spec, uint8_t *target)
 
     memcpy(trampoline, target, length);
 
-    /* jump back to the original function, the same 14 byte absolute jump the injector uses for the entry point */
     trampoline[length + 0] = 0xFF;
     trampoline[length + 1] = 0x25;
     trampoline[length + 2] = 0;
@@ -1047,13 +1050,6 @@ static void BindHttpClientPostTrampoline(void *address)
 {
     g_trampolineHttpClientPost = (FnHttpClientPost)address;
 }
-
-struct PipeReader
-{
-    char buffer[MAX_PIPE_LINE * 2];
-    size_t length;
-    size_t position;
-};
 
 static void WritePipeLine(HANDLE pipe, const char *text)
 {
@@ -1570,7 +1566,7 @@ static void InstallHooks(void)
 static DWORD WINAPI PatchWatcherThread(LPVOID unused)
 {
     (void)unused;
-    for (int attempt = 0; attempt < 600; attempt++)
+    for (;;)
     {
         int patched = 0;
         for (int i = 0; i < HOOK_COUNT; i++)
@@ -1594,12 +1590,11 @@ static DWORD WINAPI PatchWatcherThread(LPVOID unused)
             LogInfo("[hook] the entry points are patched, the hook is live");
             if (g_trampolineLogPrintf)
                 g_trampolineLogPrintf("%s", "[gtools] hook injected successfully");
-            return 0;
+            Sleep(1000);
+            continue;
         }
         Sleep(50);
     }
-    LogInfo("[hook] the entry points were not patched in time");
-    return 0;
 }
 
 static void SetDefaultState(void)
@@ -1702,11 +1697,250 @@ static LONG WINAPI CrashFilter(EXCEPTION_POINTERS *exceptionPointers)
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
+static void AcquireProcessHookMutex(void)
+{
+    char name[64];
+    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)GetCurrentProcessId());
+
+    HANDLE mutex = CreateMutexA(NULL, TRUE, name);
+    if (!mutex)
+    {
+        LogError("[hook] cannot create the process hook mutex (err=%lu)", GetLastError());
+        return;
+    }
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        CloseHandle(mutex);
+        LogError("[hook] this process is already hooked, refusing to run again");
+        return;
+    }
+
+    g_processMutex = mutex;
+}
+
+BOOL FASTCALL ProcessIsHooked(void)
+{
+    char name[64];
+    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)GetCurrentProcessId());
+    HANDLE existing = OpenMutexA(SYNCHRONIZE, FALSE, name);
+    if (existing)
+    {
+        CloseHandle(existing);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+#define HOOK_AGENT_TARGET "Growtopia.exe"
+
+typedef int (*FnRemoteInject)(const char *target, const char *dll_path);
+typedef const char *(*FnRemoteLastError)(void);
+
+static int AgentHasProcessMutex(DWORD pid)
+{
+    char name[64];
+    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)pid);
+    HANDLE existing = OpenMutexA(SYNCHRONIZE, FALSE, name);
+    if (existing)
+    {
+        CloseHandle(existing);
+        return 1;
+    }
+    return 0;
+}
+
+static int AgentFindTargetPid(const char *target)
+{
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return 0;
+
+    int pid = 0;
+    PROCESSENTRY32 entry;
+    memset(&entry, 0, sizeof(entry));
+    entry.dwSize = sizeof(entry);
+    if (Process32First(snapshot, &entry))
+    {
+        do
+        {
+            if (_stricmp(entry.szExeFile, target) == 0)
+            {
+                pid = (int)entry.th32ProcessID;
+                break;
+            }
+        } while (Process32Next(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return pid;
+}
+
+static HANDLE AgentMarkProcessMutex(DWORD pid)
+{
+    char name[64];
+    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)pid);
+
+    return CreateMutexA(NULL, TRUE, name);
+}
+
+static BOOL GetSelfPathA(char *destination, size_t destinationSize)
+{
+    HMODULE self = NULL;
+    if (!destination || destinationSize == 0)
+        return FALSE;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCWSTR)&GetSelfPathA, &self))
+        return FALSE;
+    DWORD length = GetModuleFileNameA(self, destination, (DWORD)destinationSize);
+    return length > 0 && length < destinationSize;
+}
+
+static void AgentDebug(const char *format, ...)
+{
+    char message[MAX_LOG_MESSAGE];
+
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+    if (written < 0)
+        return;
+    if ((size_t)written >= sizeof(message))
+        message[sizeof(message) - 1] = 0;
+    OutputDebugStringA(message);
+}
+
+static HANDLE AgentAcquireSingleton(void)
+{
+    HANDLE mutex = CreateMutexA(NULL, TRUE, HOOK_AGENT_MUTEX_NAME);
+    if (!mutex)
+        return NULL;
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        CloseHandle(mutex);
+        return NULL;
+    }
+    return mutex;
+}
+
+static void AgentRun(const char *selfPath)
+{
+    HANDLE singleton = AgentAcquireSingleton();
+    if (!singleton)
+        return;
+
+    char hookDirectory[MAX_PATH];
+    CopyText(hookDirectory, sizeof(hookDirectory), selfPath);
+    char *separator = strrchr(hookDirectory, '\\');
+    if (separator)
+        *separator = 0;
+    else
+        CopyText(hookDirectory, sizeof(hookDirectory), ".");
+
+    char injectorPath[MAX_PATH];
+    snprintf(injectorPath, sizeof(injectorPath), "%s\\injector.dll", hookDirectory);
+
+    HMODULE injector = LoadLibraryA(injectorPath);
+    if (!injector)
+    {
+        AgentDebug("[hook] agent: missing %s (err=%lu)", injectorPath, GetLastError());
+        CloseHandle(singleton);
+        return;
+    }
+
+    FnRemoteInject inject = (FnRemoteInject)(void *)GetProcAddress(injector, "inject");
+    FnRemoteLastError lastError = (FnRemoteLastError)(void *)GetProcAddress(injector, "last_error");
+    if (!inject || !lastError)
+    {
+        AgentDebug("[hook] agent: injector exports are missing");
+        FreeLibrary(injector);
+        CloseHandle(singleton);
+        return;
+    }
+
+    AgentDebug("[hook] agent: watching %s", HOOK_AGENT_TARGET);
+    for (;;)
+    {
+        int pid = AgentFindTargetPid(HOOK_AGENT_TARGET);
+        if (!pid || AgentHasProcessMutex((DWORD)pid))
+        {
+            Sleep(1000);
+            continue;
+        }
+
+        int rc = inject(HOOK_AGENT_TARGET, selfPath);
+        if (rc == 0 || rc == -1)
+        {
+            AgentMarkProcessMutex((DWORD)pid);
+            AgentDebug("[hook] agent: %s is hooked (pid %d)", HOOK_AGENT_TARGET, pid);
+        }
+        else
+        {
+            const char *failure = lastError();
+            AgentDebug("[hook] agent: %s (rc=%d: %s)", HOOK_AGENT_TARGET, rc, failure ? failure : "unknown");
+        }
+        Sleep(1000);
+    }
+}
+
+static void SpawnAgentProcess(void)
+{
+    HMODULE self = NULL;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCWSTR)&SpawnAgentProcess, &self))
+        return;
+
+    char dllPath[MAX_PATH];
+    DWORD length = GetModuleFileNameA(self, dllPath, sizeof(dllPath));
+    if (length == 0 || length >= sizeof(dllPath))
+        return;
+
+    char systemDirectory[MAX_PATH];
+    UINT systemLength = GetSystemDirectoryA(systemDirectory, sizeof(systemDirectory));
+    if (systemLength == 0 || systemLength >= sizeof(systemDirectory))
+        return;
+
+    char command[MAX_PATH * 4];
+    int written = snprintf(command, sizeof(command), "\"%s\\rundll32.exe\" \"%s\",AgentMain", systemDirectory, dllPath);
+    if (written < 0 || (size_t)written >= sizeof(command))
+        return;
+
+    STARTUPINFOA startup;
+    PROCESS_INFORMATION process;
+    ZeroMemory(&startup, sizeof(startup));
+    ZeroMemory(&process, sizeof(process));
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESHOWWINDOW;
+    startup.wShowWindow = SW_HIDE;
+
+    if (!CreateProcessA(NULL, command, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &startup, &process))
+    {
+        LogInfo("[hook] agent was not started (err=%lu)", GetLastError());
+        return;
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+}
+
+__declspec(dllexport) void CALLBACK AgentMain(HWND window, HINSTANCE instance, LPSTR commandLine, int showCommand)
+{
+    (void)window;
+    (void)instance;
+    (void)commandLine;
+    (void)showCommand;
+
+    char selfPath[MAX_PATH];
+    if (!GetSelfPathA(selfPath, sizeof(selfPath)))
+        return;
+    AgentRun(selfPath);
+}
+
 static DWORD WINAPI Worker(LPVOID unused)
 {
     (void)unused;
 
     InitializeHookSpecs();
+
+    AcquireProcessHookMutex();
 
     InitializeCriticalSection(&g_stateLock);
     g_stateLockReady = 1;
@@ -1748,6 +1982,8 @@ static DWORD WINAPI Worker(LPVOID unused)
     HANDLE watcher = CreateThread(NULL, 0, PatchWatcherThread, NULL, 0, NULL);
     if (watcher)
         CloseHandle(watcher);
+
+    SpawnAgentProcess();
     return 0;
 }
 

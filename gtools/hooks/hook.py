@@ -10,6 +10,7 @@ from pathlib import Path
 
 from gtools.core.privilege import elevate, is_elevated
 from gtools.hooks.control import HookControl
+from gtools.core.pipe import PipeError
 from gtools.proxy.event import UpdateClientVersion, UpdateServerData
 from gtools.setting import setting
 
@@ -164,6 +165,90 @@ def hook_available() -> bool:
     return HOOK_INJECTOR_DLL.exists() and HOOK_PAYLOAD.exists()
 
 
+def target_running() -> bool:
+    if sys.platform != "win32":
+        return False
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(wintypes.ULONG)),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    TH32CS_SNAPPROCESS = 0x00000002
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snapshot == wintypes.HANDLE(-1).value:
+        return False
+
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        if kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            while True:
+                if entry.szExeFile == TARGET.decode():
+                    return True
+                if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                    break
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+    return False
+
+
+def _ensure_hook_once() -> HookControl | None:
+    ctl = HookControl()
+    if ctl.connect(0.25):
+        logger.info("attached to existing hook DLL")
+        return ctl
+
+    if not hook_available():
+        logger.info("hook unsupported")
+        return
+
+    if not target_running():
+        return
+
+    if not inject_hook():
+        return
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if ctl.connect(0.25):
+            logger.info("hook control connected")
+            return ctl
+
+        time.sleep(0.05)
+
+    logger.error("hook was injected but its control pipe did not appear")
+
+    return
+
+
+def ensure_hook(wait_forever: bool = True) -> HookControl | None:
+    while True:
+        hook_ctl = _ensure_hook_once()
+        if hook_ctl is not None:
+            return hook_ctl
+
+        if not wait_forever:
+            return
+
+        if not target_running():
+            time.sleep(0.5)
+            continue
+
+        time.sleep(1.0)
+
+
 def _run_elevated_injector() -> bool:
     project_root = str(HOOKS_DIR.parent.parent)
     previous = os.environ.get("PYTHONPATH")
@@ -214,32 +299,6 @@ def inject_hook() -> bool:
     return True
 
 
-def ensure_hook() -> HookControl | None:
-    ctl = HookControl()
-    if ctl.connect(0.25):
-        logger.info("attached to existing hook DLL")
-        return ctl
-
-    if not hook_available():
-        logger.info("hook unsupported")
-        return None
-
-    if not inject_hook():
-        return None
-
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        if ctl.connect(0.25):
-            logger.info("hook control connected")
-            return ctl
-
-        time.sleep(0.05)
-
-    logger.error("hook was injected but its control pipe did not appear")
-
-    return
-
-
 def apply_hook_settings(ctl: HookControl) -> None:
     values = {
         "proxy_host": setting.proxy_server,
@@ -276,17 +335,49 @@ def publish_hook_state(fields: dict[str, str]) -> None:
                 UpdateServerData(server=server, port=port_number).send()
 
 
+def _reattach_hook(stop: threading.Event) -> HookControl | None:
+    while not stop.is_set():
+        fresh = ensure_hook(wait_forever=False)
+        if fresh is not None:
+            return fresh
+
+        if not target_running():
+            stop.wait(0.5)
+            continue
+
+        inject_hook()
+        stop.wait(1.0)
+
+    return
+
+
 def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
+    current = ctl
+
     while not stop.is_set():
         try:
-            event = ctl.wait_event(timeout=0.5)
+            event = current.wait_event(timeout=0.5)
         except Exception:
             logger.debug("failed to read a hook event", exc_info=True)
             continue
 
-        if not ctl.connected:
-            logger.warning("the hook control pipe was closed")
-            return
+        if not current.connected:
+            logger.warning("the hook control pipe was closed, waiting for the hook to return")
+            current.close()
+
+            fresh = _reattach_hook(stop)
+            if fresh is None:
+                return
+
+            current = fresh
+            try:
+                apply_hook_settings(current)
+                publish_hook_state(current.status())
+            except PipeError:
+                logger.exception("hook setup failed after reconnect")
+                continue
+
+            continue
 
         if event is None:
             continue
