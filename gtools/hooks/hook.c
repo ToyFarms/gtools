@@ -1671,7 +1671,7 @@ static void LoadConfig(void)
         *separator = 0;
 
     char configPath[MAX_PATH];
-    snprintf(configPath, sizeof(configPath), "%s\\gtdump_hook.cfg", directory);
+    snprintf(configPath, sizeof(configPath), "%s\\hook.cfg", directory);
 
     FILE *file = fopen(configPath, "r");
     if (file)
