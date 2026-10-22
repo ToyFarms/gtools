@@ -17,38 +17,11 @@ logger = logging.getLogger("hook")
 HOOKS_DIR = Path(__file__).resolve().parent
 HOOK_INJECTOR = HOOKS_DIR / "inject.py"
 HOOK_PAYLOAD = HOOKS_DIR / "hook.dll"
-HOOK_STATUS = HOOKS_DIR / "inject.status"
-HOOK_CONFIG = HOOKS_DIR / "hook.cfg"
+HOOK_STATUS = setting.appdir / "inject.status"
 
 
 def hook_available() -> bool:
     return (HOOKS_DIR / "injector.dll").exists() and HOOK_PAYLOAD.exists() and HOOK_INJECTOR.exists()
-
-
-def ensure_hook_config() -> None:
-    lines = HOOK_CONFIG.read_text(encoding="utf-8").splitlines() if HOOK_CONFIG.exists() else []
-    managed = {
-        "proxy_host",
-        "proxy_port",
-        "handshake_file",
-        "handshake",
-        "log_file",
-        "out_of_process",
-        "server_ip",
-        "server_port",
-        "notify_url",
-        "notify_format",
-        "server_type",
-        "loginurl",
-        "nop_request",
-        "verbose",
-    }
-    lines = [line for line in lines if line.split("=", 1)[0].strip() not in managed]
-    lines += [
-        f"proxy_host = {setting.proxy_server}",
-        f"proxy_port = {setting.proxy_port}",
-    ]
-    HOOK_CONFIG.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def read_inject_status() -> dict[str, str]:
@@ -67,8 +40,6 @@ def read_inject_status() -> dict[str, str]:
 
 
 def inject_hook() -> bool:
-    ensure_hook_config()
-
     try:
         HOOK_STATUS.unlink()
     except FileNotFoundError:
@@ -109,7 +80,6 @@ def ensure_hook() -> HookControl | None:
     ctl = HookControl()
     if ctl.connect(0.25):
         logger.info("attached to existing hook DLL")
-        ensure_hook_config()
         return ctl
 
     if not hook_available():
@@ -136,6 +106,10 @@ def apply_hook_settings(ctl: HookControl) -> None:
     values = {
         "proxy_host": setting.proxy_server,
         "proxy_port": str(setting.proxy_port),
+        "start_delay_ms": str(setting.hook.start_delay_ms),
+        "log_level": str(setting.hook.log_level),
+        "allow_any_module": str(int(setting.hook.allow_any_module)),
+        "stream_game_logs": str(int(setting.hook.stream_game_logs)),
     }
     for key, value in values.items():
         if not ctl.set(key, value):

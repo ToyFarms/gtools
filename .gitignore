@@ -20,5 +20,3 @@ out/
 *.pdb
 .cmodcache/
 sample/
-gtools/hooks/inject.status
-gtools/hooks/hook.cfg

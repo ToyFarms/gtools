@@ -45,7 +45,6 @@
 #define MAX_EVENT_TEXT        512
 #define MAX_PIPE_LINE         4096
 #define PIPE_POLL_INTERVAL_MS 20
-#define MAX_CONFIG_LINE       1024
 #define MAX_HOST_LENGTH       128
 #define MAX_VERSION_LENGTH    64
 #define MAX_SERVER_LENGTH     64
@@ -1603,52 +1602,6 @@ static DWORD WINAPI PatchWatcherThread(LPVOID unused)
     return 0;
 }
 
-static void TrimInPlace(char *text)
-{
-    if (!text)
-        return;
-    size_t length = strlen(text);
-    while (length > 0 && (text[length - 1] == ' ' || text[length - 1] == '\t' || text[length - 1] == '\r' ||
-                          text[length - 1] == '\n'))
-    {
-        text[--length] = 0;
-    }
-    size_t start = 0;
-    while (text[start] == ' ' || text[start] == '\t' || text[start] == '\r' || text[start] == '\n')
-        start++;
-    if (start > 0)
-    {
-        size_t index = 0;
-        while (text[start])
-            text[index++] = text[start++];
-        text[index] = 0;
-    }
-}
-
-static void ApplyConfigEntry(const char *key, const char *value)
-{
-    const struct SettingDescriptor *descriptor = FindSetting(key);
-    if (!descriptor)
-    {
-        LogInfo("[config] ignoring the unknown key '%s'", key);
-        return;
-    }
-    if (!descriptor->writable)
-    {
-        LogInfo("[config] ignoring the read only key '%s'", key);
-        return;
-    }
-
-    char error[128];
-    LockState();
-    int applied = ApplySetting(descriptor, value, error, sizeof(error));
-    if (applied && strcmp(descriptor->name, "log_level") == 0)
-        ApplyLogLevelSetting();
-    UnlockState();
-    if (!applied)
-        LogError("[config] %s: %s", key, error);
-}
-
 static void SetDefaultState(void)
 {
     CopyText(g_state.proxyHost, sizeof(g_state.proxyHost), "127.0.0.1");
@@ -1657,53 +1610,6 @@ static void SetDefaultState(void)
     g_state.logLevel = LOG_LEVEL_INFO;
     g_state.allowAnyModule = 0;
     g_state.streamGameLogs = 0;
-}
-
-static void LoadConfig(void)
-{
-    SetDefaultState();
-
-    char directory[MAX_PATH];
-    memset(directory, 0, sizeof(directory));
-    GetModuleFileNameA(g_selfModule, directory, MAX_PATH);
-    char *separator = strrchr(directory, '\\');
-    if (separator)
-        *separator = 0;
-
-    char configPath[MAX_PATH];
-    snprintf(configPath, sizeof(configPath), "%s\\hook.cfg", directory);
-
-    FILE *file = fopen(configPath, "r");
-    if (file)
-    {
-        char line[MAX_CONFIG_LINE];
-        while (fgets(line, sizeof(line), file))
-        {
-            TrimInPlace(line);
-            if (line[0] == 0 || line[0] == '#' || line[0] == ';')
-                continue;
-            char *separator = strchr(line, '=');
-            if (!separator)
-                continue;
-            *separator = 0;
-            char *key = line;
-            char *value = separator + 1;
-            TrimInPlace(key);
-            TrimInPlace(value);
-            ApplyConfigEntry(key, value);
-        }
-        fclose(file);
-    }
-
-    char environment[MAX_PATH];
-    if (GetEnvironmentVariableA("GTD_IP", environment, sizeof(environment)) && environment[0])
-        CopyText(g_state.proxyHost, sizeof(g_state.proxyHost), environment);
-    if (GetEnvironmentVariableA("GTD_PORT", environment, sizeof(environment)) && environment[0])
-        g_state.proxyPort = atoi(environment);
-    if (GetEnvironmentVariableA("GTD_VERBOSE", environment, sizeof(environment)) && environment[0])
-        g_state.logLevel = atoi(environment);
-
-    ApplyLogLevelSetting();
 }
 
 static size_t ImageSizeOf(uint8_t *base)
@@ -1809,7 +1715,7 @@ static DWORD WINAPI Worker(LPVOID unused)
     InitializeCriticalSection(&g_logLock);
     g_logLockReady = 1;
 
-    LoadConfig();
+    SetDefaultState();
 
     HMODULE self = NULL;
     if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,

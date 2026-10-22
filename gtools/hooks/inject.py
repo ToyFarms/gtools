@@ -8,8 +8,11 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 INJECTOR_DLL = HOOKS_DIR / "injector.dll"
 PAYLOAD_DLL = HOOKS_DIR / "hook.dll"
-STATUS = HOOKS_DIR / "inject.status"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from gtools.setting import setting
+
+STATUS = setting.appdir / "inject.status"
 TARGET = b"Growtopia.exe"
 
 
