@@ -25,11 +25,12 @@ class NetType(IntEnum):
     CLIENT_LOG_REQUEST = 7
     CLIENT_LOG_RESPONSE = 8
 
-    # server sends entity position records for client-side interpolation
+    # server sends entity position records for client-side interpolation, or possibly anti cheat measures?
     POSITION_SYNC = 9
-    # server instructs client to write position history into ring buffer slots
+    # server instructs client to write position history into ring buffer slots, received when leaving the world
     POSITION_HISTORY_WRITE = 10
-    UNK11 = 11
+    # sent by the client with ~30hz rate
+    PLAYER_FRAME_COUNTER = 11
 
     @classmethod
     def _missing_(cls, value: int) -> "NetType":
@@ -120,6 +121,23 @@ class TankFlags(IntFlag):
     DOUBLE_JUMPED = 1 << 26
     UNK3 = 1 << 27
     ACID_DAMAGE = 1 << 28
+
+
+class PlayerFrameFlags(IntEnum):
+    NONE = 0
+    LEFT = 1
+    RIGHT = 2
+    UNK3 = 3
+    JUMP = 4
+    LEFT_JUMP = 5
+    RIGHT_JUMP = 6
+
+    @classmethod
+    def _missing_(cls, value: int) -> "PlayerFrameFlags":
+        obj = int.__new__(cls, value)
+        obj._name_ = f"UNKNOWN_{value}"
+        obj._value_ = value
+        return obj
 
 
 # TODO: have constructor for variant
@@ -316,8 +334,8 @@ class PositionSyncHeaderEntry(Serializable):
     _Struct: struct.Struct = struct.Struct("<BBHHBB")
     SIZE = 8
 
-    def __init__(self, key: int = 0, b1: int = 0, w2: int = 0, w4: int = 0, b6: int = 0, b7: int = 0) -> None:
-        self.key = key
+    def __init__(self, net_id: int = 0, b1: int = 0, w2: int = 0, w4: int = 0, b6: int = 0, b7: int = 0) -> None:
+        self.net_id = net_id
         self.b1 = b1
         self.w2 = w2
         self.w4 = w4
@@ -325,14 +343,14 @@ class PositionSyncHeaderEntry(Serializable):
         self.b7 = b7
 
     def serialize(self) -> bytes:
-        return self._Struct.pack(self.key, self.b1, self.w2, self.w4, self.b6, self.b7)
+        return self._Struct.pack(self.net_id, self.b1, self.w2, self.w4, self.b6, self.b7)
 
     @classmethod
     def deserialize(cls, data: bytes) -> "PositionSyncHeaderEntry":
         return cls(*cls._Struct.unpack(data[: cls.SIZE]))
 
     def __repr__(self) -> str:
-        return f"PositionSyncHeaderEntry(key={self.key}, b1={self.b1}, w2={self.w2}, w4={self.w4}, b6={self.b6}, b7={self.b7})"
+        return f"PositionSyncHeaderEntry(net_id={self.net_id}, b1={self.b1}, w2={self.w2}, w4={self.w4}, b6={self.b6}, b7={self.b7})"
 
 
 class PositionSnapshotEntry(Serializable):
@@ -341,36 +359,36 @@ class PositionSnapshotEntry(Serializable):
 
     def __init__(
         self,
-        key: int = 0,
+        net_id: int = 0,
         b1: int = 0,
         b2: int = 0,
         b3: int = 0,
-        d4: int = 0,
-        d8: int = 0,
+        player_tick: int = 0,
+        flags: TankFlags = TankFlags.NONE,
         w12: int = 0,
-        w14: int = 0,
-        w16: int = 0,
+        x: int = 0,
+        y: int = 0,
         w18: int = 0,
         w20: int = 0,
         b22: int = 0,
         b23: int = 0,
     ) -> None:
-        self.key = key
+        self.net_id = net_id
         self.b1 = b1
         self.b2 = b2
         self.b3 = b3
-        self.d4 = d4
-        self.d8 = d8
+        self.player_tick = player_tick
+        self.flags = flags
         self.w12 = w12
-        self.w14 = w14
-        self.w16 = w16
+        self.x = x
+        self.y = y
         self.w18 = w18
         self.w20 = w20
         self.b22 = b22
         self.b23 = b23
 
     def serialize(self) -> bytes:
-        return self._Struct.pack(self.key, self.b1, self.b2, self.b3, self.d4, self.d8, self.w12, self.w14, self.w16, self.w18, self.w20, self.b22, self.b23)
+        return self._Struct.pack(self.net_id, self.b1, self.b2, self.b3, self.player_tick, self.flags, self.w12, self.x, self.y, self.w18, self.w20, self.b22, self.b23)
 
     @classmethod
     def deserialize(cls, data: bytes) -> "PositionSnapshotEntry":
@@ -378,8 +396,8 @@ class PositionSnapshotEntry(Serializable):
 
     def __repr__(self) -> str:
         return (
-            f"PositionSnapshotEntry(key={self.key}, b=({self.b1},{self.b2},{self.b3}), d4={self.d4}, d8={self.d8}, "
-            f"w=({self.w12},{self.w14},{self.w16},{self.w18},{self.w20}), b22={self.b22}, b23={self.b23})"
+            f"PositionSnapshotEntry(net_id={self.net_id}, b=({self.b1},{self.b2},{self.b3}), player_tick={self.player_tick}, flags={self.flags}, "
+            f"w=({self.w12},x={self.x},y={self.y},{self.w18},{self.w20}), b22={self.b22}, b23={self.b23})"
         )
 
 
@@ -509,6 +527,25 @@ class PositionHistoryWritePacket(Serializable):
         )
 
 
+class PlayerFrameCounter(Serializable):
+    _Struct = struct.Struct("<II")
+
+    def __init__(self, tick: int, flags: PlayerFrameFlags) -> None:
+        self.tick = tick
+        self.flags = flags
+
+    def serialize(self) -> bytes:
+        return self._Struct.pack(self.tick, self.flags)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "PlayerFrameCounter":
+        t, f = cls._Struct.unpack(data)
+        return cls(tick=t, flags=PlayerFrameFlags(f))
+
+    def __repr__(self) -> str:
+        return f"PlayerFrameCounter(tick={self.tick}, flags={self.flags})"
+
+
 class UnknownPacket(Serializable):
     def __init__(self, data: bytes) -> None:
         self.data = data
@@ -601,6 +638,8 @@ class NetPacket(Serializable):
                 pkt = PositionSyncPacket.deserialize(pkt)
             case NetType.POSITION_HISTORY_WRITE:
                 pkt = PositionHistoryWritePacket.deserialize(pkt)
+            case NetType.PLAYER_FRAME_COUNTER:
+                pkt = PlayerFrameCounter.deserialize(pkt)
             case _:
                 pkt = UnknownPacket.deserialize(pkt)
 
