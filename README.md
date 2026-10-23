@@ -30,6 +30,7 @@
 
 > [!NOTE]
 > clone with submodule (if already cloned): `git submodule update --init --recursive`
+>
 > clone with submodule: `git clone --recurse-submodules https://github.com/ToyFarms/gtools`
 
 ```
@@ -99,6 +100,27 @@ simply ctrl+c, it will automatically unregister
 
 broker/extension is restart-resistant, meaning it will automatically recover if any of them goes down
 so you can safely interrupt to make some change
+
+how it works:
+
+how a proxy work is simple, it just acts as a real server from the client perspective, and a real client from the server perspective.
+the usually hard part is how we can redirect the connection that the game made from the real server to our own server.
+fortunately Growtopia makes it really easy for us to do this
+
+Growtopia fetches /growtopia/server_data.php from either www.growtopia1.com or www.growtopia2.com (alternate) that contains
+the enet server address
+so, the logical way is just to spin up a local https server with a self signed certificate, such that we can intercept the requests
+and modify the address field with our own custom server address.
+we can leverage hosts file so that www.growtopia1.com or www.growtopia2.com resolves to our https server
+this works if the client didnt use certificate pinning, which it doesnt atleast until v5.59. the update added certificate pinning
+so the https server is out of the question.
+
+the another way is to use dll injection, which may be risky, but i dont think the AC is sophisticated enough to detect this.
+the goal is to find the function that creates the POST request to www.growtopia1.com, and we need to stub this function out
+with our own trampoline with a jmp absolute instruction.
+from this function, we gather the version, protocol, platform data so we can send it to our proxy later.
+then we stub out the function that parses the server_data.php returns, in this function we directly modify the actual server
+response with our proxy address and let it run normally
 
 LEGAL AND ETHICS
 
