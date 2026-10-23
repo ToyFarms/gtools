@@ -13,6 +13,7 @@ class Kind(IntEnum):
     VEC3 = 4
     UNSIGNED = 5
     SIGNED = 9
+    ENTITY_REF = 10
 
 
 class Variant:
@@ -88,7 +89,18 @@ class Variant:
         def compact_repr(self) -> str:
             return f"{self.value}i"
 
-    Type = vfloat | vstr | vvec2 | vvec3 | vuint | vint
+    @dataclass(frozen=True)
+    class vref:
+        value: int = 0
+        kind: Literal[Kind.ENTITY_REF] = Kind.ENTITY_REF
+
+        def __repr__(self) -> str:
+            return f"Variant.vref({self.value})"
+
+        def compact_repr(self) -> str:
+            return f"ref({self.value})"
+
+    Type = vfloat | vstr | vvec2 | vvec3 | vuint | vint | vref
 
     def __init__(self, values: list[Type] | None = None) -> None:
         self._values: list[Variant.Type] = values if values else []
@@ -191,6 +203,8 @@ class Variant:
                 s.write_u32(v.value)
             elif v.kind == Kind.SIGNED:
                 s.write_i32(v.value)
+            elif v.kind == Kind.ENTITY_REF:
+                s.write_u64(v.value)
             else:
                 raise ValueError("invalid Kind")
 
@@ -276,7 +290,8 @@ class Variant:
                     )
                     break
                 out.append(Variant.vint(value=s.read_i32()))
-
+            elif kind == Kind.ENTITY_REF:
+                out.append(Variant.vref(value=s.read_u64()))
             else:
                 raise ValueError("invalid Kind")
 
@@ -379,6 +394,16 @@ class Variant:
                     return Variant.vint(value=s.read_i32())
                 s.read_i32()
 
+            elif kind == Kind.ENTITY_REF:
+                if s.remaining() < 8:
+                    Variant.logger.warning(
+                        f"truncated ENTITY_REF payload at element {i} " f"(count={count} declared, target idx={idx}), aborting",
+                        stacklevel=2,
+                    )
+                    break
+                if i == idx:
+                    return Variant.vref(value=s.read_u64())
+                s.read_u64()
             else:
                 raise ValueError("invalid Kind")
 
