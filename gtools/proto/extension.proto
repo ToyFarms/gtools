@@ -94,6 +94,9 @@ enum InterestType {
   INTEREST_TRACK = 8;
   INTEREST_CLIENT_LOG_REQUEST = 9;
   INTEREST_CLIENT_LOG_RESPONSE = 10;
+  INTEREST_POSITION_SYNC = 62;
+  INTEREST_POSITION_HISTORY_WRITE = 63;
+  INTEREST_UNK11 = 64;
 
   INTEREST_STATE = 11;
   INTEREST_CALL_FUNCTION = 12;
@@ -256,6 +259,8 @@ message InterestError {}
 message InterestTrack { repeated gtools.op.BinOp where = 1; }
 message InterestClientLogRequest {}
 message InterestClientLogResponse {}
+message InterestPositionSync {}
+message InterestPositionHistoryWrite {}
 
 message InterestState { repeated gtools.op.BinOp where = 1; }
 message InterestCallFunction {

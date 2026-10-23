@@ -15,6 +15,8 @@ NETPACKET_TO_INTEREST_TYPE: dict[NetType, InterestType] = {
     NetType.TRACK: InterestType.INTEREST_TRACK,
     NetType.CLIENT_LOG_REQUEST: InterestType.INTEREST_CLIENT_LOG_REQUEST,
     NetType.CLIENT_LOG_RESPONSE: InterestType.INTEREST_CLIENT_LOG_RESPONSE,
+    NetType.POSITION_SYNC: InterestType.INTEREST_POSITION_SYNC,
+    NetType.POSITION_HISTORY_WRITE: InterestType.INTEREST_POSITION_HISTORY_WRITE,
 }
 
 TANKPACKET_TO_INTEREST_TYPE: dict[TankType, InterestType] = {
@@ -273,6 +275,12 @@ class ExtensionHandler:
                     return False
             case InterestType.INTEREST_CLIENT_LOG_RESPONSE:
                 if pkt.as_net.type != NetType.CLIENT_LOG_RESPONSE:
+                    return False
+            case InterestType.INTEREST_POSITION_SYNC:
+                if pkt.as_net.type != NetType.POSITION_SYNC:
+                    return False
+            case InterestType.INTEREST_POSITION_HISTORY_WRITE:
+                if pkt.as_net.type != NetType.POSITION_HISTORY_WRITE:
                     return False
 
         return True

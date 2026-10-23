@@ -23,6 +23,9 @@ class InterestType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     INTEREST_TRACK: _ClassVar[InterestType]
     INTEREST_CLIENT_LOG_REQUEST: _ClassVar[InterestType]
     INTEREST_CLIENT_LOG_RESPONSE: _ClassVar[InterestType]
+    INTEREST_POSITION_SYNC: _ClassVar[InterestType]
+    INTEREST_POSITION_HISTORY_WRITE: _ClassVar[InterestType]
+    INTEREST_UNK11: _ClassVar[InterestType]
     INTEREST_STATE: _ClassVar[InterestType]
     INTEREST_CALL_FUNCTION: _ClassVar[InterestType]
     INTEREST_UPDATE_STATUS: _ClassVar[InterestType]
@@ -97,6 +100,9 @@ INTEREST_ERROR: InterestType
 INTEREST_TRACK: InterestType
 INTEREST_CLIENT_LOG_REQUEST: InterestType
 INTEREST_CLIENT_LOG_RESPONSE: InterestType
+INTEREST_POSITION_SYNC: InterestType
+INTEREST_POSITION_HISTORY_WRITE: InterestType
+INTEREST_UNK11: InterestType
 INTEREST_STATE: InterestType
 INTEREST_CALL_FUNCTION: InterestType
 INTEREST_UPDATE_STATUS: InterestType
@@ -468,6 +474,14 @@ class InterestClientLogRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class InterestClientLogResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class InterestPositionSync(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class InterestPositionHistoryWrite(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
