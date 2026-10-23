@@ -311,109 +311,153 @@ class EmptyPacket(Serializable):
         return "<Empty>"
 
 
+class PositionSyncHeaderEntry(Serializable):
+    _Struct: struct.Struct = struct.Struct("<BBHHBB")
+    SIZE = 8
+
+    def __init__(self, key: int = 0, b1: int = 0, w2: int = 0, w4: int = 0, b6: int = 0, b7: int = 0) -> None:
+        self.key = key
+        self.b1 = b1
+        self.w2 = w2
+        self.w4 = w4
+        self.b6 = b6
+        self.b7 = b7
+
+    def serialize(self) -> bytes:
+        return self._Struct.pack(self.key, self.b1, self.w2, self.w4, self.b6, self.b7)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "PositionSyncHeaderEntry":
+        return cls(*cls._Struct.unpack(data[: cls.SIZE]))
+
+    def __repr__(self) -> str:
+        return f"PositionSyncHeaderEntry(key={self.key}, b1={self.b1}, w2={self.w2}, w4={self.w4}, b6={self.b6}, b7={self.b7})"
+
+
 class PositionSnapshotEntry(Serializable):
-    _Struct: struct.Struct = struct.Struct("<iiiiii")
+    _Struct: struct.Struct = struct.Struct("<BBBBIIHHHHHBB")
+    SIZE = 24
 
     def __init__(
         self,
-        frame: int = 0,
-        x: int = 0,
-        y: int = 0,
-        x_subpixel: int = 0,
-        y_subpixel: int = 0,
-        state: int = 0,
+        key: int = 0,
+        b1: int = 0,
+        b2: int = 0,
+        b3: int = 0,
+        d4: int = 0,
+        d8: int = 0,
+        w12: int = 0,
+        w14: int = 0,
+        w16: int = 0,
+        w18: int = 0,
+        w20: int = 0,
+        b22: int = 0,
+        b23: int = 0,
     ) -> None:
-        self.frame = frame
-        self.x = x
-        self.y = y
-        self.x_subpixel = x_subpixel
-        self.y_subpixel = y_subpixel
-        self.state = state
+        self.key = key
+        self.b1 = b1
+        self.b2 = b2
+        self.b3 = b3
+        self.d4 = d4
+        self.d8 = d8
+        self.w12 = w12
+        self.w14 = w14
+        self.w16 = w16
+        self.w18 = w18
+        self.w20 = w20
+        self.b22 = b22
+        self.b23 = b23
 
     def serialize(self) -> bytes:
-        return self._Struct.pack(
-            self.frame,
-            self.x,
-            self.y,
-            self.x_subpixel,
-            self.y_subpixel,
-            self.state,
-        )
+        return self._Struct.pack(self.key, self.b1, self.b2, self.b3, self.d4, self.d8, self.w12, self.w14, self.w16, self.w18, self.w20, self.b22, self.b23)
 
     @classmethod
     def deserialize(cls, data: bytes) -> "PositionSnapshotEntry":
-        return cls(*cls._Struct.unpack(data[:24]))
+        return cls(*cls._Struct.unpack(data[: cls.SIZE]))
 
     def __repr__(self) -> str:
-        return f"PositionSnapshotEntry(frame={self.frame}, x={self.x}, y={self.y}, " f"x_sub={self.x_subpixel}, y_sub={self.y_subpixel}, state={self.state})"
+        return (
+            f"PositionSnapshotEntry(key={self.key}, b=({self.b1},{self.b2},{self.b3}), d4={self.d4}, d8={self.d8}, "
+            f"w=({self.w12},{self.w14},{self.w16},{self.w18},{self.w20}), b22={self.b22}, b23={self.b23})"
+        )
 
 
 class PositionSyncPacket(Serializable):
-    def __init__(self, field_0: int = 0, entries: list[PositionSnapshotEntry] | None = None) -> None:
-        self.field_0 = field_0
+    def __init__(
+        self,
+        timestamp: int = 0,
+        entries: list[PositionSnapshotEntry] | None = None,
+        header_entries: list[PositionSyncHeaderEntry] | None = None,
+    ) -> None:
+        self.timestamp = timestamp
         self.entries = entries if entries is not None else []
+        self.header_entries = header_entries if header_entries is not None else []
 
     def serialize(self) -> bytes:
-        buf = bytearray()
-        buf.extend(struct.pack("<I", self.field_0))
-        buf.extend(struct.pack("<B", len(self.entries)))
-        # array1 is reserved/unused (count1 == 0)
-        buf.extend(struct.pack("<B", len(self.entries)))
-        for entry in self.entries:
-            buf.extend(entry.serialize())
-        buf.extend(struct.pack("<B", 0))  # count3 == 0
+        buf = bytearray(struct.pack("<I", self.timestamp))
+        buf.append(len(self.header_entries))
+        for h in self.header_entries:
+            buf.extend(h.serialize())
+        buf.append(len(self.entries))
+        for e in self.entries:
+            buf.extend(e.serialize())
+
         return bytes(buf)
 
     @classmethod
     def deserialize(cls, data: bytes) -> "PositionSyncPacket":
         if len(data) < 5:
-            return cls(field_0=0)
+            return cls()
 
-        field_0 = struct.unpack_from("<I", data, 0)[0]
-        count1 = data[4]
-        offset = 5 + count1 * 8  # skip array1 (unused)
+        timestamp = struct.unpack_from("<I", data, 0)[0]
+        offset = 4
 
-        if offset >= len(data):
-            return cls(field_0=field_0)
-
-        count2 = data[offset]
+        header_entries: list[PositionSyncHeaderEntry] = []
+        count1 = data[offset]
         offset += 1
+        for _ in range(count1):
+            if offset + PositionSyncHeaderEntry.SIZE > len(data):
+                break
+            header_entries.append(PositionSyncHeaderEntry.deserialize(data[offset:]))
+            offset += PositionSyncHeaderEntry.SIZE
 
         entries: list[PositionSnapshotEntry] = []
-        for _ in range(count2):
-            if offset + 24 > len(data):
-                break
-            entries.append(PositionSnapshotEntry.deserialize(data[offset : offset + 24]))
-            offset += 24
+        if offset < len(data):
+            count2 = data[offset]
+            offset += 1
+            for _ in range(count2):
+                if offset + PositionSnapshotEntry.SIZE > len(data):
+                    break
+                entries.append(PositionSnapshotEntry.deserialize(data[offset:]))
+                offset += PositionSnapshotEntry.SIZE
 
-        # count3 and array3 are reserved/unused
-        return cls(field_0=field_0, entries=entries)
-
-    def __repr__(self) -> str:
-        return f"PositionSyncPacket(field_0={self.field_0}, entries={len(self.entries)})"
-
-
-class PositionHistoryWriteEntry(Serializable):
-    def __init__(self, count: int, data: bytes) -> None:
-        self.count = count
-        self.data = data
+        return cls(timestamp=timestamp, entries=entries, header_entries=header_entries)
 
     def __repr__(self) -> str:
-        return f"PositionHistoryWriteEntry(count={self.count}, data={self.data!r})"
+        return f"PositionSyncPacket(timestamp={self.timestamp}, header_entries={len(self.header_entries)}, entries={len(self.entries)})"
 
 
 class PositionHistoryWritePacket(Serializable):
+    _ARRAYS: tuple[tuple[str, str], ...] = (
+        ("array1", "<QI"),
+        ("array2", "<Q"),
+        ("array3", "<B"),
+        ("array4", "<HB"),
+        ("array5", "<IH"),
+        ("array6", "<Q"),
+    )
+
     def __init__(
         self,
-        field_0: int = 0,
+        timestamp: int = 0,
         array1: list[tuple[int, int]] | None = None,
         array2: list[int] | None = None,
-        array3: list[tuple[int, int]] | None = None,
+        array3: list[int] | None = None,
         array4: list[tuple[int, int]] | None = None,
-        array5: list[int] | None = None,
+        array5: list[tuple[int, int]] | None = None,
         array6: list[int] | None = None,
     ) -> None:
-        self.field_0 = field_0
+        self.timestamp = timestamp
         self.array1 = array1 if array1 is not None else []
         self.array2 = array2 if array2 is not None else []
         self.array3 = array3 if array3 is not None else []
@@ -422,112 +466,42 @@ class PositionHistoryWritePacket(Serializable):
         self.array6 = array6 if array6 is not None else []
 
     def serialize(self) -> bytes:
-        buf = bytearray()
-        buf.extend(struct.pack("<I", self.field_0))
-        buf.extend(struct.pack("<B", len(self.array1)))
-        for q, d in self.array1:
-            buf.extend(struct.pack("<QI", q, d))
-        buf.extend(struct.pack("<B", len(self.array2)))
-        for q in self.array2:
-            buf.extend(struct.pack("<Q", q))
-        buf.extend(struct.pack("<B", len(self.array3)))
-        for w, b in self.array3:
-            buf.extend(struct.pack("<HB", w, b))
-        buf.extend(struct.pack("<B", len(self.array4)))
-        for d, w in self.array4:
-            buf.extend(struct.pack("<IH", d, w))
-        buf.extend(struct.pack("<B", len(self.array5)))
-        for q in self.array5:
-            buf.extend(struct.pack("<Q", q))
-        buf.extend(struct.pack("<B", len(self.array6)))
-        for q in self.array6:
-            buf.extend(struct.pack("<Q", q))
+        buf = bytearray(struct.pack("<I", self.timestamp))
+        for name, fmt in self._ARRAYS:
+            items = getattr(self, name)
+            buf.append(len(items))
+            for item in items:
+                buf.extend(struct.pack(fmt, *item) if isinstance(item, tuple) else struct.pack(fmt, item))
+
         return bytes(buf)
 
     @classmethod
     def deserialize(cls, data: bytes) -> "PositionHistoryWritePacket":
         if len(data) < 5:
-            return cls(field_0=0)
+            return cls()
 
-        field_0 = struct.unpack_from("<I", data, 0)[0]
+        timestamp = struct.unpack_from("<I", data, 0)[0]
         offset = 4
+        arrays: list[list] = []
+        for _, fmt in cls._ARRAYS:
+            item_size = struct.calcsize(fmt)
+            items: list = []
+            if offset < len(data):
+                count = data[offset]
+                offset += 1
+                for _ in range(count):
+                    if offset + item_size > len(data):
+                        break
+                    values = struct.unpack_from(fmt, data, offset)
+                    items.append(values[0] if len(values) == 1 else values)
+                    offset += item_size
+            arrays.append(items)
 
-        # array1: count1 entries of 12 bytes each (uint64 + uint32)
-        count1 = data[offset]
-        offset += 1
-        array1: list[tuple[int, int]] = []
-        for _ in range(count1):
-            if offset + 12 > len(data):
-                break
-            q, d = struct.unpack_from("<QI", data, offset)
-            array1.append((q, d))
-            offset += 12
-
-        # array2: count2 entries of uint64 each
-        count2 = data[offset]
-        offset += 1
-        array2: list[int] = []
-        for _ in range(count2):
-            if offset + 8 > len(data):
-                break
-            array2.append(struct.unpack_from("<Q", data, offset)[0])
-            offset += 8
-
-        # array3: count3 entries of 3 bytes each (uint16 + uint8)
-        count3 = data[offset]
-        offset += 1
-        array3: list[tuple[int, int]] = []
-        for _ in range(count3):
-            if offset + 3 > len(data):
-                break
-            w, b = struct.unpack_from("<HB", data, offset)
-            array3.append((w, b))
-            offset += 3
-
-        # array4: count4 entries of 6 bytes each (uint32 + uint16)
-        count4 = data[offset]
-        offset += 1
-        array4: list[tuple[int, int]] = []
-        for _ in range(count4):
-            if offset + 6 > len(data):
-                break
-            d, w = struct.unpack_from("<IH", data, offset)
-            array4.append((d, w))
-            offset += 6
-
-        # array5: count5 entries of uint64 each
-        count5 = data[offset]
-        offset += 1
-        array5: list[int] = []
-        for _ in range(count5):
-            if offset + 8 > len(data):
-                break
-            array5.append(struct.unpack_from("<Q", data, offset)[0])
-            offset += 8
-
-        # array6: count6 entries of uint64 each
-        count6 = data[offset]
-        offset += 1
-        array6: list[int] = []
-        for _ in range(count6):
-            if offset + 8 > len(data):
-                break
-            array6.append(struct.unpack_from("<Q", data, offset)[0])
-            offset += 8
-
-        return cls(
-            field_0=field_0,
-            array1=array1,
-            array2=array2,
-            array3=array3,
-            array4=array4,
-            array5=array5,
-            array6=array6,
-        )
+        return cls(timestamp, *arrays)
 
     def __repr__(self) -> str:
         return (
-            f"PositionHistoryWritePacket(field_0={self.field_0}, "
+            f"PositionHistoryWritePacket(timestamp={self.timestamp}, "
             f"array1={len(self.array1)}, array2={len(self.array2)}, "
             f"array3={len(self.array3)}, array4={len(self.array4)}, "
             f"array5={len(self.array5)}, array6={len(self.array6)})"
@@ -626,8 +600,6 @@ class NetPacket(Serializable):
                 pkt = PositionSyncPacket.deserialize(pkt)
             case NetType.POSITION_HISTORY_WRITE:
                 pkt = PositionHistoryWritePacket.deserialize(pkt)
-            case NetType.UNKNOWN:
-                pkt = UnknownPacket.deserialize(pkt)
             case _:
                 pkt = UnknownPacket.deserialize(pkt)
 
