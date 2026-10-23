@@ -29,6 +29,7 @@ class NetType(IntEnum):
     POSITION_SYNC = 9
     # server instructs client to write position history into ring buffer slots
     POSITION_HISTORY_WRITE = 10
+    UNK11 = 11
 
     @classmethod
     def _missing_(cls, value: int) -> "NetType":
