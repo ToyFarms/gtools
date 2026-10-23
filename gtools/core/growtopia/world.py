@@ -2179,94 +2179,97 @@ class AngelicCountingCloudTile(TileExtra):
 
 @dataclass(slots=True)
 class PveNpcData:
-    field_1: int = 0  # u32
-    field_2: int = 0  # u32
-    field_3: int = 0  # u32
-    field_4: int = 0  # u32
-    field_5: int = 0  # u32
-    field_b6: bool = False  # u32
-    field_b7: bool = False  # u32
-    field_8: int = 0  # u32
-    field_9: int = 0  # u32
-    field_10: int = 0  # u32
-    field_b11: bool = False  # u32
-    field_12: int = 0  # u32
-    field_13: int = 0  # u32
-    field_14: int = 0  # u32
-    field_b15: bool = False  # u32
-    field_16: int = 0  # u32
-    field_17: int = 0  # u32
-    field_18: int = 0  # u32
-    field_19: int = 0  # u32
-    field_b20: bool = False  # u32
-    field_21: int = 0  # u32
-    field_22: int = 0  # u32
-    field_23: int = 0  # u32
-    field_25: int = 0  # u32
-    field_b26: bool = False  # u32
-    pos: list[tuple[int, int]] = field(default_factory=list)  # vector<vec2<i32>>
+    npc_template_id: int = 0  # u32
+    variant_id: int = 0  # u32
+    level: int = 0  # u32
+    max_hp: int = 0  # u32
+    current_hp: int = 0  # u32
+    is_active: bool = False  # u32
+    is_aggro: bool = False  # u32
+    attack_damage: int = 0  # u32
+    attack_speed: int = 0  # u32
+    move_speed: int = 0  # u32
+    is_ranged: bool = False  # u32
+    detection_range: int = 0  # u32
+    projectile_type: int = 0  # u32
+    loot_table_id: int = 0  # u32
+    xp_reward: int = 0  # u32
+    is_patrolling: bool = False  # u32
+    waypoint_count: int = 0  # u32
+    current_waypoint: int = 0  # u32
+    patrol_state: int = 0  # u32
+    is_returning_home: int = 0  # u32
+    has_home_position: bool = False  # u32
+    spawn_pos_x: int = 0  # u32
+    spawn_pos_y: int = 0  # u32
+    home_tile_x: int = 0  # u32
+    home_tile_y: int = 0  # u32
+    has_waypoints: bool = False  # u32
+    waypoints: list[tuple[int, int]] = field(default_factory=list)  # (i32, i32)
 
     @classmethod
     def deserialize(cls, s: Buffer) -> "PveNpcData":
         t = cls()
-        t.field_1 = s.read_u32()
-        t.field_2 = s.read_u32()
-        t.field_3 = s.read_u32()
-        t.field_4 = s.read_u32()
-        t.field_5 = s.read_u32()
-        t.field_b6 = s.read_u32() != 0
-        t.field_b7 = s.read_u32() != 0
-        t.field_8 = s.read_u32()
-        t.field_9 = s.read_u32()
-        t.field_10 = s.read_u32()
-        t.field_b11 = s.read_u32() != 0
-        t.field_12 = s.read_u32()
-        t.field_13 = s.read_u32()
-        t.field_14 = s.read_u32()
-        t.field_b15 = s.read_u32() != 0
-        t.field_16 = s.read_u32()
-        t.field_17 = s.read_u32()
-        t.field_18 = s.read_u32()
-        t.field_19 = s.read_u32()
-        t.field_b20 = s.read_u32() != 0
-        t.field_21 = s.read_u32()
-        t.field_22 = s.read_u32()
-        t.field_23 = s.read_u32()
-        t.field_25 = s.read_u32()
-        t.field_b26 = s.read_u32() != 0
+        t.npc_template_id = s.read_u32()
+        t.variant_id = s.read_u32()
+        t.level = s.read_u32()
+        t.max_hp = s.read_u32()
+        t.current_hp = s.read_u32()
+        t.is_active = s.read_u32() != 0
+        t.is_aggro = s.read_u32() != 0
+        t.attack_damage = s.read_u32()
+        t.attack_speed = s.read_u32()
+        t.move_speed = s.read_u32()
+        t.is_ranged = s.read_u32() != 0
+        t.detection_range = s.read_u32()
+        t.projectile_type = s.read_u32()
+        t.loot_table_id = s.read_u32()
+        t.xp_reward = s.read_u32()
+        t.is_patrolling = s.read_u32() != 0
+        t.waypoint_count = s.read_u32()
+        t.current_waypoint = s.read_u32()
+        t.patrol_state = s.read_u32()
+        t.is_returning_home = s.read_u32()
+        t.has_home_position = s.read_u32() != 0
+        t.spawn_pos_x = s.read_u32()
+        t.spawn_pos_y = s.read_u32()
+        t.home_tile_x = s.read_u32()
+        t.home_tile_y = s.read_u32()
+        t.has_waypoints = s.read_u32() != 0
         for _ in range(s.read_u32()):
-            t.pos.append((s.read_u32(), s.read_u32()))
+            t.waypoints.append((s.read_u32(), s.read_u32()))
 
         return t
 
     def serialize_into(self, s: Buffer) -> None:
-        s.write_u32(self.field_1)
-        s.write_u32(self.field_2)
-        s.write_u32(self.field_3)
-        s.write_u32(self.field_4)
-        s.write_u32(self.field_5)
-        s.write_u32(1 if self.field_b6 else 0)
-        s.write_u32(1 if self.field_b7 else 0)
-        s.write_u32(self.field_8)
-        s.write_u32(self.field_9)
-        s.write_u32(self.field_10)
-        s.write_u32(1 if self.field_b11 else 0)
-        s.write_u32(self.field_12)
-        s.write_u32(self.field_13)
-        s.write_u32(self.field_14)
-        s.write_u32(1 if self.field_b15 else 0)
-        s.write_u32(self.field_16)
-        s.write_u32(self.field_17)
-        s.write_u32(self.field_18)
-        s.write_u32(self.field_19)
-        s.write_u32(1 if self.field_b20 else 0)
-        s.write_u32(self.field_21)
-        s.write_u32(self.field_22)
-        s.write_u32(self.field_23)
-        s.write_u32(self.field_25)
-        s.write_u32(1 if self.field_b26 else 0)
-        s.write_u32(len(self.pos))
-        for x, y in self.pos:
+        s.write_u32(self.npc_template_id)
+        s.write_u32(self.variant_id)
+        s.write_u32(self.level)
+        s.write_u32(self.max_hp)
+        s.write_u32(self.current_hp)
+        s.write_u32(1 if self.is_active else 0)
+        s.write_u32(1 if self.is_aggro else 0)
+        s.write_u32(self.attack_damage)
+        s.write_u32(self.attack_speed)
+        s.write_u32(self.move_speed)
+        s.write_u32(1 if self.is_ranged else 0)
+        s.write_u32(self.detection_range)
+        s.write_u32(self.projectile_type)
+        s.write_u32(self.loot_table_id)
+        s.write_u32(self.xp_reward)
+        s.write_u32(1 if self.is_patrolling else 0)
+        s.write_u32(self.waypoint_count)
+        s.write_u32(self.current_waypoint)
+        s.write_u32(self.patrol_state)
+        s.write_u32(self.is_returning_home)
+        s.write_u32(1 if self.has_home_position else 0)
+        s.write_u32(self.spawn_pos_x)
+        s.write_u32(self.spawn_pos_y)
+        s.write_u32(self.home_tile_x)
+        s.write_u32(self.home_tile_y)
+        s.write_u32(1 if self.has_waypoints else 0)
+        s.write_u32(len(self.waypoints))
+        for x, y in self.waypoints:
             s.write_u32(x)
             s.write_u32(y)
 
@@ -2274,18 +2277,18 @@ class PveNpcData:
 @dataclass(slots=True)
 class PveNpcTile(TileExtra):
     type: TileExtraType = TileExtraType.PVE_NPC_TILE
-    arr: list[PveNpcData] = field(default_factory=list)  # len 3
+    npcs: list[PveNpcData] = field(default_factory=list)  # exactly 3 NPCs per tile
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "PveNpcTile":
         t = cls()
         for _ in range(3):
-            t.arr.append(PveNpcData.deserialize(s))
+            t.npcs.append(PveNpcData.deserialize(s))
 
         return t
 
     def int__serialize_into(self, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> None:
-        for npc in self.arr:
+        for npc in self.npcs:
             npc.serialize_into(s)
 
 
