@@ -354,7 +354,7 @@ class PositionSyncHeaderEntry(Serializable):
 
 
 class PositionSnapshotEntry(Serializable):
-    _Struct: struct.Struct = struct.Struct("<BBBBIIHHHHHBB")
+    _Struct: struct.Struct = struct.Struct("<BBBBIIHHHhhBB")
     SIZE = 24
 
     def __init__(
@@ -368,10 +368,10 @@ class PositionSnapshotEntry(Serializable):
         w12: int = 0,
         x: int = 0,
         y: int = 0,
-        w18: int = 0,
-        w20: int = 0,
-        b22: int = 0,
-        b23: int = 0,
+        vel_x: int = 0,
+        vel_y: int = 0,
+        jump_hold_time: int = 0,
+        jump_count: int = 0,
     ) -> None:
         self.net_id = net_id
         self.b1 = b1
@@ -382,13 +382,15 @@ class PositionSnapshotEntry(Serializable):
         self.w12 = w12
         self.x = x
         self.y = y
-        self.w18 = w18
-        self.w20 = w20
-        self.b22 = b22
-        self.b23 = b23
+        self.vel_x = vel_x
+        self.vel_y = vel_y
+        self.jump_hold_time = jump_hold_time
+        self.jump_count = jump_count
 
     def serialize(self) -> bytes:
-        return self._Struct.pack(self.net_id, self.b1, self.b2, self.b3, self.player_tick, self.flags, self.w12, self.x, self.y, self.w18, self.w20, self.b22, self.b23)
+        return self._Struct.pack(
+            self.net_id, self.b1, self.b2, self.b3, self.player_tick, self.flags, self.w12, self.x, self.y, self.vel_x, self.vel_y, self.jump_hold_time, self.jump_count
+        )
 
     @classmethod
     def deserialize(cls, data: bytes) -> "PositionSnapshotEntry":
@@ -397,7 +399,7 @@ class PositionSnapshotEntry(Serializable):
     def __repr__(self) -> str:
         return (
             f"PositionSnapshotEntry(net_id={self.net_id}, b=({self.b1},{self.b2},{self.b3}), player_tick={self.player_tick}, flags={self.flags}, "
-            f"w=({self.w12},x={self.x},y={self.y},{self.w18},{self.w20}), b22={self.b22}, b23={self.b23})"
+            f"w12={self.w12}, x={self.x}, y={self.y}, vel_x={self.vel_x}, vel_y={self.vel_y}, jump_hold_time={self.jump_hold_time}, jump_count={self.jump_count})"
         )
 
 
