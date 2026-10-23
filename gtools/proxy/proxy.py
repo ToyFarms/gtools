@@ -257,7 +257,7 @@ class Proxy:
                 if _pkt_replace:
                     pkt = _pkt_replace
             except Exception as e:
-                self.logger.error(f"process_event failed: {e}")
+                self.logger.error(f"process_event failed: {e}", stack_info=True)
 
         for handler in self._custom_handler:
             try:
