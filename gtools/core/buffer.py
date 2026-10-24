@@ -38,9 +38,6 @@ class Buffer:
         self.endian = endian
         self.reverse_read = False
 
-    def serialize(self) -> bytes:
-        return bytes(self.buffer)
-
     def eof(self) -> bool:
         return self.rpos >= len(self.buffer)
 
@@ -310,7 +307,7 @@ class Buffer:
     def remaining(self) -> int:
         return max(0, len(self.buffer) - self.rpos)
 
-    def getvalue(self) -> bytes:
+    def serialize(self) -> bytes:
         return bytes(self.buffer)
 
     def truncate(self, new_len: int | None = None):

@@ -540,7 +540,7 @@ class TileExtra:
     def serialize(self, fg_id: int, bg_id: int, format_version: int = 999999999) -> bytes:
         s = Buffer()
         self.serialize_into(s, fg_id, bg_id, format_version)
-        return s.getvalue()
+        return s.serialize()
 
     @classmethod
     def new(cls, type: TileExtraType) -> "TileExtra":
@@ -2692,12 +2692,12 @@ class Tile:
         if self.fg_id in CBOR_IDs:
             s.write_pascal_bytes("I", cbor2.dumps(self.json_data))
 
-        return s.getvalue()
+        return s.serialize()
 
     def serialize(self, format_version: int = 999999999999) -> bytes:
         s = Buffer()
         self.serialize_into(s, format_version)
-        return s.getvalue()
+        return s.serialize()
 
 
 @dataclass(slots=True)
@@ -3980,7 +3980,7 @@ class World:
         s.write_u16(self.unk8)
         s.write_u32(self.unk9)
 
-        return s.getvalue()
+        return s.serialize()
 
     @classmethod
     def deserialize(cls, s: bytes | Buffer, int_x_id: int = 0) -> "World":

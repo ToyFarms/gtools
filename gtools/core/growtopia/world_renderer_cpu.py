@@ -556,7 +556,7 @@ def build_object_commands(world: World, commands: list[Command]) -> None:
     for obj in icons["display"]:
         _object_icon_command(obj, RenderLayer.OBJ_PRE, commands, icon_scale=1.0)
 
-    for obj in world.dropped.items:
+    for obj in world.dropped:
         if _seed_icon_commands(obj, RenderLayer.OBJ_POST, commands, pos_offset=(0, 0)):
             continue
         _object_icon_command(obj, RenderLayer.OBJ_POST, commands, icon_scale=0.5, pos_offset=(2, 2), render_pickup_overlay=True)

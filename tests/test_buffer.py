@@ -491,8 +491,8 @@ def test_remaining_beyond_end() -> None:
 
 def test_getvalue() -> None:
     buf = Buffer(b"\x01\x02\x03")
-    assert buf.getvalue() == b"\x01\x02\x03"
-    verify(repr(buf.getvalue()))
+    assert buf.serialize() == b"\x01\x02\x03"
+    verify(repr(buf.serialize()))
 
 
 def test_truncate_default() -> None:
