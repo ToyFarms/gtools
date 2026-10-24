@@ -15,9 +15,9 @@ payload is determiend through the type,
     TRACK                (6):  strkv,          [\x06\x00\x00\x00[strkv]\x00]
     CLIENT_LOG_REQUEST   (7):  empty,          [\x07\x00\x00\x00\x00]
     CLIENT_LOG_RESPONSE  (8):  empty,          [\x08\x00\x00\x00\x00]
-    POSITION_SYNC        (9):  snapshots,      [\x09\x00\x00\x00[payload]\x00]
+    NETWORLD_SNAPSHOT    (9):  snapshots,      [\x09\x00\x00\x00[payload]\x00]
     NETWORLD_DELTA       (10): networld delta, [\x0a\x00\x00\x00[payload]\x00]
-    PLAYER_FRAME_COUNTER (11): frame,          [\x0b\x00\x00\x00[payload]\x00]
+    NETWORLD_STATE       (11): frame,          [\x0b\x00\x00\x00[payload]\x00]
 
 tank packet,
     [
@@ -163,7 +163,7 @@ APP_INTEGRITY_FAIL,
 
     there are other code, but im too lazy to find out what triggers them
 
-POSITION_SYNC,
+NETWORLD_SNAPSHOT,
     type 9, sent by the server.
 
     packet looks like,
@@ -194,7 +194,7 @@ POSITION_SYNC,
             unknown_1       :u8 (always 0xFF),
             unknown_2       :u8 (always 0x03),
             action_cooldown :u8 (0..255 -> 0.0..1.0 seconds),
-            player_frame    :u32 (frame counter from PLAYER_FRAME_COUNTER),
+            player_frame    :u32 (frame counter from NETWORLD_STATE),
             flags           :u32 (TankFlags),
             unknown_u16     :u16 (always 0),
             x               :u16,
@@ -398,18 +398,12 @@ NETWORLD_DELTA,
         it when a player enters the world or is teleported; it sets the avatar
         position directly and resets controller +0x6C to 0.
 
-    notes,
-        object_type/item_id/effect_variant are inferred from the
-        AddRenderObject decoder; the item/effect database ids are not resolved
-        here. an object_updates entry's effect_id selects a string/effect slot,
-        and progress is stored as value / 255.0.
-
     direction,
         server -> client: all six lists, parsed by sub_140B0ADE0.
         client -> server: only render_objects, serialized by sub_140B0B860 from
         the world's render-object queue (sub_140DEE470). the client timestamp is
         its estimated server time + 250 ms, and it sends at most 100 entries
-        every 33 ms (the same gate as PLAYER_FRAME_COUNTER).
+        every 33 ms (the same gate as NETWORLD_STATE).
 
     apply order (not the same as wire order),
         1. deleted_net_ids DeleteObject
@@ -426,7 +420,7 @@ NETWORLD_DELTA,
         "[NetWorld] AddSpecialAbility {}"
         "[NetWorld] MovePlayer {}"
 
-PLAYER_FRAME_COUNTER,
+NETWORLD_STATE,
     type 11, sent by the client at about 30hz (every 33 ms).
 
     packet looks like,
@@ -458,12 +452,12 @@ PLAYER_FRAME_COUNTER,
           frame.
         - the payload is copied from controller +0x30, which holds the last
           processed input record: {u32 frame, u8 flags, 3 padding bytes}.
-        - the server echoes the same value in POSITION_SYNC player_frame. in
+        - the server echoes the same value in NETWORLD_SNAPSHOT player_frame. in
           the snapshot tick is consistently 9 frames behind the live counter (median),
           i.e. snapshots are rendered about 250-300 ms behind the client.
         - the packet is suppressed while controller +0x68 (action lock/freeze
           timer) is > 0, or while there is no local player/controller.
         - the client keeps the same {frame, flags} records in its input history.
-          on a POSITION_SYNC correction it replays the records after the server
+          on a NETWORLD_SNAPSHOT correction it replays the records after the server
           tick through the controller.
 

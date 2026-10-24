@@ -15,9 +15,9 @@ NETPACKET_TO_INTEREST_TYPE: dict[NetType, InterestType] = {
     NetType.TRACK: InterestType.INTEREST_TRACK,
     NetType.CLIENT_LOG_REQUEST: InterestType.INTEREST_CLIENT_LOG_REQUEST,
     NetType.CLIENT_LOG_RESPONSE: InterestType.INTEREST_CLIENT_LOG_RESPONSE,
-    NetType.POSITION_SYNC: InterestType.INTEREST_POSITION_SYNC,
+    NetType.NETWORLD_SNAPSHOT: InterestType.INTEREST_NETWORLD_SNAPSHOT,
     NetType.NETWORLD_DELTA: InterestType.INTEREST_NETWORLD_DELTA,
-    NetType.PLAYER_FRAME_COUNTER: InterestType.INTEREST_PLAYER_FRAME_COUNTER,
+    NetType.NETWORLD_STATE: InterestType.INTEREST_NETWORLD_STATE,
 }
 
 TANKPACKET_TO_INTEREST_TYPE: dict[TankType, InterestType] = {
@@ -277,14 +277,14 @@ class ExtensionHandler:
             case InterestType.INTEREST_CLIENT_LOG_RESPONSE:
                 if pkt.as_net.type != NetType.CLIENT_LOG_RESPONSE:
                     return False
-            case InterestType.INTEREST_POSITION_SYNC:
-                if pkt.as_net.type != NetType.POSITION_SYNC:
+            case InterestType.INTEREST_NETWORLD_SNAPSHOT:
+                if pkt.as_net.type != NetType.NETWORLD_SNAPSHOT:
                     return False
             case InterestType.INTEREST_NETWORLD_DELTA:
                 if pkt.as_net.type != NetType.NETWORLD_DELTA:
                     return False
-            case InterestType.INTEREST_PLAYER_FRAME_COUNTER:
-                if pkt.as_net.type != NetType.PLAYER_FRAME_COUNTER:
+            case InterestType.INTEREST_NETWORLD_STATE:
+                if pkt.as_net.type != NetType.NETWORLD_STATE:
                     return False
 
         return True

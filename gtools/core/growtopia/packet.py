@@ -53,9 +53,9 @@ class NetType(IntEnum):
     CLIENT_LOG_RESPONSE = 8
 
     # see docs/02_packet
-    POSITION_SYNC = 9
+    NETWORLD_SNAPSHOT = 9
     NETWORLD_DELTA = 10
-    PLAYER_FRAME_COUNTER = 11
+    NETWORLD_STATE = 11
 
     @classmethod
     def _missing_(cls, value: int) -> "NetType":
@@ -816,9 +816,9 @@ _BODY_READERS: dict[NetType, Callable[[Buffer], Packet | StrKV]] = {
     NetType.ERROR: EmptyPacket.deserialize,
     NetType.CLIENT_LOG_REQUEST: EmptyPacket.deserialize,
     NetType.CLIENT_LOG_RESPONSE: EmptyPacket.deserialize,
-    NetType.POSITION_SYNC: PositionSyncPacket.deserialize,
+    NetType.NETWORLD_SNAPSHOT: PositionSyncPacket.deserialize,
     NetType.NETWORLD_DELTA: NetWorldDeltaPacket.deserialize,
-    NetType.PLAYER_FRAME_COUNTER: PlayerFrameCounter.deserialize,
+    NetType.NETWORLD_STATE: PlayerFrameCounter.deserialize,
 }
 
 
@@ -937,7 +937,7 @@ class NetPacket(BufferSerializable):
 
     @property
     def position_sync(self) -> "PositionSyncPacket":
-        if self.type is not NetType.POSITION_SYNC:
+        if self.type is not NetType.NETWORLD_SNAPSHOT:
             raise TypeError("not a position sync packet")
         return cast(PositionSyncPacket, self.data)
 
@@ -949,7 +949,7 @@ class NetPacket(BufferSerializable):
 
     @property
     def player_frame_counter(self) -> "PlayerFrameCounter":
-        if self.type is not NetType.PLAYER_FRAME_COUNTER:
+        if self.type is not NetType.NETWORLD_STATE:
             raise TypeError("not a player frame counter packet")
         return cast(PlayerFrameCounter, self.data)
 
