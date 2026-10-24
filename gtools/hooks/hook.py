@@ -10,10 +10,11 @@ from ctypes import wintypes
 from pathlib import Path
 
 from gtools.core.privilege import elevate, is_elevated
+from gtools.core.eventbus import subscribe
 from gtools.hooks.control import HookControl
 from gtools.core.pipe import PipeError
 from gtools.proxy.event import UpdateClientVersion, UpdateServerData
-from gtools.setting import setting
+from gtools.setting import Setting, SettingChanged, setting
 
 logger = logging.getLogger("hook")
 
@@ -397,18 +398,55 @@ def inject_hook() -> bool:
     return True
 
 
-def apply_hook_settings(ctl: HookControl) -> None:
-    values = {
-        "proxy_host": setting.proxy_server,
-        "proxy_port": str(setting.proxy_port),
-        "start_delay_ms": str(setting.hook.start_delay_ms),
-        "log_level": str(setting.hook.log_level),
-        "allow_any_module": str(int(setting.hook.allow_any_module)),
-        "stream_game_logs": str(int(setting.hook.stream_game_logs)),
+_SETTING_FIELDS_FORWARDED = frozenset({"hook", "proxy_server", "proxy_port"})
+_pending_settings_push = threading.Event()
+
+
+def live_hook_settings(source: Setting | None = None) -> dict[str, str]:
+    current = source if source is not None else setting
+    hook_settings = current.hook
+
+    return {
+        "proxy_host": current.proxy_server,
+        "proxy_port": str(current.proxy_port),
+        "start_delay_ms": str(hook_settings.start_delay_ms),
+        "log_level": str(hook_settings.log_level),
+        "allow_any_module": str(int(hook_settings.allow_any_module)),
+        "stream_game_logs": str(int(hook_settings.stream_game_logs)),
+        "low_power": str(int(hook_settings.low_power)),
+        "low_power_fps": str(hook_settings.low_power_fps),
+        "low_power_skip_draws": str(int(hook_settings.low_power_skip_draws)),
     }
-    for key, value in values.items():
+
+
+def apply_hook_settings(ctl: HookControl, values: dict[str, str] | None = None) -> None:
+    for key, value in (values if values is not None else live_hook_settings()).items():
         if not ctl.set(key, value):
             logger.warning(f"hook rejected setting {key}={value}")
+
+
+def _on_setting_changed(_channel: str, event: SettingChanged) -> None:
+    forwarded = [name for name, _, _ in event.changes if name in _SETTING_FIELDS_FORWARDED]
+    if not forwarded:
+        return
+
+    logger.info("setting change (%s) queued for the hook", ", ".join(forwarded))
+    _pending_settings_push.set()
+
+
+def _push_pending_settings(ctl: HookControl) -> None:
+    if not _pending_settings_push.is_set() or not ctl.connected:
+        return
+
+    _pending_settings_push.clear()
+
+    try:
+        apply_hook_settings(ctl, live_hook_settings())
+    except (PipeError, OSError):
+        _pending_settings_push.set()
+        logger.exception("failed to push reloaded settings to the hook, retrying after reconnect")
+    else:
+        logger.info("pushed reloaded setting to the hook")
 
 
 def publish_hook_state(fields: dict[str, str]) -> None:
@@ -451,39 +489,50 @@ def _reattach_hook(stop: threading.Event) -> HookControl | None:
 
 def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
     current = ctl
+    unsubscribe = subscribe(SettingChanged, _on_setting_changed)
 
-    while not stop.is_set():
-        try:
-            event = current.wait_event(timeout=0.5)
-        except Exception:
-            logger.debug("failed to read a hook event", exc_info=True)
-            continue
-
-        if not current.connected:
-            logger.warning("the hook control pipe was closed, waiting for the hook to return")
-            current.close()
-
-            fresh = _reattach_hook(stop)
-            if fresh is None:
-                return
-
-            current = fresh
+    try:
+        while not stop.is_set():
             try:
-                apply_hook_settings(current)
-                publish_hook_state(current.status())
-            except PipeError:
-                logger.exception("hook setup failed after reconnect")
+                _push_pending_settings(current)
+            except Exception:
+                logger.exception("failed to push reloaded settings to the hook")
+                _pending_settings_push.clear()
+
+            try:
+                event = current.wait_event(timeout=0.5)
+            except Exception:
+                logger.debug("failed to read a hook event", exc_info=True)
                 continue
 
-            continue
+            if not current.connected:
+                logger.warning("the hook control pipe was closed, waiting for the hook to return")
+                current.close()
 
-        if event is None:
-            continue
+                fresh = _reattach_hook(stop)
+                if fresh is None:
+                    return
 
-        if event.name == "state":
-            publish_hook_state(event.fields)
-        elif event.name == "log":
-            logger.info("[game] %s", event.payload)
+                current = fresh
+                try:
+                    apply_hook_settings(current)
+                    publish_hook_state(current.status())
+                except PipeError:
+                    logger.exception("hook setup failed after reconnect")
+                    continue
+
+                continue
+
+            if event is None:
+                continue
+
+            if event.name == "state":
+                publish_hook_state(event.fields)
+            elif event.name == "log":
+                logger.info("[game] %s", event.payload)
+    finally:
+        unsubscribe()
+        _pending_settings_push.clear()
 
 
 def inject_main(argv: list[str] | None = None) -> int:

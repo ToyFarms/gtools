@@ -1,8 +1,10 @@
 from collections import defaultdict
 from enum import StrEnum, auto
+import glob
 import hashlib
 import itertools
 import json
+import os
 import re
 import shlex
 import sqlite3
@@ -194,6 +196,7 @@ class CompilerRegistry:
 
 class FlagParser:
     _PATTERN = re.compile(r"//\s*BUILD_FLAGS\[([^\]]+)\]:\s*(.+)")
+    _DEPS_PATTERN = re.compile(r"//\s*BUILD_DEPS:\s*(.+)")
     _LINES_TO_SCAN = 20
 
     _GROUP: dict[str, str] = {
@@ -212,6 +215,37 @@ class FlagParser:
                     if os_filter is None or target_key in os_filter:
                         all_flags.extend(shlex.split(self._expand_shell(flags_str)))
         return all_flags
+
+    def collect_deps(self, src: Path, project_root: Path) -> list[str]:
+        deps: dict[str, None] = {}
+        try:
+            with open(src, encoding="utf-8") as f:
+                for line in itertools.islice(f, self._LINES_TO_SCAN):
+                    if not (m := self._DEPS_PATTERN.match(line.strip())):
+                        continue
+                    for token in shlex.split(m.group(1)):
+                        pattern = os.path.normpath(str(src.parent / token))
+                        if glob.has_magic(token):
+                            matches = sorted(p for p in glob.glob(pattern, recursive=True) if os.path.isfile(p))
+                            if not matches:
+                                print(f"warning: {src}: BUILD_DEPS glob {token!r} matched nothing", file=sys.stderr)
+                        else:
+                            matches = [pattern]
+                            if not os.path.isfile(pattern):
+                                print(f"warning: {src}: BUILD_DEPS file {token!r} not found", file=sys.stderr)
+                        for p in matches:
+                            deps[self._relativize(p, project_root)] = None
+        except Exception as exc:
+            print(f"warning: failed to parse deps from {src}: {exc}", file=sys.stderr)
+
+        return sorted(deps)
+
+    @staticmethod
+    def _relativize(path: str, project_root: Path) -> str:
+        try:
+            return os.path.relpath(path, project_root)
+        except ValueError:
+            return path
 
     def _group_key(self, canon: str) -> str:
         return self._GROUP.get(canon.lower(), canon.lower())
@@ -341,7 +375,15 @@ class CacheManager:
 
         return result
 
-    def should_rebuild(self, compiler: "Compiler", srcs: list[str], out: str, target_system: "Platform | None" = None, extra_flags: list[str] | None = None) -> bool:
+    def should_rebuild(
+        self,
+        compiler: "Compiler",
+        srcs: list[str],
+        out: str,
+        target_system: "Platform | None" = None,
+        extra_flags: list[str] | None = None,
+        deps: list[str] | None = None,
+    ) -> bool:
         if not Path(out).exists():
             return True
 
@@ -358,11 +400,19 @@ class CacheManager:
         if json.loads(row[1]) != (extra_flags or []):
             return True
 
-        return self._hash_sources(srcs) != json.loads(row[0])
+        return self._hash_sources([*srcs, *(deps or [])]) != json.loads(row[0])
 
-    def update(self, compiler: "Compiler", srcs: list[str], out: str, target_system: "Platform | None" = None, extra_flags: list[str] | None = None) -> None:
+    def update(
+        self,
+        compiler: "Compiler",
+        srcs: list[str],
+        out: str,
+        target_system: "Platform | None" = None,
+        extra_flags: list[str] | None = None,
+        deps: list[str] | None = None,
+    ) -> None:
         key = self._make_key(compiler, out, target_system)
-        src_hashes = json.dumps(self._hash_sources(srcs))
+        src_hashes = json.dumps(self._hash_sources([*srcs, *(deps or [])]))
         flags_json = json.dumps(extra_flags or [])
         with self._write_lock, self._connect() as conn:
             conn.execute(
@@ -416,11 +466,12 @@ class BuildJob:
         body: list[str] = []
         last_err = "no compilers attempted"
         success = False
+        deps = self.flag_parser.collect_deps(self.src_path, self.project_root)
 
         for compiler in self.compilers:
             extra_flags = self.flag_parser.collect([self.src_path], compiler, self.target_system)
 
-            if not force and not self.cache_manager.should_rebuild(compiler, [src_rel], out_rel, self.target_system, extra_flags):
+            if not force and not self.cache_manager.should_rebuild(compiler, [src_rel], out_rel, self.target_system, extra_flags, deps):
                 body.append(f"{indent}{_GR}{_B}ok{_R}  {_D}(cached){_R}")
                 last_err, success = "", True
                 break
@@ -454,7 +505,7 @@ class BuildJob:
                 body.append(f"{indent}{_RE}fail{_R}  {last_err}")
                 continue
 
-            self.cache_manager.update(compiler, [src_rel], out_rel, self.target_system, extra_flags)
+            self.cache_manager.update(compiler, [src_rel], out_rel, self.target_system, extra_flags, deps)
             body.append(f"{indent}{_GR}{_B}ok{_R}")
             last_err, success = "", True
             break

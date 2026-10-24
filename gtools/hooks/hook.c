@@ -38,6 +38,11 @@
 #define STOLEN_RESPONSE_BYTES  17
 #define STOLEN_HTTP_POST_BYTES 21
 
+#define STOLEN_FRAME_MODERN    24
+#define STOLEN_SUBMIT_MODERN   14
+
+#define HOOK_VARIANT_MAX 3
+
 #define PATTERN_MAX 512
 
 #if defined(_MSC_VER)
@@ -200,27 +205,43 @@ static size_t ImageSizeOf(uint8_t *base)
     return nt->OptionalHeader.SizeOfImage;
 }
 
-struct HookSpec
+struct HookVariant
 {
-    const char *name;
-    const char *key;
     const char *signature;
     uint32_t stolenBytes;
 };
 
+struct HookSpec
+{
+    const char *name;
+    const char *key;
+    struct HookVariant variants[HOOK_VARIANT_MAX];
+};
+
 static const struct HookSpec g_hookSpecs[HOOK_INDEX_COUNT] = {
     {"GameLog_Printf",       "game_log_printf",
-     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 88 10 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
-     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 70 10 00 00 48 8B D9 33 D2 48 8D 4C 24 70 41", STOLEN_LOG_BYTES      },
+     {{"48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 88 10 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
+       "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 70 10 00 00 48 8B D9 33 D2 48 8D 4C 24 70 41", STOLEN_LOG_BYTES}}},
     {"GameLog_Raw",          "game_log_raw",
-     "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 68 28 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
-     "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 50 28 00 00 48 8B D9 33 D2 48 8D 4C 24 40 41", STOLEN_LOG_BYTES      },
+     {{"48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 68 28 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B "
+       "05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 50 28 00 00 48 8B D9 33 D2 48 8D 4C 24 40 41", STOLEN_LOG_BYTES}}},
     {"OnServerDataResponse", "server_data_response",
-     "40 55 56 48 83 EC 28 81 BA ?? ?? ?? ?? C8 00 00 00 48 8B EA 48 8B 41 08 48 8B F1 75 1D C7 80 ?? ?? ?? ?? 00 "
-     "00 00 00",                                                                         STOLEN_RESPONSE_BYTES },
+     {{"40 55 56 48 83 EC 28 81 BA ?? ?? ?? ?? C8 00 00 00 48 8B EA 48 8B 41 08 48 8B F1 75 1D C7 80 ?? ?? ?? ?? 00 "
+       "00 00 00", STOLEN_RESPONSE_BYTES}}},
     {"HttpClient_Post",      "http_client_post",
-     "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 48 FD FF FF 48 81 EC B8 03 00 00 48 8B 05 ?? ?? ?? ?? 48 "
-     "33 C4 48 89 85 A0 02 00 00 4C 89 4C 24 40 45 8B E0 4C 8B FA 4C 8B E9",             STOLEN_HTTP_POST_BYTES},
+     {{"40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 48 FD FF FF 48 81 EC B8 03 00 00 48 8B 05 ?? ?? ?? ?? 48 "
+       "33 C4 48 89 85 A0 02 00 00 4C 89 4C 24 40 45 8B E0 4C 8B FA 4C 8B E9", STOLEN_HTTP_POST_BYTES}}},
+    {"Render_Frame",         "render_frame",
+     {
+         /* bgfx::frame @ 0x141640EC0 (5.6x+), reached through bgfx::frame() @ 0x140AAED50 */
+         {"48 89 5C 24 08 48 89 6C 24 18 48 89 74 24 20 57 41 54 41 55 41 56 41 57 48 83 EC 20 48 8B B9 E0 03 00 00",
+          STOLEN_FRAME_MODERN},
+     }},
+    {"Render_Submit",        "render_submit",
+     {
+         /* Encoder::submit @ 0x14164C020 (5.6x+), called by bgfx::submit @ 0x14164C3C0 */
+         {"40 53 57 48 83 EC 28 80 B9 E1 01 00 00 00 41 0F B7 D9", STOLEN_SUBMIT_MODERN},
+     }},
 };
 
 struct PatternBytes
@@ -331,9 +352,9 @@ static void write_abs_jump(unsigned char *buffer, uint64_t destination)
     memcpy(buffer + 6, &destination, sizeof(destination));
 }
 
-static void *BuildTrampoline(const struct HookSpec *spec, uint8_t *target)
+static void *BuildTrampoline(const struct HookSpec *spec, uint8_t *target, uint32_t stolenBytes)
 {
-    size_t length = spec->stolenBytes;
+    size_t length = stolenBytes;
     size_t size = length + HOOK_ENTRY_PATCH_BYTES;
 
     void *trampoline = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
@@ -659,11 +680,101 @@ static uintptr_t FASTCALL Hook_HttpClientPost(void *client, void *url, int isTls
     return trampoline(client, url, isTls, dictionary, callback);
 }
 
+typedef uint32_t(FASTCALL *FnBgfxFrame)(void *context, int capture);
+typedef void(FASTCALL *FnEncoderSubmit)(void *encoder, uint32_t id, uint32_t program, uint32_t instance,
+                                        uint32_t depth, uint32_t flags);
+
+static volatile LONG g_lowPowerRevision = -1;
+static int g_lowPowerEnabled = 0;
+static int g_lowPowerFps = 0;
+static int g_lowPowerSkipDraws = 0;
+
+static void RefreshLowPower(void)
+{
+    LONG revision = g_self.settingsRevision;
+    if (revision == 0 || revision == g_lowPowerRevision)
+        return;
+
+    struct HookSettings *settings = SettingsSnapshot();
+    int enabled = settings->lowPower ? 1 : 0;
+    int fps = settings->lowPowerFps;
+    int skipDraws = settings->lowPowerSkipDraws ? 1 : 0;
+
+    if (enabled != g_lowPowerEnabled || fps != g_lowPowerFps || skipDraws != g_lowPowerSkipDraws)
+        PublishLine(HOOK_LOG_INFO, "[hook] low power: enabled=%d fps=%d skip_draws=%d", enabled, fps, skipDraws);
+
+    g_lowPowerEnabled = enabled;
+    g_lowPowerFps = fps;
+    g_lowPowerSkipDraws = skipDraws;
+    g_lowPowerRevision = revision;
+}
+
+static volatile LONG64 g_frameDeadline = 0;
+
+static void PaceFrame(int fps)
+{
+    static LARGE_INTEGER frequency;
+    if (!frequency.QuadPart)
+        QueryPerformanceFrequency(&frequency);
+    if (frequency.QuadPart <= 0)
+        return;
+
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+
+    LONG64 period = (LONG64)(frequency.QuadPart / fps);
+    if (period <= 0)
+        period = 1;
+
+    LONG64 current = (LONG64)counter.QuadPart;
+    LONG64 deadline = (LONG64)InterlockedCompareExchange64(&g_frameDeadline, 0, 0);
+    if (deadline <= current)
+        deadline = current;
+    InterlockedExchange64(&g_frameDeadline, deadline + period);
+
+    LONG64 remaining = deadline - current;
+    if (remaining <= 0)
+        return;
+
+    DWORD milliseconds = (DWORD)((remaining * 1000) / frequency.QuadPart);
+    if (milliseconds > 0)
+        Sleep(milliseconds);
+}
+
+static uint32_t FASTCALL Hook_RenderFrame(void *context, int capture)
+{
+    FnBgfxFrame trampoline = (FnBgfxFrame)EntryTrampoline(HOOK_INDEX_RENDER_FRAME);
+    if (!trampoline)
+        return 0;
+
+    RefreshLowPower();
+    if (g_lowPowerEnabled && g_lowPowerFps > 0)
+        PaceFrame(g_lowPowerFps);
+
+    return trampoline(context, capture);
+}
+
+static void FASTCALL Hook_RenderSubmit(void *encoder, uint32_t id, uint32_t program, uint32_t instance,
+                                       uint32_t depth, uint32_t flags)
+{
+    FnEncoderSubmit trampoline = (FnEncoderSubmit)EntryTrampoline(HOOK_INDEX_RENDER_SUBMIT);
+    if (!trampoline)
+        return;
+
+    RefreshLowPower();
+    if (g_lowPowerEnabled && g_lowPowerSkipDraws)
+        return;
+
+    trampoline(encoder, id, program, instance, depth, flags);
+}
+
 static const void *const g_detours[HOOK_INDEX_COUNT] = {
     (const void *)&Hook_GameLogPrintf,
     (const void *)&Hook_GameLogRaw,
     (const void *)&Hook_ServerDataResponse,
     (const void *)&Hook_HttpClientPost,
+    (const void *)&Hook_RenderFrame,
+    (const void *)&Hook_RenderSubmit,
 };
 
 static void PublishEntries(uint64_t processId, uint64_t imageBase, uint64_t dllBase, size_t imageSize)
@@ -675,7 +786,7 @@ static void PublishEntries(uint64_t processId, uint64_t imageBase, uint64_t dllB
 
         CopyText(entry->name, sizeof(entry->name), spec->name);
         CopyText(entry->key, sizeof(entry->key), HOOK_IDENTITIES[i].key);
-        entry->stolenBytes = spec->stolenBytes;
+        entry->stolenBytes = 0;
         entry->entryPatchBytes = HOOK_ENTRY_PATCH_BYTES;
         entry->detour = (uint64_t)(uintptr_t)g_detours[i];
         entry->target = 0;
@@ -694,24 +805,48 @@ static void PublishEntries(uint64_t processId, uint64_t imageBase, uint64_t dllB
         const struct HookSpec *spec = &g_hookSpecs[i];
         struct HookEntry *entry = &g_self.entries[i];
 
-        int matchCount = 0;
-        uint8_t *target = FindUniquePattern(spec->signature, (uint8_t *)imageBase, imageSize, &matchCount);
+        uint8_t *target = NULL;
+        uint32_t stolenBytes = 0;
+        int ambiguous = 0;
+
+        for (int v = 0; v < HOOK_VARIANT_MAX; v++)
+        {
+            const struct HookVariant *variant = &spec->variants[v];
+            if (!variant->signature)
+                break;
+
+            int matchCount = 0;
+            target = FindUniquePattern(variant->signature, (uint8_t *)imageBase, imageSize, &matchCount);
+            if (target)
+            {
+                stolenBytes = variant->stolenBytes;
+                PublishLine(HOOK_LOG_INFO, "[hook] %s: signature variant %d matched", spec->name, v);
+                break;
+            }
+            if (matchCount > 1)
+            {
+                ambiguous++;
+                PublishLine(HOOK_LOG_ERROR, "[hook] %s: variant %d matches %d places, skipping", spec->name, v,
+                            matchCount);
+            }
+        }
+
         if (!target)
         {
-            if (matchCount > 1)
-                PublishLine(HOOK_LOG_ERROR, "[hook] %s: the signature matches %d places, refusing to patch", spec->name,
-                            matchCount);
+            if (ambiguous)
+                PublishLine(HOOK_LOG_ERROR, "[hook] %s: no unambiguous signature, refusing to patch", spec->name);
             else
                 PublishLine(HOOK_LOG_ERROR, "[hook] %s: signature not found", spec->name);
             continue;
         }
 
-        void *trampoline = BuildTrampoline(spec, target);
+        void *trampoline = BuildTrampoline(spec, target, stolenBytes);
         if (!trampoline)
             continue;
 
         entry->target = (uint64_t)(uintptr_t)target;
         entry->trampoline = (uint64_t)(uintptr_t)trampoline;
+        entry->stolenBytes = stolenBytes;
         entry->status = HOOK_STATUS_READY;
 
         PublishLine(HOOK_LOG_INFO, "[hook] %s: trampoline at %p for %p", spec->name, trampoline,

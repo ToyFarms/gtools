@@ -101,6 +101,9 @@ static void SetDefaultSettings(void)
     g_settings.logLevel = HOOK_LOG_INFO;
     g_settings.allowAnyModule = 0;
     g_settings.streamGameLogs = 0;
+    g_settings.lowPower = 0;
+    g_settings.lowPowerFps = 0;
+    g_settings.lowPowerSkipDraws = 0;
     ZeroMemory(&g_capture, sizeof(g_capture));
 }
 
@@ -589,23 +592,26 @@ struct SettingDescriptor
 #define BASE_CAPTURE   1
 
 static const struct SettingDescriptor g_descriptors[] = {
-    {"proxy_host",       SETTING_TEXT,   BASE_SETTINGS, offsetof(struct HookSettings, proxyHost),
-     sizeof(((struct HookSettings *)0)->proxyHost),                                                       0, 0,      1},
-    {"proxy_port",       SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, proxyPort),      0, 1, 65535,  1},
-    {"start_delay_ms",   SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, startDelayMs),   0, 0, 600000, 1},
-    {"log_level",        SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, logLevel),       0, 0, 2,      1},
-    {"allow_any_module", SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, allowAnyModule), 0, 0, 1,      1},
-    {"stream_game_logs", SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, streamGameLogs), 0, 0, 1,      1},
-
-    {"client_version",   SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientVersion),
-     sizeof(((struct HookCapture *)0)->clientVersion),                                                    0, 0,      0},
-    {"client_protocol",  SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientProtocol),
-     sizeof(((struct HookCapture *)0)->clientProtocol),                                                   0, 0,      0},
-    {"client_platform",  SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientPlatform),
-     sizeof(((struct HookCapture *)0)->clientPlatform),                                                   0, 0,      0},
-    {"real_server",      SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  realServer),
-     sizeof(((struct HookCapture *)0)->realServer),                                                       0, 0,      0},
-    {"real_port",        SETTING_NUMBER, BASE_CAPTURE,  offsetof(struct HookCapture,  realPort),       0, 0, 65535,  0},
+    {"proxy_host",           SETTING_TEXT,   BASE_SETTINGS, offsetof(struct HookSettings, proxyHost),
+     sizeof(((struct HookSettings *)0)->proxyHost),                                                              0, 0,      1},
+    {"proxy_port",           SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, proxyPort),         0, 1, 65535,  1},
+    {"start_delay_ms",       SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, startDelayMs),      0, 0, 600000, 1},
+    {"log_level",            SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, logLevel),          0, 0, 2,      1},
+    {"allow_any_module",     SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, allowAnyModule),    0, 0, 1,      1},
+    {"stream_game_logs",     SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, streamGameLogs),    0, 0, 1,      1},
+    {"low_power",            SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, lowPower),          0, 0, 1,      1},
+    {"low_power_fps",        SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, lowPowerFps),       0, 0, 240,    1},
+    {"low_power_skip_draws", SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, lowPowerSkipDraws), 0, 0, 1,
+     1                                                                                                                       },
+    {"client_version",       SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientVersion),
+     sizeof(((struct HookCapture *)0)->clientVersion),                                                           0, 0,      0},
+    {"client_protocol",      SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientProtocol),
+     sizeof(((struct HookCapture *)0)->clientProtocol),                                                          0, 0,      0},
+    {"client_platform",      SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientPlatform),
+     sizeof(((struct HookCapture *)0)->clientPlatform),                                                          0, 0,      0},
+    {"real_server",          SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  realServer),
+     sizeof(((struct HookCapture *)0)->realServer),                                                              0, 0,      0},
+    {"real_port",            SETTING_NUMBER, BASE_CAPTURE,  offsetof(struct HookCapture,  realPort),          0, 0, 65535,  0},
 };
 
 #define SETTING_COUNT ((int)(sizeof(g_descriptors) / sizeof(g_descriptors[0])))

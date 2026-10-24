@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <windows.h>
 
-#define HOOK_PROTOCOL_VERSION 2u
+#define HOOK_PROTOCOL_VERSION 3u
 #define HOOK_PROTOCOL_MAGIC   0x4B485447u /* "GTHK" */
 #define HOOK_PIPE_NAME        "\\\\.\\pipe\\gtools_hook"
 #ifndef HOOK_AGENT_MUTEX_NAME
@@ -25,7 +25,9 @@
 #define HOOK_INDEX_GAME_LOG_RAW    1
 #define HOOK_INDEX_RESPONSE        2
 #define HOOK_INDEX_HTTP_POST       3
-#define HOOK_INDEX_COUNT           4
+#define HOOK_INDEX_RENDER_FRAME    4
+#define HOOK_INDEX_RENDER_SUBMIT   5
+#define HOOK_INDEX_COUNT           6
 
 enum HookEntryStatus
 {
@@ -71,6 +73,9 @@ struct HookSettings
     int logLevel;
     int allowAnyModule;
     int streamGameLogs;
+    int lowPower;
+    int lowPowerFps;
+    int lowPowerSkipDraws;
 };
 
 struct HookCapture
@@ -138,6 +143,8 @@ static const struct HookIdentity HOOK_IDENTITIES[HOOK_INDEX_COUNT] = {
     {"GameLog_Raw",          "game_log_raw"        },
     {"OnServerDataResponse", "server_data_response"},
     {"HttpClient_Post",      "http_client_post"    },
+    {"Render_Frame",         "render_frame"        },
+    {"Render_Submit",        "render_submit"       },
 };
 
 #endif /* __HOOK_PROTOCOL_H */

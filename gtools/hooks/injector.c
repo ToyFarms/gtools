@@ -610,6 +610,9 @@ EXPORT int inject(const char *target, const char *dll_path)
         settings.logLevel = HOOK_LOG_INFO;
         settings.allowAnyModule = 0;
         settings.streamGameLogs = 0;
+        settings.lowPower = 0;
+        settings.lowPowerFps = 0;
+        settings.lowPowerSkipDraws = 0;
     }
     if (!WriteShimSettings(process, selfRemote, &settings))
     {

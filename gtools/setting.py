@@ -1,14 +1,16 @@
 import atexit
+import copy
 import json
 import logging
 import threading
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
 from watchdog.events import DirModifiedEvent, FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from gtools.core.eventbus import EventMixin
 from gtools.core.mixin import JsonMixin
 from gtools.core.utils import get_growtopia, get_home
 from gtools.core.wsl import is_running_wsl
@@ -46,6 +48,9 @@ class HookSetting(JsonMixin):
     log_level: int = field(default=1)
     allow_any_module: bool = field(default=False)
     stream_game_logs: bool = field(default=False)
+    low_power: bool = field(default=False)
+    low_power_fps: int = field(default=0)
+    low_power_skip_draws: bool = field(default=False)
 
 
 @dataclass
@@ -111,6 +116,22 @@ class Setting(JsonMixin):
         return loaded
 
 
+@dataclass
+class SettingChanged(EventMixin):
+    changes: list[tuple[str, Any, Any]]
+
+
+def _copy_into(target: "Setting", source: "Setting") -> None:
+    for f in fields(Setting):
+        incoming = getattr(source, f.name)
+        current = getattr(target, f.name)
+        if is_dataclass(current) and type(current) is type(incoming):
+            for sub in fields(current):
+                setattr(current, sub.name, getattr(incoming, sub.name))
+        else:
+            setattr(target, f.name, incoming)
+
+
 class _SettingFileHandler(FileSystemEventHandler):
     def on_modified(self, event: DirModifiedEvent | FileModifiedEvent) -> None:
         if not isinstance(event, FileModifiedEvent):
@@ -135,12 +156,12 @@ def _reload():
         try:
             old = _setting
             new = Setting.load()
-            _setting = new
         except Exception:
             logger.exception("failed to reload setting, keeping previous")
             return
 
         if old is None:
+            _setting = new
             logger.info("setting loaded")
             return
 
@@ -150,14 +171,20 @@ def _reload():
             old_val = getattr(old, name)
             new_val = getattr(new, name)
             if old_val != new_val:
-                changes.append((name, old_val, new_val))
+                changes.append((name, copy.deepcopy(old_val), new_val))
 
         if changes:
-            logger.info(f"setting reloaded with {len(changes)} change(s):")
-            for name, old_val, new_val in changes:
-                logger.info(f"  {name}: {old_val} -> {new_val}")
-        else:
-            logger.info("setting reloaded (no changes)")
+            _copy_into(old, new)
+
+    if not changes:
+        logger.info("setting reloaded (no changes)")
+        return
+
+    logger.info(f"setting reloaded with {len(changes)} change(s):")
+    for name, old_val, new_val in changes:
+        logger.info(f"  {name}: {old_val} -> {new_val}")
+
+    SettingChanged(changes).send()
 
 
 def _start_watchdog():
