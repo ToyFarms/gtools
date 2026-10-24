@@ -1,16 +1,43 @@
+from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 import logging
-import struct
 import time
-from typing import Literal, cast
+from typing import Callable, ClassVar, Literal, Protocol, cast
 
 from gtools import setting
+from gtools.core.buffer import Buffer
 from gtools.core.growtopia.strkv import StrKV
 from gtools.core.growtopia.variant import Variant
 from gtools.core.convertible import ConvertibleToFloat, ConvertibleToInt
-from gtools.core.protocol import Serializable
 from gtools.protogen.extension_pb2 import Direction, PendingPacket
 from thirdparty.enet.bindings import ENetPacketFlag
+
+Mode = Literal["strict", "relaxed"]
+
+
+class BufferSerializable(Protocol):
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "BufferSerializable": ...
+    def serialize_into(self, s: Buffer) -> None: ...
+
+    def serialize(self) -> bytes:
+        b = Buffer()
+        self.serialize_into(b)
+        return b.serialize()
+
+
+class Packet(BufferSerializable): ...
+
+
+class PacketWithMode(Packet):
+    def serialize_into(self, s: Buffer, mode: Mode = "relaxed") -> None: ...
+    def serialize(self, mode: Mode = "relaxed") -> bytes:
+        b = Buffer()
+        self.serialize_into(b, mode)
+        return b.serialize()
+
+
+class NetWorldPacket(BufferSerializable): ...
 
 
 class NetType(IntEnum):
@@ -25,11 +52,9 @@ class NetType(IntEnum):
     CLIENT_LOG_REQUEST = 7
     CLIENT_LOG_RESPONSE = 8
 
-    # server sends entity position records for client-side interpolation, or possibly anti cheat measures?
+    # see docs/02_packet
     POSITION_SYNC = 9
-    # server instructs client to write position history into ring buffer slots, received when leaving the world
-    POSITION_HISTORY_WRITE = 10
-    # sent by the client with ~30hz rate
+    NETWORLD_DELTA = 10
     PLAYER_FRAME_COUNTER = 11
 
     @classmethod
@@ -123,27 +148,22 @@ class TankFlags(IntFlag):
     ACID_DAMAGE = 1 << 28
 
 
-class PlayerFrameFlags(IntEnum):
+class PlayerFrameFlags(IntFlag):
     NONE = 0
     LEFT = 1
     RIGHT = 2
-    UNK3 = 3
     JUMP = 4
-    LEFT_JUMP = 5
-    RIGHT_JUMP = 6
-
-    @classmethod
-    def _missing_(cls, value: int) -> "PlayerFrameFlags":
-        obj = int.__new__(cls, value)
-        obj._name_ = f"UNKNOWN_{value}"
-        obj._value_ = value
-        return obj
+    LEFT_RIGHT = LEFT | RIGHT
+    LEFT_JUMP = LEFT | JUMP
+    RIGHT_JUMP = RIGHT | JUMP
 
 
-# TODO: have constructor for variant
-class TankPacket(Serializable):
+_NET_TYPES: dict[int, NetType] = {m.value: m for m in NetType}
+_TANK_TYPES: dict[int, TankType] = {m.value: m for m in TankType}
+
+
+class TankPacket(PacketWithMode):
     logger = logging.getLogger("tank_packet")
-    _Struct: struct.Struct = struct.Struct("<BBBBiiIfIfffffiiI")
 
     def __init__(
         self,
@@ -203,69 +223,74 @@ class TankPacket(Serializable):
         self._extended_data = data
         self.extended_len = len(data)
 
-    def serialize(self, mode: Literal["relaxed", "strict"] = "relaxed") -> bytes:
-        if self.extended_data and self.flags & TankFlags.EXTENDED == 0:
-            msg = "has extended data, but the flags is not set"
-            if mode == "strict":
-                raise ValueError(msg)
-            self.logger.warning(msg)
-
-        buf = bytearray()
-        buf.extend(
-            TankPacket._Struct.pack(
-                self.type.value,
-                self.object_type,
-                self.jump_count,
-                self.animation_type,
-                self.net_id,
-                self.target_net_id,
-                self.flags,
-                self.float_var,
-                self.value,
-                self.vector_x,
-                self.vector_y,
-                self.vector_x2,
-                self.vector_y2,
-                self.particle_rotation,
-                self.int_x,
-                self.int_y,
-                self.extended_len,
-            )
-        )
-        if self.extended_data:
-            buf.extend(self.extended_data)
-
-        return bytes(buf)
-
     @classmethod
-    def deserialize(
-        cls,
-        data: bytes,
-        mode: Literal["strict", "relaxed"] = "relaxed",
-    ) -> "TankPacket":
-        tank_size = TankPacket._Struct.size
-        tank = cls(*TankPacket._Struct.unpack(data[:tank_size]), extended_data=None)
-        extended_data = b""
-        if len(data) > tank_size:
-            extended_data = data[tank_size:]
+    def deserialize(cls, s: Buffer | bytes, mode: Mode = "relaxed") -> "TankPacket":
+        s = s if isinstance(s, Buffer) else Buffer(s)
+        t = cls()
+        type_id = s.read_u8()
+        t.type = _TANK_TYPES.get(type_id) or TankType(type_id)
+        t.object_type = s.read_u8()
+        t.jump_count = s.read_u8()
+        t.animation_type = s.read_u8()
+        t.net_id = s.read_i32()
+        t.target_net_id = s.read_i32()
+        t.flags = TankFlags(s.read_u32())
+        t.float_var = s.read_f32()
+        t.value = s.read_u32()
+        t.vector_x = s.read_f32()
+        t.vector_y = s.read_f32()
+        t.vector_x2 = s.read_f32()
+        t.vector_y2 = s.read_f32()
+        t.particle_rotation = s.read_f32()
+        t.int_x = s.read_i32()
+        t.int_y = s.read_i32()
+        t.extended_len = s.read_u32()
+        extended_data = s.read_bytes(-1)
+        t._extended_data = extended_data
 
         # sometimes the length advertised is outright wrong
-        if tank.extended_len != len(extended_data):
-            msg = f"extended data size does not match (advertised: {tank.extended_len}, actual: {len(extended_data)}): {tank}, extended={extended_data[:100]}"
-
+        if t.extended_len != len(extended_data):
+            msg = f"extended data size does not match (advertised: {t.extended_len}, actual: {len(extended_data)}): {t}, extended={extended_data[:100]}"
             if mode == "strict":
                 raise ValueError(msg)
             cls.logger.warning(msg)
 
         # sometimes the extended flag is not set even when there is extended data
-        if extended_data and tank.flags & TankFlags.EXTENDED == 0:
-            msg = f"packet has extended data but the flag is not set: {tank}, extended={extended_data[:100]}"
+        if extended_data and t.flags & TankFlags.EXTENDED == 0:
+            msg = f"packet has extended data but the flag is not set: {t}, extended={extended_data[:100]}"
             if mode == "strict":
                 raise ValueError(msg)
             cls.logger.warning(msg)
 
-        tank._extended_data = extended_data
-        return tank
+        return t
+
+    def serialize_into(self, s: Buffer, mode: Mode = "relaxed") -> None:
+        ext = self._extended_data
+        if ext and self.flags & TankFlags.EXTENDED == 0:
+            msg = "has extended data, but the flags is not set"
+            if mode == "strict":
+                raise ValueError(msg)
+            self.logger.warning(msg)
+
+        s.write_u8(self.type)
+        s.write_u8(self.object_type)
+        s.write_u8(self.jump_count)
+        s.write_u8(self.animation_type)
+        s.write_i32(self.net_id)
+        s.write_i32(self.target_net_id)
+        s.write_u32(self.flags)
+        s.write_f32(self.float_var)
+        s.write_u32(self.value)
+        s.write_f32(self.vector_x)
+        s.write_f32(self.vector_y)
+        s.write_f32(self.vector_x2)
+        s.write_f32(self.vector_y2)
+        s.write_f32(self.particle_rotation)
+        s.write_i32(self.int_x)
+        s.write_i32(self.int_y)
+        s.write_u32(self.extended_len)
+        if ext:
+            s.write_bytes(ext)
 
     def __repr__(self) -> str:
         extra = ""
@@ -322,249 +347,483 @@ class TankPacket(Serializable):
         return f"TankPacket({', '.join(f'{k}={v}' for k, v in fields.items())})"
 
 
-class EmptyPacket(Serializable):
-    def serialize(self) -> bytes:
-        return b""
+class EmptyPacket(Packet):
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "EmptyPacket":
+        return cls()
+
+    def serialize_into(self, s: Buffer) -> None:
+        pass
 
     def __repr__(self) -> str:
         return "<Empty>"
 
 
-class PositionSyncHeaderEntry(Serializable):
-    _Struct: struct.Struct = struct.Struct("<BBHHBB")
-    SIZE = 8
-
-    def __init__(self, net_id: int = 0, b1: int = 0, w2: int = 0, w4: int = 0, b6: int = 0, b7: int = 0) -> None:
-        self.net_id = net_id
-        self.b1 = b1
-        self.w2 = w2
-        self.w4 = w4
-        self.b6 = b6
-        self.b7 = b7
-
-    def serialize(self) -> bytes:
-        return self._Struct.pack(self.net_id, self.b1, self.w2, self.w4, self.b6, self.b7)
-
-    @classmethod
-    def deserialize(cls, data: bytes) -> "PositionSyncHeaderEntry":
-        return cls(*cls._Struct.unpack(data[: cls.SIZE]))
-
-    def __repr__(self) -> str:
-        return f"PositionSyncHeaderEntry(net_id={self.net_id}, b1={self.b1}, w2={self.w2}, w4={self.w4}, b6={self.b6}, b7={self.b7})"
-
-
-class PositionSnapshotEntry(Serializable):
-    _Struct: struct.Struct = struct.Struct("<BBBBIIHHHhhBB")
-    SIZE = 24
-
-    def __init__(
-        self,
-        net_id: int = 0,
-        b1: int = 0,
-        b2: int = 0,
-        b3: int = 0,
-        player_tick: int = 0,
-        flags: TankFlags = TankFlags.NONE,
-        w12: int = 0,
-        x: int = 0,
-        y: int = 0,
-        vel_x: int = 0,
-        vel_y: int = 0,
-        jump_hold_time: int = 0,
-        jump_count: int = 0,
-    ) -> None:
-        self.net_id = net_id
-        self.b1 = b1
-        self.b2 = b2
-        self.b3 = b3
-        self.player_tick = player_tick
-        self.flags = flags
-        self.w12 = w12
-        self.x = x
-        self.y = y
-        self.vel_x = vel_x
-        self.vel_y = vel_y
-        self.jump_hold_time = jump_hold_time
-        self.jump_count = jump_count
-
-    def serialize(self) -> bytes:
-        return self._Struct.pack(
-            self.net_id, self.b1, self.b2, self.b3, self.player_tick, self.flags, self.w12, self.x, self.y, self.vel_x, self.vel_y, self.jump_hold_time, self.jump_count
-        )
-
-    @classmethod
-    def deserialize(cls, data: bytes) -> "PositionSnapshotEntry":
-        return cls(*cls._Struct.unpack(data[: cls.SIZE]))
-
-    def __repr__(self) -> str:
-        return (
-            f"PositionSnapshotEntry(net_id={self.net_id}, b=({self.b1},{self.b2},{self.b3}), player_tick={self.player_tick}, flags={self.flags}, "
-            f"w12={self.w12}, x={self.x}, y={self.y}, vel_x={self.vel_x}, vel_y={self.vel_y}, jump_hold_time={self.jump_hold_time}, jump_count={self.jump_count})"
-        )
-
-
-class PositionSyncPacket(Serializable):
-    def __init__(
-        self,
-        timestamp: int = 0,
-        entries: list[PositionSnapshotEntry] | None = None,
-        header_entries: list[PositionSyncHeaderEntry] | None = None,
-    ) -> None:
-        self.timestamp = timestamp
-        self.entries = entries if entries is not None else []
-        self.header_entries = header_entries if header_entries is not None else []
-
-    def serialize(self) -> bytes:
-        buf = bytearray(struct.pack("<I", self.timestamp))
-        buf.append(len(self.header_entries))
-        for h in self.header_entries:
-            buf.extend(h.serialize())
-        buf.append(len(self.entries))
-        for e in self.entries:
-            buf.extend(e.serialize())
-
-        return bytes(buf)
-
-    @classmethod
-    def deserialize(cls, data: bytes) -> "PositionSyncPacket":
-        if len(data) < 5:
-            return cls()
-
-        timestamp = struct.unpack_from("<I", data, 0)[0]
-        offset = 4
-
-        header_entries: list[PositionSyncHeaderEntry] = []
-        count1 = data[offset]
-        offset += 1
-        for _ in range(count1):
-            if offset + PositionSyncHeaderEntry.SIZE > len(data):
-                break
-            header_entries.append(PositionSyncHeaderEntry.deserialize(data[offset:]))
-            offset += PositionSyncHeaderEntry.SIZE
-
-        entries: list[PositionSnapshotEntry] = []
-        if offset < len(data):
-            count2 = data[offset]
-            offset += 1
-            for _ in range(count2):
-                if offset + PositionSnapshotEntry.SIZE > len(data):
-                    break
-                entries.append(PositionSnapshotEntry.deserialize(data[offset:]))
-                offset += PositionSnapshotEntry.SIZE
-
-        return cls(timestamp=timestamp, entries=entries, header_entries=header_entries)
-
-    def __repr__(self) -> str:
-        return f"PositionSyncPacket(timestamp={self.timestamp}, header_entries={len(self.header_entries)}, entries={len(self.entries)})"
-
-
-class PositionHistoryWritePacket(Serializable):
-    _ARRAYS: tuple[tuple[str, str], ...] = (
-        ("array1", "<QI"),
-        ("array2", "<Q"),
-        ("array3", "<B"),
-        ("array4", "<HB"),
-        ("array5", "<IH"),
-        ("array6", "<Q"),
-    )
-
-    def __init__(
-        self,
-        timestamp: int = 0,
-        array1: list[tuple[int, int]] | None = None,
-        array2: list[int] | None = None,
-        array3: list[int] | None = None,
-        array4: list[tuple[int, int]] | None = None,
-        array5: list[tuple[int, int]] | None = None,
-        array6: list[int] | None = None,
-    ) -> None:
-        self.timestamp = timestamp
-        self.array1 = array1 if array1 is not None else []
-        self.array2 = array2 if array2 is not None else []
-        self.array3 = array3 if array3 is not None else []
-        self.array4 = array4 if array4 is not None else []
-        self.array5 = array5 if array5 is not None else []
-        self.array6 = array6 if array6 is not None else []
-
-    def serialize(self) -> bytes:
-        buf = bytearray(struct.pack("<I", self.timestamp))
-        for name, fmt in self._ARRAYS:
-            items = getattr(self, name)
-            buf.append(len(items))
-            for item in items:
-                buf.extend(struct.pack(fmt, *item) if isinstance(item, tuple) else struct.pack(fmt, item))
-
-        return bytes(buf)
-
-    @classmethod
-    def deserialize(cls, data: bytes) -> "PositionHistoryWritePacket":
-        if len(data) < 5:
-            return cls()
-
-        timestamp = struct.unpack_from("<I", data, 0)[0]
-        offset = 4
-        arrays: list[list] = []
-        for _, fmt in cls._ARRAYS:
-            item_size = struct.calcsize(fmt)
-            items: list = []
-            if offset < len(data):
-                count = data[offset]
-                offset += 1
-                for _ in range(count):
-                    if offset + item_size > len(data):
-                        break
-                    values = struct.unpack_from(fmt, data, offset)
-                    items.append(values[0] if len(values) == 1 else values)
-                    offset += item_size
-            arrays.append(items)
-
-        return cls(timestamp, *arrays)
-
-    def __repr__(self) -> str:
-        return (
-            f"PositionHistoryWritePacket(timestamp={self.timestamp}, "
-            f"array1={len(self.array1)}, array2={len(self.array2)}, "
-            f"array3={len(self.array3)}, array4={len(self.array4)}, "
-            f"array5={len(self.array5)}, array6={len(self.array6)})"
-        )
-
-
-class PlayerFrameCounter(Serializable):
-    _Struct = struct.Struct("<II")
-
-    def __init__(self, tick: int, flags: PlayerFrameFlags) -> None:
-        self.tick = tick
-        self.flags = flags
-
-    def serialize(self) -> bytes:
-        return self._Struct.pack(self.tick, self.flags)
-
-    @classmethod
-    def deserialize(cls, data: bytes) -> "PlayerFrameCounter":
-        t, f = cls._Struct.unpack(data)
-        return cls(tick=t, flags=PlayerFrameFlags(f))
-
-    def __repr__(self) -> str:
-        return f"PlayerFrameCounter(tick={self.tick}, flags={self.flags})"
-
-
-class UnknownPacket(Serializable):
+class UnknownPacket(Packet):
     def __init__(self, data: bytes) -> None:
         self.data = data
 
     @classmethod
-    def deserialize(cls, data: bytes) -> "UnknownPacket":
-        return cls(data)
+    def deserialize(cls, s: Buffer) -> "UnknownPacket":
+        return cls(s.read_bytes(-1))
 
-    def serialize(self) -> bytes:
-        return self.data
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_bytes(self.data)
 
     def __repr__(self) -> str:
         return f"{self.data!r}"
 
 
-class NetPacket(Serializable):
-    def __init__(self, type: NetType, data: Serializable) -> None:
+@dataclass(slots=True)
+class NetWorldObjectUpdate(NetWorldPacket):
+    SIZE: ClassVar[int] = 8
+
+    net_id: int = 0  # u8
+    state: int = 0  # u8
+    x: int = 0  # u16
+    y: int = 0  # u16
+    effect_id: int = 0  # u8
+    progress: int = 0  # u8
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "NetWorldObjectUpdate":
+        t = cls()
+        t.net_id = s.read_u8()
+        t.state = s.read_u8()
+        t.x = s.read_u16()
+        t.y = s.read_u16()
+        t.effect_id = s.read_u8()
+        t.progress = s.read_u8()
+
+        return t
+
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_u8(self.net_id)
+        s.write_u8(self.state)
+        s.write_u16(self.x)
+        s.write_u16(self.y)
+        s.write_u8(self.effect_id)
+        s.write_u8(self.progress)
+
+
+@dataclass(slots=True, repr=False)
+class PlayerSnapshot(BufferSerializable):
+    SIZE: ClassVar[int] = 24
+
+    net_id: int = 0  # u8
+    unknown_1: int = 0  # u8
+    unknown_2: int = 0  # u8
+    action_cooldown: int = 0  # u8
+    player_frame: int = 0  # u32
+    flags: TankFlags = TankFlags.NONE  # u32
+    unknown_u16: int = 0  # u16
+    x: int = 0  # u16
+    y: int = 0  # u16
+    velocity_x: int = 0  # i16
+    velocity_y: int = 0  # i16
+    jump_hold_time: int = 0  # u8
+    jump_count: int = 0  # u8
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "PlayerSnapshot":
+        t = cls()
+        t.net_id = s.read_u8()
+        t.unknown_1 = s.read_u8()
+        t.unknown_2 = s.read_u8()
+        t.action_cooldown = s.read_u8()
+        t.player_frame = s.read_u32()
+        t.flags = TankFlags(s.read_u32())
+        t.unknown_u16 = s.read_u16()
+        t.x = s.read_u16()
+        t.y = s.read_u16()
+        t.velocity_x = s.read_i16()
+        t.velocity_y = s.read_i16()
+        t.jump_hold_time = s.read_u8()
+        t.jump_count = s.read_u8()
+
+        return t
+
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_u8(self.net_id)
+        s.write_u8(self.unknown_1)
+        s.write_u8(self.unknown_2)
+        s.write_u8(self.action_cooldown)
+        s.write_u32(self.player_frame)
+        s.write_u32(self.flags)
+        s.write_u16(self.unknown_u16)
+        s.write_u16(self.x)
+        s.write_u16(self.y)
+        s.write_i16(self.velocity_x)
+        s.write_i16(self.velocity_y)
+        s.write_u8(self.jump_hold_time)
+        s.write_u8(self.jump_count)
+
+    def __repr__(self) -> str:
+        return (
+            f"PlayerSnapshot(net_id={self.net_id}, unknown=({self.unknown_1},{self.unknown_2}), "
+            f"action_cooldown={self.action_cooldown}, player_frame={self.player_frame}, flags={self.flags!r}, "
+            f"unknown_u16={self.unknown_u16}, x={self.x}, y={self.y}, "
+            f"velocity_x={self.velocity_x}, velocity_y={self.velocity_y}, "
+            f"jump_hold_time={self.jump_hold_time}, jump_count={self.jump_count})"
+        )
+
+
+@dataclass(slots=True)
+class NetWorldRenderObject(NetWorldPacket):
+    SIZE: ClassVar[int] = 12
+
+    object_type: int = 0  # u8
+    item_id: int = 0  # u8
+    x: int = 0  # u16
+    y: int = 0  # u16
+    target_x: int = 0  # u16
+    target_y: int = 0  # u16
+    effect_variant: int = 0  # u8
+    owner_net_id: int = 0  # u8
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "NetWorldRenderObject":
+        t = cls()
+        t.object_type = s.read_u8()
+        t.item_id = s.read_u8()
+        t.x = s.read_u16()
+        t.y = s.read_u16()
+        t.target_x = s.read_u16()
+        t.target_y = s.read_u16()
+        t.effect_variant = s.read_u8()
+        t.owner_net_id = s.read_u8()
+
+        return t
+
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_u8(self.object_type)
+        s.write_u8(self.item_id)
+        s.write_u16(self.x)
+        s.write_u16(self.y)
+        s.write_u16(self.target_x)
+        s.write_u16(self.target_y)
+        s.write_u8(self.effect_variant)
+        s.write_u8(self.owner_net_id)
+
+
+@dataclass(slots=True)
+class NetWorldObject(NetWorldPacket):
+    SIZE: ClassVar[int] = 8
+
+    net_id: int = 0  # u8
+    object_type: int = 0  # u8
+    item_id: int = 0  # u8
+    reserved: int = 0  # u8
+    x: int = 0  # u16
+    y: int = 0  # u16
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "NetWorldObject":
+        t = cls()
+        t.net_id = s.read_u8()
+        t.object_type = s.read_u8()
+        t.item_id = s.read_u8()
+        t.reserved = s.read_u8()
+        t.x = s.read_u16()
+        t.y = s.read_u16()
+
+        return t
+
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_u8(self.net_id)
+        s.write_u8(self.object_type)
+        s.write_u8(self.item_id)
+        s.write_u8(self.reserved)
+        s.write_u16(self.x)
+        s.write_u16(self.y)
+
+
+class NetWorldDeletedNetID(NetWorldPacket):
+    SIZE: ClassVar[int] = 4
+
+    net_id: int = 0  # u32
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "NetWorldDeletedNetID":
+        t = cls()
+        t.net_id = s.read_u32()
+
+        return t
+
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_u32(self.net_id)
+
+
+@dataclass(slots=True)
+class NetWorldAbility(NetWorldPacket):
+    SIZE: ClassVar[int] = 3
+
+    net_id: int = 0  # u8
+    ability_id: int = 0  # u8
+    value: int = 0  # u8
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "NetWorldAbility":
+        t = cls()
+        t.net_id = s.read_u8()
+        t.ability_id = s.read_u8()
+        t.value = s.read_u8()
+
+        return t
+
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_u8(self.net_id)
+        s.write_u8(self.ability_id)
+        s.write_u8(self.value)
+
+
+@dataclass(slots=True)
+class NetWorldMovePlayer(NetWorldPacket):
+    SIZE: ClassVar[int] = 6
+
+    net_id: int = 0  # u8
+    reserved: int = 0  # u8
+    x: int = 0  # u16
+    y: int = 0  # u16
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "NetWorldMovePlayer":
+        t = cls()
+        t.net_id = s.read_u8()
+        t.reserved = s.read_u8()
+        t.x = s.read_u16()
+        t.y = s.read_u16()
+
+        return t
+
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_u8(self.net_id)
+        s.write_u8(self.reserved)
+        s.write_u16(self.x)
+        s.write_u16(self.y)
+
+
+@dataclass(slots=True, repr=False)
+class PlayerFrameCounter(Packet):
+    SIZE: ClassVar[int] = 8
+
+    frame: int = 0  # u32
+    flags: PlayerFrameFlags = PlayerFrameFlags.NONE  # u8
+    padding: bytes = b"\x00\x00\x00"
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "PlayerFrameCounter":
+        t = cls()
+        t.frame = s.read_u32()
+        t.flags = PlayerFrameFlags(s.read_u8())
+        t.padding = s.read_bytes(3)
+
+        return t
+
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_u32(self.frame)
+        s.write_u8(self.flags)
+        s.write_bytes(self.padding)
+
+    def __repr__(self) -> str:
+        return f"PlayerFrameCounter(frame={self.frame}, flags={self.flags!r})"
+
+
+class PositionSyncPacket(Packet):
+    MAX_OBJECT_UPDATES = 100
+    MAX_PLAYERS = 100
+
+    def __init__(self, timestamp: int = 0, object_updates: list[NetWorldObjectUpdate] | None = None, players: list[PlayerSnapshot] | None = None) -> None:
+        self.timestamp = timestamp
+        self.object_updates = object_updates if object_updates is not None else []
+        self.players = players if players is not None else []
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "PositionSyncPacket":
+        if s.remaining() < 5:
+            return cls()
+
+        timestamp = s.read_u32()
+        object_updates: list[NetWorldObjectUpdate] = []
+        for _ in range(s.read_u8()):
+            object_updates.append(NetWorldObjectUpdate.deserialize(s))
+
+        players: list[PlayerSnapshot] = []
+        if not s.eof():
+            for _ in range(s.read_u8()):
+                players.append(PlayerSnapshot.deserialize(s))
+
+        return cls(timestamp=timestamp, object_updates=object_updates, players=players)
+
+    def serialize_into(self, s: Buffer) -> None:
+        if len(self.object_updates) > self.MAX_OBJECT_UPDATES:
+            raise ValueError(f"too many object updates: {len(self.object_updates)}")
+        if len(self.players) > self.MAX_PLAYERS:
+            raise ValueError(f"too many players: {len(self.players)}")
+
+        s.write_u32(self.timestamp)
+        s.write_u8(len(self.object_updates))
+        for update in self.object_updates:
+            update.serialize_into(s)
+        s.write_u8(len(self.players))
+        for player in self.players:
+            player.serialize_into(s)
+
+    def __repr__(self) -> str:
+        return f"PositionSyncPacket(timestamp={self.timestamp}, object_updates={len(self.object_updates)}, players={len(self.players)})"
+
+
+class NetWorldDeltaPacket(Packet):
+    MAX_RENDER_OBJECTS = 100
+    MAX_OBJECTS = 200
+    MAX_DELETED_NET_IDS = 200
+    MAX_ABILITIES = 100
+    MAX_MOVED_PLAYERS = 100
+    MAX_OBJECT_UPDATES = 100
+
+    def __init__(
+        self,
+        timestamp: int = 0,
+        render_objects: list[NetWorldRenderObject] | None = None,
+        objects: list[NetWorldObject] | None = None,
+        deleted_net_ids: list[NetWorldDeletedNetID] | None = None,
+        abilities: list[NetWorldAbility] | None = None,
+        moved_players: list[NetWorldMovePlayer] | None = None,
+        object_updates: list[NetWorldObjectUpdate] | None = None,
+        client_side: bool = False,
+    ) -> None:
+        self.timestamp = timestamp
+        self.render_objects = render_objects if render_objects is not None else []
+        self.objects = objects if objects is not None else []
+        self.deleted_net_ids = deleted_net_ids if deleted_net_ids is not None else []
+        self.abilities = abilities if abilities is not None else []
+        self.moved_players = moved_players if moved_players is not None else []
+        self.object_updates = object_updates if object_updates is not None else []
+        self.client_side = client_side
+
+    @classmethod
+    def deserialize(cls, s: Buffer) -> "NetWorldDeltaPacket":
+        if s.remaining() < 5:
+            return cls()
+
+        timestamp = s.read_u32()
+
+        render_objects: list[NetWorldRenderObject] = []
+        objects: list[NetWorldObject] = []
+        deleted_net_ids: list[NetWorldDeletedNetID] = []
+        abilities: list[NetWorldAbility] = []
+        moved_players: list[NetWorldMovePlayer] = []
+        object_updates: list[NetWorldObjectUpdate] = []
+
+        for _ in range(s.read_u8()):
+            render_objects.append(NetWorldRenderObject.deserialize(s))
+
+        if not s.eof():
+            for _ in range(s.read_u8()):
+                objects.append(NetWorldObject.deserialize(s))
+
+            for _ in range(s.read_u8()):
+                deleted_net_ids.append(NetWorldDeletedNetID.deserialize(s))
+
+            for _ in range(s.read_u8()):
+                abilities.append(NetWorldAbility.deserialize(s))
+
+            for _ in range(s.read_u8()):
+                moved_players.append(NetWorldMovePlayer.deserialize(s))
+
+            for _ in range(s.read_u8()):
+                object_updates.append(NetWorldObjectUpdate.deserialize(s))
+
+            client_side = False
+        else:
+            client_side = True
+
+        return cls(
+            timestamp=timestamp,
+            render_objects=render_objects,
+            objects=objects,
+            deleted_net_ids=deleted_net_ids,
+            abilities=abilities,
+            moved_players=moved_players,
+            object_updates=object_updates,
+            client_side=client_side,
+        )
+
+    def serialize_into(self, s: Buffer) -> None:
+        if len(self.render_objects) > self.MAX_RENDER_OBJECTS:
+            raise ValueError(f"too many render_objects: {len(self.render_objects)}, max is {self.MAX_RENDER_OBJECTS}")
+
+        if not self.client_side:
+            if len(self.objects) > self.MAX_OBJECTS:
+                raise ValueError(f"too many objects: {len(self.objects)}, max is {self.MAX_OBJECTS}")
+            if len(self.deleted_net_ids) > self.MAX_DELETED_NET_IDS:
+                raise ValueError(f"too many deleted_net_ids: {len(self.deleted_net_ids)}, max is {self.MAX_DELETED_NET_IDS}")
+            if len(self.abilities) > self.MAX_ABILITIES:
+                raise ValueError(f"too many abilities: {len(self.abilities)}, max is {self.MAX_ABILITIES}")
+            if len(self.moved_players) > self.MAX_MOVED_PLAYERS:
+                raise ValueError(f"too many moved_players: {len(self.moved_players)}, max is {self.MAX_MOVED_PLAYERS}")
+            if len(self.object_updates) > self.MAX_OBJECT_UPDATES:
+                raise ValueError(f"too many object_updates: {len(self.object_updates)}, max is {self.MAX_OBJECT_UPDATES}")
+
+        s.write_u32(self.timestamp)
+
+        s.write_u8(len(self.render_objects))
+        for item in self.render_objects:
+            item.serialize_into(s)
+
+        if self.client_side:
+            return
+
+        s.write_u8(len(self.objects))
+        for item in self.objects:
+            item.serialize_into(s)
+
+        s.write_u8(len(self.deleted_net_ids))
+        for item in self.deleted_net_ids:
+            item.serialize_into(s)
+
+        s.write_u8(len(self.abilities))
+        for item in self.abilities:
+            item.serialize_into(s)
+
+        s.write_u8(len(self.moved_players))
+        for item in self.moved_players:
+            item.serialize_into(s)
+
+        s.write_u8(len(self.object_updates))
+        for item in self.object_updates:
+            item.serialize_into(s)
+
+    def __repr__(self) -> str:
+        return (
+            f"NetWorldDeltaPacket(timestamp={self.timestamp}, "
+            f"render_objects={len(self.render_objects)}, objects={len(self.objects)}, "
+            f"deleted_net_ids={len(self.deleted_net_ids)}, abilities={len(self.abilities)}, "
+            f"moved_players={len(self.moved_players)}, object_updates={len(self.object_updates)}, "
+            f"client_side={self.client_side})"
+        )
+
+
+def _read_strkv(s: Buffer) -> StrKV:
+    return StrKV.deserialize(s.read_bytes(-1))
+
+
+_BODY_READERS: dict[NetType, Callable[[Buffer], Packet | StrKV]] = {
+    NetType.SERVER_HELLO: EmptyPacket.deserialize,
+    NetType.GAME_MESSAGE: _read_strkv,
+    NetType.GENERIC_TEXT: _read_strkv,
+    NetType.TRACK: _read_strkv,
+    NetType.ERROR: EmptyPacket.deserialize,
+    NetType.CLIENT_LOG_REQUEST: EmptyPacket.deserialize,
+    NetType.CLIENT_LOG_RESPONSE: EmptyPacket.deserialize,
+    NetType.POSITION_SYNC: PositionSyncPacket.deserialize,
+    NetType.NETWORLD_DELTA: NetWorldDeltaPacket.deserialize,
+    NetType.PLAYER_FRAME_COUNTER: PlayerFrameCounter.deserialize,
+}
+
+
+class NetPacket(BufferSerializable):
+    def __init__(self, type: NetType, data: "BufferSerializable | StrKV") -> None:
         self.type = type
         self.data = data
 
@@ -612,40 +871,33 @@ class NetPacket(Serializable):
             ),
         )
 
-    def serialize(self) -> bytes:
-        if setting.anomaly_byte_compensation:
-            return struct.pack("<I", self.type.value) + self.data.serialize() + b"\x00"
-        else:
-            return struct.pack("<I", self.type.value) + self.data.serialize()
-
     @classmethod
-    def deserialize(cls, data: bytes, mode: Literal["strict", "relaxed"] = "relaxed") -> "NetPacket":
-        type = NetType(struct.unpack("<I", data[:4])[0])
+    def deserialize(cls, s: Buffer | bytes, mode: Mode = "relaxed") -> "NetPacket":
+        s = s if isinstance(s, Buffer) else Buffer(s)
+        raw_type = s.read_u32()
+        type = _NET_TYPES.get(raw_type) or NetType(raw_type)
 
         if setting.anomaly_byte_compensation:
-            pkt = data[4:-1]
+            s.truncate(max(s.rpos, len(s) - 1))
+
+        if type is NetType.TANK_PACKET:
+            body = TankPacket.deserialize(s, mode)
         else:
-            pkt = data[4:]
+            body = _BODY_READERS.get(type, UnknownPacket.deserialize)(s)
 
-        match type:
-            case NetType.SERVER_HELLO:
-                pkt = EmptyPacket()
-            case NetType.TANK_PACKET:
-                pkt = TankPacket.deserialize(pkt, mode)
-            case NetType.GAME_MESSAGE | NetType.GENERIC_TEXT | NetType.TRACK:
-                pkt = StrKV.deserialize(pkt)
-            case NetType.ERROR | NetType.CLIENT_LOG_REQUEST | NetType.CLIENT_LOG_RESPONSE:
-                pkt = EmptyPacket()
-            case NetType.POSITION_SYNC:
-                pkt = PositionSyncPacket.deserialize(pkt)
-            case NetType.POSITION_HISTORY_WRITE:
-                pkt = PositionHistoryWritePacket.deserialize(pkt)
-            case NetType.PLAYER_FRAME_COUNTER:
-                pkt = PlayerFrameCounter.deserialize(pkt)
-            case _:
-                pkt = UnknownPacket.deserialize(pkt)
+        return cls(type, body)
 
-        return cls(type, pkt)
+    def serialize_into(self, s: Buffer) -> None:
+        s.write_u32(self.type.value)
+
+        body = self.data
+        if isinstance(body, StrKV):
+            s.write_bytes(body.serialize())
+        else:
+            body.serialize_into(s)
+
+        if setting.anomaly_byte_compensation:
+            s.write_u8(0)
 
     def __repr__(self) -> str:
         return f"NetPacket[{self.type.name}]({self.data})"
@@ -680,15 +932,35 @@ class NetPacket(Serializable):
             raise TypeError("not a track packet")
         return cast(StrKV, self.data)
 
+    @property
+    def position_sync(self) -> "PositionSyncPacket":
+        if self.type is not NetType.POSITION_SYNC:
+            raise TypeError("not a position sync packet")
+        return cast(PositionSyncPacket, self.data)
+
+    @property
+    def networld_delta(self) -> "NetWorldDeltaPacket":
+        if self.type is not NetType.NETWORLD_DELTA:
+            raise TypeError("not a networld delta packet")
+        return cast(NetWorldDeltaPacket, self.data)
+
+    @property
+    def player_frame_counter(self) -> "PlayerFrameCounter":
+        if self.type is not NetType.PLAYER_FRAME_COUNTER:
+            raise TypeError("not a player frame counter packet")
+        return cast(PlayerFrameCounter, self.data)
+
 
 class PreparedPacket:
-    def __init__(self, packet: NetPacket | bytes, direction: Direction, flags: ENetPacketFlag) -> None:
+    def __init__(self, packet: "NetPacket | Buffer | bytes", direction: Direction, flags: ENetPacketFlag) -> None:
         if isinstance(packet, NetPacket):
             self._packet = packet
-            self._packet_raw = packet.serialize()
+            raw = Buffer()
+            packet.serialize_into(raw)
+            self._raw = raw
         else:
-            self._packet = NetPacket.deserialize(packet)
-            self._packet_raw = packet
+            self._raw = Buffer(packet)
+            self._packet = NetPacket.deserialize(Buffer(self._raw.buffer))
 
         self.direction = direction
         self.flags = flags
@@ -699,7 +971,7 @@ class PreparedPacket:
 
     @property
     def as_raw(self) -> bytes:
-        return self._packet_raw
+        return self._raw.serialize()
 
     @classmethod
     def from_pending(cls, pending: PendingPacket) -> "PreparedPacket":
@@ -722,17 +994,6 @@ class PreparedPacket:
 
 if __name__ == "__main__":
     samples = [
-        # "02000000616374696f6e7c696e7075740a7c746578747c61776a6961776a69646f61d5",
-        # "02000000616374696f6e7c696e7075740a7c746578747c647700",
-        # "02000000616374696f6e7c696e7075740a7c746578747c776401",
-        # "02000000616374696f6e7c696e7075740a7c746578747c643a",
-        # "02000000616374696f6e7c696e7075740a7c746578747c61b0",
-        # "03000000616374696f6e7c717569745f746f5f6578697400",
-        # "02000000616374696f6e7c696e7075740a7c746578747c746573737373737373737373737373737373737373737300",
-        # "02000000616374696f6e7c696e7075740a7c746578747c424f4f524f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f2120",
-        # "0400000001000000ffffffff000000000800000000000000ffffffff00000000000000000000000000000000000000000000000000000000a6010000020002070000004f6e537061776e010292010000737061776e7c6176617461720a6e657449447c3139330a7573657249447c3231303836373737350a6569647c3231303836373737357c434a5a6e70797966376b30433048546136644f447951594f744739547050747273566376532f50357650633d7c50793164474c49507a3842323853327a4f7a433265673d3d0a69707c6b577632614c3968454531334e6862736f77776274344b6e68586872634f6456577a6a4f3843596a7439493d0a636f6c726563747c307c307c32307c33300a706f7358597c3631347c3133300a6e616d657c6077796a67736d66726a60600a7469746c6549636f6e7c7b22506c61796572576f726c644944223a3139332c225772656e6368437573746f6d697a6174696f6e223a7b225772656e6368466f726567726f756e6443616e526f74617465223a66616c73652c225772656e6368466f726567726f756e644944223a2d312c225772656e636849636f6e4944223a2d317d7d0a636f756e7472797c75730a696e7669737c300a6d73746174657c300a736d73746174657c300a6f6e6c696e6549447c0a00",
-        # "03000000616374696f6e7c7175697400",
-        # b"\x04\x00\x00\x00\x00\x00\x00\x00@\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x008E\x00\x00!C\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00"
         b"\x04\x00\x00\x00\x01\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9b\x00\x00\x00\x02\x00\x02\x10\x00\x00\x00OnConsoleMessage\x01\x02~\x00\x00\x00CP:0_PL:1_OID:_CT:[SB]_ `5** from (`wuRalph`````5) in [```$EMBAGAMES```5] ** : ```$Looking for 3 letter world lmk what u got``\x00"
     ]
 
@@ -740,7 +1001,8 @@ if __name__ == "__main__":
     start = time.perf_counter()
     for sample in samples:
         for _ in range(n):
-            NetPacket.deserialize(sample)
+            NetPacket.deserialize(Buffer(sample))
 
     elapsed = time.perf_counter() - start
-    print(f"taking {elapsed}s {elapsed / n * 1000000000:.3f}ns / call")
+    calls = n * len(samples)
+    print(f"taking {elapsed}s {elapsed / calls * 1_000_000_000:.3f}ns / call")

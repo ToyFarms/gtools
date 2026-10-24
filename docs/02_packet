@@ -7,14 +7,17 @@ every packet is a net packet,
 net packet always contain 1 extra byte at the end, you can safely discard it.
 
 payload is determiend through the type,
-    SERVER_HELLO        (1): empty,       [\x01\x00\x00\x00\x00]
-    GENERIC_TEXT        (2): strkv,       [\x02\x00\x00\x00[strkv]\x00]
-    GAME_MESSAGE        (3): strkv,       [\x03\x00\x00\x00[strkv]\x00]
-    TANK_PACKET         (4): tank packet, [\x04\x00\x00\x00[tank packet]\x00]
-    ERROR               (5): empty,       [\x05\x00\x00\x00\x00]
-    TRACK               (6): strkv,       [\x06\x00\x00\x00[strkv]\x00]
-    CLIENT_LOG_REQUEST  (7): empty,       [\x07\x00\x00\x00\x00]
-    CLIENT_LOG_RESPONSE (8): empty,       [\x08\x00\x00\x00\x00]
+    SERVER_HELLO         (1):  empty,          [\x01\x00\x00\x00\x00]
+    GENERIC_TEXT         (2):  strkv,          [\x02\x00\x00\x00[strkv]\x00]
+    GAME_MESSAGE         (3):  strkv,          [\x03\x00\x00\x00[strkv]\x00]
+    TANK_PACKET          (4):  tank packet,    [\x04\x00\x00\x00[tank packet]\x00]
+    ERROR                (5):  empty,          [\x05\x00\x00\x00\x00]
+    TRACK                (6):  strkv,          [\x06\x00\x00\x00[strkv]\x00]
+    CLIENT_LOG_REQUEST   (7):  empty,          [\x07\x00\x00\x00\x00]
+    CLIENT_LOG_RESPONSE  (8):  empty,          [\x08\x00\x00\x00\x00]
+    POSITION_SYNC        (9):  snapshots,      [\x09\x00\x00\x00[payload]\x00]
+    NETWORLD_DELTA       (10): networld delta, [\x0a\x00\x00\x00[payload]\x00]
+    PLAYER_FRAME_COUNTER (11): frame,          [\x0b\x00\x00\x00[payload]\x00]
 
 tank packet,
     [
@@ -159,3 +162,308 @@ APP_INTEGRITY_FAIL,
     TELEPORT_HACK (25)
 
     there are other code, but im too lazy to find out what triggers them
+
+POSITION_SYNC,
+    type 9, sent by the server.
+
+    packet looks like,
+        [\x09\x00\x00\x00[payload]\x00]
+
+    payload,
+        [
+            timestamp           :u32 (server world time in milliseconds),
+            object_update_count :u8,
+            object_updates      :[object_update, ...] (object_update_count entries, max 100),
+            player_count        :u8,
+            players             :[player_snapshot, ...] (player_count entries, max 100),
+        ]
+
+    object_update (8 bytes), same layout as NETWORLD_DELTA object_updates,
+        [
+            net_id          :u8,
+            state           :u8,
+            x               :u16,
+            y               :u16,
+            effect_id       :u8,
+            progress        :u8 (0..255 -> 0.0..1.0),
+        ]
+
+    player_snapshot (24 bytes),
+        [
+            net_id          :u8,
+            unknown_1       :u8 (always 0xFF),
+            unknown_2       :u8 (always 0x03),
+            action_cooldown :u8 (0..255 -> 0.0..1.0 seconds),
+            player_frame    :u32 (frame counter from PLAYER_FRAME_COUNTER),
+            flags           :u32 (TankFlags),
+            unknown_u16     :u16 (always 0),
+            x               :u16,
+            y               :u16,
+            velocity_x      :i16,
+            velocity_y      :i16,
+            jump_hold_time  :u8 (0..255 -> 0.0..1.0 seconds),
+            jump_count      :u8 (0 = grounded, 1 = jump, 2 = double jump),
+        ]
+
+    sample,
+        payload:
+            fe494801000174ff0300cc00000010000000000058054f06000000000801
+
+        decoded:
+            timestamp        = 21514750
+            object_update_count = 0
+            player_count     = 1
+            players[0]       = PlayerSnapshot(
+                net_id         = 116,
+                unknown_1      = 255,
+                unknown_2      = 3,
+                action_cooldown = 0,
+                player_frame   = 204,
+                flags          = TankFlags.FACING_LEFT (0x10),
+                unknown_u16    = 0,
+                x              = 1368,
+                y              = 1615,
+                velocity_x     = 0,
+                velocity_y     = 0,
+                jump_hold_time = 8,
+                jump_count     = 1,
+            )
+
+    sample with double jump,
+        payload:
+            41e84701000168ff0300560000000000000400002807ab06a800b1ff0802
+
+        decoded:
+            timestamp  = 21489729
+            players[0] = PlayerSnapshot(
+                net_id         = 104,
+                unknown_1      = 255,
+                unknown_2      = 3,
+                action_cooldown = 0,
+                player_frame   = 86,
+                flags          = TankFlags.DOUBLE_JUMPED (0x04000000),
+                unknown_u16    = 0,
+                x              = 1832,
+                y              = 1707,
+                velocity_x     = 168,
+                velocity_y     = -79,
+                jump_hold_time = 8,
+                jump_count     = 2,
+            )
+
+    sample with two players and a long jump hold,
+        payload:
+            11dd4901000264ff0300020400002000000000006d06b1069e002b00000069ff03006c0200001000000000001b055f0306ffd200b001
+
+        decoded:
+            timestamp  = 21617937
+            players[0] = PlayerSnapshot(
+                net_id         = 100,
+                unknown_1      = 255,
+                unknown_2      = 3,
+                action_cooldown = 0,
+                player_frame   = 1026,
+                flags          = TankFlags.STANDING (0x20),
+                unknown_u16    = 0,
+                x              = 1645,
+                y              = 1713,
+                velocity_x     = 158,
+                velocity_y     = 43,
+                jump_hold_time = 0,
+                jump_count     = 0,
+            )
+            players[1] = PlayerSnapshot(
+                net_id         = 105,
+                unknown_1      = 255,
+                unknown_2      = 3,
+                action_cooldown = 0,
+                player_frame   = 620,
+                flags          = TankFlags.FACING_LEFT (0x10),
+                unknown_u16    = 0,
+                x              = 1307,
+                y              = 863,
+                velocity_x     = -250,
+                velocity_y     = 210,
+                jump_hold_time = 176,
+                jump_count     = 1,
+            )
+
+    semantics,
+        - the server sends snapshots at about 30hz. a snapshot normally contains
+          the latest state of the players that changed.
+        - the client keeps a ring of the last 12 snapshots (3240 bytes each).
+          equal timestamp -> merge the entries into the newest snapshot.
+          newer timestamp -> push the snapshot and set the interpolation clock to
+          timestamp - 250 ms. remote players are rendered about 250 ms behind the
+          server, interpolating x/y/velocity/flags between snapshots.
+          older timestamp -> drop with
+          "Skip snapshot. Snapshot time: {}, comparisonTime {}".
+        - the local player is not interpolated. the client looks up player_frame in
+          its input history. if the recorded position differs by >= 2.0 units, it
+          logs "{}: Sync client position", snaps position/velocity/facing, and
+          replays the remaining history frames through the controller.
+        - action_cooldown is written to controller +0x4C as value / 255.0.
+          jump_hold_time is written to controller +0x2C as value / 255.0.
+          jump_count is written to controller +0x28.
+        - object_updates are applied immediately with the same code as
+          NETWORLD_DELTA object_updates; they are not interpolated.
+        - unknown_1, unknown_2 and unknown_u16 are only copied into the snapshot
+          ring; neither interpolation nor local reconciliation reads them. they
+          are probably server-side object/animation state.
+
+NETWORLD_DELTA,
+    type 10. the NetWorld world-state delta: it adds/deletes/updates world
+    objects, updates abilities and moves players.
+
+    packet looks like,
+        [\x0a\x00\x00\x00[payload]\x00]
+
+    payload,
+        [
+            timestamp            :u32 (server world time in milliseconds),
+            render_object_count  :u8, render_objects:[render_object, ...],
+            object_count         :u8, objects:[object, ...],
+            deleted_count        :u8, deleted_net_ids:[net_id, ...],
+            ability_count        :u8, abilities:[ability, ...],
+            moved_player_count   :u8, moved_players:[move_player, ...],
+            object_update_count  :u8, object_updates:[object_update, ...],
+        ]
+
+    render_objects (12 bytes each, max 100) - AddRenderObject,
+        [
+            object_type     :u8,
+            item_id         :u8,
+            x               :u16,
+            y               :u16,
+            target_x        :u16,
+            target_y        :u16,
+            effect_variant  :u8,
+            owner_net_id    :u8,
+        ]
+
+    objects (8 bytes each, max 200) - AddObject,
+        [
+            net_id          :u8,
+            object_type     :u8,
+            item_id         :u8,
+            reserved        :u8,
+            x               :u16,
+            y               :u16,
+        ]
+
+    deleted_net_ids (1 byte each, max 200) - DeleteObject,
+        [
+            net_id          :u8,
+        ]
+
+    abilities (3 bytes each, max 100) - AddSpecialAbility,
+        [
+            net_id          :u8,
+            ability_id      :u8,
+            value           :u8,
+        ]
+
+    moved_players (6 bytes each, max 100) - MovePlayer,
+        [
+            net_id          :u8,
+            reserved        :u8,
+            x               :u16,
+            y               :u16,
+        ]
+
+    object_updates (8 bytes each, max 100) - UpdateObject,
+        [
+            state           :u8,
+            facing          :u8 (0 = right, nonzero = left),
+            x               :u16,
+            y               :u16,
+            effect_id       :u8,
+            progress        :u8 (0..255 -> 0.0..1.0),
+        ]
+
+    sample (server -> client),
+        payload:
+            94504801000000000174006a06af0600
+
+        decoded:
+            timestamp       = 21515412
+            render_objects  = []
+            objects         = []
+            deleted_net_ids = []
+            abilities       = []
+            moved_players   = [NetWorldMovePlayer(net_id=116, reserved=0, x=1642, y=1711)]
+            object_updates  = []
+
+        this is a MovePlayer to (1642, 1711), the world spawn. the server sends
+        it when a player enters the world or is teleported; it sets the avatar
+        position directly and resets controller +0x6C to 0.
+
+    notes,
+        object_type/item_id/effect_variant are inferred from the
+        AddRenderObject decoder; the item/effect database ids are not resolved
+        here. an object_updates entry's effect_id selects a string/effect slot,
+        and progress is stored as value / 255.0.
+
+    direction,
+        server -> client: all six lists, parsed by sub_140B0ADE0.
+        client -> server: only render_objects, serialized by sub_140B0B860 from
+        the world's render-object queue (sub_140DEE470). the client timestamp is
+        its estimated server time + 250 ms, and it sends at most 100 entries
+        every 33 ms (the same gate as PLAYER_FRAME_COUNTER).
+
+    apply order (not the same as wire order),
+        1. deleted_net_ids DeleteObject
+        2. objects AddObject
+        3. render_objects AddRenderObject
+        4. abilities AddSpecialAbility (update pass, then add pass)
+        5. moved_players MovePlayer
+        6. object_updates UpdateObject
+
+    logs,
+        "[NetWorld] DeleteObject {}"
+        "[NetWorld] AddObject {} {}"
+        "[NetWorld] AddRenderObject {}"
+        "[NetWorld] AddSpecialAbility {}"
+        "[NetWorld] MovePlayer {}"
+
+PLAYER_FRAME_COUNTER,
+    type 11, sent by the client at about 30hz (every 33 ms).
+
+    packet looks like,
+        [\x0b\x00\x00\x00[payload]\x00]
+
+    payload (8 bytes),
+        [
+            frame   :u32 (frame counter),
+            flags   :u8  (input bitmask),
+            padding :[u8, u8, u8] (always 0),
+        ]
+
+    flags,
+        bit 0 (1): LEFT
+        bit 1 (2): RIGHT
+        bit 2 (4): JUMP
+        bit 3 (8): unknown/unused
+        combinations 3 (LEFT|RIGHT), 5 (LEFT|JUMP) and 6 (RIGHT|JUMP) are
+        possible.
+
+    samples,
+        0000000000000000  frame=0,   flags=NONE,  padding=0
+        1901000001000000  frame=281, flags=LEFT,  padding=0
+        f300000000000000  frame=243, flags=NONE,  padding=0
+
+    semantics,
+        - the counter starts at 0 when the local player's controller is created
+          (world join/respawn) and increments once per processed simulation
+          frame.
+        - the payload is copied from controller +0x30, which holds the last
+          processed input record: {u32 frame, u8 flags, 3 padding bytes}.
+        - the server echoes the same value in POSITION_SYNC player_frame. in
+          the snapshot tick is consistently 9 frames behind the live counter (median),
+          i.e. snapshots are rendered about 250-300 ms behind the client.
+        - the packet is suppressed while controller +0x68 (action lock/freeze
+          timer) is > 0, or while there is no local player/controller.
+        - the client keeps the same {frame, flags} records in its input history.
+          on a POSITION_SYNC correction it replays the records after the server
+          tick through the controller.
+

@@ -67,11 +67,7 @@ def test_deserialize_strict_mode_mismatch_raises() -> None:
     pkt.extended_data = b"abc"
     s = pkt.serialize()
 
-    size = TankPacket._Struct.size
-    header_vals = list(TankPacket._Struct.unpack(s[:size]))
-    header_vals[-1] = header_vals[-1] + 10
-    new_header = TankPacket._Struct.pack(*header_vals)
-    tampered = new_header + s[size:]
+    tampered = s[: 56 - 4] + struct.pack("<I", struct.unpack_from("<I", s, 56 - 4)[0] + 10) + s[56:]
 
     with pytest.raises(ValueError):
         TankPacket.deserialize(tampered, mode="strict")
@@ -91,12 +87,7 @@ def test_deserialize_relaxed_mode_truncation_and_warning(caplog: pytest.LogCaptu
     pkt.extended_data = b"ABCDEFGHIJ"
     s = pkt.serialize()
 
-    size = TankPacket._Struct.size
-    header_vals = list(TankPacket._Struct.unpack(s[:size]))
-
-    header_vals[-1] = 4
-    new_header = TankPacket._Struct.pack(*header_vals)
-    tampered = new_header + s[size:]
+    tampered = s[: 56 - 4] + struct.pack("<I", 4) + s[56:]
 
     caplog.clear()
     caplog.set_level("WARNING")
@@ -122,36 +113,31 @@ def test_sample_deserialize_relaxed_mode_truncation_and_warning(caplog: pytest.L
     assert serialized == sample
 
 
-def test_tank_size() -> None:
-    assert TankPacket._Struct.size == 56
-
-
 def test_net_tank_size() -> None:
-    assert len(NetPacket(type=NetType.TANK_PACKET, data=TankPacket()).serialize()) == TankPacket._Struct.size + 4 + 1
+    assert len(NetPacket(type=NetType.TANK_PACKET, data=TankPacket()).serialize()) == 56 + 4 + 1
 
 
 def test_tankpacket_serialize_minimal_appends_single_zero() -> None:
     pkt = _make_basic_tank()
     s = pkt.serialize()
 
-    size = TankPacket._Struct.size
-    assert len(s) == size
+    assert len(s) == 56
 
     verify(s)
 
 
 def test_deserialize_too_short_raises_struct_error() -> None:
     short = b"\x01\x02\x03"
-    with pytest.raises(struct.error):
+    with pytest.raises(EOFError):
         TankPacket.deserialize(short)
 
 
-def test_netpacket_deserialize_unknown_enum_raises_valueerror() -> None:
+def test_netpacket_deserialize_unknown_enum() -> None:
     junk_type = 0xDEADBEEF
     raw = struct.pack("<I", junk_type) + b"\x00"
 
-    with pytest.raises(ValueError):
-        NetPacket.deserialize(raw)
+    pkt = NetPacket.deserialize(raw)
+    assert pkt.serialize() == raw
 
 
 def test_netpacket_server_hello_and_serialize_roundtrip() -> None:
@@ -179,9 +165,10 @@ def test_netpacket_tank_roundtrip_and_snapshot() -> None:
 
 
 def test_netpacket_unknown_zero_type_raises_typeerror() -> None:
-    raw = struct.pack("<I", NetType.UNKNOWN.value) + b"payload"
-    with pytest.raises(TypeError):
-        NetPacket.deserialize(raw)
+    raw = struct.pack("<I", NetType.UNKNOWN.value) + b"payload\x00"
+
+    pkt = NetPacket.deserialize(raw)
+    assert pkt.serialize() == raw
 
 
 def test_sample_bytes() -> None:
@@ -285,12 +272,6 @@ def test_sample_roundtrip() -> None:
 
 def test_unknown_packet_serialize() -> None:
     verify(NetPacket(NetType(0), EmptyPacket()).serialize())
-
-
-def test_unknown_packet_deserialize() -> None:
-    payload = b"\x00\x00\x00\x00\x00"
-    with pytest.raises(TypeError):
-        NetPacket.deserialize(payload)
 
 
 def test_server_hello_serialize() -> None:
@@ -533,12 +514,6 @@ def test_empty_packet_variations() -> None:
         parsed = NetPacket.deserialize(raw)
         assert parsed.type == net_type
         assert isinstance(parsed.data, EmptyPacket)
-
-
-def test_invalid_nettype_deserialize() -> None:
-    raw = struct.pack("<I", 999) + b"\x00"
-    with pytest.raises(ValueError):
-        NetPacket.deserialize(raw)
 
 
 def test_tankpacket_maximal_values() -> None:

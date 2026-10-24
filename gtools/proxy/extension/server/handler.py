@@ -16,7 +16,7 @@ NETPACKET_TO_INTEREST_TYPE: dict[NetType, InterestType] = {
     NetType.CLIENT_LOG_REQUEST: InterestType.INTEREST_CLIENT_LOG_REQUEST,
     NetType.CLIENT_LOG_RESPONSE: InterestType.INTEREST_CLIENT_LOG_RESPONSE,
     NetType.POSITION_SYNC: InterestType.INTEREST_POSITION_SYNC,
-    NetType.POSITION_HISTORY_WRITE: InterestType.INTEREST_POSITION_HISTORY_WRITE,
+    NetType.NETWORLD_DELTA: InterestType.INTEREST_NETWORLD_DELTA,
     NetType.PLAYER_FRAME_COUNTER: InterestType.INTEREST_PLAYER_FRAME_COUNTER,
 }
 
@@ -280,8 +280,8 @@ class ExtensionHandler:
             case InterestType.INTEREST_POSITION_SYNC:
                 if pkt.as_net.type != NetType.POSITION_SYNC:
                     return False
-            case InterestType.INTEREST_POSITION_HISTORY_WRITE:
-                if pkt.as_net.type != NetType.POSITION_HISTORY_WRITE:
+            case InterestType.INTEREST_NETWORLD_DELTA:
+                if pkt.as_net.type != NetType.NETWORLD_DELTA:
                     return False
             case InterestType.INTEREST_PLAYER_FRAME_COUNTER:
                 if pkt.as_net.type != NetType.PLAYER_FRAME_COUNTER:
