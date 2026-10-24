@@ -906,7 +906,10 @@ class NetPacket(BufferSerializable):
         if callable(repr := getattr(self.data, "compact_repr", None)):
             return cast(str, repr())
 
-        return f"[{self.type.name}]{self.data}"
+        if isinstance(self.data, StrKV):
+            return f"[{self.type.name}]{self.data}"
+        else:
+            return f"{self.data}"
 
     @property
     def tank(self) -> "TankPacket":
