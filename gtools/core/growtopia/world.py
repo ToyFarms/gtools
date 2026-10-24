@@ -955,6 +955,7 @@ class TeamTile(TileExtra):
 @dataclass(slots=True)
 class GameGeneratorTile(TileExtra):
     type: TileExtraType = TileExtraType.GAME_GENERATOR_TILE
+
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "GameGeneratorTile":
         t = cls()
@@ -2731,7 +2732,7 @@ class DroppedItem:
 
 @dataclass(slots=True)
 class DroppedGroup:
-    items: dict[int, DroppedItem] = field(default_factory=dict)  # uid -> dropped item
+    uids: list[int] = field(default_factory=list)
     total: int = 0
 
 
@@ -2740,23 +2741,13 @@ class Dropped:
     nb_items: int = 0
     last_uid: int = 0
     groups: defaultdict[int, DroppedGroup] = field(default_factory=lambda: defaultdict(DroppedGroup))
-    id_reference: dict[int, int] = field(default_factory=dict)  # mapping from uid -> id
+    _items: dict[int, DroppedItem] = field(default_factory=dict)
 
     def __iter__(self) -> Iterator[DroppedItem]:
-        for group in self.groups.values():
-            for item in group.items.values():
-                yield item
+        return iter(self._items.values())
 
     def get(self, uid: int) -> DroppedItem | None:
-        if uid not in self.id_reference:
-            return
-
-        id = self.id_reference[uid]
-        if id not in self.groups:
-            return
-
-        group = self.groups[id]
-        return group.items.get(uid, None)
+        return self._items.get(uid)
 
     def get_total(self, id: int) -> int:
         group = self.groups.get(id)
@@ -2765,9 +2756,9 @@ class Dropped:
     def add_item(self, item: DroppedItem) -> DroppedGroup:
         item.uid = self.last_uid + 1
         group = self.groups[item.id]
-        group.items[item.uid] = item
+        group.uids.append(item.uid)
         group.total += item.amount
-        self.id_reference[item.uid] = item.id
+        self._items[item.uid] = item
         self.last_uid += 1
         self.nb_items += 1
 
@@ -2775,22 +2766,22 @@ class Dropped:
 
     def load_item(self, item: DroppedItem) -> None:
         group = self.groups[item.id]
-        group.items[item.uid] = item
+        group.uids.append(item.uid)
         group.total += item.amount
-        self.id_reference[item.uid] = item.id
+        self._items[item.uid] = item
 
     def remove_item(self, uid: int) -> DroppedItem:
-        group = self.groups[self.id_reference[uid]]
-        item = group.items.pop(uid)
+        item = self._items.pop(uid)
+        group = self.groups[item.id]
+        group.uids.remove(uid)
         group.total -= item.amount
-        self.id_reference.pop(item.uid)
         self.nb_items -= 1
 
         return item
 
     def set_amount(self, uid: int, amount: int) -> DroppedItem:
-        group = self.groups[self.id_reference[uid]]
-        item = group.items[uid]
+        item = self._items[uid]
+        group = self.groups[item.id]
 
         group.total += amount - item.amount
         item.amount = amount
@@ -2811,7 +2802,7 @@ class Dropped:
         return growtopia_pb2.Dropped(
             nb_items=self.nb_items,
             last_uid=self.last_uid,
-            items=[item.to_proto() for group in self.groups.values() for item in group.items.values()],
+            items=[item.to_proto() for item in self._items.values()],
         )
 
 
