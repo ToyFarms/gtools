@@ -391,8 +391,10 @@ class State:
                         )
                     case TankType.SEND_TILE_UPDATE_DATA_MULTIPLE:
                         buf = Buffer(pkt.tank.extended_data)
-                        while not buf.eof():
+                        while True:
                             x = buf.read_i32()
+                            if x == -1:
+                                break
                             y = buf.read_i32()
                             tile = Tile.deserialize(buf)
                             tile.pos.x = x
