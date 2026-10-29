@@ -3428,13 +3428,13 @@ class World:
         return 0
 
     @overload
-    def get_tile(self, x: ivec2, *, log: bool = True) -> Tile | None: ...
+    def get_tile(self, x: ivec2) -> Tile | None: ...
     @overload
-    def get_tile(self, x: int, *, log: bool = True) -> Tile | None: ...
+    def get_tile(self, x: int) -> Tile | None: ...
     @overload
-    def get_tile(self, x: int, y: int, *, log: bool = True) -> Tile | None: ...
+    def get_tile(self, x: int, y: int) -> Tile | None: ...
 
-    def get_tile(self, x: ivec2 | int, y: int | None = None, *, log: bool = True) -> Tile | None:
+    def get_tile(self, x: ivec2 | int, y: int | None = None) -> Tile | None:
         if isinstance(x, ivec2):
             idx = x.y * self.width + x.x
         elif y is None:
@@ -3442,11 +3442,7 @@ class World:
         else:
             idx = y * self.width + x
 
-        tile = self.tiles.get(idx)
-        if log and tile is None:
-            self.logger.warning(f"tile idx={idx} in {self.name} does not exist")
-
-        return tile
+        return self.tiles.get(idx)
 
     def find_tile(self, where: Callable[[Tile], object]) -> Iterator[Tile]:
         for tile in self.tiles.values():
@@ -3714,7 +3710,7 @@ class World:
 
         for y in range(-1, 2):
             for x in range(-1, 2):
-                if n := self.get_tile(tile.pos + ivec2(x, y), log=False):
+                if n := self.get_tile(tile.pos + ivec2(x, y)):
                     self.update_tile_connection(n)
 
     def update_tree(self, tile: Tile, item_id: int, harvest: bool, spawn_seed_flag: bool, seedling_flag: bool) -> None:

@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from enum import IntFlag
 from typing import Iterator
 
-from pyglm.glm import vec2, vec4
+from pyglm.glm import ivec2, vec2, vec4
 
 from gtools.core.color import Color
 from gtools.core.growtopia.items_dat import ItemInfoClothingType
@@ -46,15 +46,14 @@ class CharacterFlags(IntFlag):
 
 @dataclass(slots=True)
 class CharacterState:
-    build_range: int = 2  # tank.jump_count - 126
-    punch_range: int = 2  # tank.animation_type - 126
+    build_range: int = 2  # tank.jump_count - 128 + 2
+    punch_range: int = 2  # tank.animation_type - 128 + 2
     flags: CharacterFlags = CharacterFlags.NONE  # tank.value
-    velocity: float = 250.0  # tank.vector_x2
-    gravity: float = 1000.0  # tank.vector_y2
-    acceleration: float = 1200.0  # tank.vector_x
+    max_velocity: float = 250.0  # tank.vector_x2
+    vertical_accel: float = 1000.0  # tank.vector_y2
+    horizontal_accel: float = 1200.0  # tank.vector_x
     velocity_in_water: float = 125.0  # tank.float_var
     jump_strength: float = 200.0  # tank.vector_y
-    # TODO: unknown values: tank.target_net_id, tank.value, tank.int_x, tank.int_y
 
     @classmethod
     def from_proto(cls, proto: growtopia_pb2.CharacterState) -> "CharacterState":
@@ -62,9 +61,9 @@ class CharacterState:
             build_range=proto.build_range,
             punch_range=proto.punch_range,
             flags=CharacterFlags(proto.flags),
-            gravity=proto.gravity,
-            velocity=proto.velocity,
-            acceleration=proto.acceleration,
+            vertical_accel=proto.vertical_accel,
+            max_velocity=proto.max_velocity,
+            horizontal_accel=proto.horizontal_accel,
             velocity_in_water=proto.velocity_in_water,
             jump_strength=proto.jump_strength,
         )
@@ -74,9 +73,9 @@ class CharacterState:
             build_range=self.build_range,
             punch_range=self.punch_range,
             flags=self.flags,
-            gravity=self.gravity,
-            velocity=self.velocity,
-            acceleration=self.acceleration,
+            vertical_accel=self.vertical_accel,
+            max_velocity=self.max_velocity,
+            horizontal_accel=self.horizontal_accel,
             velocity_in_water=self.velocity_in_water,
             jump_strength=self.jump_strength,
         )
@@ -228,3 +227,33 @@ class Player:
             state=self.state.to_proto(),
             clothing=self.clothing.to_proto(),
         )
+
+    def is_facing_left_to(self, *, abs: vec2 | None = None, tile: ivec2 | None = None) -> TankFlags:
+        if abs:
+            target = abs
+        elif tile:
+            target = vec2(tile) * 32
+        else:
+            return self.flags & TankFlags.FACING_LEFT
+
+        if int(self.pos.x // 32) == int(target.x // 32):
+            return self.flags & ~TankFlags.FACING_LEFT
+
+        return TankFlags.FACING_LEFT if self.pos.x > target.x else TankFlags.NONE
+
+    def in_range(self, p: ivec2, punch: bool) -> bool:
+        reach = self.state.punch_range if punch else self.state.build_range
+
+        player_tile = ivec2(self.pos // 32)
+        rel = self.pos % 32
+        in_middle = ivec2(rel.x > (32 - self.colrect.w), rel.y > (32 - self.colrect.z))
+
+        dx = abs(player_tile.x - p.x)
+        dy = abs(player_tile.y - p.y)
+
+        if in_middle.x and p.x > player_tile.x:
+            dx = max(0, dx - 1)
+        if in_middle.y and p.y > player_tile.y:
+            dy = max(0, dy - 1)
+
+        return dx <= reach and dy <= reach

@@ -107,7 +107,7 @@ class PlantHelper(Extension):
             if tile.flags & TileFlags.WAS_SPLICED != 0:
                 return False
 
-        below = self.state.world.get_tile(tile.pos.x, tile.pos.y + 1, log=False)
+        below = self.state.world.get_tile(tile.pos.x, tile.pos.y + 1)
         if not below:
             return False
 

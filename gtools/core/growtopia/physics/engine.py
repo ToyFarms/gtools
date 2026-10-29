@@ -1,363 +1,372 @@
-import pygame
-import sys
 import math
-import keyboard
-import threading
-import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
-from pyglm.glm import vec2
-from gtools.core.growtopia.packet import NetPacket, TankFlags
-from gtools.protogen.extension_pb2 import (
-    BLOCKING_MODE_SEND_AND_FORGET,
-    DIRECTION_CLIENT_TO_SERVER,
-    INTEREST_STATE,
-    INTEREST_STATE_UPDATE,
-    Interest,
-    PendingPacket,
-)
-from gtools.proxy.extension.client.sdk import Extension, dispatch
-from gtools.proxy.extension.client.sdk_utils import helper
+from gtools.baked.items import ICE_CRUST_BLOCK, STEAM_LAUNCHER
+from gtools.core.growtopia.items_dat import ItemInfoCollisionType, ItemInfoType, item_database
+from gtools.core.growtopia.packet import TankFlags, TankPacket, TankType
+from gtools.core.growtopia.player import CharacterFlags, CharacterState
+from gtools.core.growtopia.world import Tile, TileFlags, World
+
+TILE = 32.0
+HITBOX = (20.0, 30.0)
+FIXED_DT = 1 / 60
+
+JUMP_SPEED = 450.0
+JUMP_CUT_ACCEL = 5000.0
+MAX_FALL = 400.0
+WATER_VERTICAL_SCALE = 0.3
+SLIDE_ACCEL_SCALE = 0.15
+SLIDE_WALL_BOUNCE = -0.7
+BOUNCY_SPEED = 500.0
+TRAMPOLINE_SPEED = -800.0
+TRAMPOLINE_MOMENTUM_SPEED = -531.25
+TANK_STATE_POLL_MS = 200.0
+
+_EPS = 1e-4
+_SOLID = {ItemInfoCollisionType.FULL, ItemInfoCollisionType.COLLIDE_IF_ON, ItemInfoCollisionType.COLLIDE_IF_OFF}
+_PLATFORM = {ItemInfoCollisionType.JUMP_THROUGH, ItemInfoCollisionType.ONE_WAY, ItemInfoCollisionType.CLOUD}
+
+StateCallback = Callable[[TankPacket], None]
 
 
-class GlobalKeys:
+@dataclass(slots=True)
+class PhysicsComponent:
+    net_id: int
+    x: float
+    y: float
+    state: CharacterState = field(default_factory=CharacterState)
+    on_state: StateCallback | None = None
+
+    vx: float = 0.0
+    vy: float = 0.0
+    facing_right: bool = True
+    grounded: bool = False
+    sliding: bool = False
+    in_water: bool = False
+
+    left: bool = False
+    right: bool = False
+    jump: bool = False
+    jump_latch: bool = False
+    double_jumped: bool = False
+
+    force_send: bool = False
+
+    frac_x: float = 0.0
+    frac_y: float = 0.0
+    next_poll_ms: float = 0.0
+    last_key: tuple | None = None
+    dup_pending: bool = False
+
+
+class PhysicsEngine:
+    def __init__(self, world: World, *, hitbox: tuple[float, float] = HITBOX, fixed_dt: float = FIXED_DT, on_state: StateCallback | None = None) -> None:
+        self.world = world
+        self.width, self.height = hitbox
+        self.fixed_dt = fixed_dt
+        self.on_state = on_state
+        self.components: dict[int, PhysicsComponent] = {}
+        self.tick = 0
+        self.time_ms = 0.0
+        self._accumulator = 0.0
+
+    def register(self, net_id: int, x: float, y: float, *, state: CharacterState | None = None, on_state: StateCallback | None = None) -> PhysicsComponent:
+        if net_id in self.components:
+            raise ValueError(f"net_id {net_id} is already registered")
+        c = PhysicsComponent(net_id, x, y, state or CharacterState(), on_state)
+        self._check_tile_mod(c)
+        self.components[net_id] = c
+
+        return c
+
+    def unregister(self, net_id: int) -> PhysicsComponent | None:
+        return self.components.pop(net_id, None)
+
+    def set_input(self, net_id: int, *, left: bool = False, right: bool = False, jump: bool = False) -> None:
+        c = self.components[net_id]
+        c.left, c.right = left, right
+        if jump != c.jump:
+            c.jump_latch = jump
+            if jump and c.grounded:
+                c.vy = -JUMP_SPEED
+                c.double_jumped = False
+            elif jump and c.state.flags & CharacterFlags.DOUBLE_JUMP and not c.double_jumped:
+                c.vy = -JUMP_SPEED
+                c.double_jumped = True
+
+        c.jump = jump
+
+    def teleport(self, net_id: int, x: float, y: float) -> None:
+        c = self.components[net_id]
+        c.x, c.y = x, y
+        c.vx = c.vy = c.frac_x = c.frac_y = 0.0
+        c.grounded = c.sliding = c.in_water = False
+        self._check_tile_mod(c)
+
+    def update(self, dt: float) -> None:
+        self._accumulator += dt
+        while self._accumulator >= self.fixed_dt:
+            self._accumulator -= self.fixed_dt
+            self.step()
+
+    def step(self) -> None:
+        self.tick += 1
+        self.time_ms += self.fixed_dt * 1000.0
+        for c in list(self.components.values()):
+            self._simulate(c)
+            self._send_state(c)
+
+    def build_state_packet(self, net_id: int) -> TankPacket:
+        c = self.components[net_id]
+        flags = TankFlags.NONE
+        if c.grounded:
+            flags |= TankFlags.STANDING
+        if not c.facing_right:
+            flags |= TankFlags.FACING_LEFT
+        if c.sliding:
+            flags |= TankFlags.SLIDE
+        if c.in_water:
+            flags |= TankFlags.SWIM
+
+        return TankPacket(
+            type=TankType.STATE,
+            net_id=net_id,
+            flags=flags,
+            vector_x=float(math.floor(c.x + 0.5)),
+            vector_y=float(math.floor(c.y + 0.5)),
+            vector_x2=c.vx,
+            vector_y2=c.vy,
+            float_var=c.state.velocity_in_water,
+            int_x=-1,
+            int_y=-1,
+        )
+
+    def _simulate(self, c: PhysicsComponent) -> None:
+        dt, st = self.fixed_dt, c.state
+        self._check_tile_mod(c)
+
+        # vertical
+        if c.grounded:
+            c.vy = min(c.vy, 0.0)
+        else:
+            accel = self._vertical_accel(c)
+            if accel > 0.0 and c.vy < 0.0 and not c.jump_latch:
+                accel += JUMP_CUT_ACCEL
+            max_fall = MAX_FALL * WATER_VERTICAL_SCALE if c.in_water else MAX_FALL
+            c.vy = min(c.vy + dt * accel, max_fall)
+
+        # horizontal
+        direction = int(c.right) - int(c.left)
+        if direction:
+            c.facing_right = direction > 0
+        elif c.vx:
+            c.facing_right = c.vx > 0.0
+        cap = st.velocity_in_water if c.in_water else st.max_velocity
+        step_v = st.horizontal_accel * dt
+        if c.sliding and c.vy <= 0.0:
+            step_v *= SLIDE_ACCEL_SCALE
+        if c.sliding:
+            if direction > 0 and c.vx < cap:
+                c.vx = min(c.vx + step_v, cap)
+            elif direction < 0 and c.vx > -cap:
+                c.vx = max(c.vx - step_v, -cap)
+        else:
+            c.vx = self._approach(c.vx, direction * cap, step_v)
+
+        step_x = max(-TILE, min(TILE, c.vx * dt))
+        step_y = max(-TILE, min(TILE, c.vy * dt))
+        self._touch(c, step_x, step_y)
+        self._move(c, c.vx * dt, 0)
+        self._move(c, c.vy * dt, 1)
+        self._settle(c)
+
+        c.x = max(0.0, min(self.world.width * TILE - self.width, c.x))
+        c.y = max(0.0, min(self.world.height * TILE - self.height, c.y))
+
     @staticmethod
-    def pressed(key):
-        return keyboard.is_pressed(key)
+    def _approach(value: float, target: float, step: float) -> float:
+        return min(value + step, target) if value < target else max(value - step, target)
 
+    @staticmethod
+    def _vertical_accel(c: PhysicsComponent) -> float:
+        return c.state.vertical_accel * WATER_VERTICAL_SCALE if c.in_water else c.state.vertical_accel
 
-pygame.init()
+    def _touch(self, c: PhysicsComponent, step_x: float, step_y: float) -> None:
+        w, h = self.width, self.height
 
-SCREEN_WIDTH = 1200
-SCREEN_HEIGHT = 800
-FPS = 60
-TPS = 60
+        if step_x:
+            for tx, ty in self._overlap(c.x + step_x, c.y, c.x + step_x + w, c.y + h):
+                if self._item_type(tx, ty) == ItemInfoType.BOUNCY:
+                    self._bounce(c, tx, ty)
+                    break
+                if self._is_solid(tx, ty):
+                    c.vx = c.vx * SLIDE_WALL_BOUNCE if c.sliding else 0.0
+                    break
 
-MULTIPLIER = 1
-GRAVITY = 1000.0 / MULTIPLIER
-MAX_HORIZONTAL_SPEED = 250.0
-HORIZONTAL_ACCELERATION = 1200.0
-HORIZONTAL_DECELERATION = 1300.0
-AIR_CONTROL_MULTIPLIER = 1
+        probe = 1.0 if (step_y == 0.0 and c.grounded) else step_y
+        if probe:
+            for tx, ty in self._overlap(c.x, c.y + probe, c.x + w, c.y + probe + h):
+                kind = self._item_type(tx, ty)
+                if kind == ItemInfoType.BOUNCY:
+                    self._bounce(c, tx, ty)
+                    break
+                launch = self._landing_launch(c, tx, ty, kind)
+                if launch is not None:
+                    c.vy = launch
+                    c.grounded = False
+                    break
 
-VERTICAL_MOMENTUM = 100 * MULTIPLIER
-JUMP_FORCE = -450.0
-MAX_FALL_SPEED = 800.0 / MULTIPLIER
+    def _bounce(self, c: PhysicsComponent, tx: int, ty: int) -> None:
+        angle = math.atan2(
+            c.y + self.height / 2 - (ty * TILE + TILE / 2),
+            c.x + self.width / 2 - (tx * TILE + TILE / 2),
+        )
+        c.vx, c.vy = math.cos(angle) * BOUNCY_SPEED, math.sin(angle) * BOUNCY_SPEED
+        c.grounded = False
+        c.jump_latch = False
+        c.sliding = True
 
-APEX_GRAVITY_MULTIPLIER = 0.55 if MULTIPLIER > 1 else 0.90
-APEX_VELOCITY_THRESHOLD = 100.0
+    def _landing_launch(self, c: PhysicsComponent, tx: int, ty: int, kind: int | None) -> float | None:
+        tile = self.world.get_tile(tx, ty)
+        steam = tile is not None and tile.fg_id == STEAM_LAUNCHER and tile.flags & TileFlags.IS_ON
+        if kind not in (ItemInfoType.TRAMPOLINE, ItemInfoType.TRAMPOLINE_MOMENTUM) and not steam:
+            return
 
-GROUND_Y = 700
+        if self._vertical_accel(c) <= 0.0 or c.vy < 0.0:
+            return
 
+        if ty * TILE < c.y + self.height - _EPS:
+            return
 
-class Player:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.width = 20
-        self.height = 30
+        if kind == ItemInfoType.TRAMPOLINE_MOMENTUM:
+            return TRAMPOLINE_MOMENTUM_SPEED
 
-        self.velocity_x = 0.0
-        self.velocity_y = 0.0
+        if steam and tile is not None:
+            # TODO: client also sends a tile-activate request
+            tile.flags &= ~TileFlags.IS_ON
 
-        self.facing_left = False
-        self.on_ground = False
-        self.has_double_jump = False
+        return TRAMPOLINE_SPEED
 
-        self.trail = []
-        self.trail_max_length = 20
-
-        self.prev_x = x
-        self.prev_y = y
-        self.color: tuple[int, int, int] = (255, 255, 255)
-
-    def update(self, dt):
-        self.prev_x = self.x
-        self.prev_y = self.y
-
-        acceleration_x = 0.0
-
-        moving_left = GlobalKeys.pressed("left") or GlobalKeys.pressed("a")
-        moving_right = GlobalKeys.pressed("right") or GlobalKeys.pressed("d")
-
-        if moving_left:
-            self.facing_left = True
-        elif moving_right:
-            self.facing_left = False
-
-        control_multiplier = 1.0 if self.on_ground else AIR_CONTROL_MULTIPLIER
-
-        if moving_left and not moving_right:
-            acceleration_x = -HORIZONTAL_ACCELERATION * control_multiplier
-        elif moving_right and not moving_left:
-            acceleration_x = HORIZONTAL_ACCELERATION * control_multiplier
+    def _move(self, c: PhysicsComponent, delta: float, axis: int) -> None:
+        total = delta + (c.frac_x if axis == 0 else c.frac_y)
+        steps = math.floor(total + 0.5)
+        if axis == 0:
+            c.frac_x = total - steps
         else:
-            if abs(self.velocity_x) > 0:
-                decel = HORIZONTAL_DECELERATION * dt
-                if abs(self.velocity_x) <= decel:
-                    self.velocity_x = 0
-                else:
-                    self.velocity_x -= math.copysign(decel, self.velocity_x)
+            c.frac_y = total - steps
+        direction = 1 if steps > 0 else -1
+        for _ in range(abs(steps)):
+            if axis == 0:
+                if self._blocked_x(c.x + direction, c.y, direction):
+                    return
 
-        self.velocity_x += acceleration_x * dt
-
-        if abs(self.velocity_x) > MAX_HORIZONTAL_SPEED:
-            self.velocity_x = math.copysign(MAX_HORIZONTAL_SPEED, self.velocity_x)
-
-        if not self.on_ground:
-            if not GlobalKeys.pressed("space"):
-                if self.velocity_y < -VERTICAL_MOMENTUM:
-                    self.velocity_y = -VERTICAL_MOMENTUM
-
-            gravity = GRAVITY
-
-            if abs(self.velocity_y) < APEX_VELOCITY_THRESHOLD:
-                gravity *= APEX_GRAVITY_MULTIPLIER
-
-            self.velocity_y += gravity * dt
-
-            if self.velocity_y > MAX_FALL_SPEED:
-                self.velocity_y = MAX_FALL_SPEED
-
-        self.x += self.velocity_x * dt
-        self.y += self.velocity_y * dt
-
-        if self.y + self.height >= GROUND_Y:
-            self.y = GROUND_Y - self.height
-            self.velocity_y = 0
-            self.on_ground = True
-            self.has_double_jump = True
-        else:
-            self.on_ground = False
-
-        if self.x < -self.width:
-            self.x = SCREEN_WIDTH
-        elif self.x > SCREEN_WIDTH:
-            self.x = -self.width
-
-        self.trail.append((self.x + self.width // 2, self.y + self.height // 2))
-        if len(self.trail) > self.trail_max_length:
-            self.trail.pop(0)
-
-    def get_interpolated_position(self, alpha):
-        interp_x = self.prev_x + (self.x - self.prev_x) * alpha
-        interp_y = self.prev_y + (self.y - self.prev_y) * alpha
-        return interp_x, interp_y
-
-    def jump(self):
-        if self.on_ground:
-            self.velocity_y = JUMP_FORCE
-            self.on_ground = False
-        elif self.has_double_jump:
-            self.velocity_y = JUMP_FORCE
-            self.has_double_jump = False
-
-    def draw(self, screen, alpha=1.0):
-        # draw_x, draw_y = self.get_interpolated_position(alpha)
-        draw_x, draw_y = self.x, self.y
-
-        for i, (tx, ty) in enumerate(self.trail):
-            alpha_val = int(255 * (i / len(self.trail)))
-            size = 2 + i // 5
-            pygame.draw.circle(screen, (0, 0, 255, alpha_val), (int(tx), int(ty)), size)
-
-        rect = pygame.Rect(int(draw_x), int(draw_y), self.width, self.height)
-        pygame.draw.rect(screen, self.color, rect)
-
-        indicator_x = draw_x + (5 if self.facing_left else self.width - 5)
-        indicator_y = draw_y + self.height // 2
-        color = (255, 0, 0) if self.facing_left else (0, 0, 255)
-        pygame.draw.circle(screen, (color), (int(indicator_x), int(indicator_y)), 5)
-
-        vector_scale = 0.3
-        end_x = draw_x + self.width // 2 + self.velocity_x * vector_scale
-        end_y = draw_y + self.height // 2 + self.velocity_y * vector_scale
-        pygame.draw.line(screen, (0, 255, 0), (draw_x + self.width // 2, draw_y + self.height // 2), (int(end_x), int(end_y)), 2)
-
-
-def draw_hud(screen, player, font, clock, tick_count, physics_ticks_per_second):
-    y_offset = 10
-    line_height = 25
-
-    hud_rect = pygame.Rect(10, 10, 400, 250)
-    pygame.draw.rect(screen, (0, 0, 0, 128), hud_rect)
-
-    info_lines = [
-        f"Render FPS: {int(clock.get_fps())}",
-        f"Physics TPS: {physics_ticks_per_second:.1f} (target: {TPS})",
-        f"Total Ticks: {tick_count}",
-        f"Position: ({int(player.x)}, {int(player.y)})",
-        f"Velocity X: {player.velocity_x:.1f} px/s",
-        f"Velocity Y: {player.velocity_y:.1f} px/s",
-        f"On Ground: {player.on_ground}",
-        f"Has Double Jump: {player.has_double_jump}",
-        f"Facing: {'Left' if player.facing_left else 'Right'}",
-    ]
-
-    for i, line in enumerate(info_lines):
-        text = font.render(line, True, (255, 255, 255))
-        screen.blit(text, (20, y_offset + i * line_height))
-
-
-gt_player = Player(SCREEN_WIDTH // 2, GROUND_Y - 60)
-player = Player(SCREEN_WIDTH // 2, GROUND_Y - 60)
-
-
-def main():
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Movement Engine")
-    clock = pygame.time.Clock()
-    font = pygame.font.Font(None, 24)
-
-    tick_interval = 1.0 / TPS
-
-    current_fps_cap = FPS
-
-    state_lock = threading.Lock()
-    physics_stop_event = threading.Event()
-
-    tick_count = 0
-    tps_tick_count = 0
-    tps_timer = 0.0
-    actual_tps = float(TPS)
-    last_physics_time = time.perf_counter()
-
-    def physics_loop():
-        nonlocal tick_count, tps_tick_count, tps_timer, actual_tps, last_physics_time
-        next_tick = time.perf_counter()
-        while not physics_stop_event.is_set():
-            now = time.perf_counter()
-            if now >= next_tick:
-                with state_lock:
-                    player.update(tick_interval)
-                    tick_count += 1
-                    tps_tick_count += 1
-                    last_physics_time = now
-
-                next_tick += tick_interval
-                if now - next_tick > 1.0:
-                    next_tick = now + tick_interval
-
-                tps_timer += tick_interval
-                if tps_timer >= 1.0:
-                    with state_lock:
-                        actual_tps = tps_tick_count / tps_timer if tps_timer > 0 else 0.0
-                        tps_tick_count = 0
-                        tps_timer = 0.0
+                c.x += direction
             else:
-                time_to_sleep = next_tick - now
-                if time_to_sleep > 0:
-                    time.sleep(min(time_to_sleep, 0.001))
+                if self._blocked_y(c.x, c.y + direction, direction):
+                    return
 
-    physics_thread = threading.Thread(target=physics_loop, daemon=True)
-    physics_thread.start()
+                c.y += direction
 
-    running = True
-    jumped = False
+    def _blocked_x(self, x: float, y: float, direction: int) -> bool:
+        edge = x + self.width if direction > 0 else x
+        tx = math.floor((edge - direction * _EPS) / TILE)
 
-    while running:
-        frame_time = clock.get_time() / 1000.0
-        if frame_time <= 0:
-            frame_time = 1.0 / 1000.0
+        return any(self._is_solid(tx, ty) for ty in range(math.floor((y + _EPS) / TILE), math.floor((y + self.height - _EPS) / TILE) + 1))
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    running = False
-                elif event.key == pygame.K_c:
-                    current_fps_cap = 60 if current_fps_cap == 5 else 5 if current_fps_cap == 60 else 60
+    def _blocked_y(self, x: float, y: float, direction: int) -> bool:
+        edge = y + self.height if direction > 0 else y
+        ty = math.floor((edge - direction * _EPS) / TILE)
+        for tx in range(math.floor((x + _EPS) / TILE), math.floor((x + self.width - _EPS) / TILE) + 1):
+            if self._is_solid(tx, ty):
+                return True
 
-        if GlobalKeys.pressed("space"):
-            if not jumped:
-                with state_lock:
-                    player.jump()
-            jumped = True
+            if direction > 0 and self._is_platform(tx, ty) and edge - 1.0 <= ty * TILE + _EPS:
+                return True
+
+        return False
+
+    def _settle(self, c: PhysicsComponent) -> None:
+        feet = c.y + self.height
+        row = math.floor((feet + 0.5) / TILE)
+        support = any(self._is_solid(tx, row) or self._is_platform(tx, row) for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0))
+        if support and abs(feet - row * TILE) <= 0.5 and c.vy >= 0.0:
+            c.y = row * TILE - self.height
+            c.vy = 0.0
+            c.grounded = True
+            c.double_jumped = False
         else:
-            jumped = False
+            c.grounded = False
 
-        with state_lock:
-            local_last_physics_time = last_physics_time
-            local_tick_count = tick_count
-            local_actual_tps = actual_tps
-            screen.fill((0, 0, 0))
+    def _check_tile_mod(self, c: PhysicsComponent) -> None:
+        centre = self.world.get_tile(math.floor((c.x + self.width / 2) / TILE), math.floor((c.y + self.height / 2) / TILE))
+        c.in_water = bool(centre and centre.flags & TileFlags.IS_WET)
 
-            pygame.draw.line(screen, (200, 200, 200), (0, GROUND_Y), (SCREEN_WIDTH, GROUND_Y), 3)
+        row = math.floor((c.y + self.height) / TILE)
+        if any(self._is_slippery(self.world.get_tile(tx, row)) for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0)):
+            c.sliding = True
+        elif c.grounded:
+            c.sliding = False
 
-            grid_spacing = 32
-            for x in range(0, SCREEN_WIDTH, grid_spacing):
-                pygame.draw.line(screen, (40, 40, 40), (x, 0), (x, SCREEN_HEIGHT), 1)
-            for y in range(0, SCREEN_HEIGHT, grid_spacing):
-                pygame.draw.line(screen, (40, 40, 40), (0, y), (SCREEN_WIDTH, y), 1)
+    def _collision(self, tx: int, ty: int) -> ItemInfoCollisionType:
+        tile = self.world.get_tile(tx, ty)
+        if tile is None or tile.fg_id <= 0:
+            return ItemInfoCollisionType.NONE
 
-            now_perf = time.perf_counter()
-            alpha = (now_perf - local_last_physics_time) / tick_interval
-            if alpha < 0:
-                alpha = 0.0
-            elif alpha > 1:
-                alpha = 1.0
+        kind = item_database.get(tile.fg_id).collision_type
+        on = bool(tile.flags & TileFlags.IS_ON)
+        if (kind == ItemInfoCollisionType.COLLIDE_IF_ON and not on) or (kind == ItemInfoCollisionType.COLLIDE_IF_OFF and on):
+            return ItemInfoCollisionType.NONE
 
-            player.draw(screen, alpha)
-            gt_player.color = (255, 100, 100)
-            gt_player.draw(screen, alpha)
+        return kind
 
-            draw_hud(screen, player, font, clock, local_tick_count, local_actual_tps)
+    def _is_solid(self, tx: int, ty: int) -> bool:
+        return self._collision(tx, ty) in _SOLID
 
-            fps_text = f"FPS Cap: {'Uncapped' if current_fps_cap == 0 else current_fps_cap}"
-            fps_render = font.render(fps_text, True, (0, 255, 255))
-            screen.blit(fps_render, (SCREEN_WIDTH - 200, 20))
+    def _is_platform(self, tx: int, ty: int) -> bool:
+        return self._collision(tx, ty) in _PLATFORM
 
-        pygame.display.flip()
+    def _item_type(self, tx: int, ty: int) -> int | None:
+        tile = self.world.get_tile(tx, ty)
+        return int(item_database.get(tile.fg_id).item_type) if tile and tile.fg_id > 0 else None
 
-        if current_fps_cap > 0:
-            clock.tick(current_fps_cap)
-        else:
-            clock.tick()
+    @staticmethod
+    def _is_slippery(tile: Tile | None) -> bool:
+        if tile is None or tile.fg_id <= 0:
+            return False
 
-    physics_stop_event.set()
-    physics_thread.join(timeout=1.0)
+        return (tile.fg_id == ICE_CRUST_BLOCK and not (tile.flags & TileFlags.IS_ON)) or item_database.get(tile.fg_id).item_type == ItemInfoType.ICE
 
-    pygame.quit()
-    sys.exit()
+    @staticmethod
+    def _columns(left: float, right: float) -> range:
+        return range(math.floor(left / TILE), math.floor(right / TILE) + 1)
 
+    def _overlap(self, left: float, top: float, right: float, bottom: float):
+        for tx in range(math.floor((left + _EPS) / TILE), math.floor((right - _EPS) / TILE) + 1):
+            for ty in range(math.floor((top + _EPS) / TILE), math.floor((bottom - _EPS) / TILE) + 1):
+                tile = self.world.get_tile(tx, ty)
+                if tile is not None and tile.fg_id > 0:
+                    yield tx, ty
 
-s = helper()
+    def _send_state(self, c: PhysicsComponent) -> None:
+        send = c.on_state or self.on_state
+        if send is None:
+            return
 
+        if c.force_send:
+            c.force_send = False
+            c.next_poll_ms = 0.0
+        if self.time_ms < c.next_poll_ms:
+            return
 
-class MovementTest(Extension):
-    def __init__(self) -> None:
-        super().__init__(name="movement-test", interest=[Interest(interest=INTEREST_STATE_UPDATE)])
-        self.origin = vec2(0, 0)
-        self.pos = vec2(0, 0)
-        self.offset = vec2(0, 0)
+        c.next_poll_ms = self.time_ms + TANK_STATE_POLL_MS
 
-    @dispatch(
-        Interest(
-            interest=INTEREST_STATE,
-            direction=DIRECTION_CLIENT_TO_SERVER,
-            blocking_mode=BLOCKING_MODE_SEND_AND_FORGET,
-            id=s.auto,
-        ),
-    )
-    def on_move(self, event: PendingPacket) -> PendingPacket | None:
-        pkt = NetPacket.deserialize(event.buf)
-        self.pos = vec2(pkt.tank.vector_x, pkt.tank.vector_y)
-        gt_player.x = pkt.tank.vector_x - self.origin.x + self.offset.x
-        gt_player.y = pkt.tank.vector_y - self.origin.y + self.offset.y
-        gt_player.facing_left = pkt.tank.flags & TankFlags.FACING_LEFT != 0
-
-    @dispatch(s.command_toggle("/set", s.auto))
-    def set_origin(self, _event: PendingPacket) -> PendingPacket | None:
-        self.origin = self.pos
-        self.offset = vec2(player.x, player.y)
-
-        return self.cancel()
-
-    def destroy(self) -> None:
-        pass
-
-
-if __name__ == "__main__":
-    # MovementTest().standalone()
-    MovementTest().start(block=False)
-    main()
+        pkt = self.build_state_packet(c.net_id)
+        key = (pkt.vector_x, pkt.vector_y, pkt.vector_x2, pkt.vector_y2, int(pkt.flags), pkt.float_var)
+        if key != c.last_key:
+            c.last_key = key
+            c.dup_pending = True
+            send(pkt)
+        elif c.dup_pending:
+            c.dup_pending = False
+            send(pkt)

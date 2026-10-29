@@ -27,26 +27,26 @@ class Inventory(_message.Message):
     def __init__(self, max_slot: _Optional[int] = ..., items: _Optional[_Iterable[_Union[Item, _Mapping]]] = ...) -> None: ...
 
 class CharacterState(_message.Message):
-    __slots__ = ("net_id", "build_range", "punch_range", "flags", "gravity", "velocity", "acceleration", "velocity_in_water", "jump_strength")
+    __slots__ = ("net_id", "build_range", "punch_range", "flags", "max_velocity", "vertical_accel", "horizontal_accel", "velocity_in_water", "jump_strength")
     NET_ID_FIELD_NUMBER: _ClassVar[int]
     BUILD_RANGE_FIELD_NUMBER: _ClassVar[int]
     PUNCH_RANGE_FIELD_NUMBER: _ClassVar[int]
     FLAGS_FIELD_NUMBER: _ClassVar[int]
-    GRAVITY_FIELD_NUMBER: _ClassVar[int]
-    VELOCITY_FIELD_NUMBER: _ClassVar[int]
-    ACCELERATION_FIELD_NUMBER: _ClassVar[int]
+    MAX_VELOCITY_FIELD_NUMBER: _ClassVar[int]
+    VERTICAL_ACCEL_FIELD_NUMBER: _ClassVar[int]
+    HORIZONTAL_ACCEL_FIELD_NUMBER: _ClassVar[int]
     VELOCITY_IN_WATER_FIELD_NUMBER: _ClassVar[int]
     JUMP_STRENGTH_FIELD_NUMBER: _ClassVar[int]
     net_id: int
     build_range: int
     punch_range: int
     flags: int
-    gravity: float
-    velocity: float
-    acceleration: float
+    max_velocity: float
+    vertical_accel: float
+    horizontal_accel: float
     velocity_in_water: float
     jump_strength: float
-    def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., flags: _Optional[int] = ..., gravity: _Optional[float] = ..., velocity: _Optional[float] = ..., acceleration: _Optional[float] = ..., velocity_in_water: _Optional[float] = ..., jump_strength: _Optional[float] = ...) -> None: ...
+    def __init__(self, net_id: _Optional[int] = ..., build_range: _Optional[int] = ..., punch_range: _Optional[int] = ..., flags: _Optional[int] = ..., max_velocity: _Optional[float] = ..., vertical_accel: _Optional[float] = ..., horizontal_accel: _Optional[float] = ..., velocity_in_water: _Optional[float] = ..., jump_strength: _Optional[float] = ...) -> None: ...
 
 class Me(_message.Message):
     __slots__ = ("net_id", "pos", "flags", "state", "server_ping", "client_ping", "time_since_login", "time_in_world")
