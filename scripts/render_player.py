@@ -1,77 +1,77 @@
+import random
 import sys
-from PIL import Image
+
 import click
 import numpy as np
-from pyglm.glm import ivec2
 
-from gtools import setting
-from gtools.baked.items import ANIME_MALE_HAIR, DIAMOND_ROCKET_SHOES, EDVOID_S_FIRE_NADO, INTERGALACTIC_WARRIOR_HAIR, MESSY_HAIR, SPIKEY_HAIR, STARBOARD
-from gtools.core.color import Color, color_tint, composite, composite_onto
-from gtools.core.growtopia.items_dat import item_database
+from gtools.baked.items import (
+    ANCESTRAL_TESSERACT_OF_DIMENSIONS,
+    DA_VINCI_WINGS,
+    INTERGALACTIC_WARRIOR_HAIR,
+    LEGENDARY_KATANA,
+    NEON_NERVES,
+    NO_FACE,
+    SKELETAL_HORSIE,
+)
+from gtools.core.color import Color
+from gtools.core.growtopia.items_dat import ItemInfoClothingType, ItemInfoType, item_database
 from gtools.core.growtopia.player import Clothing, Player
-from gtools.core.growtopia.rttex import RTTexManager
-from gtools.core.growtopia.variant import Variant
+from gtools.core.growtopia.renderer.player_renderer import PlayerRenderer, RenderOptions
 from scripts.utils import image_show_ansi
 
 
+def clothing_candidates() -> dict[ItemInfoClothingType, list[int]]:
+    candidates: dict[ItemInfoClothingType, list[int]] = {}
+    for item in item_database.items.values():
+        if item.item_type == ItemInfoType.CLOTHES:
+            candidates.setdefault(item.clothing_type, []).append(item.id)
+
+    return candidates
+
+
+def randomize_clothing(clothing: Clothing) -> None:
+    candidates = clothing_candidates()
+    for clothing_type, _ in clothing:
+        ids = candidates.get(clothing_type)
+        if ids:
+            setattr(clothing, clothing_type.name.lower(), random.choice(ids))
+
+
 @click.command()
-def render_player() -> None:
-    player = Player(
-        clothing=Clothing(
-            hair=INTERGALACTIC_WARRIOR_HAIR,
-            shirt=0,
-            pants=344,
-            shoes=EDVOID_S_FIRE_NADO,
-            face=0,
-            hand=0,
-            back=0,
-            hat=46,
-            neck=7576,
-            artifacts=0,
-            skin_color=Color.from_int_le(2527912447),
-        )
+@click.option("--out", type=click.Path(dir_okay=False, path_type=str), default=None, help="Write the render to a PNG file.")
+@click.option("--facing", type=click.IntRange(-1, 1), default=1, show_default=True, help="1 = right, -1 = left.")
+@click.option("--random", "randomize", is_flag=True, help="Pick a random item for every clothing slot.")
+def render_player(out: str | None, facing: int, randomize: bool) -> None:
+    clothing = Clothing(
+        hair=INTERGALACTIC_WARRIOR_HAIR,
+        shirt=NEON_NERVES,
+        pants=344,
+        shoes=SKELETAL_HORSIE,
+        face=NO_FACE,
+        hand=LEGENDARY_KATANA,
+        back=DA_VINCI_WINGS,
+        hat=46,
+        neck=7576,
+        artifacts=ANCESTRAL_TESSERACT_OF_DIMENSIONS,
+        skin_color=Color(120, 92, 80, 255),
     )
+
+    if randomize:
+        randomize_clothing(clothing)
+
+    player = Player(clothing=clothing)
 
     for type, cloth in player.clothing:
         print(f"{type.name:<10}: {item_database.get(cloth).name.decode() if cloth != 0 else '-'}")
 
-    mgr = RTTexManager()
-    layers: list[tuple[np.ndarray, ivec2]] = []
+    image = PlayerRenderer().render(player, RenderOptions(facing=facing))
 
-    base = ivec2(0, 16)
+    if out is not None:
+        image.save(out)
+        print(f"wrote {out}")
 
-    skin_color = np.array(player.clothing.skin_color.to_tuple(), dtype=np.uint8)
+    image_show_ansi(np.array(image))
 
-    # right arm
-    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_arm.rttex", 0, 0, 8, 16), skin_color), base + ivec2(20, 17)))
 
-    # left feet
-    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_feet.rttex", 0, 0, 32, 32), skin_color), base + ivec2(0, 0)))
-    # right feet
-    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_feet.rttex", 0, 32, 32, 32), skin_color), base + ivec2(0, 0)))
-
-    # leg
-    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_extraleg.rttex", 0, 0, 16, 16), skin_color), base + ivec2(8, 28)))
-    # body
-    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_head.rttex", 0, 0, 32, 32), skin_color), base + ivec2(0, 0)))
-
-    # left arm
-    layers.append((color_tint(mgr.get(setting.gt_path / "game/player_arm.rttex", 0, 0, 8, 16), skin_color), base + ivec2(6, 17)))
-
-    # eyes
-    layers.append((mgr.get(setting.gt_path / "game/player_eyes.rttex", 0, 0, 32, 32), base + ivec2(0, 0)))
-
-    if player.clothing.hair != 0:
-        item = item_database.get(player.clothing.hair)
-        layers.append((mgr.get(setting.gt_path / "game" / item.texture_file.decode(), item.tex_coord_x * 32, item.tex_coord_y * 32, 32, 32), base + ivec2(0, -16)))
-
-    if player.clothing.hat != 0:
-        item = item_database.get(player.clothing.hat)
-        layers.append((mgr.get(setting.gt_path / "game" / item.texture_file.decode(), item.tex_coord_x * 32, item.tex_coord_y * 32, 32, 32), base + ivec2(0, -16)))
-
-    out = np.zeros((64, 64, 4), dtype=np.uint8)
-    for layer, pos in layers:
-        out = composite_onto(out, layer, pos[0], pos[1])
-
-    # Image.fromarray(out).show()
-    image_show_ansi(out)
+if __name__ == "__main__":
+    sys.exit(render_player())
