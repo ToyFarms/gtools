@@ -128,6 +128,10 @@ class PhysicsEngine:
             flags |= TankFlags.SLIDE
         if c.in_water:
             flags |= TankFlags.SWIM
+        if c.double_jumped:
+            flags |= TankFlags.DOUBLE_JUMPED
+        if c.jump:
+            flags |= TankFlags.JUMP
 
         return TankPacket(
             type=TankType.STATE,

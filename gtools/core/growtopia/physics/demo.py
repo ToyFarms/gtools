@@ -106,7 +106,7 @@ class GPUPhysicsDemo:
         self.world = self.load_world(world_path)
         self.world_path = world_path
 
-        self.engine = PhysicsEngine(self.world)
+        self.engine = PhysicsEngine(self.world, on_state=lambda x: print(x.compact_repr()))
         self.spawn = self._find_spawn(self.world)
         self.body: PhysicsComponent = self.engine.register(PLAYER_NET_ID, *self.spawn, state=CharacterState(flags=CharacterFlags.DOUBLE_JUMP))
         self._accumulator = 0.0
