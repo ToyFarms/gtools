@@ -46,6 +46,15 @@ ProcessTankUpdatePacket            @ 0x140405470
 | `NetAvatar::tickAux` | `0x140503160` | per-tick avatar update; calls `sendTankState` every tick |
 | `sendTankState` | `0x1404F5E30` | **the client's send gate**: 200 ms poll + changed-packet check (§7.1) |
 | `NetAvatar::fillTankStatePacket` | `0x1404FBEB0` | builds the STATE frame; floors positions to whole pixels first |
+| `NetAvatar::vfunc_40 (`handleTileInteraction` `0x140501DF0`) | X-probe tile interaction dispatcher: deadly -> kill, LAVA/POINTY/ACID -> damaging, BOUNCY -> radial bounce, else wall response + climb (§12) |
+| `NetAvatar::vfunc_48` | `0x1405021D0` | Y-probe counterpart (`resolveLandingCollision`): BOUNCY/trampoline/steam landing + deadly dispatch + the Y-specific damaging response (§12) |
+| `NetAvatar::handleDamagingTileCollision` | `0x1404FBFF0` | X-probe hazard event flags + invert-and-clamp response (§12.2.1) |
+| `NetAvatar::sub_1404FC0B0` | `0x1404FC0B0` | Y-probe hazard event flags + vertical −800 response and same-direction horizontal clamp (§12.2.2) |
+| `NetAvatar::killPlayer` | `0x1405024E0` | deadly kill: dying latch + `GOT_KILLED` + rope/airlock special cases (§12.1) |
+| `NetAvatar::getTileAtPlayerPosition` | `0x1404FB8F0` | tile at the **collision-rect centre** — the climb check target (§12.3) |
+| `TileExistsAt` | `0x140519D80` | scans 5 cached tile slots for a foreground id (Adventure Rope check) |
+| `CanPassThroughTile` | `0x140554C10` | despite the name, returns "this tile **blocks** the axis / is interactive" (§12.4) |
+| `FindNearestInteractableTile` | `0x140512690` | gathers the probe rects and drives `vfunc_40`/`vfunc_48` (§11) |
 
 `NetControllerLocal` layout: `vtable` at `+0x00`, **`NetAvatar *avatar` at `+0x08`**,
 input latch/tick fields at `+0x10..+0x28`.
@@ -131,8 +140,8 @@ pairs are seeded at runtime — read the `initObfConst_*` helpers, not the data.
 | `0x140B52CB8` | `48.0` | `kConst_48p0_CB8` | — |
 | `0x140B52CC8` | `1200.0` | `kNoInputDamping_1200p0` | idle friction coefficient |
 | `0x140B52CE8` | `0.15` | `kConst_0p15_CE8` | validator scale |
-| `0x140B52CF8` | `300.0` | `kConst_300p0_CF8` | — |
-| `0x140B52D08` | `800.0` | `kConst_800p0_D08` | — |
+| `0x140B52CF8` | `300.0` | `kConst_300p0_CF8` | damaging-tile clamp (X away from the hazard; Y same direction, §12.2) |
+| `0x140B52D08` | `800.0` | `kConst_800p0_D08` | Y-probe damaging vertical response (§12.2.2) |
 | `0x140B52D18` | `800.0` | `kConst_800p0_D18` | — |
 | `0x140B52D28` | `500.0` | `kConst_500p0_D28` | — |
 | `0x140B52D38` | `400.0` | `kJumpStrengthOffset_400p0` | jump strength offset |
@@ -158,6 +167,8 @@ Plus two plain (non-obfuscated) read-only floats:
 |---|---|---|
 | `kHalfMultiplier_0p5` | `0x1408B8FEC` | `0.5` |
 | `kMinGravity_0p01` | `0x1408EE7A4` | `0.01` |
+| wall-boot multiplier | `0x14095C488` | `-0.01` |
+| wall-slide multiplier | `0x14095C494` | `-0.7` |
 
 `validateObfuscatedConstantPool` (`0x1400F5600`) sums 13 of these and compares the
 total against `*(float *)(this + 3612)`; mismatch `> 0.1` tears down the context.
@@ -175,7 +186,10 @@ total against `*(float *)(this + 3612)`; mismatch `> 0.1` tears down the context
    if (avatar[0x18C] & 0x800) m = -m;          // inverted
    avatar[0x61] = (avatar[0x18C] & 0x800) == 0;
    ```
-3. If `avatar[0x138] != 1`:
+3. If `avatar[0x138] == 0` **and** `FROZEN` (`avatar[0x188] & 0x800`) is clear
+   (asm at `0x140511B81`: `cmp dword ptr [rax+138h], 0` / `jnz`, then
+   `shr eax, 0Bh` / `test al, 1` / `jnz` — the earlier "`!= 1`" reading was
+   wrong; any non-zero `0x138`, including the dying state `2`, skips):
    - `avatar[0x104] = 0`
    - `NetAvatar::integrateVerticalAxis(avatar)`
    - `NetAvatar::validatePhysics(avatar, m)`
@@ -222,8 +236,26 @@ The clamp paths keep the same half-step convention: a clamped `+400` stores
 **released while the avatar is still rising** — this is the client-side jump
 cut. It adds to the **acceleration** (`1000 + 5000 = 6000 px/s²`), not to the
 velocity; there is no `-100 px/s` clamp in the client. `0x1A9` is bit 0 of
-`NetAvatar::SetCharacterMods` (`0x14050B980`) and can disable the cut. The
-`0x131` branch (boot/slipper variant) adds `0.85 * 5000` instead.
+`NetAvatar::SetCharacterMods` (`0x14050B980`) and can disable the cut.
+
+The `else` branch at `0x140510705` is the **damage-slip state** `avatar[0x131]`
+(set by the Y damaging response, §12.2.2): while it is set, `accel += 0.85 *
+5000` (`4250`). Verified in the asm — note it fires even when the first
+condition failed because the avatar is *falling* (`cur >= 0`), where the extra
+acceleration is inert thanks to the `+400` terminal-velocity clamp:
+
+```asm
+1405106ce  comiss  xmm10, xmm1        ; 0 vs the vertical axis
+1405106d2  jbe     loc_140510705      ; cur >= 0 -> skip the normal cut
+1405106d4  cmp     byte ptr [rbx+130h], 0   ; jump latch
+1405106db  jnz     loc_140510705
+1405106dd  cmp     byte ptr [rbx+1A9h], 0   ; character mod
+1405106e4  jnz     loc_140510705
+...        addss   xmm7, <5000>       ; normal cut
+140510705  cmp     byte ptr [rbx+131h], 0   ; damage slip?
+14051070c  jz      loc_14051074F
+...        addss   xmm7, <0.85 * 5000>
+```
 
 Modifiers on `accel`:
 
@@ -410,7 +442,7 @@ the gravity-derived velocity.
 
 ```c
 // validatePhysics: only when the horizontal input is zero and neither the
-// boot (0x131) nor the slide (0x0DD) override is active.
+// damage slip (0x131) nor the slide (0x0DD) override is active.
 if (inputAxis == 0.0 && avatar[0x131] == 0 && avatar[0x0DD] == 0) {
     float cur = avatar[0x0E4] - avatar[0x0F0]*0.5;
     lerpTo(&cur, 0.0, kNoInputDamping_1200p0 * dt);   // 1200.0
@@ -420,10 +452,12 @@ if (inputAxis == 0.0 && avatar[0x131] == 0 && avatar[0x0DD] == 0) {
 
 The damped axis is **`+0x0E4` (horizontal velocity)**, not `+0x0F4`. The
 vertical axis has no idle damping; it is governed by gravity in
-`integrateVerticalAxis`. The Python port in `physics_step.py` currently
-applies this damping to `vertical_axis_secondary`, which is a port bug; the
-demo overrides the vertical axis after the step, so it does not affect the
-jump.
+`integrateVerticalAxis`. `engine.py` mirrors this in `_simulate` — with no
+input the `_approach` helper decelerates `vx` toward zero at
+`horizontal_accel * dt` (1200 px/s²), and the vertical axis is only ever
+touched by gravity / the jump cut / the landing clamps. (An earlier port of
+this document against a discarded `physics_step.py` claimed the damping was
+applied to a vertical axis; that code no longer exists.)
 
 ### 6.4 Slide
 
@@ -450,14 +484,18 @@ If `sub_140512960` fails — no `isOn` tile overlaps the player rect, which is
 the normal case while airborne — `sub_140505CB0` jumps to its exit and leaves
 `+0xDD` **unchanged**. Jumping off a slippery tile therefore preserves the
 slide flag and horizontal momentum; the flag clears only when a non-slippery
-tile is found on landing. `engine.py`'s `_update_world_state` does this.
+tile is found on landing. `engine.py`'s `_check_tile_mod` does this: it only
+clears `sliding` in the `elif c.grounded` branch, so an airborne frame with no
+slippery tile underneath keeps the previous flag.
 
 `NetAvatar::setJumpHeld` (`0x14050C280`) writes only `+0x105` and `+0x130`; it
-does **not** touch the on-ground flag `+0xDC`. The demo's `NetAvatar.grounded`
-is the +0xDC mirror, so `set_jump_held` must not write it. Otherwise holding
-jump makes the avatar look grounded on the next tick, `_update_world_state`
-clears `slide_flag`, and idle damping kills the horizontal momentum on the
-first airborne tick after a slide-jump.
+does **not** touch the on-ground flag `+0xDC`. The engine's
+`PhysicsComponent.grounded` is the +0xDC mirror, and `set_input` likewise never
+writes it — the launch impulse is applied while the old `grounded` value is
+still set, which is what gives the launch tick its gravity-free travel (§10).
+Otherwise holding jump would make the avatar look grounded on the next tick,
+`_check_tile_mod` would clear `sliding`, and idle damping would kill the
+horizontal momentum on the first airborne tick after a slide-jump.
 
 `fillTankStatePacket` (`0x1404FBEB0`) reports `avatar[0x0DD]` as
 `TANKFLAG_SLIDE` (`0x20000`). In `validatePhysics`, `avatar[0x0DD]`:
@@ -470,9 +508,60 @@ first airborne tick after a slide-jump.
   lowers the cap to `125 px/s`), the client's `v16 > v17` / `v17 <= -v16`
   checks fail and the axis is left unchanged; because idle damping is skipped
   for slide, that above-cap momentum is preserved until the player inputs the
-  opposite direction. The engine mirrors this in `integrate_position`;
+  opposite direction. The engine mirrors this in `_simulate`'s slide branch
+  (it only accelerates while `vx < cap`);
 - makes `vfunc_40` (`0x140501DF0`) apply `vx *= -0.7` on a horizontal
   collision instead of zeroing it.
+
+#### 6.4.1 The damage-slip state (`avatar+0x131`)
+
+Earlier passes called `0x131` the "boot variant"; the real lifecycle is a
+damaging-tile *slip* state, confirmed from every writer/reader in `.text`:
+
+| Site | Address | Access |
+|---|---|---|
+| `sub_1404FC0B0` (Y damaging response, §12.2.2) | `0x1404FC1CC` | `= 1` |
+| `sub_140505CB0` (tile-below query) | `0x14050638C` | `= 0` |
+| `sub_140501290` (server STATE snapshot) | `0x14050137F` | `= 0` |
+| `validatePhysics` input scale | `0x140505281` | read |
+| `validatePhysics` idle-damping guard | `0x140505800` | read |
+| `integrateVerticalAxis` jump cut | `0x140510705` | read |
+| `handleTileInteraction` X clamp skip | `0x140501FBB` | read |
+| `handleDamagingTileCollision` clamp skip | `0x1404FC03F` | read |
+
+Lifecycle:
+
+- **Set** by the Y probe's damaging response: jumping/falling onto lava, acid,
+  a pointy tile, an `ON_FIRE` tile, an `IS_ON` lightning cloud or steam vent.
+- **Preserved while airborne**: `sub_140505CB0` runs every tick but leaves
+  `0x131` untouched when the vertical axis is rising or when its query finds
+  no tile (the same early exits that preserve `0x0DD`, §6.4).
+- **Cleared the moment the avatar touches the ground**: `sub_140505CB0`'s
+  tile-found path writes `0x131 = 0` right before setting `0xDC = 1`
+  (grounded). The query (`sub_140512960` → `sub_140564570`) collects tiles in
+  the collision rect shifted **down by 1 px**, widened by 32 px for
+  collection, and returns the first blocking one — for a standing avatar that
+  is exactly the tile under the feet. A server snapshot also clears it.
+
+While set, the client:
+
+- **scales the whole horizontal input magnitude by `0.15`** in
+  `validatePhysics` (`if (avatar[0x131]) v3 *= 0.15;`), on top of the slide
+  scale — so full input acceleration becomes `1200 * 0.15 = 180 px/s²` (or
+  `27` with both states);
+- **skips idle damping** (the `0x131` term in the §6.3 guard), so the
+  horizontal velocity does not decay at all;
+- changes the jump-cut multiplier to `0.85 * 5000` (§5.2);
+- makes the `vfunc_40` wall response multiply by `-0.01` instead of `-0.7`/`0`
+  (§12.3).
+
+The observable behaviour is exactly "launched in the direction you were
+moving, then slippery and barely steerable until you land": the Y response
+same-direction-clamps `vx` to at least `±300`, friction is off while airborne,
+input only pushes at 15 % strength, and touching any floor restores normal
+control. `engine.py` models this with `PhysicsComponent.damage_slip`
+(`_simulate` scales `step_v` and bypasses `_approach`, `_settle` clears it when
+it grounds).
 
 ### 6.5 Floors and the universal half-multiplier
 
@@ -508,49 +597,53 @@ ORs `0x100000` (`TANKFLAG_SWIM`) into the transient `+0x134` mask when
 `0x1A1` is set; `fillTankStatePacket` (`0x1404FBEB0`) ORs `+0x134` into the
 packet flags and sets `TANKFLAG_SLIDE` from `0x0DD`.
 
-The engine (`gtools/core/growtopia/physics/engine.py`) mirrors this:
+The engine (`gtools/core/growtopia/physics/engine.py`) mirrors this in
+`_check_tile_mod`, called once per `_simulate` (i.e. every fixed tick):
 
-- `_detect_water_tile` uses `_tile_index(avatar.pos_x/pos_y)` (the avatar
-  position is the collision-rect center) and tests `TileFlags.IS_WET`.
-- `_detect_slide_tile` checks the tile under the feet (`pos_y + height/2`)
-  across the avatar width and accepts `ItemInfoType.ICE` or `5602`.
-- `_update_world_state` writes the water flag every fixed tick and sets or
-  clears the slide flag from the feet tile. While airborne with no tile under
-  the feet it preserves the previous slide flag (matching
+- water: the tile at the **collision-rect centre** — the engine position is
+  the rect's top-left, so the lookup is
+  `(c.x + width/2, c.y + height/2)` — tested against `TileFlags.IS_WET`;
+- slide: the row at `floor((c.y + height) / TILE)` (the tile being stood on /
+  approached by the feet) scanned across the body columns (`c.x + 2` ..
+  `c.x + width - 2`), accepting `ItemInfoType.ICE` or `5602`
+  (`ICE_CRUST_BLOCK`, when not `IS_ON`). While airborne with no slippery tile
+  under the feet the previous slide flag is preserved (matching
   `sub_140505CB0`'s early exit), so a jump off a slippery tile keeps its
-  horizontal momentum.
-- `_sync_player_entity` adds `TankFlags.SWIM` and `TankFlags.SLIDE` to the
-  rendered player flags.
+  horizontal momentum;
+- `build_state_packet` reports the flags: `TankFlags.SWIM` from `in_water`,
+  `TankFlags.SLIDE` from `sliding` (alongside `STANDING`, `FACING_LEFT`,
+  `DOUBLE_JUMPED`, `JUMP` and the one-shot event bits).
 
 ### 6.7 Recording physics for analysis (F6)
 
-`physics_demo_gpu.py` can record a session to JSON Lines. Press **F6** to
-start, reproduce the behaviour, then press **F6** again to stop. The file is
-written to `gtools/core/growtopia/physics/recordings/physics_<timestamp>.jsonl`;
+`demo.py` (the GPU physics demo) can record a session to JSON Lines. Press
+**F6** to start, reproduce the behaviour, then press **F6** again to stop. The
+file is written to
+`gtools/core/growtopia/physics/recordings/physics_<timestamp>.jsonl`;
 `recordings/latest.txt` contains the path of the most recent recording.
 
 Each line is one JSON object:
 
-- `header` — constants, world size, source path, starting avatar and local
-  world state.
-- `frame` — one per render frame: `dt`, `tick`, pressed keys, key events, and
-  the avatar state.
-- `tick` — one per fixed physics tick: the same input/avatar data plus
-  `pre_integrate` (position and velocities before collision), `horizontal`
-  (`vx_before`/`vx_after`, `target_speed`, `slide_scale_applied`,
-  `idle_damping_skipped`, `idle_damping_applied`, `above_cap_no_decel`,
-  collision/bounce flags), `vertical` (previous and post-integration velocity,
-  acceleration, jump-cut flag, fall clamp), and a local world snapshot
-  (`feet_tiles`, `below_feet_tiles`, 3x3 neighbourhood, detected/used water and
-  slide tiles).
+- `header` — `started_at`, source path, world path/name/size, `fixed_dt`, every
+  engine constant (`TILE`, `HITBOX`, `JUMP_SPEED`, `JUMP_CUT_ACCEL`,
+  `MAX_FALL`, `WATER_VERTICAL_SCALE`, `SLIDE_ACCEL_SCALE`,
+  `SLIDE_WALL_BOUNCE`, `BOUNCY_SPEED`, `TRAMPOLINE_SPEED`,
+  `TRAMPOLINE_MOMENTUM_SPEED`, the three `DAMAGING_*` values),
+  `character_state`, and the starting avatar snapshot.
+- `frame` — one per render frame: `dt`, `tick`, `keys_pressed`, `events`, and
+  the avatar snapshot.
+- `tick` — one per fixed physics tick: the same input/avatar data.
 - `final_events` / `footer` — pending key events and the final state.
 
-For the slide-jump question, compare a tick's `pre_integrate.horizontal_velocity`
-with `horizontal.vx_after` and check `avatar.slide_flag`,
-`horizontal.idle_damping_skipped`, `horizontal.above_cap_no_decel`, and
-`world.slide_tile_used`. The avatar block also includes `avatar_jump_held` and
-`jump_latch_130` (`+0x105` / `+0x130`) so `setJumpHeld` behaviour can be
-checked separately from the on-ground flag.
+The avatar snapshot carries `x`, `y`, `vx`, `vy`, the sub-pixel `frac_x`/
+`frac_y`, `facing_right`, `grounded`, `sliding`, `in_water`, the latched
+inputs (`left`/`right`/`jump`/`jump_latch`), `double_jumped`, and the hazard
+state (`killed`, `killed_pending`, `on_fire`, `on_acid`, `damaged`,
+`damage_slip`). For the slide-jump question compare consecutive ticks' `vx`
+while `sliding` is set, and watch `jump_latch` (`+0x130`) separately from the
+on-ground flag — a bounce sets `sliding` but clears `jump_latch` (§11.2). For
+the damaging-tile slip (§6.4.1) watch `damage_slip`: `vx` should stay pinned
+while it is set and only decay once it clears on landing.
 
 ---
 
@@ -661,12 +754,18 @@ Consequences:
   `pad_90[11]` (or the `+0x134` event bit `0x800`) zeroes the poll timer, so
   the next tick bypasses the gate. Normal motion never exceeds 5 Hz.
 - The event mask **`0x10C16740`** decodes exactly against the `TankFlags`
-  enum as the one-shot event bits: `FIRE_DAMAGE`, `GOT_KILLED`, `PLACE`,
-  `RESPAWN`, `OBJECT_COLLECT`, `DAMAGE`, `POWER_UP_PUNCH_START`,
-  `POWER_UP_PUNCH_END`, `ACID_DAMAGE`. Those force a resend even when the
-  packet body is otherwise identical (they are cleared again inside
-  `fillTankStatePacket`). `SLIDE`/`SWIM`/`STANDING`/`FACING_LEFT` are not in
-  the mask; they send via the `memcmp` path like any other change.
+  enum as the ten one-shot event bits: `FIRE_DAMAGE`, `GOT_KILLED`,
+  `PUNCH`, `PLACE`, `RESPAWN`, `OBJECT_COLLECT`, `DAMAGE`,
+  `POWER_UP_PUNCH_START`, `POWER_UP_PUNCH_END`, `ACID_DAMAGE`. Those force a
+  resend even when the packet body is otherwise identical (they are cleared
+  again inside `fillTankStatePacket`). `SLIDE`/`SWIM`/`STANDING`/`FACING_LEFT`
+  are not in the mask; they send via the `memcmp` path like any other change.
+- The mask alone does **not** expedite a send — only the `0x800` bit in the
+  same `+0x134` word (or the `pad_90[11]` latch) zeroes the poll timer. The
+  hazard bits `FIRE_DAMAGE`/`ACID_DAMAGE`/`DAMAGE` therefore ride the next
+  ≤200 ms poll, not the current tick; the kill is the only event in this group
+  that also arms `0x800` (via `onPositionSnapped`, §12.1), which is why the
+  kill frame leaves immediately.
 - The sub-200 ms bursts in the logs (p50 0.066 / 0.010) are the *other*
   client->server packets (SET_ICON_STATE etc.); they are unaffected by this
   gate, which governs only `TankPacket.type == STATE`.
@@ -863,7 +962,7 @@ written there — it stays under the local simulation.
    | `0xE4` | `horizontalVelocity` triplet | ctor `0xE4/0xE8/0xEC/0xF0`; `validatePhysics` |
    | `0xF4` | `verticalVelocity` triplet | ctor `0xF4/0xF8/0xFC/0x100`; `integrateVerticalAxis` |
    | `0x104` / `0x105` | `axisValid` / `jumpHeld` | ctor, `setJumpHeld` |
-   | `0x130` / `0x131` | `jumpLatch` / `bootVariant` | `integrateVerticalAxis` |
+   | `0x130` / `0x131` | `jumpLatch` / `damageSlip` | `integrateVerticalAxis`; `damageSlip` is set by the Y damaging response, cleared by `sub_140505CB0` on ground contact (§6.4.1) |
    | `0x134` | `bitmask134` | ctor qword write; `or dword [rbx+134]` |
    | `0x158` | `antigravity` | `validatePhysics` / gravity overrides |
    | `0x188` / `0x18C` | `field_188` / `inputFlags18C` | ctor qword write at `0x188` |
@@ -920,7 +1019,7 @@ written there — it stays under the local simulation.
   - `0x1F4` is `velocityInWater` as a **float** (125), not a triplet; the old
     `trip1F4_*` fields were misaligned. The `0x1FC` triplet is the real one.
   - Flags: `flag_DC` (on-ground), `slideFlag` (`0xDD`), `jumpHeld` (`0x105`),
-    `jumpLatch` (`0x130`), `bootVariant` (`0x131`), `antigravity` (`0x158`),
+    `jumpLatch` (`0x130`), `damageSlip` (`0x131`, §6.4.1), `antigravity` (`0x158`),
     `waterInput` (`0x1A0`), `waterFlag` (`0x1A1`), `mods`/`modBit0/1/2`
     (`0x1A8`/`0x1A9`/`0x1AA`/`0x1B0`), `accelMul` (`0x1B2`),
     `inputFlag1BC/1BD`.
@@ -1030,28 +1129,28 @@ the ceiling. Zeroing the velocity on contact turns a jump into a dead stop —
 that was the demo bug.
 
 `gtools/core/growtopia/physics/engine.py` implements this model, wrapped by
-the renderer shell `physics_demo_gpu.py`:
+the renderer shell `demo.py`:
 
-- `PLAYER_JUMP_SPEED = 450`, `PLAYER_JUMP_CUT_ACCELERATION = 5000`,
-  `PLAYER_MAX_FALL_SPEED = 400`; no `PLAYER_VERTICAL_MOMENTUM` or
-  `PLAYER_APEX_GRAVITY_MULTIPLIER`.
-- `step_fixed` adds the `+5000` cut acceleration while rising with the jump
+- `JUMP_SPEED = 450`, `JUMP_CUT_ACCEL = 5000`, `MAX_FALL = 400`; there is no
+  vertical-momentum or apex-gravity constant.
+- `_simulate` adds the `+5000` cut acceleration while rising with the jump
   latch released (`+0x130`; see §11.2 — the button alone is not enough),
-  integrates flat `+1000` gravity, and only clamps the *fall* speed (the `-450`
-  launch is allowed while rising).
+  integrates flat `+1000` gravity (`CharacterState.vertical_accel`), and only
+  clamps the *fall* speed (the `-450` launch is allowed while rising).
 - `set_input` applies the grounded launch **without clearing the ground
-  flags**: flag `0xDC` is only re-evaluated against the position the avatar has
-  already moved to (end of `integrate_position`), so the launch tick is still
-  grounded and takes no gravity. Clearing the flags there shortened the jump to
-  `97.50 px` instead of `105.00 px`. With `F5` (or
-  `PLAYER_ENABLE_DOUBLE_JUMP = True`) an airborne second press emulates the
-  server's double-jump `STATE` by reusing the launch speed.
-- `step_fixed`'s grounded branch mirrors `integrateVerticalAxis` exactly:
+  flags**: `grounded` (`0xDC`) is only re-derived from the floor by `_settle`
+  at the end of `_simulate`, after the avatar has already moved, so the launch
+  tick is still grounded and takes no gravity. Clearing the flag there
+  shortened the jump to `97.50 px` instead of `105.00 px`. An airborne second
+  press with `CharacterFlags.DOUBLE_JUMP` set (the demo's default state)
+  emulates the server's double-jump `STATE` by reusing the launch speed.
+- `_simulate`'s grounded branch mirrors `integrateVerticalAxis` exactly:
   kill a *downward* velocity (`cur > 0`), keep an upward one, integrate
   nothing (no gravity, no jump cut). Zeroing the axis unconditionally deleted
   the launch.
-- `integrate_position` clamps the ceiling position without zeroing
-  `vertical_axis_secondary`.
+- The ceiling is a position-only clamp: `_blocked_y` stops the upward move,
+  `_touch` never zeroes `vy` on a solid tile, and the surviving negative
+  velocity resumes as soon as the avatar clears the overhang.
 
 ---
 
@@ -1081,29 +1180,34 @@ client is *when* those handlers run and what they are handed, which lives in
    **column-major** (X in the outer loop, Y inner, left to right then top to
    bottom within a column). Ordering only matters when the rect touches two
    candidate tiles at once (a diagonal seam), but there it decides the launch
-   direction, so the demo's `_overlap_tiles` uses the same order.
+   direction, so the engine's `_overlap` generator uses the same order.
 4. **The mover** (`NetAvatar::moveByPixels`, `0x140512080`) keeps the
    sub-pixel remainder in `+0x64`/`+0x68`, rounds the displacement to whole
    pixels and steps one pixel at a time, stopping on the first tile the axis
    predicate rejects. The body stops *on* a tile edge; it is never pushed
    inside and then resolved back out.
 
-`engine.py` implements this as `_resolve_contacts` (called from
-`integrate_position` before any movement) plus `_move_axis` / `_x_blocked` /
-`_y_blocked`. The previous implementation resolved collisions *after* moving,
-which is what produced the three reported symptoms: the body ended up inside
-the tile (penetration), the radial direction was computed from an overlapping
-position (launch straight back into the tile, i.e. "wrong direction"), and the
-landing gate meant a bounce from below never fired.
+`engine.py` implements this as `_touch` (called from `_simulate` after the
+velocity integration and **before** `_move`, mirroring the probe-before-move
+order) plus `_move` / `_blocked_x` / `_blocked_y`, with `_settle` re-deriving
+the grounded flag from the floor afterwards. The previous implementation
+resolved collisions *after* moving, which is what produced the three reported
+symptoms: the body ended up inside the tile (penetration), the radial direction
+was computed from an overlapping position (launch straight back into the tile,
+i.e. "wrong direction"), and the landing gate meant a bounce from below never
+fired.
 
 ### 11.1 Why a corner hit throws further than a centre hit
 
 The launch **speed is constant at 500 px/s**; only the direction depends on
 the contact point, because the angle is measured from the tile centre to the
-avatar's collision-rect centre. With the demo's `20 × 30` rect (centre = `pos`)
-standing on a tile, the vertical offset is fixed at `31 px` (half the body plus
-half the tile) while the horizontal offset runs from `0` (dead centre) to
-`±26 px` (corner graze):| Contact | offset (dx, dy) | angle | vx | vy | apex after the cut | sideways drift |
+avatar's collision-rect centre. With the engine's `20 × 30` rect (`c.x`/`c.y`
+is the rect's top-left, so the centre is `c.x + 10`, `c.y + 15`) standing on a
+tile, the vertical offset is fixed at `31 px` (half the body plus half the
+tile) while the horizontal offset runs from `0` (dead centre) to `±26 px`
+(corner graze):
+
+| Contact | offset (dx, dy) | angle | vx | vy | apex after the cut | sideways drift |
 |---|---|---|---|---|---|---|
 | dead centre | `(0, −31)` | `−90°` | `0` | `−500` | `~21 px` | `0` |
 | quarter tile | `(13, −31)` | `−67°` | `193` | `−461` | `~18 px` | `~16 px` |
@@ -1175,10 +1279,321 @@ trampoline still answers to the button. `+0x1A9` is read here and in three
 other places but has **no writer** in `.text` outside a possible wide store, so
 nothing else suppresses the cut for tile launches.
 
-The demo mirrors this: `latch_jump` forwards to `set_jump_held` only when the
-button changes state, `_on_tile_bounce_hit(fg_type)` returns immediately for
-everything but `ItemInfoType.BOUNCY`, and the cut in `update_physics` tests the
-latch. The slide flag the client sets on a bouncy hit is transient in the demo
-too — `_update_world_state` rebuilds it from the tile below at the top of the
-next tick.
+The engine mirrors this: `set_input` writes `jump_latch` only when the button
+changes state, `_bounce` clears `jump_latch` and sets `sliding` for every
+BOUNCY hit (and only BOUNCY — trampolines/steam go through `_landing_launch`,
+which leaves both alone), and the cut in `_simulate` tests the latch. The
+slide flag the client sets on a bouncy hit is re-derived in the engine too —
+`_check_tile_mod` looks at the tile below at the top of the next tick, and like
+the client's early exit it only *clears* the flag once the avatar is grounded
+again (`elif c.grounded`), so it survives the airborne arc.
+
+---
+
+## 12. Deadly, damaging and climbing tiles (`handleTileInteraction`)
+
+This is the rest of the tile-interaction dispatcher that §11 only skimmed:
+`vfunc_40` = `handleTileInteraction` (`0x140501DF0`, X) and `vfunc_48`
+(`0x1405021D0`, Y), each receiving pointers to **both** velocity axes:
+`vfunc_40` gets `a2` = horizontal/collided and `a3` = vertical, while
+`vfunc_48` gets `a2` = horizontal and `a3` = vertical/collided.
+
+The deadly and bounce branches are shared, but the damaging velocity response
+is **not**: the X probe calls `handleDamagingTileCollision` (`0x1404FBFF0`),
+while the Y probe calls `sub_1404FC0B0`. They behave differently (§12.2).
+
+### 12.0 Dispatch order and return values
+
+The real code is an if/else-if chain, and **the `IGNORE_SPIKES` /
+`IGNORE_LAVA` immunity checks sit in the dispatchers themselves**, not inside
+`killPlayer` / `handleDamagingTileCollision`. When an immune avatar hits a
+deadly or damaging tile the branch is simply not entered, so control falls
+through to the *next* branch (and, on the X probe, eventually to the wall
+response):
+
+```c
+// handleTileInteraction, 0x140501DF0 (X) -- vfunc_48, 0x1405021D0 (Y) mirrors it
+if (avatar[0x188] & 1)                      // CharacterFlags.NOCLIP
+    return 1;                               // NO interaction at all, not even bounce
+
+// item_type at item+4, flags2 at item+0x74
+if ((type == DEADLY(6)
+  || (flags2 & 0x8000 && tile->flags & 0x40) // TILE_DEADLY_IF_ON && IS_ON
+  || (type == DEADLY_IF_ON(45) && tile->flags & 0x40))
+ && !(avatar[0x188] & 0x400))               // CharacterFlags.IGNORE_SPIKES
+{
+    killPlayer(this, tile);                 // void -- the dispatcher jumps to its
+    return 1;                               // "no action" exit: the scan CONTINUES
+}
+else if ((type == LAVA(16) || type == POINTY(25) || type == ACID(136)
+  || (tile->flags & 0x1000)                 // TileFlags.ON_FIRE
+  || (type == LIGHTNING_CLOUD(126) && IS_ON)
+  || (type == STEAM_LAVA_IF_ON(70) && IS_ON))
+ && !(avatar[0x188] & 0x200))               // CharacterFlags.IGNORE_LAVA
+{
+    // X: handleDamagingTileCollision (0x1404FBFF0)
+    // Y: sub_1404FC0B0             (0x1404FC0B0)
+    return 0;                               // the scan BREAKS
+}
+else if (type == BOUNCY(24))
+{
+    handleBouncyTileCollision(...);         // radial 500 launch (§6.2.1)
+    return 0;                               // the scan BREAKS
+}
+// else: wall response + climb grab (§12.3)
+return 1;                                   // the scan continues
+```
+
+Details that matter for a port:
+
+- **`IS_ON` is tile flags bit 6 (`0x40`), read as a byte at `tile+8`;
+  `ON_FIRE` is bit 12 (`0x1000`), read as a word.** `flags2` (bit 15,
+  `TILE_DEADLY_IF_ON`) is the item field, no tile state involved.
+- **Deadly does not break the scan** (it returns 1), so a deadly tile next to a
+  damaging tile still triggers the burn on the same probe pass.
+- **Damaging and bouncy do break the scan** (they return 0). On the Y probe,
+  trampoline gates that fail also return 1 and keep scanning; a successful
+  trampoline/steam launch returns 0 (verified in the asm).
+- The `IGNORE_*` fall-through is observable: with `IGNORE_SPIKES`, spikes are
+  `collision FULL`, so the avatar leans against them with the wall response;
+  with `IGNORE_LAVA` the X probe likewise reaches the wall response for
+  `FULL`-collision lava, while the Y probe has no wall branch and does nothing.
+- A **held item id** reaches `killPlayer` (`edx = tile *`) — the death packet
+  path resolves the killer there; the engine does not need it.
+- The wall response in the `else` branch runs **only here**. A common porting
+  bug is falling through to `if (is_solid)` after a deadly/damaging/bouncy hit —
+  the client never does that, because those branches return before it.
+
+### 12.1 `killPlayer` (`0x1405024E0`)
+
+- `killPlayer` itself has **no** `IGNORE_SPIKES` check — the dispatcher's
+  deadly condition is `... && !(avatar[0x188] & 0x400)` (§12.0). With
+  `IGNORE_SPIKES` set the kill is skipped and dispatch **continues** to the
+  damaging/bouncy checks on the same tile (spikes are `collision FULL`, so an
+  immune avatar simply leans against them and gets the wall response).
+- The body is guarded by the dying latch: it runs only while
+  `avatar[0x138] == 0` (`if ( !*(_DWORD *)&this->pad_0104[52] )` at the top).
+  The `STARSHIP_AIRLOCK` foreground special case does **not** bypass that
+  guard — it merely adds a `getTileTopLeftCorner` + `sub_140132520` effect
+  inside it (an earlier pass misread this).
+- Effect: latches `avatar[0x138] = 2` (the dying state), calls
+  `NetAvatar::onPositionSnapped(this, 0)`, then sends the text packet
+  `action|respawn_spike` (+ `tileX|`/`tileY|` when called with a tile) and
+  `markTileInteractionTick`. Consequences, all verified:
+  - `NetControllerLocal::Update` **skips the physics step** while `0x138` is
+    non-zero (not just `1`, §5.1) — the corpse does not integrate;
+  - `onPositionSnapped`'s no-pending-snapshot path does
+    `avatar[0x134] |= 0x904`, i.e. `GOT_KILLED (0x100) | TILE_CHANGE (0x800) |
+    RESET_VISUAL_STATE (0x4)`. The `0x800` bit zeroes the `sendTankState` poll
+    timer (§7.1), so the kill frame leaves on the next tick despite the
+    `pad_90[9]`/`+0x1A2 && 0x138` early-out; after that everything goes quiet
+    until the respawn teleports the avatar back (`0x138` cleared by the server
+    snapshot path, `sub_140501290`, which also clears `0xDD` and `0x131`).
+- In the engine this contract becomes: `_kill` (through `_is_deadly`) latches
+  `killed`, arms `killed_pending`, sets `force_send` (the poll reset), fires
+  `on_death(c, tx, ty)` once per death and `_simulate` returns early while the
+  latch is set. Since we have no server, `PhysicsEngine` (with
+  `auto_respawn=True`, the default) teleports the **local** player
+  (`World.is_local_player`) back to `World.get_respawn_position()` immediately
+  after the kill frame; `teleport()` clears the latch (and `damage_slip`),
+  mirroring the server snap. Callers can set `auto_respawn=False` and handle
+  the respawn themselves on `on_death`. `World` owns the client-side respawn
+  point: it defaults to the `MAIN_DOOR` tile, is replaced by the tile of the
+  last `CHECKPOINT` item the local player touched, and is reset by
+  `World.exit_world()`; the engine feeds `World.update_local_respawn(...)` from
+  `_simulate` every tick. (The kill packet the engine builds carries only
+  `GOT_KILLED`; `TILE_CHANGE`/`RESET_VISUAL_STATE` are display/server
+  bookkeeping the demo does not model.)
+
+### 12.2 Damaging response
+
+The dispatcher gates the whole branch on `IGNORE_LAVA` (§12.0); when the branch
+is entered, the handlers choose the event from the tile — `LAVA` or `ON_FIRE`
+→ `onBurn` (`FIRE_DAMAGE`), `ACID` → `onAcidBurn` (`ACID_DAMAGE`), everything
+else (`POINTY`, `LIGHTNING_CLOUD`, `STEAM_LAVA_IF_ON`) → `onDamagingTile`
+(`DAMAGE`) — and then apply **different** velocity handlers. Each event helper
+ORs its bit into the transient `avatar+0x134` mask only when
+`avatar+0x120 == 0` (a pending server state block suppresses it), and the bits
+are cleared again by `fillTankStatePacket` (§7.1).
+
+#### 12.2.1 X probe — `handleDamagingTileCollision` (`0x1404FBFF0`)
+
+Called as `handleDamagingTileCollision(this, horiz_ptr, vert_ptr,
+isLavaOrFire, isAcid)`; the vertical pointer is accepted but unused here.
+
+```c
+// event selection (see above); the IGNORE_LAVA gate is in the dispatcher
+if (isLavaOrFire) onBurn(); else if (isAcid) onAcidBurn(); else onDamagingTile();
+
+v = -collided_axis;
+if (avatar[0x131] == 0) {                    // damage slip skips the clamp (§6.4.1)
+    if (v < 0.0) v = min(-kConst_300p0_CF8, v);  // -300.0
+    else         v = max( kConst_300p0_CF8, v);  // +300.0
+}
+collided_axis = v;
+if ((avatar[0x2CF0] - avatar[0x2CFC]*0.5) != 0.0)
+    sub_14050B830(avatar);                   // resets an extra axis group, not modelled
+```
+
+- The X response inverts the **collided-axis** velocity and clamps it to **at
+  least 300 px/s away from the tile**: walking into acid sideways throws you
+  back at `±300`. Unlike the Y response it does **not** clear the on-ground
+  flag and does **not** set `0x131`.
+- The clamp is skipped when `avatar+0x131` (`pad_0104[45]`, the damage-slip
+  state, §6.4.1) is already set — i.e. a second damaging contact while slipping
+  inverts the axis without re-applying the 300 floor.
+- The `kObfRand_D04` obfuscated pair participates in the arithmetic but its
+  effect cancels (`X - Y*0.5` symmetry); treat the response as deterministic.
+- The event bits are in the forced-send mask `0x10C16740` (§7.1) but do **not**
+  reset the 200 ms poll timer — the frame with the hazard bit is the next poll
+  frame (the bit persists in `+0x134` until then). Only `GOT_KILLED` also arms
+  the `0x800` poll reset, via `onPositionSnapped` (§12.1).
+
+#### 12.2.2 Y probe — `sub_1404FC0B0` (`0x1404FC0B0`)
+
+`vfunc_48` passes the **horizontal** pointer in `rdx` (its `rbp`) and the
+**vertical** pointer in `r8` (its `r14`). `sub_1404FC0B0` therefore modifies
+the vertical axis first, then clamps the horizontal axis:
+
+```c
+accel = avatar[0x1C4] - avatar[0x1D0]*0.5f;
+if (accel > 0.0f) {
+    if (vertical_axis >= 0.0f)
+        vertical_axis = -800.0f;            // kConst_800 - kObfRand*0.5
+    else
+        vertical_axis *= -1.0f;             // rising: flip sign, same magnitude
+} else {
+    vertical_axis = -50.0f;                 // (800 - rand*0.5) * -0.0625
+}
+
+avatar[0xDC] = 0;                           // clear on-ground
+// set event flag...
+if (horizontal_axis == 0.0f)
+    horizontal_axis = avatar[0x61] ? -1.0f : 1.0f;   // FACING_LEFT
+horizontal_axis = clamp_same_direction(horizontal_axis, 300.0f);
+avatar[0x131] = 1;                          // damage slip (§6.4.1)
+```
+
+- The horizontal axis is clamped to **at least 300 px/s in its current
+  direction**, not away from the tile. Jumping onto a damaging tile from the
+  left with `vx > 0` keeps `vx >= +300`; the client does not reverse it.
+- The vertical axis is the knockback: a falling contact (`vy >= 0`) becomes
+  `−800`, a rising contact is flipped to a downward velocity with the same
+  magnitude, and with vertical acceleration disabled it is forced to `−50`.
+- If the horizontal axis is exactly zero, `avatar[0x61]` (facing left) seeds it
+  with `−1` (left-facing) or `+1` (right-facing) before the 300 clamp.
+- `avatar[0x131]` (the **damage-slip state**, §6.4.1) is set after the
+  response. The X handler skips its clamp when that byte is already set, so the
+  Y response deliberately suppresses a second X clamp on the same contact
+  sequence. While airborne it scales the input acceleration to `0.15` and
+  disables idle friction, which is the "launched and hard to steer until you
+  land" feel; `sub_140505CB0` clears it the moment the tile-below query finds
+  ground, and a server STATE snapshot (`sub_140501290`) clears it too. The
+  engine's `damage_slip` mirrors all of that.
+- The same-direction clamp is `min(-300, vx)` when `vx < 0` and
+  `max(300, vx)` otherwise — it never reverses the sign.
+- The handler ends with the same
+  `if ((avatar[0x2CF0] - avatar[0x2CFC]*0.5) != 0.0) sub_14050B830(avatar);`
+  extra-axis reset as the X side (not modelled).
+- The clamp constants are the same deterministic `800.0` and `300.0` pairs
+  documented in §4; the obfuscated random terms cancel. The `-50` fallback is
+  exactly `(800 − rand*0.5) * -0.0625`.
+
+### 12.3 The wall response and the climb grab
+
+After the hazard checks the `else` branch first runs `CanPassThroughTile`
+(§12.4). For blocking tiles it responds to the wall, then tries the climb:
+
+```c
+if (avatar[0x131] != 0)      vx *= -0.01;   // damage slip (0x14095C488)
+else if (avatar[0xDD] != 0)  vx *= -0.7;    // slide flag  (0x14095C494)
+else                         vx  =  0.0;
+
+tile_at_player = getTileAtPlayerPosition(this);   // 0x1404FB8F0
+if (tile_at_player
+ && other_axis >= 0.0                        // falling or level, not rising
+ && avatar[0xDC] == 0)                       // not grounded
+    goto climb_checks;
+```
+
+`getTileAtPlayerPosition` is **the tile at the collision-rect centre**
+(`getPlayerCollisionRect` → centre → `getTileAtPosition`), and both climb
+targets are `collision NONE` items (verified in `items.dat`), so the avatar can
+actually stand inside them — that is what makes a centre-tile check work at
+all:
+
+```c
+climb_checks:
+if (wearing_gear && getForeground(center) == CLIMBING_WALL(3586))
+    goto grab;
+if (getForeground(center) == ADVENTURE_ROPE_PITON(4700)
+ && localPlayer
+ && TileExistsAt(*(World **)(localPlayer + 0x2E0), 1694, ...))   // rope nearby
+    goto grab;                              // no gear required for the piton
+
+grab:
+    *y_axis = 0.0;  *x_axis = 0.0;
+    avatar[0xCC] = 0;
+    avatar[0xDC] = 1;                       // grounded — gravity stops
+    sub_140131EA0(&avatar[0x3B8]);          // audio/effect, no state effect
+```
+
+The **gear checks** read inventory slots through `GetInventorySlot` and were
+verified slot-by-slot against `items.dat` (`clothing_type`):
+
+| Slot | Clothing field | Items |
+|---|---|---|
+| 5 | `hand` | `3588` Climbing Picks, `8042` Claws of Barko |
+| 3 | `shoes` | `3590` Climbing Boots, `8018` S.P.I.D.E.R. Legs, `9034` Tarantula Legs, `5440` Mountain Boots, `7094` Ezio's Boots |
+| 7 | `hair` | `5712` Will of the Wild |
+
+The Will of the Wild additionally requires a client-side toggle (bit 8 of
+`avatar+0x18C`). The climb grab is **not ported** to `engine.py` yet — it needs
+worn-clothing data the physics component does not carry (the client checks
+inventory slots, §12.5), so it remains a client-only mechanic for now.
+
+Behaviour summary: **falling onto/into a Climbing Wall column (or grabbing a
+piton with a rope placed nearby) while wearing any of the gear freezes you in
+place** (`vx = vy = 0`, `grounded = 1`). A jump launches you (`vy = −450`,
+`vy < 0` releases the grip); walking off the column frees the centre tile and
+the hold ends.
+
+### 12.4 `CanPassThroughTile` (`0x140554C10`) — the name lies
+
+The function answers **"does this tile block this axis / demand interaction"**,
+not "can I pass". Verified per-type returns:
+
+| `tile+0x14` (collision) | return |
+|---|---|
+| — (`tile+0x12 == 0`) | `0` — never interacts |
+| `JUMP_THROUGH(2)`, `JUMP_DOWN(7)`, `ONE_WAY(5)` | `0` — platforms never stop the X response |
+| `GATEWAY(3)` | `0` / `1` per `canDoorPassedThrough_1` |
+| `VIP_DOOR(6)`, `FRIEND_ENTRANCE(13)`, `FACTION(10)`, `GUILD(11)` | door/membership logic |
+| `ADVENTURE(8)` | `1` unless the required adventure item is present (`1696` key, /`event` flags) |
+| `COLLIDE_IF_OFF(4)` | `!IS_ON` |
+| `COLLIDE_IF_ON(9)` | `IS_ON` |
+| `CLOUD(12)` | `extra+0x140 > 0` |
+| default (`FULL(1)`, `NONE(0)`) | `1` |
+
+This is the port of "which tiles get a wall response": platforms are excluded
+exactly like `engine.py`'s `_is_solid` in the X probe, and the `X - Y*0.5`
+door/adventure branches are why locked doors and adventure gates still stop
+you.
+
+### 12.5 Port map — `engine.py`
+
+The first implementation pass is in `gtools/core/growtopia/physics/engine.py`:
+
+| Client | `engine.py` |
+|---|---|
+| `NOCLIP` gate | `_touch` early return on `state.flags & NOCLIP` |
+| dispatch probes | `_touch` runs the X probe (rect translated by the tick's X displacement) then the Y probe (with the grounded `+1` px quirk), in the client's column-major scan order; `_is_deadly` / `_damaging_event` reproduce the two hazard predicates and their `IS_ON`/`ON_FIRE`/`flags2` bit tests |
+| deadly branch + `IGNORE_SPIKES` | `_kill` (via `_is_deadly`): the probe skips it when `state.flags & IGNORE_SPIKES` (the client's fall-through goes on to the damaging/bouncy/wall branches); latches `killed`, arms `killed_pending`, sets `force_send` (→ the `GOT_KILLED` frame leaves immediately, as the client's `0x800` poll reset does), fires `on_death` (component-level or engine-level callback) — **once per death**; `_simulate` returns early while `killed` is set; `teleport()` clears `killed` and `damage_slip`, mirroring the server snapshot |
+| — (server responsibility) | respawn: the client answers `killPlayer` with `action|respawn_spike` and waits for the server snap; the engine auto-respawns the **local** player (`World.is_local_player`) at `World.get_respawn_position()` right after the `GOT_KILLED` frame (`auto_respawn=True`, the default), while still firing `on_death(c, tx, ty)` for callers. `_simulate` also feeds `World.update_local_respawn(...)` every tick so touching a `CHECKPOINT` moves the respawn tile; `MAIN_DOOR` is the fallback and `World.exit_world()` resets it |
+| damaging branch + `IGNORE_LAVA` | the probe skips `_damaging_event` entirely when `IGNORE_LAVA` is set (then falls through to bouncy/wall like the client). Otherwise it arms `on_fire` / `on_acid` / `damaged` (no `force_send`: the bits ride the next poll) and breaks the scan. `_damaging_x` matches `handleDamagingTileCollision`: invert the collided X, clamp to exactly ±300 (`DAMAGING_KNOCKBACK_SPEED`) unless `damage_slip`. `_damaging_y` matches `sub_1404FC0B0`: vertical `−800` (`DAMAGING_LAUNCH_SPEED`) when falling, sign-flip when rising, `−50` (`DAMAGING_LAUNCH_NO_GRAVITY_SPEED`) with the vertical-acceleration axis disabled; clears `grounded`, seeds `vx` from the facing when zero, same-direction-clamps to ±300, sets `damage_slip`. The client has **no head-contact hazard pass**; `FindNearestInteractableTile` only probes the body rect plus 1 px below the feet, so the engine does not add one |
+| damage-slip state (`0x131`) | `PhysicsComponent.damage_slip` (§6.4.1): set by `_damaging_y`, so while airborne `_simulate` scales `step_v` by `SLIDE_ACCEL_SCALE` **and** takes the no-friction/no-above-cap-decel branch, and the jump cut uses `0.85 * JUMP_CUT_ACCEL`; `_settle` clears the flag the moment it grounds (the `sub_140505CB0` tile-found path), `teleport()` clears it like a server snapshot. This is the "launched in your movement direction, slippery and barely steerable until you land" behaviour |
+| BOUNCY break | unchanged `_bounce` + `break` |
+| wall response `else` branch | `_touch` runs it through `_is_solid` (after the hazard/bounce checks) and, like the client, **keeps scanning** the probe rect instead of breaking; the `0x131` multiplier (`DAMAGE_SLIP_WALL_BOUNCE = −0.01`) and the slide `−0.7` are applied in that order (`damage_slip` wins, matching the client's if/else-if) |
+| climb grab | **not ported** — the client only reaches it through the wall branch while `vy >= 0 && !grounded`, gated on inventory gear (`GetInventorySlot` slots 5/3/7: `3588`/`8042` hand, `3590`/`8018`/`9034`/`5440`/`7094` shoes, `5712` hair with `avatar[0x18C] & 0x100`) for `CLIMBING_WALL(3586)`, or `ADVENTURE_ROPE_PITON(4700)` with item `1694` nearby; the grab zeroes both axes, clears `0xCC` and sets `grounded`. Needs clothing/inventory data the `PhysicsComponent` does not carry |
+| — (extra axes) | `handleDamagingTileCollision`/`sub_1404FC0B0` also call `sub_14050B830` when the `0x2CF0`/`0x2CFC` axis pair is perturbed; those axes are not modelled |
 

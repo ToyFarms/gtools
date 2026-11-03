@@ -3,7 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from gtools.baked.items import ICE_CRUST_BLOCK, STEAM_LAUNCHER
-from gtools.core.growtopia.items_dat import ItemInfoCollisionType, ItemInfoType, item_database
+from gtools.core.growtopia.items_dat import ItemInfoCollisionType, ItemInfoFlag2, ItemInfoType, item_database
 from gtools.core.growtopia.packet import TankFlags, TankPacket, TankType
 from gtools.core.growtopia.player import CharacterFlags, CharacterState
 from gtools.core.growtopia.world import Tile, TileFlags, World
@@ -18,9 +18,13 @@ MAX_FALL = 400.0
 WATER_VERTICAL_SCALE = 0.3
 SLIDE_ACCEL_SCALE = 0.15
 SLIDE_WALL_BOUNCE = -0.7
+DAMAGE_SLIP_WALL_BOUNCE = -0.01  # 0x14095C488, the 0x131 branch of the wall response
 BOUNCY_SPEED = 500.0
 TRAMPOLINE_SPEED = -800.0
 TRAMPOLINE_MOMENTUM_SPEED = -531.25
+DAMAGING_KNOCKBACK_SPEED = 300.0  # kConst_300p0_CF8
+DAMAGING_LAUNCH_SPEED = -800.0  # kConst_800p0_D08
+DAMAGING_LAUNCH_NO_GRAVITY_SPEED = -50.0  # kConst_800p0_D08 * -0.0625
 TANK_STATE_POLL_MS = 200.0
 
 _EPS = 1e-4
@@ -28,6 +32,7 @@ _SOLID = {ItemInfoCollisionType.FULL, ItemInfoCollisionType.COLLIDE_IF_ON, ItemI
 _PLATFORM = {ItemInfoCollisionType.JUMP_THROUGH, ItemInfoCollisionType.ONE_WAY, ItemInfoCollisionType.CLOUD}
 
 StateCallback = Callable[[TankPacket], None]
+DeathCallback = Callable[["PhysicsComponent", int, int], None]
 
 
 @dataclass(slots=True)
@@ -37,6 +42,7 @@ class PhysicsComponent:
     y: float
     state: CharacterState = field(default_factory=CharacterState)
     on_state: StateCallback | None = None
+    on_death: DeathCallback | None = None
 
     vx: float = 0.0
     vy: float = 0.0
@@ -53,6 +59,18 @@ class PhysicsComponent:
 
     force_send: bool = False
 
+    # hazards / death -- mirrors NetAvatar::killPlayer (0x1405024E0) and the damaging probes
+    killed: bool = False  # avatar+0x138 == 2 (dying latch)
+    killed_pending: bool = False  # one-shot GOT_KILLED event bit (avatar+0x134)
+    on_fire: bool = False  # one-shot FIRE_DAMAGE event bit
+    on_acid: bool = False  # one-shot ACID_DAMAGE event bit
+    damaged: bool = False  # one-shot DAMAGE event bit
+    # avatar+0x131: set by the Y damaging response, cleared by the tile-below query
+    # (sub_140505CB0) the moment the avatar touches the ground / by a server snapshot.
+    # While set, validatePhysics scales the input acceleration to 0.15 and skips the
+    # idle friction lerp (slippery, barely-controllable air state), see `_simulate`.
+    damage_slip: bool = False
+
     frac_x: float = 0.0
     frac_y: float = 0.0
     next_poll_ms: float = 0.0
@@ -61,20 +79,40 @@ class PhysicsComponent:
 
 
 class PhysicsEngine:
-    def __init__(self, world: World, *, hitbox: tuple[float, float] = HITBOX, fixed_dt: float = FIXED_DT, on_state: StateCallback | None = None) -> None:
+    def __init__(
+        self,
+        world: World,
+        *,
+        hitbox: tuple[float, float] = HITBOX,
+        fixed_dt: float = FIXED_DT,
+        on_state: StateCallback | None = None,
+        on_death: DeathCallback | None = None,
+        auto_respawn: bool = True,
+    ) -> None:
         self.world = world
         self.width, self.height = hitbox
         self.fixed_dt = fixed_dt
         self.on_state = on_state
+        self.on_death = on_death
+        self.auto_respawn = auto_respawn
         self.components: dict[int, PhysicsComponent] = {}
         self.tick = 0
         self.time_ms = 0.0
         self._accumulator = 0.0
 
-    def register(self, net_id: int, x: float, y: float, *, state: CharacterState | None = None, on_state: StateCallback | None = None) -> PhysicsComponent:
+    def register(
+        self,
+        net_id: int,
+        x: float,
+        y: float,
+        *,
+        state: CharacterState | None = None,
+        on_state: StateCallback | None = None,
+        on_death: DeathCallback | None = None,
+    ) -> PhysicsComponent:
         if net_id in self.components:
             raise ValueError(f"net_id {net_id} is already registered")
-        c = PhysicsComponent(net_id, x, y, state or CharacterState(), on_state)
+        c = PhysicsComponent(net_id, x, y, state or CharacterState(), on_state, on_death)
         self._check_tile_mod(c)
         self.components[net_id] = c
 
@@ -102,6 +140,10 @@ class PhysicsEngine:
         c.x, c.y = x, y
         c.vx = c.vy = c.frac_x = c.frac_y = 0.0
         c.grounded = c.sliding = c.in_water = False
+        # a server position snap (ProcessTankUpdatePacket -> sub_140501290) clears
+        # avatar+0x138 (dying) and avatar+0x131 (damage slip state)
+        c.killed = False
+        c.damage_slip = False
         self._check_tile_mod(c)
 
     def update(self, dt: float) -> None:
@@ -116,6 +158,23 @@ class PhysicsEngine:
         for c in list(self.components.values()):
             self._simulate(c)
             self._send_state(c)
+            self._auto_respawn(c)
+
+    def _auto_respawn(self, c: PhysicsComponent) -> None:
+        """Mirror the server's answer to `action|respawn_spike` without a server.
+
+        The client sends that text packet from killPlayer and waits for the server to
+        snap it back home; with auto_respawn (the default) the engine teleports the
+        local player to `World.get_respawn_position()` right after the GOT_KILLED
+        frame left in `_send_state`. Callers can turn this off and respawn on
+        `on_death` themselves.
+        """
+        if not (c.killed and self.auto_respawn) or not self.world.is_local_player(c.net_id):
+            return
+
+        pos = self.world.get_respawn_position((self.width, self.height))
+        if pos is not None:
+            self.teleport(c.net_id, *pos)
 
     def build_state_packet(self, net_id: int) -> TankPacket:
         c = self.components[net_id]
@@ -132,6 +191,15 @@ class PhysicsEngine:
             flags |= TankFlags.DOUBLE_JUMPED
         if c.jump:
             flags |= TankFlags.JUMP
+        # one-shot event bits -- ORed in like avatar+0x134 and consumed by `_send_state`
+        if c.killed_pending:
+            flags |= TankFlags.GOT_KILLED
+        if c.on_fire:
+            flags |= TankFlags.FIRE_DAMAGE
+        if c.on_acid:
+            flags |= TankFlags.ACID_DAMAGE
+        if c.damaged:
+            flags |= TankFlags.DAMAGE
 
         return TankPacket(
             type=TankType.STATE,
@@ -147,6 +215,11 @@ class PhysicsEngine:
         )
 
     def _simulate(self, c: PhysicsComponent) -> None:
+        if c.killed:
+            # NetControllerLocal::Update (0x140511A50) skips the physics step while
+            # avatar+0x138 (dying) is set -- the corpse does not integrate.
+            return
+
         dt, st = self.fixed_dt, c.state
         self._check_tile_mod(c)
 
@@ -155,8 +228,12 @@ class PhysicsEngine:
             c.vy = min(c.vy, 0.0)
         else:
             accel = self._vertical_accel(c)
-            if accel > 0.0 and c.vy < 0.0 and not c.jump_latch:
-                accel += JUMP_CUT_ACCEL
+            if accel > 0.0:
+                if c.vy < 0.0 and not c.jump_latch:
+                    accel += JUMP_CUT_ACCEL
+                elif c.damage_slip:
+                    # integrateVerticalAxis's 0x131 branch: += 0.85 * 5000
+                    accel += JUMP_CUT_ACCEL * 0.85
             max_fall = MAX_FALL * WATER_VERTICAL_SCALE if c.in_water else MAX_FALL
             c.vy = min(c.vy + dt * accel, max_fall)
 
@@ -170,7 +247,13 @@ class PhysicsEngine:
         step_v = st.horizontal_accel * dt
         if c.sliding and c.vy <= 0.0:
             step_v *= SLIDE_ACCEL_SCALE
-        if c.sliding:
+        if c.damage_slip:
+            # validatePhysics scales the whole input magnitude by 0.15 while +0x131 is
+            # set (the scale stacks with the ice slide one)
+            step_v *= SLIDE_ACCEL_SCALE
+        if c.sliding or c.damage_slip:
+            # neither state applies idle damping, and neither decelerates a momentum
+            # that is already outside the speed cap -- both client paths skip it
             if direction > 0 and c.vx < cap:
                 c.vx = min(c.vx + step_v, cap)
             elif direction < 0 and c.vx > -cap:
@@ -188,6 +271,10 @@ class PhysicsEngine:
         c.x = max(0.0, min(self.world.width * TILE - self.width, c.x))
         c.y = max(0.0, min(self.world.height * TILE - self.height, c.y))
 
+        # the client's tile-step query (sub_140505CB0's sibling) touches CHECKPOINTs from
+        # the collision rect; World keeps the MAIN_DOOR fallback and `exit_world` resets it
+        self.world.update_local_respawn(c.net_id, c.x, c.y, self.width, self.height)
+
     @staticmethod
     def _approach(value: float, target: float, step: float) -> float:
         return min(value + step, target) if value < target else max(value - step, target)
@@ -197,29 +284,153 @@ class PhysicsEngine:
         return c.state.vertical_accel * WATER_VERTICAL_SCALE if c.in_water else c.state.vertical_accel
 
     def _touch(self, c: PhysicsComponent, step_x: float, step_y: float) -> None:
+        if c.state.flags & CharacterFlags.NOCLIP:
+            return  # avatar+0x188 bit 0 -- no tile interaction at all, not even bounce
+
         w, h = self.width, self.height
+        ignore_spikes = bool(c.state.flags & CharacterFlags.IGNORE_SPIKES)
+        ignore_lava = bool(c.state.flags & CharacterFlags.IGNORE_LAVA)
 
-        if step_x:
-            for tx, ty in self._overlap(c.x + step_x, c.y, c.x + step_x + w, c.y + h):
-                if self._item_type(tx, ty) == ItemInfoType.BOUNCY:
-                    self._bounce(c, tx, ty)
-                    break
-                if self._is_solid(tx, ty):
+        # X probe -- NetAvatar::handleTileInteraction (0x140501DF0). The probe rect is the
+        # collision rect translated by the tick's X displacement; only the hazard and the
+        # bounce branches stop the column-major scan, a deadly hit keeps it going.
+        for tx, ty in self._overlap(c.x + step_x, c.y, c.x + step_x + w, c.y + h):
+            if not ignore_spikes and self._is_deadly(tx, ty):
+                self._kill(c, tx, ty)
+                continue
+
+            hazard = None if ignore_lava else self._damaging_event(tx, ty)
+            if hazard is not None:
+                self._damaging_x(c, hazard)
+                break
+
+            if self._item_type(tx, ty) == ItemInfoType.BOUNCY:
+                self._bounce(c, tx, ty)
+                break
+
+            if self._is_solid(tx, ty):
+                if c.damage_slip:
+                    c.vx *= DAMAGE_SLIP_WALL_BOUNCE
+                else:
                     c.vx = c.vx * SLIDE_WALL_BOUNCE if c.sliding else 0.0
-                    break
 
+        # Y probe -- NetAvatar vfunc_48 (0x1405021D0). The `+1` px quirk keeps a grounded
+        # avatar in contact with whatever it is standing on; deadly returns 1 (continue),
+        # damaging/bouncy/launch act and stop the scan.
         probe = 1.0 if (step_y == 0.0 and c.grounded) else step_y
-        if probe:
-            for tx, ty in self._overlap(c.x, c.y + probe, c.x + w, c.y + probe + h):
-                kind = self._item_type(tx, ty)
-                if kind == ItemInfoType.BOUNCY:
-                    self._bounce(c, tx, ty)
-                    break
-                launch = self._landing_launch(c, tx, ty, kind)
-                if launch is not None:
-                    c.vy = launch
-                    c.grounded = False
-                    break
+        for tx, ty in self._overlap(c.x, c.y + probe, c.x + w, c.y + probe + h):
+            if not ignore_spikes and self._is_deadly(tx, ty):
+                self._kill(c, tx, ty)
+                continue
+
+            hazard = None if ignore_lava else self._damaging_event(tx, ty)
+            if hazard is not None:
+                self._damaging_y(c, hazard)
+                break
+
+            kind = self._item_type(tx, ty)
+            if kind == ItemInfoType.BOUNCY:
+                self._bounce(c, tx, ty)
+                break
+
+            launch = self._landing_launch(c, tx, ty, kind)
+            if launch is not None:
+                c.vy = launch
+                c.grounded = False
+                break
+
+    def _is_deadly(self, tx: int, ty: int) -> bool:
+        """NetAvatar::handleTileInteraction deadly branch (0x140501E5C..0x140501E94)."""
+        tile = self.world.get_tile(tx, ty)
+        if tile is None or tile.fg_id <= 0:
+            return False
+
+        item = item_database.get(tile.fg_id)
+        on = bool(tile.flags & TileFlags.IS_ON)
+        return (
+            item.item_type == ItemInfoType.DEADLY
+            or (bool(item.flags2 & ItemInfoFlag2.TILE_DEADLY_IF_ON) and on)
+            or (item.item_type == ItemInfoType.DEADLY_IF_ON and on)
+        )
+
+    def _damaging_event(self, tx: int, ty: int) -> TankFlags | None:
+        """Damaging branch of both probes; returns the one-shot event it arms."""
+        tile = self.world.get_tile(tx, ty)
+        if tile is None or tile.fg_id <= 0:
+            return None
+
+        kind = item_database.get(tile.fg_id).item_type
+        on = bool(tile.flags & TileFlags.IS_ON)
+        if kind == ItemInfoType.LAVA or tile.flags & TileFlags.ON_FIRE:
+            return TankFlags.FIRE_DAMAGE
+
+        if kind == ItemInfoType.ACID:
+            return TankFlags.ACID_DAMAGE
+
+        if kind == ItemInfoType.POINTY or (kind == ItemInfoType.LIGHTNING_CLOUD and on) or (kind == ItemInfoType.STEAM_LAVA_IF_ON and on):
+            return TankFlags.DAMAGE
+
+        return None
+
+    def _kill(self, c: PhysicsComponent, tx: int, ty: int) -> None:
+        """NetAvatar::killPlayer (0x1405024E0): latch the dying state and arm GOT_KILLED."""
+        if c.killed:
+            return  # guarded by avatar+0x138 -- one kill per death
+
+        c.killed = True
+        c.killed_pending = True
+        c.force_send = True
+        if (send := c.on_death or self.on_death) is not None:
+            send(c, tx, ty)
+
+    @staticmethod
+    def _apply_damage(c: PhysicsComponent, event: TankFlags) -> None:
+        # the event bits ride the next 200 ms poll: unlike the kill (which sets the poll
+        # reset bit 0x800 through onPositionSnapped) they do not expedite the send gate
+        if event & TankFlags.FIRE_DAMAGE:
+            c.on_fire = True
+        elif event & TankFlags.ACID_DAMAGE:
+            c.on_acid = True
+        else:
+            c.damaged = True
+
+    def _damaging_x(self, c: PhysicsComponent, event: TankFlags) -> None:
+        """NetAvatar::handleDamagingTileCollision (0x1404FBFF0): invert the collided X
+        axis and clamp it to at least 300 px/s away from the tile."""
+        self._apply_damage(c, event)
+        c.vx = -c.vx
+        if not c.damage_slip:
+            if c.vx < 0.0:
+                c.vx = min(-DAMAGING_KNOCKBACK_SPEED, c.vx)
+            else:
+                c.vx = max(DAMAGING_KNOCKBACK_SPEED, c.vx)
+
+    def _damaging_y(self, c: PhysicsComponent, event: TankFlags) -> None:
+        """sub_1404FC0B0 (0x1404FC0B0): -800 launch when falling (or a sign flip while
+        rising, -50 without a vertical acceleration axis) plus a same-direction
+        horizontal clamp. Also sets avatar+0x131 (the damage slip state): while
+        airborne the input acceleration is scaled to 0.15 and idle friction is
+        suppressed, until the tile-below query finds ground again (see `_simulate`,
+        `_settle`)."""
+        if c.state.vertical_accel <= 0.0:
+            c.vy = DAMAGING_LAUNCH_NO_GRAVITY_SPEED
+        elif c.vy < 0.0:
+            c.vy = -c.vy
+        else:
+            c.vy = DAMAGING_LAUNCH_SPEED
+
+        c.grounded = False
+        self._apply_damage(c, event)
+
+        if c.vx == 0.0:
+            c.vx = -1.0 if not c.facing_right else 1.0
+
+        if c.vx < 0.0:
+            c.vx = min(-DAMAGING_KNOCKBACK_SPEED, c.vx)
+        else:
+            c.vx = max(DAMAGING_KNOCKBACK_SPEED, c.vx)
+
+        c.damage_slip = True
 
     def _bounce(self, c: PhysicsComponent, tx: int, ty: int) -> None:
         angle = math.atan2(
@@ -299,6 +510,9 @@ class PhysicsEngine:
             c.vy = 0.0
             c.grounded = True
             c.double_jumped = False
+            # sub_140505CB0 clears avatar+0x131 as soon as the tile-below query finds
+            # ground -- touching down restores normal control
+            c.damage_slip = False
         else:
             c.grounded = False
 
@@ -370,7 +584,12 @@ class PhysicsEngine:
         if key != c.last_key:
             c.last_key = key
             c.dup_pending = True
-            send(pkt)
         elif c.dup_pending:
             c.dup_pending = False
-            send(pkt)
+        else:
+            return
+
+        # the client's fillTankStatePacket clears avatar+0x134 after building the frame,
+        # so FIRE_DAMAGE / ACID_DAMAGE / DAMAGE / GOT_KILLED ride exactly one packet
+        c.killed_pending = c.on_fire = c.on_acid = c.damaged = False
+        send(pkt)

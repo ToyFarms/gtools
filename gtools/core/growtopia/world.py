@@ -83,6 +83,7 @@ from gtools.baked.items import (
     MAGIC_INFUSED_STONE_BACKGROUND_SEED,
     MAGIC_INFUSED_VEIN,
     MAGIC_INFUSED_VEIN_SEED,
+    MAIN_DOOR,
     MANOR_HOUSE_SANDSTONE,
     MANOR_HOUSE_SANDSTONE_STEPS,
     MASTER_PENG_STONEWORK,
@@ -148,6 +149,8 @@ import numpy as np
 import numpy.typing as npt
 
 from gtools import setting
+
+TILE_SIZE = 32.0
 
 # shoutout https://github.com/CLOEI/gtworld-r/tree/284a2bb9f501e740401c4f0aa025d11adbed2b02
 # and https://github.com/badewen/Growtopia-Things/tree/187a6b312b5e0acec24ccf6749bda113a0279e02
@@ -2970,6 +2973,11 @@ class World:
     _event_buffer: defaultdict[WorldEvent, list[tuple]] = field(default_factory=lambda: defaultdict(list), init=False, repr=False)
     live: bool = False
 
+    # local client state (not in data)
+    local_player: Player | None = field(default=None, repr=False)
+    local_net_id: int = 0
+    _checkpoint_tile: ivec2 | None = field(default=None, repr=False)
+
     @overload
     def subscribe(
         self,
@@ -3346,16 +3354,107 @@ class World:
 
         return player
 
+    def set_local_player(self, player: Player | int | None) -> None:
+        """Mark which player is ours. This player owns the local respawn state."""
+        if isinstance(player, Player):
+            self.local_player = player
+            self.local_net_id = player.net_id
+        elif player is None:
+            self.local_player = None
+            self.local_net_id = 0
+        else:
+            self.local_net_id = int(player)
+            self.local_player = self.players.get(self.local_net_id)
+
+    def is_local_player(self, net_id: int) -> bool:
+        if self.local_player is not None:
+            return self.local_player.net_id == net_id
+        return self.local_net_id != 0 and self.local_net_id == net_id
+
+    def get_main_door_tile(self) -> ivec2 | None:
+        for tile in self.tiles.values():
+            if tile.fg_id == MAIN_DOOR:
+                return ivec2(tile.pos.x, tile.pos.y)
+
+        return None
+
+    @property
+    def respawn_tile(self) -> ivec2 | None:
+        """The checkpoint if the local player touched one, otherwise the main door."""
+        if self._checkpoint_tile is not None:
+            return ivec2(self._checkpoint_tile.x, self._checkpoint_tile.y)
+
+        return self.get_main_door_tile()
+
+    @respawn_tile.setter
+    def respawn_tile(self, tile: ivec2 | None) -> None:
+        self.set_checkpoint_tile(tile)
+
+    @property
+    def respawn_point(self) -> ivec2 | None:
+        return self.respawn_tile
+
+    def set_checkpoint_tile(self, tile: ivec2 | None) -> None:
+        self._checkpoint_tile = ivec2(tile.x, tile.y) if tile is not None else None
+
+    def reset_respawn(self) -> None:
+        self._checkpoint_tile = None
+
+    def get_respawn_position(self, hitbox: tuple[float, float] = (20.0, 30.0)) -> tuple[float, float] | None:
+        tile = self.respawn_tile
+        if tile is None:
+            return None
+
+        width, height = hitbox
+        return tile.x * TILE_SIZE + (TILE_SIZE - width) / 2.0, (tile.y + 1) * TILE_SIZE - height
+
+    def update_local_respawn(self, net_id: int, x: float, y: float, width: float, height: float) -> None:
+        """Update the local player's checkpoint when their collision rect touches one."""
+        if not self.is_local_player(net_id):
+            return
+
+        left = x
+        top = y
+        right = x + width
+        bottom = y + height + 1.0
+
+        for ty in range(int(top // TILE_SIZE), int(bottom // TILE_SIZE) + 1):
+            for tx in range(int(left // TILE_SIZE), int(right // TILE_SIZE) + 1):
+                if not (0 <= tx < self.width and 0 <= ty < self.height):
+                    continue
+
+                tile = self.get_tile(tx, ty)
+                if tile is None or tile.fg_id <= 0:
+                    continue
+
+                if item_database.get(tile.fg_id).item_type == ItemInfoType.CHECKPOINT:
+                    if self._checkpoint_tile is not None and self._checkpoint_tile.x == tile.pos.x and self._checkpoint_tile.y == tile.pos.y:
+                        return  # already the active checkpoint, nothing changed
+
+                    self._checkpoint_tile = ivec2(tile.pos.x, tile.pos.y)
+                    return
+
+    def exit_world(self) -> None:
+        """Reset per-session local state when the player leaves the world."""
+        self.reset_respawn()
+        self.set_local_player(None)
+
     def add_player(self, player: Player) -> None:
         self.players[player.net_id] = player
+        if self.local_net_id == player.net_id:
+            self.local_player = player
         self.broadcast(WorldEvent.PLAYER_UPDATE)
 
     def remove_player(self, player: Player) -> None:
         self.players.pop(player.net_id, None)
+        if self.local_player is player:
+            self.local_player = None
         self.broadcast(WorldEvent.PLAYER_UPDATE)
 
     def remove_player_by_id(self, net_id: int) -> None:
         self.players.pop(net_id, None)
+        if self.local_player is not None and self.local_player.net_id == net_id:
+            self.local_player = None
         self.broadcast(WorldEvent.PLAYER_UPDATE)
 
     @classmethod
@@ -3929,6 +4028,10 @@ class World:
         data = self.serialize()
         new_world = World.deserialize(data, int_x_id=self.id)
         new_world.garbage_start = self.garbage_start
+        local_net_id = self.local_player.net_id if self.local_player is not None else self.local_net_id
+        new_world.local_net_id = local_net_id
+        new_world.local_player = new_world.players.get(local_net_id)
+        new_world._checkpoint_tile = ivec2(self._checkpoint_tile.x, self._checkpoint_tile.y) if self._checkpoint_tile is not None else None
 
         return new_world
 

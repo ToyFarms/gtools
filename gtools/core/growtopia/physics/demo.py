@@ -34,6 +34,9 @@ from gtools.core.growtopia.physics.engine import (
     BOUNCY_SPEED,
     TRAMPOLINE_SPEED,
     TRAMPOLINE_MOMENTUM_SPEED,
+    DAMAGING_KNOCKBACK_SPEED,
+    DAMAGING_LAUNCH_SPEED,
+    DAMAGING_LAUNCH_NO_GRAVITY_SPEED,
 )
 
 PLAYER_NET_ID = 1
@@ -127,6 +130,7 @@ class GPUPhysicsDemo:
             pos=vec2(*self._render_pos()),
         )
         self.world.add_player(self.player)
+        self.world.set_local_player(self.player)  # owns the respawn/checkpoint state
         self._sync_player_entity()
 
         camera = self.world_renderer._camera
@@ -254,6 +258,9 @@ class GPUPhysicsDemo:
                 "BOUNCY_SPEED": BOUNCY_SPEED,
                 "TRAMPOLINE_SPEED": TRAMPOLINE_SPEED,
                 "TRAMPOLINE_MOMENTUM_SPEED": TRAMPOLINE_MOMENTUM_SPEED,
+                "DAMAGING_KNOCKBACK_SPEED": DAMAGING_KNOCKBACK_SPEED,
+                "DAMAGING_LAUNCH_SPEED": DAMAGING_LAUNCH_SPEED,
+                "DAMAGING_LAUNCH_NO_GRAVITY_SPEED": DAMAGING_LAUNCH_NO_GRAVITY_SPEED,
             },
             "character_state": self._state_snapshot(),
             "avatar_start": self._snapshot(),
@@ -340,6 +347,12 @@ class GPUPhysicsDemo:
             "jump": c.jump,
             "jump_latch": c.jump_latch,
             "double_jumped": c.double_jumped,
+            "killed": c.killed,
+            "killed_pending": c.killed_pending,
+            "on_fire": c.on_fire,
+            "on_acid": c.on_acid,
+            "damaged": c.damaged,
+            "damage_slip": c.damage_slip,
         }
 
     def _record_tick(self) -> None:
@@ -506,6 +519,8 @@ class GPUPhysicsDemo:
             imgui.text(f"Double Jump Used: {c.double_jumped}")
             imgui.text(f"Water: {c.in_water}")
             imgui.text(f"Slide: {c.sliding}")
+            imgui.text(f"Killed: {c.killed}  Fire: {c.on_fire}  Acid: {c.on_acid}")
+            imgui.text(f"Damaged: {c.damaged}  Damage slip: {c.damage_slip}")
             if self._recording_file is not None:
                 imgui.text(f"RECORDING: {self._recording_ticks} ticks, " f"{self._recording_frames} frames")
                 if self._recording_path is not None:
