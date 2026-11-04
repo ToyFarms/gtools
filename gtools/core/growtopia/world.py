@@ -637,6 +637,16 @@ class LockTile(TileExtra):
 
         return t
 
+    @property
+    def door_flags(self) -> int:
+        """Client ``doorIsOpenToPublic`` (TileExtra+0x09) -- the door state bits (0x40/0x80)."""
+        return self.flags
+
+    @property
+    def guild_id(self) -> int:
+        """Client ``guildLockUnk2`` (TileExtra+0xF8): the guild lock's guild id."""
+        return self.unk1
+
     def set_bpm(self, bpm: int) -> None:
         set = False
         for i in range(self.access_count):
@@ -1503,6 +1513,11 @@ class VipEntranceTile(TileExtra):
     unk1: int = 0  # u8
     owner_uid: int = 0  # u32
     access_uids: list[int] = field(default_factory=list)  # Vec<u32>
+
+    @property
+    def door_flags(self) -> int:
+        """Client ``doorIsOpenToPublic`` (TileExtra+0x09) -- the door state bits (0x40/0x80)."""
+        return self.unk1
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "VipEntranceTile":
@@ -2384,6 +2399,12 @@ class FriendsEntranceTile(TileExtra):
     owner_uid: int = 0  # u32
     unk1: int = 0  # u16
     unk2: int = 0  # u16
+
+    # runtime only -- the client keeps these in the TileExtra union; the wire
+    # parse in this protocol version does not carry them. `placedTimestamp`
+    # (TileExtra+0x7C) is initialised to 1 by determineTileExtraType (0x140557B60).
+    access_uids: list[int] = field(default_factory=list)
+    placed_timestamp: int = 1
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "FriendsEntranceTile":
@@ -3516,6 +3537,18 @@ class World:
 
             if isinstance(tile.extra, LockTile) and not tile.fg_id in (SMALL_LOCK, BIG_LOCK, HUGE_LOCK, BUILDER_S_LOCK):
                 return tile
+
+    def get_owner_user_id(self) -> int:
+        """World owner user id (``World::getOwnerUserID``, 0x14055E2E0), -1 when unlocked.
+
+        The client reads the world-lock tile's extra owner id (tile+0x28 ->
+        extra+0x0C); the engine resolves it from ``get_world_lock()``.
+        """
+        lock = self.get_world_lock()
+        if lock is None or not isinstance(lock.extra, LockTile):
+            return -1
+
+        return lock.extra.owner_uid
 
     def tile_exists(self, pos: ivec2 | int) -> bool:
         return self.get_tile(pos) is not None

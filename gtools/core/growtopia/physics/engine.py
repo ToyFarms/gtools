@@ -3,6 +3,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from gtools.baked.items import (
+    ADVENTURE_BARRIER,
+    ADVENTURE_IDOL_GATE,
+    ADVENTURE_ITEM_KEY,
+    ADVENTURE_TOMB_GATE,
     ANGEL_OF_MERCY_S_WINGS,
     CARDBOARD_NESSIE,
     CELESTIAL_HALO,
@@ -29,6 +33,7 @@ from gtools.baked.items import (
     JET_SKI_CHARIOT,
     LEGENDARY_WINGS,
     LIGHTNING_UMBRELLA,
+    LOCKED_ADVENTURE_DOOR,
     MAGIC_CARPET,
     OIL_PAPER_UMBRELLA,
     PARASOL,
@@ -60,11 +65,18 @@ from gtools.baked.items import (
 from gtools.core.growtopia.items_dat import ItemInfoCollisionType, ItemInfoFlag2, ItemInfoType, item_database
 from gtools.core.growtopia.packet import TankFlags, TankPacket, TankType
 from gtools.core.growtopia.player import CharacterFlags, CharacterState, Clothing
-from gtools.core.growtopia.world import Tile, TileFlags, World
+from gtools.core.growtopia.world import BalloonOMaticTile, LockTile, StormyCloudTile, Tile, TileFlags, World
 
 TILE = 32.0
 HITBOX = (20.0, 30.0)
 FIXED_DT = 1 / 60
+
+# adventure gate item ids -> avatar+0x2E8 event-flag index (CanPassThroughTile)
+_ADVENTURE_GATE_FLAGS = {
+    ADVENTURE_BARRIER: 40,
+    ADVENTURE_IDOL_GATE: 41,
+    ADVENTURE_TOMB_GATE: 42,
+}
 
 JUMP_SPEED = 450.0
 JUMP_CUT_ACCEL = 5000.0
@@ -90,8 +102,9 @@ DAMAGING_LAUNCH_NO_GRAVITY_SPEED = -50.0  # kConst_800p0_D08 * -0.0625
 TANK_STATE_POLL_MS = 200.0
 
 _EPS = 1e-4
-_SOLID = {ItemInfoCollisionType.FULL, ItemInfoCollisionType.COLLIDE_IF_ON, ItemInfoCollisionType.COLLIDE_IF_OFF}
-_PLATFORM = {ItemInfoCollisionType.JUMP_THROUGH, ItemInfoCollisionType.ONE_WAY, ItemInfoCollisionType.CLOUD}
+# NOTE: the client has two collision layers (see docs/collision-port-backlog.md):
+#  - movement: WorldView::collectStepTiles + NetAvatar::canMoveXInto/canMoveYInto
+#  - interaction: CanPassThroughTile (wall response + climb), `_interaction_blocked`
 # `sub_14053C770`: the water vehicles that grant the water-float state on entry
 _WATER_VEHICLES = {
     SURFBOARD,
@@ -112,6 +125,39 @@ DeathCallback = Callable[["PhysicsComponent", int, int], None]
 
 
 @dataclass(slots=True)
+class CollisionPermissions:
+    """Local-player context for the lock/door collision checks.
+
+    Mirrors the ``NetAvatar`` fields the client's permission branches read
+    (see ``docs/collision-port-backlog.md`` and ``docs/netavatar-physics.md``
+    §12.4):
+
+    * ``user_id`` -- avatar+0x13C, compared against lock owners/access lists;
+    * ``guild_id`` / ``guild_rank`` -- avatar+0x94 / avatar+0xA0, the
+      ``canDoorPassedThrough`` guild branch (protocol >= 36);
+    * ``team`` / ``has_team`` -- avatar+0x288 / avatar+0x294, the FACTION
+      gate compares it with the door's team byte;
+    * ``adventure_flags`` -- avatar+0x2E8[40/41/42] non-zero; the adventure
+      barrier / idol gate / tomb gate toggle on these event flags;
+    * ``tile_cache`` -- avatar+0x2E0, the five touched foreground ids scanned
+      by ``TileExistsAt`` (the locked adventure door needs
+      ``ADVENTURE_ITEM_KEY`` in it);
+    * ``friend`` -- avatar+0x2DB0, the friends-entrance state;
+    * ``protocol_version`` -- gates the guild branch (client: >= 36).
+    """
+
+    user_id: int = 0
+    guild_id: int = 0
+    guild_rank: int = 0
+    team: int = 0
+    has_team: bool = False
+    adventure_flags: set[int] = field(default_factory=set)
+    tile_cache: list[int] = field(default_factory=list)
+    friend: bool = False
+    protocol_version: int = 999999999
+
+
+@dataclass(slots=True)
 class PhysicsComponent:
     net_id: int
     x: float
@@ -119,6 +165,7 @@ class PhysicsComponent:
     state: CharacterState = field(default_factory=CharacterState)
     on_state: StateCallback | None = None
     on_death: DeathCallback | None = None
+    permissions: CollisionPermissions = field(default_factory=CollisionPermissions)
 
     vx: float = 0.0
     vy: float = 0.0
@@ -452,6 +499,7 @@ class PhysicsEngine:
         # collision rect translated by the tick's X displacement; only the hazard and the
         # bounce branches stop the column-major scan, a deadly hit keeps it going.
         for tx, ty in self._overlap(c.x + step_x, c.y, c.x + step_x + w, c.y + h):
+            self._cache_touch(c, tx, ty)
             if not ignore_spikes and self._is_deadly(tx, ty):
                 self._kill(c, tx, ty)
                 continue
@@ -465,7 +513,7 @@ class PhysicsEngine:
                 self._bounce(c, tx, ty)
                 break
 
-            if self._is_solid(tx, ty):
+            if self._interaction_blocked(c, tx, ty):
                 if c.damage_slip:
                     c.vx *= DAMAGE_SLIP_WALL_BOUNCE
                 else:
@@ -476,6 +524,7 @@ class PhysicsEngine:
         # damaging/bouncy/launch act and stop the scan.
         probe = 1.0 if (step_y == 0.0 and c.grounded) else step_y
         for tx, ty in self._overlap(c.x, c.y + probe, c.x + w, c.y + probe + h):
+            self._cache_touch(c, tx, ty)
             if not ignore_spikes and self._is_deadly(tx, ty):
                 self._kill(c, tx, ty)
                 continue
@@ -638,38 +687,68 @@ class PhysicsEngine:
         direction = 1 if steps > 0 else -1
         for _ in range(abs(steps)):
             if axis == 0:
-                if self._blocked_x(c.x + direction, c.y, direction):
+                if self._blocked_x(c, c.x + direction, c.y, direction):
                     return
 
                 c.x += direction
             else:
-                if self._blocked_y(c.x, c.y + direction, direction):
+                if self._blocked_y(c, c.x, c.y + direction, direction):
                     return
 
                 c.y += direction
 
-    def _blocked_x(self, x: float, y: float, direction: int) -> bool:
+    def _can_enter_x(self, c: PhysicsComponent, tx: int, ty: int, direction: int) -> bool:
+        """Movement-layer X predicate -- collectStepTiles + canMoveXInto (0x1405617E0 / 0x140512A40)."""
+        entry = self._active_tile(tx, ty)
+        if entry is None:
+            return True
+
+        tile, kind = entry
+        if kind in (ItemInfoCollisionType.JUMP_THROUGH, ItemInfoCollisionType.JUMP_DOWN):
+            return True  # never block horizontally
+        if kind == ItemInfoCollisionType.ONE_WAY:
+            flipped = bool(tile.flags & TileFlags.FLIPPED_X)
+            return (flipped and direction < 0) or (not flipped and direction > 0)
+
+        return not self._blocks_like_client(c, tile, kind)
+
+    def _can_enter_y(self, c: PhysicsComponent, tx: int, ty: int, y: float, direction: int) -> bool:
+        """Movement-layer Y predicate -- canMoveYInto (0x140512A80). `y` is the step's new top."""
+        entry = self._active_tile(tx, ty)
+        if entry is None:
+            return True
+
+        tile, kind = entry
+        if kind == ItemInfoCollisionType.JUMP_THROUGH:
+            # land exactly on the platform edge (newBottom == tileTop + 1)
+            if direction > 0 and math.floor(y + self.height) == ty * int(TILE) + 1:
+                return False
+            return True
+        if kind == ItemInfoCollisionType.JUMP_DOWN:
+            return direction > 0  # can fall through, cannot rise into it
+        if kind == ItemInfoCollisionType.ONE_WAY:
+            return True  # never collected for the vertical step
+
+        return not self._blocks_like_client(c, tile, kind)
+
+    def _blocked_x(self, c: PhysicsComponent, x: float, y: float, direction: int) -> bool:
         edge = x + self.width if direction > 0 else x
         tx = math.floor((edge - direction * _EPS) / TILE)
+        return any(
+            not self._can_enter_x(c, tx, ty, direction) for ty in range(math.floor((y + _EPS) / TILE), math.floor((y + self.height - _EPS) / TILE) + 1)
+        )
 
-        return any(self._is_solid(tx, ty) for ty in range(math.floor((y + _EPS) / TILE), math.floor((y + self.height - _EPS) / TILE) + 1))
-
-    def _blocked_y(self, x: float, y: float, direction: int) -> bool:
+    def _blocked_y(self, c: PhysicsComponent, x: float, y: float, direction: int) -> bool:
         edge = y + self.height if direction > 0 else y
         ty = math.floor((edge - direction * _EPS) / TILE)
-        for tx in range(math.floor((x + _EPS) / TILE), math.floor((x + self.width - _EPS) / TILE) + 1):
-            if self._is_solid(tx, ty):
-                return True
-
-            if direction > 0 and self._is_platform(tx, ty) and edge - 1.0 <= ty * TILE + _EPS:
-                return True
-
-        return False
+        return any(
+            not self._can_enter_y(c, tx, ty, y, direction) for tx in range(math.floor((x + _EPS) / TILE), math.floor((x + self.width - _EPS) / TILE) + 1)
+        )
 
     def _settle(self, c: PhysicsComponent) -> None:
         feet = c.y + self.height
         row = math.floor((feet + 0.5) / TILE)
-        support = any(self._is_solid(tx, row) or self._is_platform(tx, row) for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0))
+        support = any(self._is_ground(c, tx, row) for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0))
         if support and abs(feet - row * TILE) <= 0.5 and c.vy >= 0.0:
             c.y = row * TILE - self.height
             c.vy = 0.0
@@ -806,11 +885,218 @@ class PhysicsEngine:
 
         return kind
 
-    def _is_solid(self, tx: int, ty: int) -> bool:
-        return self._collision(tx, ty) in _SOLID
+    def _active_tile(self, tx: int, ty: int) -> tuple[Tile, ItemInfoCollisionType] | None:
+        """The tile and its state-aware collision kind (`None` when the slot is empty)."""
+        tile = self.world.get_tile(tx, ty)
+        if tile is None or tile.fg_id <= 0:
+            return None
 
-    def _is_platform(self, tx: int, ty: int) -> bool:
-        return self._collision(tx, ty) in _PLATFORM
+        return tile, self._collision(tx, ty)
+
+    def _interaction_blocked(self, c: PhysicsComponent, tx: int, ty: int) -> bool:
+        """CanPassThroughTile (0x140554C10, isBreakTap=1) -- the wall response + climb gate."""
+        entry = self._active_tile(tx, ty)
+        if entry is None:
+            return False
+
+        tile, kind = entry
+        if kind in (ItemInfoCollisionType.JUMP_THROUGH, ItemInfoCollisionType.JUMP_DOWN, ItemInfoCollisionType.ONE_WAY):
+            return False  # probes only, never a wall response
+        return self._blocks_like_client(c, tile, kind)
+
+    def _blocks_like_client(self, c: PhysicsComponent, tile: Tile, kind: ItemInfoCollisionType) -> bool:
+        """The per-type switch of CanPassThroughTile (1 = blocking/interactive)."""
+        if kind == ItemInfoCollisionType.NONE:
+            return False
+        if kind == ItemInfoCollisionType.ONE_WAY:
+            return False  # directional, never collected for the vertical step
+        if kind == ItemInfoCollisionType.GATEWAY:
+            return not self._gateway_open(c, tile)
+        if kind == ItemInfoCollisionType.VIP_DOOR:
+            return not self._vip_door_open(c, tile)
+        if kind == ItemInfoCollisionType.FRIEND_ENTRANCE:
+            return not self._friend_entrance_open(c, tile)
+        if kind == ItemInfoCollisionType.ADVENTURE:
+            return not self._adventure_open(c, tile)
+        if kind == ItemInfoCollisionType.FACTION:
+            return not self._faction_open(c, tile)
+        if kind == ItemInfoCollisionType.GUILD:
+            return not self._guild_open(c, tile)
+        if kind == ItemInfoCollisionType.CLOUD:
+            # client reads extra+0x140; a cloud without its extra blocks too
+            extra = tile.extra
+            return not isinstance(extra, StormyCloudTile) or extra.is_solid > 0
+        return True  # FULL and the state-gated COLLIDE_IF variants
+
+    def _is_ground(self, c: PhysicsComponent, tx: int, ty: int) -> bool:
+        """Ground support (sub_140564570 with a7=1): blocking tiles except JUMP_DOWN."""
+        entry = self._active_tile(tx, ty)
+        if entry is None or entry[1] == ItemInfoCollisionType.JUMP_DOWN:
+            return False
+        return self._blocks_like_client(c, *entry)
+
+    def _cache_touch(self, c: PhysicsComponent, tx: int, ty: int) -> None:
+        """Record a touched tile in the five-slot cache scanned by ``TileExistsAt``.
+
+        The client keeps the last five tiles the avatar touched at avatar+0x2E0
+        and ``TileExistsAt`` (0x140519D80) only compares their foreground ids.
+        The adventure key gate reads this cache, so the engine tracks the same
+        ids (most recent last, duplicates moved to the back).
+        """
+        tile = self.world.get_tile(tx, ty)
+        if tile is None or tile.fg_id <= 0:
+            return
+
+        cache = c.permissions.tile_cache
+        if tile.fg_id in cache:
+            cache.remove(tile.fg_id)
+        cache.append(tile.fg_id)
+        del cache[:-5]
+
+    # -- lock / door permissions (CanPassThroughTile + canDoorPassedThrough) ------
+
+    def _lock_passes(self, c: PhysicsComponent, extra, tile: Tile | None, is_break_tap: bool) -> bool:
+        """canDoorPassedThrough (0x140557A20).
+
+        Pass when the tile is open to public, when break-tapping one's own lock,
+        through the guild branches (protocol >= 36, lock guild id at extra+0xF8),
+        or when the user id is in the lock's access list. ``extra`` may be any
+        lock-shaped extra (``LockTile``, ``VipEntranceTile``,
+        ``FriendsEntranceTile``); the door-state byte is its first serialized
+        byte (client TileExtra+0x09, bits 0x40/0x80).
+        """
+        if tile is not None and tile.flags & TileFlags.IS_OPEN_TO_PUBLIC:
+            return True
+        if extra is None or not hasattr(extra, "owner_uid"):
+            return False
+
+        perms = c.permissions
+        if is_break_tap and perms.user_id == extra.owner_uid:
+            return True
+
+        guild_id = getattr(extra, "guild_id", 0)
+        if perms.protocol_version >= 36 and guild_id:
+            if perms.guild_id == guild_id:
+                state = getattr(extra, "door_flags", 0)
+                if state & 0x40:
+                    if state & 0x80:
+                        return True
+                elif state & 0x80 and 1 <= perms.guild_rank <= 2:
+                    return True
+                if state & 0x40 and perms.guild_rank == 2:
+                    return True
+
+        return perms.user_id in getattr(extra, "access_uids", ())
+
+    def _lock_check(self, c: PhysicsComponent, tile: Tile) -> bool:
+        """canDoorPassedThrough_1 (0x140555950).
+
+        The tile's own lock extra wins; otherwise the tile's ``parent_index``
+        lock is used; otherwise the world lock. The resolved lock is checked
+        with ``isBreakTap=1`` (the client forces it).
+        """
+        extra = tile.extra
+        world_lock = self.world.get_world_lock()
+        if not isinstance(extra, LockTile) and not tile.parent_index and world_lock is None:
+            return True  # nothing locks this tile -> pass
+        if not isinstance(extra, LockTile):
+            index = tile.parent_index
+            if not index and world_lock is not None:
+                index = self.world.index_tile(world_lock.pos)
+            tile = self.world.get_tile(index)
+            if tile is None:
+                return False
+            extra = tile.extra
+        return self._lock_passes(c, extra, tile, True)
+
+    @staticmethod
+    def _guild_required_rank(extra) -> int:
+        """getGuildDoorRequiredRank (0x140551E30): extra+0x09 door bits -> 0..3."""
+        if extra is None:
+            return 3
+        state = getattr(extra, "door_flags", 0)
+        if state & 0x40:
+            if state & 0x80:
+                return 0
+        elif state & 0x80:
+            return 1
+        return 2 if state & 0x40 else 3
+
+    def _gateway_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+        """GATEWAY: ``canDoorPassedThrough_1`` or the public flag."""
+        return bool(tile.flags & TileFlags.IS_OPEN_TO_PUBLIC) or self._lock_check(c, tile)
+
+    def _vip_door_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+        """VIP_DOOR: ``canDoorPassedThrough(extra, userID, tile, 1)``; no extra blocks."""
+        if tile.extra is None:
+            return False
+        return self._lock_passes(c, tile.extra, tile, True)
+
+    def _friend_entrance_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+        """FRIEND_ENTRANCE -- canFriendEntrancePassedThrough (0x1405587B0).
+
+        The lock/access path runs with ``isBreakTap=0``; then the extra's
+        ``placedTimestamp`` (avatar-side init 1) must be 1 and either the
+        friend state (avatar+0x2DB0 + a world owner) or the world owner's own
+        user id must hold.
+        """
+        extra = tile.extra
+        if extra is None:
+            return False
+
+        perms = c.permissions
+        owner_uid = self.world.get_owner_user_id()
+        friend_state = perms.friend and owner_uid >= 0
+        if self._lock_passes(c, extra, tile, False):
+            return True
+        if getattr(extra, "placed_timestamp", 0) != 1:
+            return False
+        if not friend_state and perms.user_id != owner_uid:
+            return False
+        return True
+
+    def _adventure_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+        """ADVENTURE branch of CanPassThroughTile.
+
+        ``LOCKED_ADVENTURE_DOOR`` needs the adventure key in the avatar's touch
+        cache (``TileExistsAt`` + ``ADVENTURE_ITEM_KEY``); the barrier / idol /
+        tomb gates toggle on the avatar+0x2E8[40/41/42] event flags.
+        """
+        perms = c.permissions
+        if tile.fg_id == LOCKED_ADVENTURE_DOOR:
+            return ADVENTURE_ITEM_KEY in perms.tile_cache
+
+        flag = _ADVENTURE_GATE_FLAGS.get(tile.fg_id)
+        if flag is None:
+            return False  # unknown ADVENTURE tile -> block
+        on = bool(tile.flags & TileFlags.IS_ON)
+        if flag in perms.adventure_flags:
+            return not on  # event flag set: open while IS_ON is clear
+        return on  # otherwise: open while IS_ON is set
+
+    def _faction_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+        """FACTION branch: team byte (extra+0x80), public flag, access list."""
+        perms = c.permissions
+        extra = tile.extra
+        team = extra.team_type if isinstance(extra, BalloonOMaticTile) else 0
+        public = bool(tile.flags & TileFlags.IS_OPEN_TO_PUBLIC)
+        if perms.has_team:
+            if public:
+                return perms.team == team
+            return self._lock_check(c, tile) and perms.team == team
+        if not public:
+            return self._lock_check(c, tile)
+        return True
+
+    def _guild_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+        """GUILD branch: guild id/rank gate, then the lock path, then public."""
+        extra = tile.extra
+        if not isinstance(extra, LockTile):
+            return False
+
+        perms = c.permissions
+        guild_ok = bool(extra.guild_id) and perms.guild_id == extra.guild_id and perms.guild_rank >= self._guild_required_rank(extra)
+        return guild_ok or self._lock_check(c, tile) or bool(tile.flags & TileFlags.IS_OPEN_TO_PUBLIC)
 
     def _item_type(self, tx: int, ty: int) -> int | None:
         tile = self.world.get_tile(tx, ty)

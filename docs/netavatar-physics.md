@@ -1746,24 +1746,76 @@ the hold ends.
 ### 12.4 `CanPassThroughTile` (`0x140554C10`) — the name lies
 
 The function answers **"does this tile block this axis / demand interaction"**,
-not "can I pass". Verified per-type returns:
+not "can I pass". Verified per-type returns (`isBreakTap` = the call's `a4`;
+the movement collector and the ground query use `0`, the interaction probes
+`1`):
 
 | `tile+0x14` (collision) | return |
 |---|---|
-| — (`tile+0x12 == 0`) | `0` — never interacts |
-| `JUMP_THROUGH(2)`, `JUMP_DOWN(7)`, `ONE_WAY(5)` | `0` — platforms never stop the X response |
-| `GATEWAY(3)` | `0` / `1` per `canDoorPassedThrough_1` |
-| `VIP_DOOR(6)`, `FRIEND_ENTRANCE(13)`, `FACTION(10)`, `GUILD(11)` | door/membership logic |
-| `ADVENTURE(8)` | `1` unless the required adventure item is present (`1696` key, /`event` flags) |
-| `COLLIDE_IF_OFF(4)` | `!IS_ON` |
-| `COLLIDE_IF_ON(9)` | `IS_ON` |
-| `CLOUD(12)` | `extra+0x140 > 0` |
+| — (`tile+0x12 == 0`) | `0` — the inactive byte short-circuits everything |
+| `JUMP_THROUGH(2)`, `JUMP_DOWN(7)` | `0` when `isBreakTap`, else `1` (the movement collector sees them as candidates) |
+| `ONE_WAY(5)` | `0` — platforms never stop the X response |
+| `GATEWAY(3)` | `0` when `canDoorPassedThrough_1(tile, uid, world, isBreakTap) \|\| tile->flags & 0x80` |
+| `VIP_DOOR(6)` | `0` when `tile->extra && canDoorPassedThrough(extra, uid, tile, 1)`; no extra → block |
+| `FRIEND_ENTRANCE(13)` | `0` when `tile->extra && canFriendEntrancePassedThrough(extra, uid, tile)` |
+| `FACTION(10)` | team byte + lock + public bit (below) |
+| `GUILD(11)` | guild id/rank + lock + public bit (below) |
+| `ADVENTURE(8)` | `LOCKED_ADVENTURE_DOOR(4698)`: `0` iff `ADVENTURE_ITEM_KEY(1696)` is in the avatar's 5-slot tile cache (`TileExistsAt`); `ADVENTURE_BARRIER(4706)` / `ADVENTURE_IDOL_GATE(4710)` / `ADVENTURE_TOMB_GATE(4744)`: toggles on avatar+0x2E8[40/41/42]; any other fg id → `1` |
+| `COLLIDE_IF_OFF(4)` | `(flags & 0x40) == 0` — blocks while `IS_ON` is clear |
+| `COLLIDE_IF_ON(9)` | `(flags >> 6) & 1` — blocks while `IS_ON` is set |
+| `CLOUD(12)` | `extra ? extra+0x140 > 0 : 1` (a cloud with no extra blocks) |
 | default (`FULL(1)`, `NONE(0)`) | `1` |
 
+**The permission layer** (all decompiled; `TileExtra` offsets from the IDB
+struct, protocol version in the client's global):
+
+- `canDoorPassedThrough` (`0x140557A20`, `(extra, userID, tile, isBreakTap)`):
+  1. `tile->flags & 0x80` (public) → pass; `isBreakTap && userID == extra->ownerId`
+     (owner break-tap) → pass;
+  2. guild branch when `protocolVersion >= 36 && extra->guildLockUnk2` and the
+     avatar guild (avatar+0x94) matches: the `extra+0x09` door byte
+     (`0x40`/`0x80`) vs the avatar rank (avatar+0xA0) — `0xC0` → pass any
+     rank, `0x80` → rank 1/2, `0x40` → rank 2, else fall through;
+  3. otherwise `userID in extra->accessList` (`arrayBegin..arrayEnd`).
+- `canDoorPassedThrough_1` (`0x140555950`): the tile's own `LOCK_TILE` extra
+  wins; else `parent_index`; else the world lock's tile index (`world+312`
+  → `+0x0C`); resolves the tile and calls `canDoorPassedThrough(..., 1)`
+  (the `isBreakTap` argument is forced to 1). No lock anywhere → pass.
+- `getGuildDoorRequiredRank` (`0x140551E30`): `extra+0x09` → `0xC0`→0,
+  `0x80`→1, `0x40`→2, else→3 (`extra == NULL` → 3).
+- FACTION: `public = flags & 0x80`; with a team (`avatar+0x294`,
+  `avatar+0x288`): public → pass iff `team == extra+0x80[0]`; non-public →
+  pass iff `canDoorPassedThrough_1` **and** team match. Without a team:
+  non-public → pass iff `canDoorPassedThrough_1`; public → pass.
+  The team byte is the BALLOON_O_MATIC extra (`gap80[0]`); item defaults
+  FACTION=0, RED=1, GREEN=2, BLUE=3 (`determineTileExtraType`, `0x140557B60`).
+- GUILD: `extra && ((guild == extra+0xF8 && rank >= required) ||
+  canDoorPassedThrough_1(...) || flags & 0x80)` → pass.
+- FRIEND_ENTRANCE (`canFriendEntrancePassedThrough`, `0x1405587B0`):
+  `friendState = avatar+0x2DB0 && getOwnerUserID(world) >= 0`;
+  `canDoorPassedThrough(extra, uid, tile, 0)` → pass; `extra+0x7C`
+  (`placedTimestamp`) `!= 1` → block; `!friendState && uid != owner` → block;
+  else pass. `World::getOwnerUserID` (`0x14055E2E0`) = world lock tile
+  (`world+0x10`) → `tile+0x28` extra → `extra+0x0C` owner, `-1` when absent.
+- `TileExistsAt` (`0x140519D80`) scans five 8-byte tile-pointer slots at
+  avatar+0x2E0 and compares `getForeground(tile)` with the wanted item id.
+
 This is the port of "which tiles get a wall response": platforms are excluded
-exactly like `engine.py`'s `_is_solid` in the X probe, and the `X - Y*0.5`
-door/adventure branches are why locked doors and adventure gates still stop
-you.
+exactly like `engine.py`'s `_interaction_blocked` in the X probe, and the
+`X - Y*0.5` door/adventure branches are why locked doors and adventure gates
+still stop you.
+
+> **Movement is a separate layer.** `CanPassThroughTile` is *not* what stops
+> `moveByPixels`; the mover collects candidates per pixel step with
+> `WorldView::collectStepTiles` (`0x1405617E0`) — blocking tiles from this
+> function plus direction-matched `ONE_WAY` tiles — and then asks
+> `NetAvatar::canMoveXInto` (`0x140512A40`) / `canMoveYInto` (`0x140512A80`).
+> `JUMP_THROUGH`/`JUMP_DOWN` pass the X predicate; vertically `JUMP_THROUGH`
+> blocks only at the landing pixel (`newBottom == tileTop + 1`) and
+> `JUMP_DOWN` blocks rising but passes falling; `ONE_WAY` only ever blocks
+> horizontally, against its facing. The engine mirrors that split in
+> `_can_enter_x`/`_can_enter_y` vs `_interaction_blocked`; the per-type port
+> checklist lives in `docs/collision-port-backlog.md`.
 
 ### 12.5 Port map — `engine.py`
 
@@ -1778,7 +1830,8 @@ The first implementation pass is in `gtools/core/growtopia/physics/engine.py`:
 | damaging branch + `IGNORE_LAVA` | the probe skips `_damaging_event` entirely when `IGNORE_LAVA` is set (then falls through to bouncy/wall like the client). Otherwise it arms `on_fire` / `on_acid` / `damaged` (no `force_send`: the bits ride the next poll) and breaks the scan. `_damaging_x` matches `handleDamagingTileCollision`: invert the collided X, clamp to exactly ±300 (`DAMAGING_KNOCKBACK_SPEED`) unless `damage_slip`. `_damaging_y` matches `sub_1404FC0B0`: vertical `−800` (`DAMAGING_LAUNCH_SPEED`) when falling, sign-flip when rising, `−50` (`DAMAGING_LAUNCH_NO_GRAVITY_SPEED`) with the vertical-acceleration axis disabled; clears `grounded`, seeds `vx` from the facing when zero, same-direction-clamps to ±300, sets `damage_slip`. The client has **no head-contact hazard pass**; `FindNearestInteractableTile` only probes the body rect plus 1 px below the feet, so the engine does not add one |
 | damage-slip state (`0x131`) | `PhysicsComponent.damage_slip` (§6.4.1): set by `_damaging_y`, so while airborne `_simulate` scales `step_v` by `SLIDE_ACCEL_SCALE` **and** takes the no-friction/no-above-cap-decel branch, and the jump cut uses `0.85 * JUMP_CUT_ACCEL`; `_settle` clears the flag the moment it grounds (the `sub_140505CB0` tile-found path), `teleport()` clears it like a server snapshot. This is the "launched in your movement direction, slippery and barely steerable until you land" behaviour |
 | BOUNCY break | unchanged `_bounce` + `break`; `_on_tile_bounce_hit` also records the tile/item for the next STATE frame (`int_x`/`int_y`/`value`, §7.2) |
-| wall response `else` branch | `_touch` runs it through `_is_solid` (after the hazard/bounce checks) and, like the client, **keeps scanning** the probe rect instead of breaking; the `0x131` multiplier (`DAMAGE_SLIP_WALL_BOUNCE = −0.01`) and the slide `−0.7` are applied in that order (`damage_slip` wins, matching the client's if/else-if) |
+| wall response `else` branch | `_touch` runs it through `_interaction_blocked` (after the hazard/bounce checks) and, like the client, **keeps scanning** the probe rect instead of breaking; the `0x131` multiplier (`DAMAGE_SLIP_WALL_BOUNCE = −0.01`) and the slide `−0.7` are applied in that order (`damage_slip` wins, matching the client's if/else-if) |
+| door/lock permission layer (§12.4) | `CollisionPermissions` (a `PhysicsComponent` field) carries the user id, guild/rank, team, adventure event flags, the five-slot touch cache, friend state and protocol version, threaded as `c` into `_can_enter_x` / `_can_enter_y` / `_interaction_blocked` / `_is_ground` / `_blocks_like_client`. `_lock_passes` mirrors `canDoorPassedThrough` (public bit, owner break-tap, guild branch, access list), `_lock_check` mirrors `canDoorPassedThrough_1` (own lock extra → `parent_index` → `World.get_world_lock()`), `_gateway_open` / `_vip_door_open` / `_friend_entrance_open` / `_adventure_open` / `_faction_open` / `_guild_open` mirror the per-type branches; `_cache_touch` fills the `TileExistsAt` cache from the two probes; `World.get_owner_user_id()` = `World::getOwnerUserID` |
 | slow fall (`0x0DF`/`0x0E0`) | `_slow_fall_flags` over the player's `Clothing`, applied in `_simulate` while falling + jump held + not water + not `ZOMBIE`: `accel *= SLOW_FALL_ACCEL_SCALE` (0.3) and the per-tick `parasol`/`glide` flags are reported as `TankFlags.PARASOL` / `TankFlags.UNK_GRAVITY_RELATED` (§6B.2) |
 | water vertical | `_simulate`: `accel *= 0.3, max_fall = 120`; `water_float` (`+0x1FB9`) zeroes both; floaties (`_is_floatie`) use `-12` / `-320` and clamp the fall to `40`; the `accel < 0` upward clamp matches the client |
 | water-float lifecycle (`0x7C`/`0x1FB9`) | `_check_tile_mod` → `_update_water_state`: on entry with a water vehicle (`sub_14053C770` list + JET_SKI/GOLDEN_JET_SKI) set `water_float`, timestamp `water_enter_ms`; clear after `WATER_FLOAT_DURATION_MS` (3000) unless FISHING_DINGHY/JET_SKI/GOLDEN_JET_SKI; clear out of water |
