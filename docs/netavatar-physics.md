@@ -257,21 +257,54 @@ acceleration is inert thanks to the `+400` terminal-velocity clamp:
 ...        addss   xmm7, <0.85 * 5000>
 ```
 
-Modifiers on `accel`:
+Modifiers on `accel`, in the order they appear (the full clean decompile of
+`0x140510580` supersedes the earlier one-liner pass):
 
 | Condition | Effect |
 |---|---|
-| standing on a boot/slipper item id (long list at `avatar+0x2D0..0x2D6`) | `*= kBootSpeedMul_0p3` (0.3) |
-| `SLIPPERY_FLAG_POLE` foreground tile (a pole, not a floor) | vertical `cur` and `maxSpd` both `*= kSlideFriction_0p3`; calls `sub_140101810` |
-| `avatar[0x1A1]` (in-water flag) set | same 0.3 scaling on the vertical `cur` and `maxSpd` |
-| `HYPERTECH_ANTIGRAVITY_FIELD` tile or particle flag `0x40` | `accel *= kConst_0p75_D68 * 0.5` |
-| particle type `7` | `accel *= kConst_0p75_D68` |
-| `avatar[0x1B2]` (`434`) set | `accel *= 15.0` |
-| `avatar[0x11480]` ramp active | damping `*= 0.5625` per tick |
+| standing on a boot/slipper item id (long list below) | `*= kBootSpeedMul_0p3` (0.3) |
+| **slow-fall group A** (rows below), falling + jump held + not water + not `ZOMBIE` | `accel *= 0.3`, `avatar[0x0DF] = 1`, `event |= 0x40000` (PARASOL) |
+| **slow-fall group B** (rows below), same gates | `accel *= 0.3` (only if A not already applied), `avatar[0x0E0] = 1`, `event |= 0x80000` |
+| `HYPERTECH_ANTIGRAVITY_FIELD` centre tile or a hover particle (flag `0x40`) | `accel *= kConst_0p75_D68 * 0.5` (= 0.375) |
+| particle type `7` | `accel *= kConst_0p75_D68` (0.75) |
+| `avatar[0x1A1]` (in-water flag) set | `accel *= kSlideFriction_0p3`, `maxSpd = 400 * 0.3 = 120` (then the `0x1FB9`/floatie overrides, §6B.3) |
+| else if centre tile `== SLIPPERY_FLAG_POLE` | `accel *= 0.3`, `maxSpd = 120`; calls `sub_140101810` on `clothes_358` |
+| `avatar[0x1B2]` (`accelMulFlag`) set | `accel *= 15.0` (set from `flag_1B1` by the jump action, cleared when grounded) |
+| `avatar[0x1F8C]` trampoline momentum armed and rising | squared momentum `*= 0.5625`, `accel *= (1 - squared)` |
+
+The final clamp is asymmetric and uses `maxSpd` as `v5`:
+
+```c
+cur += dt * accel;
+if (cur >  v5) cur =  v5;                 // always
+if (accel < 0.0 && cur < -v5) cur = -v5;  // only while accelerating upward
+```
 
 Boot item ids checked: `1020, 7696, 10186, 11292, 7034, 9424, 7144, 10718, 1876,
 3074, 5278, 1762, 4880, 4946, 6372, 1784, 8286, 5206, 9088, 5322, 5482, 6758,
 8552, 9132, 10632, 10634, 11318, 10666, 10714, 10754`.
+
+Slow-fall item lists (verified in the disassembly, all clothing slot ids):
+
+| Group | Slot | Items |
+|---|---|---|
+| A | hand | `1020` Parasol, `7696` Draconic Rocket Parasol, `10186` Darkest Skull Parasol, `11292` Lightning Umbrella, `7034` Oil Paper Umbrella, `9424` Giant Falling Shamrock, `1876` Ring of Winds |
+| A | shoes | `7144` Magic Carpet |
+| A | back | `10718` Grow-X Rocket Wings |
+| A | shoes/hat | `3074` Floating Leaf, `5278` Celestial Halo (second A test, same event bit) |
+| B | back | `1762` Soda Jetpack, `4880` Super Squirt Gun Jetpack, `1784` Legendary Wings, `8286` Da Vinci Wings, `5206` Cloak of Falling Waters, `9088` Spectral Mantle, `6758` Cloak of Hoveration, `8552` Angel of Mercy's Wings, `10754` Helping Hand |
+| B | pants | `4946` Super Squirt Gun Jetpack Pants |
+| B | shoes | `6372` Space Thruster Boost Boots, `10666` Grow-Air Balloon |
+| B | hat/hair | `5322` Zephyr Helm, `9132` Turkey Hat, `5482` Rayman's Hair |
+| B | neck | `10632` Silk Scarf, `10634` Golden Silk Scarf, `11318` Possessing Scarf, `5200` Harvest Scarf |
+| B | hand | `10714` Steampunk Arm |
+
+`avatar[0x2CE]` is checked through `sub_14053BE70` (`7836 <= id <= 7842`, the
+Morty elephants). Group A also fires for `inputFlags_18C & 0x40000` (a client
+toggle). A second slot array (`avatar+0x2B4..0x2C5`) mirrors the clothing for
+the jump sounds; the physics checks use `0x2C6..0x2D6` (`+0x2C6` hat, `+0x2CA`
+pants, `+0x2CC` shoes, `+0x2D0` hand, `+0x2D2` back, `+0x2D4` hair,
+`+0x2D6` neck).
 
 > The horizontal **floor slide** is a separate mechanic. It is driven by
 > `avatar[0xDD]`, which `sub_140505CB0` sets from the tile below (see §6.4),
@@ -592,10 +625,12 @@ Both flags are derived from tiles, not from the action input:
 | `avatar[0x0DD]` (`slideFlag`) | `sub_140505CB0` (`0x140505CB0`), called from `tickAux` at `0x140503C88` | first passable tile overlapping the player rect extended 32 px down/right; `item_type == 29` (`ItemInfoType.ICE`, the slippery type) or item id `5602` (`ICE_CRUST_BLOCK`), plus slide clothing |
 
 `updateBlockStateFromPlayerInteraction` also calls the water entry/exit effects
-(`sub_140132860`) when `0x1A1` changes. `TryPlaceSeedAtTile` (`0x140506430`)
-ORs `0x100000` (`TANKFLAG_SWIM`) into the transient `+0x134` mask when
-`0x1A1` is set; `fillTankStatePacket` (`0x1404FBEB0`) ORs `+0x134` into the
-packet flags and sets `TANKFLAG_SLIDE` from `0x0DD`.
+(`sub_140132860`) when `0x1A1` changes, timestamps the entry in `+0x07C`, and
+maintains the water-vehicle float state `+0x1FB9` (§6B.3).
+`TryPlaceSeedAtTile` (`0x140506430`) ORs `0x100000` (`TANKFLAG_SWIM`) into the
+transient `+0x134` mask when `0x1A1` is set; `fillTankStatePacket`
+(`0x1404FBEB0`) ORs `+0x134` into the packet flags and sets `TANKFLAG_SLIDE`
+from `0x0DD`.
 
 The engine (`gtools/core/growtopia/physics/engine.py`) mirrors this in
 `_check_tile_mod`, called once per `_simulate` (i.e. every fixed tick):
@@ -603,6 +638,10 @@ The engine (`gtools/core/growtopia/physics/engine.py`) mirrors this in
 - water: the tile at the **collision-rect centre** — the engine position is
   the rect's top-left, so the lookup is
   `(c.x + width/2, c.y + height/2)` — tested against `TileFlags.IS_WET`;
+- the `+0x07C`/`+0x1FB9` water-float lifecycle (`water_enter_ms`,
+  `water_float`) with the 3000 ms window and the vehicle lists (§6B.3);
+- mud: `ItemInfoType.MUD` in the feet row sets `mud` (`+0x0DE`, reduced jump
+  and the `0.6` horizontal cap);
 - slide: the row at `floor((c.y + height) / TILE)` (the tile being stood on /
   approached by the feet) scanned across the body columns (`c.x + 2` ..
   `c.x + width - 2`), accepting `ItemInfoType.ICE` or `5602`
@@ -681,6 +720,124 @@ modify gravity" is answered at the network level. Tile/item effects in
 Also in this function, when `net_id == 0`:
 `GameState->field_28C = animation_type - 0x80` and
 `GameState->field_290 = jump_count - 0x80`.
+
+---
+
+## 6B. The jump action, the swim and the water vertical state
+
+### 6B.1 `TryPlaceSeedAtTile` (`0x140506430`) — the jump action
+
+Despite the name this is the jump handler. It runs **every tick** from
+`tickAux` (`0x140504116`, after `FindNearestInteractableTile`, while not dying
+and not `FROZEN`); the 500004/500056 input action has just armed
+`jumpHeld`/`jumpLatch` through `setJumpHeld` (`0x14050C280`). The handler
+clears `jumpHeld` and `leftGround_140` at the end, so both act per press.
+
+```c
+if ((jumpHeld && !modBit0) || (!jumpLatch && charge > 0.0 && modBit0)) {
+    tile = getTileAtPlayerPosition();            // the collision-rect centre tile
+    antigrav = tile && fg == HYPERTECH_ANTIGRAVITY_FIELD;
+    pole     = tile && fg == SLIPPERY_FLAG_POLE;
+    if (isGrounded() || leftGround_140 || LOBYTE(unk_1F8) || flag_1B1
+        || (charFlags_188 & 1)                    // flying/NOCLIP mod
+        || ((verticalVel > 0.0 || water_float)    // paddle up while falling
+            && (waterFlag || antigrav || hoverParticle)))
+    {
+        if (waterFlag && !pendingStateBlock)
+            eventMask_134 |= 0x100000;           // TANKFLAG_SWIM
+        if (hoverParticle || antigrav || pole)
+            LOBYTE(unk_1F8) = 1;                 // refill the double-jump token
+        NetAvatar::onJump(this);
+        if (!pendingStateBlock)
+            eventMask_134 |= 0x80;               // TANKFLAG_JUMP
+    }
+    charge = 0;
+}
+jumpHeld = 0;
+leftGround_140 = 0;
+```
+
+- `leftGround_140` (`+0x140`) is the **coyote flag**: `sub_140505CB0` sets it
+  when the tile-below query stops finding ground. Jumping consumes it, and
+  being punched (`sub_1404FE720`) clears it too.
+- `unk_1F8` (byte at `+0x1F8`) is the **double-jump token**: refilled by
+  `sub_140505CB0` on every grounded frame while `charFlags & 2` is set, and by
+  the antigravity/pole/hover line above; any airborne launch consumes it.
+- `flag_1B1` (`+0x1B1`) is set by `sub_140505CB0` while grounded with
+  `modBit2` (`+0x1B0`); the jump converts it into `accelMulFlag` (`+0x1B2`,
+  `accel *= 15`) and clears it.
+- `charge` is `unk_090[56]` (float at `+0xC8`): accumulated while the jump
+  latch is held and not moving vertically, capped at 1.0, and used by onJump as
+  `v2 = charge * 1.25` only for the `modBit0` charged jump.
+
+### 6B.2 `NetAvatar::onJump` (`0x1404FE4A50`) — the launch
+
+The launch constant is the obfuscated pair at `0x140B52CD8` / `0x140B52CE4`,
+initialised by `sub_140019D30` to `X - Y*0.5 == -450.0`:
+
+```c
+launch = -450.0 * v2;                            // v2 = 1.0 (or charge*1.25 with modBit0)
+if (waterFlag || fg == HAY
+ || (fg == SNOW_BLOCK && clothingShoes != SNOWSHOES)
+ || mudFlag || fg == SLIPPERY_FLAG_POLE)
+    launch = -270.0 * v2;                        // -450 * 0.6
+verticalVelocity = launch;
+onGround = 0;
+```
+
+- **Swim:** the water case is the same launch, but the permission line in 6B.1
+  drops the ground requirement, so holding jump in water keeps setting
+  `-270` (as long as the avatar is falling or has the water-float state) —
+  that is the infinite upward swim.
+- `counter_0CC` is incremented for a normal launch, zeroed for the reduced /
+  antigravity ones. `doubleJumpAnim` (`+0xE1`) is set for the wing list or
+  `charFlags & 2`. The airborne branch consumes the token (`LOBYTE(unk_1F8) = 0`).
+- On reduced launches there is no jump-cut interaction: the `+5000` cut in
+  `integrateVerticalAxis` keys off `jumpLatch`, which stays as the player holds.
+
+### 6B.3 The water vertical block (`integrateVerticalAxis`)
+
+```c
+if (waterFlag) {
+    accel  *= 0.3;                               // kSlideFriction_0p3
+    maxSpd  = 400 * 0.3;                         // 120
+    if (unk_1F90[41]) { accel = 0.0; maxSpd = 0.0; }   // +0x1FB9, water vehicle
+    if (clothingNeck == SEA_MONSTER_FLOATIE || clothingNeck == UNICORN_FLOATIE
+        || clothingHand == WATER_WINGS || clothingHand == FLAMING_FLOATIES) {
+        accel = 400 * -0.03;                     // -12, gentle buoyancy
+        if (verticalVel > 0.0) {                 // falling
+            accel = 400 * -0.8;                  // -320
+            if (verticalVel > 40.0) verticalVel = 40.0;   // then pulled back up
+        }
+    }
+} else if (centre tile == SLIPPERY_FLAG_POLE) {
+    accel *= 0.3;  maxSpd = 120;  sub_140101810(clothes_358);
+}
+```
+
+The floatie override makes a falling avatar decelerate to 40 px/s and then rise
+— the "float back to the surface" behaviour.
+
+The water-float state `+0x1FB9` is maintained by
+`updateBlockStateFromPlayerInteraction` (`0x140509C20`), together with
+`waterFlag` (`+0x1A1`) and the entry tick `+0x07C`:
+
+- entering water when `clothingHand`/`clothingShoes` matches `sub_14053C770`
+  (items `4822`/`4824`/`4826`/`4828` surfboards, `6996` Fishing Dinghy, `9648`
+  Go-Anywhere Surfboard, `10688` Cardboard Nessie, `10390` Jet Ski Chariot,
+  `11670` Swan Boat) or `clothingShoes` is JET_SKI (`7518`) / GOLDEN_JET_SKI
+  (`7530`) sets `+0x1FB9` and stores `getTick()` in `+0x07C`;
+- 3000 ms after entry (`kConst_3000p0_D98`) the flag clears unless the shoes
+  are FISHING_DINGHY / JET_SKI / GOLDEN_JET_SKI;
+- being grounded (`+0x1FB0` or `onGround`) clears it as well.
+
+### 6B.4 Jump summary
+
+| Situation | Launch |
+|---|---|
+| ground / coyote / double-jump token / flying mod | `-450` |
+| in water (also the swim), on hay, on snow without snowshoes, in mud, on a slippery pole | `-270` |
+| antigravity field / slippery pole | refills the double-jump token, then the normal launch |
 
 ---
 
@@ -785,6 +942,33 @@ The meaning of `vector_x2`/`vector_y2` is resolved in §8.1: on `STATE` they
 are the horizontal/vertical velocity written into `+0x0E4`/`+0x0F4` by
 `applyTankStateAndEvents`. 187,089 client `STATE` packets in a
 single session.
+
+The clean decompile of `fillTankStatePacket` also settles the odd fields:
+
+```c
+pkt->vector_x = floorf(posx + 0.5);  pkt->vector_y = floorf(posy + 0.5);
+pkt->vector_x2 = horizontalVelocity effective;
+pkt->vector_y2 = verticalVelocity effective;
+if (facingLeft)   pkt->flags |= FACING_LEFT;
+if (onGround) {
+    if (state_2088 == 20) pkt->flags |= WALL_HANG;      // climbing wall state
+    else pkt->flags &= <the known flag mask>;
+    pkt->flags |= STANDING;
+}
+if (slideFlag)    pkt->flags |= SLIDE;
+pkt->flags |= eventMask_134;                            // one-shot bits, then cleared
+pkt->int_x = bounceTileX;                               // last bounce (0xD0)
+pkt->int_y = bounceTileY;                               //             (0xD4)
+pkt->value = bounceItemId;                              //             (0x17C)
+pkt->float_var = current time (ms, as float);
+eventMask_134 = 0;  bounceTileX = bounceTileY = -1;  bounceItemId = 0;
+```
+
+So the bounce coordinates from `onTileBounceHit` (§11.2) ride one STATE frame
+in `int_x`/`int_y`/`value`, and the slow-fall states `+0xDF`/`+0xE0` reach the
+wire through the `eventMask_134` bits `0x40000`/`0x80000` (PARASOL /
+UNK_GRAVITY_RELATED) rather than dedicated fields. Note those two are **not**
+in the forced-send mask, so they ride the next poll like the damage bits.
 
 Packet offsets are fixed by the `TankPacket` type:
 
@@ -1548,9 +1732,10 @@ verified slot-by-slot against `items.dat` (`clothing_type`):
 | 7 | `hair` | `5712` Will of the Wild |
 
 The Will of the Wild additionally requires a client-side toggle (bit 8 of
-`avatar+0x18C`). The climb grab is **not ported** to `engine.py` yet — it needs
-worn-clothing data the physics component does not carry (the client checks
-inventory slots, §12.5), so it remains a client-only mechanic for now.
+`avatar+0x18C`). The climb grab is **not ported** to `engine.py` yet — the
+client checks **inventory** slots, while the engine only has the player's worn
+`Player.clothing` (used for the slow-fall/water physics, §6B), so it remains a
+client-only mechanic for now.
 
 Behaviour summary: **falling onto/into a Climbing Wall column (or grabbing a
 piton with a rope placed nearby) while wearing any of the gear freezes you in
@@ -1592,8 +1777,15 @@ The first implementation pass is in `gtools/core/growtopia/physics/engine.py`:
 | — (server responsibility) | respawn: the client answers `killPlayer` with `action|respawn_spike` and waits for the server snap; the engine auto-respawns the **local** player (`World.is_local_player`) at `World.get_respawn_position()` right after the `GOT_KILLED` frame (`auto_respawn=True`, the default), while still firing `on_death(c, tx, ty)` for callers. `_simulate` also feeds `World.update_local_respawn(...)` every tick so touching a `CHECKPOINT` moves the respawn tile; `MAIN_DOOR` is the fallback and `World.exit_world()` resets it |
 | damaging branch + `IGNORE_LAVA` | the probe skips `_damaging_event` entirely when `IGNORE_LAVA` is set (then falls through to bouncy/wall like the client). Otherwise it arms `on_fire` / `on_acid` / `damaged` (no `force_send`: the bits ride the next poll) and breaks the scan. `_damaging_x` matches `handleDamagingTileCollision`: invert the collided X, clamp to exactly ±300 (`DAMAGING_KNOCKBACK_SPEED`) unless `damage_slip`. `_damaging_y` matches `sub_1404FC0B0`: vertical `−800` (`DAMAGING_LAUNCH_SPEED`) when falling, sign-flip when rising, `−50` (`DAMAGING_LAUNCH_NO_GRAVITY_SPEED`) with the vertical-acceleration axis disabled; clears `grounded`, seeds `vx` from the facing when zero, same-direction-clamps to ±300, sets `damage_slip`. The client has **no head-contact hazard pass**; `FindNearestInteractableTile` only probes the body rect plus 1 px below the feet, so the engine does not add one |
 | damage-slip state (`0x131`) | `PhysicsComponent.damage_slip` (§6.4.1): set by `_damaging_y`, so while airborne `_simulate` scales `step_v` by `SLIDE_ACCEL_SCALE` **and** takes the no-friction/no-above-cap-decel branch, and the jump cut uses `0.85 * JUMP_CUT_ACCEL`; `_settle` clears the flag the moment it grounds (the `sub_140505CB0` tile-found path), `teleport()` clears it like a server snapshot. This is the "launched in your movement direction, slippery and barely steerable until you land" behaviour |
-| BOUNCY break | unchanged `_bounce` + `break` |
+| BOUNCY break | unchanged `_bounce` + `break`; `_on_tile_bounce_hit` also records the tile/item for the next STATE frame (`int_x`/`int_y`/`value`, §7.2) |
 | wall response `else` branch | `_touch` runs it through `_is_solid` (after the hazard/bounce checks) and, like the client, **keeps scanning** the probe rect instead of breaking; the `0x131` multiplier (`DAMAGE_SLIP_WALL_BOUNCE = −0.01`) and the slide `−0.7` are applied in that order (`damage_slip` wins, matching the client's if/else-if) |
-| climb grab | **not ported** — the client only reaches it through the wall branch while `vy >= 0 && !grounded`, gated on inventory gear (`GetInventorySlot` slots 5/3/7: `3588`/`8042` hand, `3590`/`8018`/`9034`/`5440`/`7094` shoes, `5712` hair with `avatar[0x18C] & 0x100`) for `CLIMBING_WALL(3586)`, or `ADVENTURE_ROPE_PITON(4700)` with item `1694` nearby; the grab zeroes both axes, clears `0xCC` and sets `grounded`. Needs clothing/inventory data the `PhysicsComponent` does not carry |
+| slow fall (`0x0DF`/`0x0E0`) | `_slow_fall_flags` over the player's `Clothing`, applied in `_simulate` while falling + jump held + not water + not `ZOMBIE`: `accel *= SLOW_FALL_ACCEL_SCALE` (0.3) and the per-tick `parasol`/`glide` flags are reported as `TankFlags.PARASOL` / `TankFlags.UNK_GRAVITY_RELATED` (§6B.2) |
+| water vertical | `_simulate`: `accel *= 0.3, max_fall = 120`; `water_float` (`+0x1FB9`) zeroes both; floaties (`_is_floatie`) use `-12` / `-320` and clamp the fall to `40`; the `accel < 0` upward clamp matches the client |
+| water-float lifecycle (`0x7C`/`0x1FB9`) | `_check_tile_mod` → `_update_water_state`: on entry with a water vehicle (`sub_14053C770` list + JET_SKI/GOLDEN_JET_SKI) set `water_float`, timestamp `water_enter_ms`; clear after `WATER_FLOAT_DURATION_MS` (3000) unless FISHING_DINGHY/JET_SKI/GOLDEN_JET_SKI; clear out of water |
+| jump action (`0x140506430`/`0x1404FE4A50`) | `_jump`: `can_jump` = grounded, `left_ground`, double-jump token, `NOCLIP`, antigravity/pole, or water (`vy > 0` or `water_float`); launch `-450`, reduced to `-270` on water/hay/snow-without-SNOWSHOES/mud/pole; consumes the coyote flag; air launches consume the token; antigravity/pole refill it |
+| mud (`0x0DE`) | `_check_tile_mod` sets `mud` from `ItemInfoType.MUD` under the feet; the horizontal cap becomes `max_velocity * 0.6` and the jump is reduced |
+| — (mods) | `modBit0` charged jump (`unk_090[56]`, `+0xC8`), `modBit2` → `flag_1B1` → `accelMulFlag` (15x dive) and the `charFlags & 1` flying path are **not** modelled (no server mods in the engine) |
+| — (particles) | the hover-particle gravity override (flag `0x40`) and particle type `7` are not modelled (no particle manager) |
+| climb grab | **not ported** — the client only reaches it through the wall branch while `vy >= 0 && !grounded`, gated on **inventory** gear (`GetInventorySlot` slots 5/3/7: `3588`/`8042` hand, `3590`/`8018`/`9034`/`5440`/`7094` shoes, `5712` hair with `avatar[0x18C] & 0x100`) for `CLIMBING_WALL(3586)`, or `ADVENTURE_ROPE_PITON(4700)` with item `1694` nearby; the grab zeroes both axes, clears `0xCC` and sets `grounded`. Worn `Player.clothing` is now available to the engine, but inventory is not |
 | — (extra axes) | `handleDamagingTileCollision`/`sub_1404FC0B0` also call `sub_14050B830` when the `0x2CF0`/`0x2CFC` axis pair is perturbed; those axes are not modelled |
 

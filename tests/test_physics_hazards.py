@@ -331,4 +331,5 @@ def test_checkpoint_moves_the_respawn_tile():
         if world.respawn_tile is not None and world.respawn_tile.x == 6:
             break
     assert world.respawn_tile is not None and world.respawn_tile.x == 6
-    assert bool(world.get_tile(6, FLOOR_Y - 1).flags & TileFlags.IS_ON)
+    pos = world.get_respawn_position(HITBOX)
+    assert pos is not None and abs(pos[0] - 198.0) < 0.001  # tile 6 centred for a 20 px hitbox

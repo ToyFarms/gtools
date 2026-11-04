@@ -2,10 +2,64 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from gtools.baked.items import ICE_CRUST_BLOCK, STEAM_LAUNCHER
+from gtools.baked.items import (
+    ANGEL_OF_MERCY_S_WINGS,
+    CARDBOARD_NESSIE,
+    CELESTIAL_HALO,
+    CLOAK_OF_FALLING_WATERS,
+    CLOAK_OF_HOVERATION,
+    DA_VINCI_WINGS,
+    DARKEST_SKULL_PARASOL,
+    DRACONIC_ROCKET_PARASOL,
+    FISHING_DINGHY,
+    FLAMING_FLOATIES,
+    FLOATING_LEAF,
+    GIANT_FALLING_SHAMROCK,
+    GO_ANYWHERE_SURFBOARD,
+    GOLDEN_JET_SKI,
+    GOLDEN_SILK_SCARF,
+    GROW_AIR_BALLOON,
+    GROW_X_ROCKET_WINGS,
+    HARVEST_SCARF,
+    HAY,
+    HELPING_HAND,
+    HYPERTECH_ANTIGRAVITY_FIELD,
+    ICE_CRUST_BLOCK,
+    JET_SKI,
+    JET_SKI_CHARIOT,
+    LEGENDARY_WINGS,
+    LIGHTNING_UMBRELLA,
+    MAGIC_CARPET,
+    OIL_PAPER_UMBRELLA,
+    PARASOL,
+    POSSESSING_SCARF,
+    RAYMAN_S_HAIR,
+    RING_OF_WINDS,
+    SEA_MONSTER_FLOATIE,
+    SILK_SCARF,
+    SLIPPERY_FLAG_POLE,
+    SNOWSHOES,
+    SNOW_BLOCK,
+    SODA_JETPACK,
+    SPACE_THRUSTER_BOOST_BOOTS,
+    SPECTRAL_MANTLE,
+    STEAM_LAUNCHER,
+    STEAMPUNK_ARM,
+    SUPER_SQUIRT_GUN_JETPACK,
+    SUPER_SQUIRT_GUN_JETPACK_PANTS,
+    SURFBOARD,
+    SURFBOARD_ELECTRIC_GREEN,
+    SURFBOARD_FLAME,
+    SURFBOARD_WAVE,
+    SWAN_BOAT,
+    TURKEY_HAT,
+    UNICORN_FLOATIE,
+    WATER_WINGS,
+    ZEPHYR_HELM,
+)
 from gtools.core.growtopia.items_dat import ItemInfoCollisionType, ItemInfoFlag2, ItemInfoType, item_database
 from gtools.core.growtopia.packet import TankFlags, TankPacket, TankType
-from gtools.core.growtopia.player import CharacterFlags, CharacterState
+from gtools.core.growtopia.player import CharacterFlags, CharacterState, Clothing
 from gtools.core.growtopia.world import Tile, TileFlags, World
 
 TILE = 32.0
@@ -14,8 +68,16 @@ FIXED_DT = 1 / 60
 
 JUMP_SPEED = 450.0
 JUMP_CUT_ACCEL = 5000.0
+JUMP_REDUCED_SCALE = 0.6  # water / hay / snow / mud / pole launch
 MAX_FALL = 400.0
 WATER_VERTICAL_SCALE = 0.3
+SLOW_FALL_ACCEL_SCALE = 0.3  # parasols and gliders while the jump button is held
+ANTIGRAVITY_ACCEL_SCALE = 0.75 * 0.5  # HYPERTECH field / hover particle
+WATER_FLOAT_ACCEL = -12.0  # 400 * -0.03, floatie buoyancy
+WATER_FLOAT_FALL_ACCEL = -320.0  # 400 * -0.8, floatie while falling
+WATER_FLOAT_MAX_FALL = 40.0  # 400 * 0.1, floatie fall clamp
+WATER_FLOAT_DURATION_MS = 3000.0  # kConst_3000p0_D98
+MUD_SPEED_SCALE = 0.6
 SLIDE_ACCEL_SCALE = 0.15
 SLIDE_WALL_BOUNCE = -0.7
 DAMAGE_SLIP_WALL_BOUNCE = -0.01  # 0x14095C488, the 0x131 branch of the wall response
@@ -30,6 +92,20 @@ TANK_STATE_POLL_MS = 200.0
 _EPS = 1e-4
 _SOLID = {ItemInfoCollisionType.FULL, ItemInfoCollisionType.COLLIDE_IF_ON, ItemInfoCollisionType.COLLIDE_IF_OFF}
 _PLATFORM = {ItemInfoCollisionType.JUMP_THROUGH, ItemInfoCollisionType.ONE_WAY, ItemInfoCollisionType.CLOUD}
+# `sub_14053C770`: the water vehicles that grant the water-float state on entry
+_WATER_VEHICLES = {
+    SURFBOARD,
+    SURFBOARD_FLAME,
+    SURFBOARD_WAVE,
+    SURFBOARD_ELECTRIC_GREEN,
+    FISHING_DINGHY,
+    GO_ANYWHERE_SURFBOARD,
+    CARDBOARD_NESSIE,
+    JET_SKI_CHARIOT,
+    SWAN_BOAT,
+    JET_SKI,
+    GOLDEN_JET_SKI,
+}
 
 StateCallback = Callable[[TankPacket], None]
 DeathCallback = Callable[["PhysicsComponent", int, int], None]
@@ -70,6 +146,19 @@ class PhysicsComponent:
     # While set, validatePhysics scales the input acceleration to 0.15 and skips the
     # idle friction lerp (slippery, barely-controllable air state), see `_simulate`.
     damage_slip: bool = False
+
+    # vertical-axis state (NetAvatar::integrateVerticalAxis 0x140510580)
+    water_float: bool = False  # avatar+0x1FB9: water vehicles suppress water gravity for 3 s
+    water_enter_ms: float = 0.0  # avatar+0x07C: getTick() when the avatar entered water
+    mud: bool = False  # avatar+0x0DE: standing in MUD (reduced jump + 0.6 speed cap)
+    left_ground: bool = False  # avatar+0x140: coyote flag, set when walking off an edge
+    parasol: bool = False  # avatar+0x0DF per-tick state -> TankFlags.PARASOL (0x40000)
+    glide: bool = False  # avatar+0x0E0 per-tick state -> TankFlags.UNK_GRAVITY_RELATED (0x80000)
+
+    # last bounce, reported in the STATE frame's int_x/int_y/value (fillTankStatePacket, 0x1404FBEB0)
+    bounce_tx: int = -1
+    bounce_ty: int = -1
+    bounce_item: int = 0
 
     frac_x: float = 0.0
     frac_y: float = 0.0
@@ -126,14 +215,47 @@ class PhysicsEngine:
         c.left, c.right = left, right
         if jump != c.jump:
             c.jump_latch = jump
-            if jump and c.grounded:
-                c.vy = -JUMP_SPEED
-                c.double_jumped = False
-            elif jump and c.state.flags & CharacterFlags.DOUBLE_JUMP and not c.double_jumped:
-                c.vy = -JUMP_SPEED
-                c.double_jumped = True
+            if jump:
+                self._jump(c)
 
         c.jump = jump
+
+    def _jump(self, c: PhysicsComponent) -> None:
+        """The jump action -- `TryPlaceSeedAtTile` (0x140506430) + `NetAvatar::onJump` (0x1404FE4A50).
+
+        The launch is only allowed when grounded, inside the `left_ground` coyote window
+        (`+0x140`), with the double-jump token (`+0x1F8`, refilled while grounded with
+        `CharacterFlags.DOUBLE_JUMP`), with the flying/NOCLIP mod, or while paddling in
+        water (`vy >= 0` or the water-float state). Antigravity tiles and slippery poles
+        refill the token. The strength is `-450`, reduced to `-270` in water, on hay,
+        on snow without SNOWSHOES, in mud and on a slippery pole.
+        """
+        clothing = self._clothing(c)
+        below = self._below_tile(c)
+        centre = self._centre_tile(c)
+        antigrav = (below is not None and below.fg_id == HYPERTECH_ANTIGRAVITY_FIELD) or (centre is not None and centre.fg_id == HYPERTECH_ANTIGRAVITY_FIELD)
+        pole = (centre is not None and centre.fg_id == SLIPPERY_FLAG_POLE) or (below is not None and below.fg_id == SLIPPERY_FLAG_POLE)
+        double_jump = bool(c.state.flags & CharacterFlags.DOUBLE_JUMP) and not c.double_jumped
+        can_swim = c.in_water and (c.vy > 0.0 or c.water_float)
+        can_jump = c.grounded or c.left_ground or double_jump or bool(c.state.flags & CharacterFlags.NOCLIP) or antigrav or pole or can_swim
+
+        # the client consumes the coyote flag on every jump action, successful or not
+        c.left_ground = False
+        if not can_jump:
+            return
+
+        was_grounded = c.grounded
+        shoes = clothing.shoes if clothing is not None else 0
+        snow_locked = below is not None and below.fg_id == SNOW_BLOCK and shoes != SNOWSHOES
+        reduced = c.in_water or c.mud or pole or (below is not None and below.fg_id == HAY) or snow_locked
+        # NOTE: `grounded` is intentionally left for `_settle` to re-derive at the end of
+        # the tick -- like the STATE-driven launch the recorded fits in §10 analyse, the
+        # launch tick then skips gravity and travels the full -450.
+        c.vy = -JUMP_SPEED * (JUMP_REDUCED_SCALE if reduced else 1.0)
+        if not was_grounded:
+            c.double_jumped = True  # an airborne launch consumes the token (`unk_1F8 = 0`)
+        if antigrav or pole:
+            c.double_jumped = False  # `unk_1F8 = 1` before onJump refills it
 
     def teleport(self, net_id: int, x: float, y: float) -> None:
         c = self.components[net_id]
@@ -191,6 +313,10 @@ class PhysicsEngine:
             flags |= TankFlags.DOUBLE_JUMPED
         if c.jump:
             flags |= TankFlags.JUMP
+        if c.parasol:
+            flags |= TankFlags.PARASOL  # avatar+0x0DF
+        if c.glide:
+            flags |= TankFlags.UNK_GRAVITY_RELATED  # avatar+0x0E0
         # one-shot event bits -- ORed in like avatar+0x134 and consumed by `_send_state`
         if c.killed_pending:
             flags |= TankFlags.GOT_KILLED
@@ -210,8 +336,9 @@ class PhysicsEngine:
             vector_x2=c.vx,
             vector_y2=c.vy,
             float_var=c.state.velocity_in_water,
-            int_x=-1,
-            int_y=-1,
+            value=c.bounce_item,
+            int_x=c.bounce_tx,
+            int_y=c.bounce_ty,
         )
 
     def _simulate(self, c: PhysicsComponent) -> None:
@@ -223,19 +350,47 @@ class PhysicsEngine:
         dt, st = self.fixed_dt, c.state
         self._check_tile_mod(c)
 
-        # vertical
+        # vertical -- NetAvatar::integrateVerticalAxis (0x140510580)
+        c.parasol = c.glide = False  # +0xDF/+0xE0 are per-tick wire state
+        centre = self._centre_tile(c)
         if c.grounded:
             c.vy = min(c.vy, 0.0)
         else:
-            accel = self._vertical_accel(c)
+            accel = st.vertical_accel  # base, the water scale is applied below
+            max_fall = MAX_FALL
             if accel > 0.0:
                 if c.vy < 0.0 and not c.jump_latch:
                     accel += JUMP_CUT_ACCEL
                 elif c.damage_slip:
-                    # integrateVerticalAxis's 0x131 branch: += 0.85 * 5000
+                    # +0x131 branch: += 0.85 * 5000
                     accel += JUMP_CUT_ACCEL * 0.85
-            max_fall = MAX_FALL * WATER_VERTICAL_SCALE if c.in_water else MAX_FALL
+                # slow fall: parachute-like items while the jump button is held
+                if c.vy > 0.0 and c.jump_latch and not c.in_water and not (c.state.flags & CharacterFlags.ZOMBIE):
+                    slow = self._slow_fall_flags(c)
+                    if slow is not None:
+                        accel *= SLOW_FALL_ACCEL_SCALE
+                        c.parasol, c.glide = slow
+                # antigravity field / hover particle
+                if centre is not None and centre.fg_id == HYPERTECH_ANTIGRAVITY_FIELD:
+                    accel *= ANTIGRAVITY_ACCEL_SCALE
+            if c.in_water:
+                accel *= WATER_VERTICAL_SCALE
+                max_fall = MAX_FALL * WATER_VERTICAL_SCALE
+                if c.water_float:
+                    # a water vehicle suppresses water gravity entirely (+0x1FB9)
+                    accel = 0.0
+                    max_fall = 0.0
+                if self._is_floatie(c):
+                    accel = WATER_FLOAT_ACCEL
+                    if c.vy > 0.0:
+                        accel = WATER_FLOAT_FALL_ACCEL
+                        c.vy = min(c.vy, WATER_FLOAT_MAX_FALL)
+            elif centre is not None and centre.fg_id == SLIPPERY_FLAG_POLE:
+                accel *= WATER_VERTICAL_SCALE
+                max_fall = MAX_FALL * WATER_VERTICAL_SCALE
             c.vy = min(c.vy + dt * accel, max_fall)
+            if accel < 0.0:
+                c.vy = max(c.vy, -max_fall)
 
         # horizontal
         direction = int(c.right) - int(c.left)
@@ -244,6 +399,8 @@ class PhysicsEngine:
         elif c.vx:
             c.facing_right = c.vx > 0.0
         cap = st.velocity_in_water if c.in_water else st.max_velocity
+        if c.mud:
+            cap *= MUD_SPEED_SCALE  # +0xDE, validatePhysics's BYTE6 branch
         step_v = st.horizontal_accel * dt
         if c.sliding and c.vy <= 0.0:
             step_v *= SLIDE_ACCEL_SCALE
@@ -441,6 +598,7 @@ class PhysicsEngine:
         c.grounded = False
         c.jump_latch = False
         c.sliding = True
+        self._on_tile_bounce_hit(c, tx, ty)
 
     def _landing_launch(self, c: PhysicsComponent, tx: int, ty: int, kind: int | None) -> float | None:
         tile = self.world.get_tile(tx, ty)
@@ -454,6 +612,7 @@ class PhysicsEngine:
         if ty * TILE < c.y + self.height - _EPS:
             return
 
+        self._on_tile_bounce_hit(c, tx, ty)
         if kind == ItemInfoType.TRAMPOLINE_MOMENTUM:
             return TRAMPOLINE_MOMENTUM_SPEED
 
@@ -462,6 +621,12 @@ class PhysicsEngine:
             tile.flags &= ~TileFlags.IS_ON
 
         return TRAMPOLINE_SPEED
+
+    def _on_tile_bounce_hit(self, c: PhysicsComponent, tx: int, ty: int) -> None:
+        """NetAvatar::onTileBounceHit (0x140502AB0): remember the bounce for the next STATE frame."""
+        tile = self.world.get_tile(tx, ty)
+        c.bounce_tx, c.bounce_ty = tx, ty
+        c.bounce_item = tile.fg_id if tile is not None else 0
 
     def _move(self, c: PhysicsComponent, delta: float, axis: int) -> None:
         total = delta + (c.frac_x if axis == 0 else c.frac_y)
@@ -514,17 +679,120 @@ class PhysicsEngine:
             # ground -- touching down restores normal control
             c.damage_slip = False
         else:
+            if c.grounded:
+                c.left_ground = True  # +0x140 is set when the ground query stops finding floor
             c.grounded = False
 
     def _check_tile_mod(self, c: PhysicsComponent) -> None:
         centre = self.world.get_tile(math.floor((c.x + self.width / 2) / TILE), math.floor((c.y + self.height / 2) / TILE))
+        was_water = c.in_water
         c.in_water = bool(centre and centre.flags & TileFlags.IS_WET)
 
         row = math.floor((c.y + self.height) / TILE)
-        if any(self._is_slippery(self.world.get_tile(tx, row)) for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0)):
+        below = [tile for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0) if (tile := self.world.get_tile(tx, row)) is not None]
+        if any(self._is_slippery(tile) for tile in below):
             c.sliding = True
         elif c.grounded:
             c.sliding = False
+        c.mud = any(tile.fg_id > 0 and item_database.get(tile.fg_id).item_type == ItemInfoType.MUD for tile in below)
+
+        self._update_water_state(c, was_water)
+
+    def _update_water_state(self, c: PhysicsComponent, was_water: bool) -> None:
+        """`updateBlockStateFromPlayerInteraction` (0x140509C20): the water-float state.
+
+        Entering water with a water vehicle (surfboards/boats/JET_SKI/...) turns on
+        `water_float` (avatar+0x1FB9) for 3000 ms; FISHING_DINGHY / JET_SKI /
+        GOLDEN_JET_SKI keep it while in water. While set, `integrateVerticalAxis`
+        zeroes both the water gravity and the fall speed.
+        """
+        if c.in_water and not was_water:
+            c.water_enter_ms = self.time_ms
+            if self._has_water_vehicle(c):
+                c.water_float = True
+        if not c.in_water:
+            c.water_float = False
+        elif self.time_ms - c.water_enter_ms > WATER_FLOAT_DURATION_MS and not self._has_water_float_perm(c):
+            c.water_float = False
+
+    # -- clothing / item helpers -------------------------------------------------
+
+    def _clothing(self, c: PhysicsComponent) -> Clothing | None:
+        player = self.world.players.get(c.net_id)
+        return player.clothing if player is not None else None
+
+    def _has_water_vehicle(self, c: PhysicsComponent) -> bool:
+        clothing = self._clothing(c)
+        if clothing is None:
+            return False
+
+        return clothing.hand in _WATER_VEHICLES or clothing.shoes in _WATER_VEHICLES
+
+    def _has_water_float_perm(self, c: PhysicsComponent) -> bool:
+        clothing = self._clothing(c)
+        return clothing is not None and clothing.shoes in (FISHING_DINGHY, JET_SKI, GOLDEN_JET_SKI)
+
+    def _is_floatie(self, c: PhysicsComponent) -> bool:
+        clothing = self._clothing(c)
+        if clothing is None:
+            return False
+
+        return clothing.neck in (SEA_MONSTER_FLOATIE, UNICORN_FLOATIE) or clothing.hand in (WATER_WINGS, FLAMING_FLOATIES)
+
+    def _slow_fall_flags(self, c: PhysicsComponent) -> tuple[bool, bool] | None:
+        """The two parachute groups of integrateVerticalAxis (0x140510580).
+
+        Returns `(parasol, glide)` -- `parasol` maps to avatar+0xDF and the PARASOL
+        event bit (0x40000), `glide` to avatar+0xE0 and UNK_GRAVITY_RELATED (0x80000).
+        """
+        clothing = self._clothing(c)
+        if clothing is None:
+            return None
+
+        if (
+            clothing.hand in (PARASOL, DRACONIC_ROCKET_PARASOL, DARKEST_SKULL_PARASOL, LIGHTNING_UMBRELLA, OIL_PAPER_UMBRELLA, GIANT_FALLING_SHAMROCK, RING_OF_WINDS)
+            or clothing.shoes == MAGIC_CARPET
+            or clothing.back == GROW_X_ROCKET_WINGS
+        ):
+            return True, False
+        if clothing.shoes == FLOATING_LEAF or clothing.hat == CELESTIAL_HALO:
+            return True, False
+        if (
+            clothing.back
+            in (
+                SODA_JETPACK,
+                SUPER_SQUIRT_GUN_JETPACK,
+                LEGENDARY_WINGS,
+                DA_VINCI_WINGS,
+                CLOAK_OF_FALLING_WATERS,
+                SPECTRAL_MANTLE,
+                CLOAK_OF_HOVERATION,
+                ANGEL_OF_MERCY_S_WINGS,
+                HELPING_HAND,
+            )
+            or clothing.pants == SUPER_SQUIRT_GUN_JETPACK_PANTS
+            or clothing.shoes in (SPACE_THRUSTER_BOOST_BOOTS, GROW_AIR_BALLOON)
+            or clothing.hat in (ZEPHYR_HELM, TURKEY_HAT)
+            or clothing.hair == RAYMAN_S_HAIR
+            or clothing.neck in (SILK_SCARF, GOLDEN_SILK_SCARF, POSSESSING_SCARF, HARVEST_SCARF)
+            or clothing.hand == STEAMPUNK_ARM
+        ):
+            return False, True
+
+        return None
+
+    def _centre_tile(self, c: PhysicsComponent) -> Tile | None:
+        return self.world.get_tile(math.floor((c.x + self.width / 2) / TILE), math.floor((c.y + self.height / 2) / TILE))
+
+    def _below_tile(self, c: PhysicsComponent) -> Tile | None:
+        """First foreground tile at the row under the feet (the jump/mud surface)."""
+        row = math.floor((c.y + self.height) / TILE)
+        for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0):
+            tile = self.world.get_tile(tx, row)
+            if tile is not None and tile.fg_id > 0:
+                return tile
+
+        return None
 
     def _collision(self, tx: int, ty: int) -> ItemInfoCollisionType:
         tile = self.world.get_tile(tx, ty)
@@ -589,7 +857,9 @@ class PhysicsEngine:
         else:
             return
 
-        # the client's fillTankStatePacket clears avatar+0x134 after building the frame,
-        # so FIRE_DAMAGE / ACID_DAMAGE / DAMAGE / GOT_KILLED ride exactly one packet
+        # the client's fillTankStatePacket clears avatar+0x134 and the bounce tile after
+        # building the frame, so the event bits and the bounce coordinates ride one packet
         c.killed_pending = c.on_fire = c.on_acid = c.damaged = False
+        c.bounce_tx = c.bounce_ty = -1
+        c.bounce_item = 0
         send(pkt)

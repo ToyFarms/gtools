@@ -37,6 +37,14 @@ from gtools.core.growtopia.physics.engine import (
     DAMAGING_KNOCKBACK_SPEED,
     DAMAGING_LAUNCH_SPEED,
     DAMAGING_LAUNCH_NO_GRAVITY_SPEED,
+    JUMP_REDUCED_SCALE,
+    SLOW_FALL_ACCEL_SCALE,
+    ANTIGRAVITY_ACCEL_SCALE,
+    MUD_SPEED_SCALE,
+    WATER_FLOAT_ACCEL,
+    WATER_FLOAT_FALL_ACCEL,
+    WATER_FLOAT_MAX_FALL,
+    WATER_FLOAT_DURATION_MS,
 )
 
 PLAYER_NET_ID = 1
@@ -261,6 +269,14 @@ class GPUPhysicsDemo:
                 "DAMAGING_KNOCKBACK_SPEED": DAMAGING_KNOCKBACK_SPEED,
                 "DAMAGING_LAUNCH_SPEED": DAMAGING_LAUNCH_SPEED,
                 "DAMAGING_LAUNCH_NO_GRAVITY_SPEED": DAMAGING_LAUNCH_NO_GRAVITY_SPEED,
+                "JUMP_REDUCED_SCALE": JUMP_REDUCED_SCALE,
+                "SLOW_FALL_ACCEL_SCALE": SLOW_FALL_ACCEL_SCALE,
+                "ANTIGRAVITY_ACCEL_SCALE": ANTIGRAVITY_ACCEL_SCALE,
+                "MUD_SPEED_SCALE": MUD_SPEED_SCALE,
+                "WATER_FLOAT_ACCEL": WATER_FLOAT_ACCEL,
+                "WATER_FLOAT_FALL_ACCEL": WATER_FLOAT_FALL_ACCEL,
+                "WATER_FLOAT_MAX_FALL": WATER_FLOAT_MAX_FALL,
+                "WATER_FLOAT_DURATION_MS": WATER_FLOAT_DURATION_MS,
             },
             "character_state": self._state_snapshot(),
             "avatar_start": self._snapshot(),
@@ -353,6 +369,11 @@ class GPUPhysicsDemo:
             "on_acid": c.on_acid,
             "damaged": c.damaged,
             "damage_slip": c.damage_slip,
+            "water_float": c.water_float,
+            "mud": c.mud,
+            "left_ground": c.left_ground,
+            "parasol": c.parasol,
+            "glide": c.glide,
         }
 
     def _record_tick(self) -> None:
@@ -521,6 +542,8 @@ class GPUPhysicsDemo:
             imgui.text(f"Slide: {c.sliding}")
             imgui.text(f"Killed: {c.killed}  Fire: {c.on_fire}  Acid: {c.on_acid}")
             imgui.text(f"Damaged: {c.damaged}  Damage slip: {c.damage_slip}")
+            imgui.text(f"Parasol: {c.parasol}  Glide: {c.glide}  Mud: {c.mud}")
+            imgui.text(f"Water float: {c.water_float}  Coyote: {c.left_ground}")
             if self._recording_file is not None:
                 imgui.text(f"RECORDING: {self._recording_ticks} ticks, " f"{self._recording_frames} frames")
                 if self._recording_path is not None:
