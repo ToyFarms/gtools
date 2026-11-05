@@ -150,6 +150,7 @@ class GPUPhysicsDemo:
         self._camera_snapped = True
 
         self.keys_pressed = set()
+        self.mouse_held = False
         self.event_router = EventRouter(self.window)
 
         self.dt = FIXED_DT
@@ -162,7 +163,7 @@ class GPUPhysicsDemo:
         print("  A/D or Left/Right - Move")
         print("  W/Space/Up - Jump")
         print("  R - Reset position")
-        print("  Left click - Punch the tile under the cursor (request logged)")
+        print("  Left click / hold - Punch the tile under the cursor (client cadence)")
         print("  Mouse wheel - Zoom")
         print("  Middle mouse drag - Pan camera")
         print("  Tab - Toggle settings")
@@ -227,18 +228,29 @@ class GPUPhysicsDemo:
     def _log_packet(pkt: TankPacket) -> None:
         print(f"[packet] {pkt.compact_repr()}")
 
-    def _punch_at_screen(self, sx: float, sy: float) -> None:
+    def _tile_at_screen(self, sx: float, sy: float) -> tuple[int, int]:
         lx, ly = self.world_renderer._to_local(sx, sy)
         world_pos = self.world_renderer._camera.screen_to_world(lx, ly)
-        tx = math.floor(world_pos.x / TILE)
-        ty = math.floor(world_pos.y / TILE)
 
+        return math.floor(world_pos.x / TILE), math.floor(world_pos.y / TILE)
+
+    def _touch_at_screen(self, sx: float, sy: float) -> None:
+        tx, ty = self._tile_at_screen(sx, sy)
         if not (0 <= tx < self.world.width and 0 <= ty < self.world.height):
-            print(f"punch ignored: ({tx}, {ty}) is outside the world")
+            print(f"touch outside the world: ({tx}, {ty})")
+
+        print(f"touch press -> tile ({tx}, {ty})")
+        self.controller.touch_press(tx, ty)
+
+    def handle_touch(self) -> None:
+        """Feed the held button to the controller (client ``onTouchHoldTick``)."""
+        if not self.mouse_held:
             return
 
-        print(f"punch -> tile ({tx}, {ty})")
-        self.controller.request_punch(tx, ty)
+        sx, sy = glfw.get_cursor_pos(self.window)
+        tx, ty = self._tile_at_screen(sx, sy)
+        if 0 <= tx < self.world.width and 0 <= ty < self.world.height:
+            self.controller.touch_hold(tx, ty)
 
     def _toggle_recording(self) -> None:
         if self._recording_file is not None:
@@ -473,8 +485,13 @@ class GPUPhysicsDemo:
                 ):
                     continue
 
-            if isinstance(event, MouseButtonEvent) and event.button == glfw.MOUSE_BUTTON_LEFT and event.action == glfw.PRESS:
-                self._punch_at_screen(event.screen_x, event.screen_y)
+            if isinstance(event, MouseButtonEvent) and event.button == glfw.MOUSE_BUTTON_LEFT:
+                if event.action == glfw.PRESS:
+                    self.mouse_held = True
+                    self._touch_at_screen(event.screen_x, event.screen_y)
+                elif event.action == glfw.RELEASE:
+                    self.mouse_held = False
+                    self.controller.touch_release()
                 continue  # left click no longer pans the camera
 
             if isinstance(event, ResizeEvent):
@@ -486,6 +503,8 @@ class GPUPhysicsDemo:
             self.world_renderer.handle_event(event)
 
     def update_physics(self, dt: float) -> None:
+        self.handle_touch()  # client onTouchHoldTick: resolves the tile before the tick
+
         self._accumulator += dt
         while self._accumulator >= self.controller.fixed_dt:
             self._accumulator -= self.controller.fixed_dt
@@ -579,7 +598,7 @@ class GPUPhysicsDemo:
             imgui.text("A/D or Left/Right - Move")
             imgui.text("W/Space/Up - Jump")
             imgui.text("R - Reset position")
-            imgui.text("Left click - Punch tile (logged)")
+            imgui.text("Left click/hold - Punch tile")
             imgui.text("Mouse wheel - Zoom")
             imgui.text("Middle drag - Pan")
             imgui.text("Tab - Settings")

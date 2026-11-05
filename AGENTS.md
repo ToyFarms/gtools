@@ -245,10 +245,13 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
   `_is_ground`; permission logic: `_lock_passes`, `_lock_check`, the per-type
   `_*_open` helpers and `PlayerController.permissions`
   (`CollisionPermissions`).
-- Tile changes: `request_punch`/`request_place` queue and flush on the ~200 ms
-  grid with the local position stamped in; the queued intent marks its action
-  bits so the chained STATE frame carries `PUNCH|TILE_CHANGE` /
-  `PLACE|TILE_CHANGE`. `request_activate` (steam launcher) bypasses the grid.
+- Tile changes: `touch_press`/`touch_hold`/`touch_release` model the client
+  `HandleTouch` pipeline — per-tile de-dup (the Fist's `item_type` 0 repeats,
+  items do not), 150 px reach, the 11 s hold timeout, `PUNCH_REPEAT_MS` for the
+  punch-animation gate. `request_change`/`request_punch`/`request_place` send the
+  position-stamped `TILE_CHANGE_REQUEST` immediately and arm the chained STATE
+  bits (`PUNCH|TILE_CHANGE` / `PLACE|TILE_CHANGE`); `request_activate` sends the
+  steam-launcher activate. Client evidence: `docs/tile-change-request.md`.
 - `World.from_tiles()` does **not** set `Tile.index` for explicitly supplied
   tiles (only `World.fill()` assigns indices). Compute indices with
   `World.index_tile(pos)` when resolving `parent_index`-style links.

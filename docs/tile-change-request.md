@@ -4,8 +4,10 @@ Target: **Growtopia** client (protocol 226, `game_version 5.58`), PE x64, image 
 All addresses are IDA virtual addresses in `Growtopia.exe.i64`. Every claim is annotated in the
 IDA database at the cited address, or quoted from the read-only logs in `~/.gtools/logs`.
 
-Status: phase `t1-sender` complete, cadence measured, STATE coupling resolved. Flow tracing
-continues (input gating, hand-slot selection, packet send mechanics).
+Status: press/hold/release pipeline traced (`onTouchInput` / `onTouchHoldTick` /
+`HandleTouch`), rate gates located, action-bit coupling resolved. The port lives in
+`gtools/core/growtopia/physics/controller.py` (`PlayerController.touch_press` /
+`touch_hold` / `request_change`).
 
 ---
 
@@ -13,9 +15,10 @@ continues (input gating, hand-slot selection, packet send mechanics).
 
 | Question | Answer |
 |---|---|
-| Cadence | **Event-driven, but gated onto the same ~200 ms grid as `STATE`.** Dominant rate **5/s**; hard ceiling **10/s**. No second ever exceeded 10 across 32,432 active seconds. |
-| Flow | `HandleTouch` (`0x140411CF0`) → gates → `sendTileChangeRequest` (`0x140407570`) → `SendPacketRaw(4, …, 56, 0, …)`. Four other entry points exist. |
-| STATE coupling | **Independent emitters on a shared tick.** `STATE` is a ~5 Hz heartbeat present in 33,014 of the session's active seconds; **99.7 %** of seconds containing a `TILE_CHANGE_REQUEST` also contain a `STATE` packet. `STATE` does **not** wait for tile edits — it is simply always running. |
+| Cadence | **Event-driven.** Per-tile de-dup + the punch-animation gate bound the repeats; a 333 ms/80 ms pair gates the special-item tap paths. Measured dominant rate **5/s**, hard ceiling **10/s** (32,432 active seconds). |
+| Flow | `onTouchInput` (press) / `onTouchHoldTick` (hold) → `HandleTouch` (`0x140411CF0`) → `sendTileChangeRequest` (`0x140407570`) → `SendPacketRaw(4, …, 56, 0, …)`. Five other entry points exist. |
+| STATE coupling | **Independent emitters on a shared tick.** The action bits ORed into `avatar+0x134` (`PUNCH|TILE_CHANGE` / `PLACE|TILE_CHANGE`) reset the `sendTankState` 200 ms gate, so the chained frame leaves on the next tick. |
+| Held button | Repeats the **Fist punch** only (the Fist's `item_type` is 0, which bypasses the per-tile de-dup); placeable items fire once per press. Hold stops after 11 s. |
 
 ---
 
@@ -31,7 +34,7 @@ void __fastcall sendTileChangeRequest(GameState *gameState, Tile *tile,
     pkt.type      = TANK_TILE_CHANGE_REQUEST;   // +0x00
     pkt.int_x     = tile->tileX;                 // +0x2C   target tile column
     pkt.int_y     = tile->tileY;                 // +0x30   target tile row
-    pkt.value     = itemId;                      // +0x14   item placed; 0 = break
+    pkt.value     = itemId;                      // +0x14   item used (18 = FIST punch)
     if (hasExtraFloat) {
         if (getProtocolVersion() < 999999) return;      // KILL SWITCH - aborts
         pkt.float_var = extraFloat;              // +0x10
@@ -51,180 +54,130 @@ void __fastcall sendTileChangeRequest(GameState *gameState, Tile *tile,
 }
 ```
 
-**Packet**: 56 bytes, ENet **channel 4**, reliable.
+**Packet**: 56 bytes, ENet **channel 4**, reliable. `vector_x`/`vector_y` carry the
+player's own position at the moment of the edit — the server's reach-validation input.
 
-**The `999999` sentinel.** `getProtocolVersion()` is ~226 in practice, so `999999` is a
-never-yet-enabled feature flag. With `hasExtraFloat` set, `999999`-style protocols are required
-or the send is aborted. The same gate guards the only caller that uses that branch
-(`sendSignDurationRequest`, §4.4), so that path is dead code in the shipped client.
+## 3. Flow — press, hold and `HandleTouch`
 
-**Position stamp.** `vector_x`/`vector_y` carry the player's own position at the moment of the
-edit — *"I was standing here when I changed that tile"*. This is the server's reach validation
-input. Log confirmation, `20261002_141139_app.log`:
-
-```
-from client (TANK_PACKET) TankPacket(type=TILE_CHANGE_REQUEST, value=340,
-    vector_x=422.0, vector_y=738.0, int_x=11, int_y=21)
-from client (TANK_PACKET) TankPacket(type=TILE_CHANGE_REQUEST, flags=<TankFlags.FACING_LEFT: 16>,
-    value=340, vector_x=422.0, vector_y=738.0, int_x=12, int_y=21)
-from client (TANK_PACKET) TankPacket(type=TILE_CHANGE_REQUEST, value=340,
-    vector_x=422.0, vector_y=738.0, int_x=13, int_y=21)
-```
-
-`vector_x=422.0, vector_y=738.0` is byte-identical across all three while `int_x` steps
-11 → 12 → 13. The player is stationary, sweeping a line of tiles. `flags=FACING_LEFT` matches
-`TANKFLAG_FACING_LEFT` set from `player->isFacingLeft`.
-
-### Callers (7 sites, 5 distinct entry points)
-
-| Caller | Address | Trigger |
-|---|---|---|
-| `HandleTouch` | `0x140411CF0` | **player tap** — the main front end |
-| `NetAvatar::placeSign` | `0x1404FFC20` | `itemId = 0x12` (18) = SIGN |
-| `NetAvatar::updateTileInteraction` | `0x1404FFCA0` | **per-tick**, from `NetControllerLocal::Update` |
-| `sub_140506910` | `0x140506910` | 3 sites |
-| `sendSignDurationRequest` | `0x14054ADF0` | protocol ≥ 999999 only — dead |
-
----
-
-## 3. Flow — pointer tap to packet
-
-`HandleTouch` @ `0x140411CF0` (4182 bytes, 711 lines)
-
-```
-void __fastcall HandleTouch(TouchInputState *state /*rcx -> r14*/,
-                            float screenX /*xmm0*/,
-                            vec2f *worldPos /*rdx*/,
-                            bool isBreakTap /*r8b*/)
-```
-
-### 3.1 Early rejects
-
-| Check | Meaning |
-|---|---|
-| `!getLocalPlayer(gs)` | no local avatar |
-| `getLocalPlayer(gs) + 11444 > -1` | mounted / in a vehicle |
-| `GameLogicComponent::DialogIsOpened()` | UI modal |
-| `sub_1404FB580(localPlayer, 1) + 8 == 4260` | blocked costume |
-| `state->rejectD4` (`0xD4`) | latched reject |
-| `!isGoblin(localPlayer + 856)` | **this path is goblin-gated** |
-| `localPlayer[0x138] != 0` or `flags(0x188) & 0x800` | frozen → shows `"`!(Can't, you are frozen!)`"` |
-
-### 3.2 Item and target selection
+### 3.1 `onTouchInput` @ `0x140414020` — the press path
 
 ```c
-itemId = GameState->gap224[36];                                  // held hand item
-item   = &getItemManager()->itemsBegin->itemId + 808 * itemId;   // 808-byte stride
-tile   = getTileAtPosition(sub_1403F27B0(gameState), worldPos);
-```
-
-Item types **37 / 64 / 129** are the goblin work stations and are accepted only on these
-foreground tiles: `GOLDEN_TICKET_BOOTH`, `DISPLAY_BLOCK`, `DNA_EXTRACTOR`,
-`GIANT_POT_O_GOLD`, `STUFF_4_TOYS_BOX`, `FOOD_GRINDER` (the last also when
-`tile item_type == 98`).
-
-`state->lastTileIndex` (`0xB8`) caches the last targeted tile — **a repeat tap on the same
-tile index aborts**, which is a de-duplication guard rather than a timing guard.
-
-### 3.3 Pre-send gates
-
-```c
-// hand slots
-slot5 = sub_1405445F0(&inventory.items, 5);
-slot6 = sub_1405445F0(&inventory.items, 6);
-v121 = (slot5 == 3716 || slot5 == 6086) && slot6 != 3714 && itemId == 18;
-v122 = (slot5 == 1748 || slot5 == 3274) && !isFuelPackLike(slot6) && itemId == 18;
-if (v121 || v122 || !v80) goto ABORT;
-
-// weapon-ish bit test
-v123 = state.dword[1];
-if ((v123 <= 0x25 && bittest64(0x2000100100, v123)) || v123 == 107 || v123 == 129)
-    state->flagC8 = 0;
-
-// empty tile guard
-if (!tile->bg_id && !tile->fg_id && slot5 != 3716) {
-    if (NetAvatar::isPetTileInteractionPending(localPlayer)) goto ABORT;
-    sub_1403FE9D0(gameState);
-}
-
-// must be standing here
-if (!findAvatarAtPosition(getAllPlayer(), worldPos)) goto ABORT;
-
-sendTileChangeRequest(sdk::GetGameState(), tile, itemId, 0, 0.0);
-```
-
-Failure feedback plays **`audio/cant_place_tile.wav`** through the AudioManager vtable.
-
-### 3.4 Reach check — it is containment, not distance
-
-`findAvatarAtPosition` @ `0x140513780`
-
-```c
-NetAvatar *findAvatarAtPosition(NetAvatar *players /*rcx*/, vec2f *pos /*rdx*/)
+void onTouchInput(TouchInputState *state, void *evt)      // "OnTouchStart"
 {
-    // walks the player map (tree root at players+0x18)
-    // skips avatars with byte[76] set
-    // returns the first avatar whose collision rect CONTAINS pos, else NULL
+    state->lastTileIndex /* +0xB8 */ = -1;                // reset the de-dup guard
+    if (!getLocalPlayer(gs)) { DebugLog("Can't touch yet"); return; }
+    /* ... pinch/drag setup reads the two touch points ... */
+    state->screenPos.x /* +0xCC */ = input.x;             // cached cursor
+    state->screenPos.y /* +0xD0 */ = input.y;
+    // inventory/held-item read: itemId = gs->heldItemId /* +0x248 */;
+    // item = itemsBegin + itemId * 0x650; item->item_type at +0x4
+    if (findAvatarAtPosition(getAllPlayer(), worldPos)) {       // cursor on a player
+        /* send "action|wrench|<netid>" (channel 2) + audio/tile_remov.wav */ return;
+    }
+    if (item && item->item_type == WRENCH && findAvatarAtTile(...)) { /* same wrench path */ return; }
+    state->holdActive /* +0xC8 */ = 1;
+    screenToWorld(cam, state->screenPos, &worldPos);
+    HandleTouch(state, state->screenPos.x, &worldPos, /*isBreakTap=*/true);
 }
 ```
 
-There is **no distance/reach test** anywhere on this path — the tap point must fall literally
-inside an avatar's collision rect. Tile size is **32 px**
-(`NetAvatar::clampToWorldBounds`, `0x1404FF550`: `width*32.0`, `height*32.0`).
-
-### 3.5 Pet interaction gate
-
-`NetAvatar::isPetTileInteractionPending` @ `0x140411CC0`
+### 3.2 `onTouchHoldTick` @ `0x1404146D0` — the held path (per frame)
 
 ```c
-return (this[11504] - this[11516]*0.5) != 0.0f;
+void onTouchHoldTick(TouchInputState *state)              // "OnTouchHold"
+{
+    /* state[0xDC] / state[0xDD] drive two drag helpers (sub_140412D80) */
+    byte_140B51D68 = 0;                                   // the "in-reach" latch, see 3.4
+    if (!state->holdActive) { state->holdStartTick = 0; return; }
+    if (state->holdStartTick == 0) state->holdStartTick /* +0xD8 */ = getTick();
+    if (!getLocalPlayer(gs)) { state->holdActive = 0; return; }
+    if (getTick() - state->holdStartTick >= 0x2AF8 /* 11 s */) { state->holdActive = 0; state->holdStartTick = 0; return; }
+    screenToWorld(cam, state->screenPos, &worldPos);
+    HandleTouch(state, state->screenPos.x, &worldPos, /*isBreakTap=*/false);
+}
 ```
 
-`11504`/`11516` are the `half` and `base` of a pet axis triplet in the second triplet block
-(`11488..11580`). Non-zero means the pet owns a pending tile interaction and the edit is refused.
+Confirmed by the event registration in `sub_140412EC0` (`OnTouchStart` → `onTouchInput`,
+`OnTouchEnd`/hold → `onTouchHoldTick`), the `LevelTouchComponent` ctor
+`sub_140411AD0` (state +0xB8 `lastTileIndex = -1`, +0xC8 `holdActive = 0`,
++0xD8 hold start, +0xE0/+0xE4 throttle stamps) and `vtable` `0x14094A708`.
+
+### 3.3 `HandleTouch` @ `0x140411CF0` — the gates
+
+Entry: `(TouchInputState *state, float screenX, vec2f *worldPos, bool isBreakTap)`.
+`tile = getTileAtPosition(world, worldPos)`; `item = itemsBegin + gs->heldItemId`.
+
+| Gate | Behaviour |
+|---|---|
+| dying / frozen | `avatar[0x138] != 0` or `flags(0x188) & 0x800` → abort ("Can't, you are frozen!") |
+| work stations | item types 37 / 64 / 129 accepted only on GOLDEN_TICKET_BOOTH / DISPLAY_BLOCK / DNA_EXTRACTOR / GIANT_POT_O_GOLD / STUFF_4_TOYS_BOX / FOOD_GRINDER |
+| **per-tile de-dup** | `if (item_type != 0 && state->lastTileIndex == tile->index) return;` then `lastTileIndex = tile->index`. **The Fist's `item_type` is 0 (`ItemInfoType.FIST`) — it is the only item that may re-trigger the same tile.** Each new press resets the guard to `-1`. |
+| reach (special items) | the **mod item's** `flags2` bit 20/21/22 selects a radius (70.4 / 166.4 / 102.4 px; `dword_14094A800/808/804`); `distance(playerCentre, worldPos) > radius` → abort. Gated on the held item being the dead `null_item9638` (`0x25A6`), so it does not fire in the shipped build — `PlayerController` only models the 150 px path. |
+| reach (normal) | the tile is collected from the collision rect expanded by `(levelReach + 2) * 32` (`sub_1403F24C0`; `sub_1403F2760` for item 18) via `WorldView__collectGridTilesInRect`. In-rect + `distance <= 150.0` (`0x1408EE898`) sets `byte_140B51D68 = 1` and **returns** (the per-tick auto-punch in 4.2 handles the actual repeat). Outside the rect the full path below runs and may send immediately. |
+| `isBreakTap` | press: full action (plant validation → "Can't plant a tree in the air!" feedback, door handling, `HandleTileActionResult`, placement preparation, item-type rate gates). Hold: skips the placement preparation (`0x14041254E`, `0x1404128A8`) — **holding never places**. |
+| empty-tile guard | item_type 0 + empty tile + slot5 != 3716 → send only when `findAvatarAtPosition(worldPos)` finds an avatar (the click is on the player) |
+| hand item | `gs->heldItemId` (+0x248). If 0: `isTileBreakable(tile)` → **WRENCH (32)**, else `inventoryHasItem(18)` → **FIST (18)** |
+| pet interaction | `NetAvatar::isPetTileInteractionPending` aborts the edit while a pet axis is armed |
+
+### 3.4 The action result vs the request
+
+* **Fist**: `HandleTileActionResult` @ `0x140500220` is the local result (it gates on
+  `checkIfAbleToPunch` for fuel-pack items) — it sets the anim fields, ORs
+  `POWER_UP_PUNCH_START` and `PUNCH|TILE_CHANGE` (`0xA00`) into `avatar+0x134`, stamps
+  `bounceTileX/Y` (+0xD0/+0xD4) and plays the punch effect; **it does not send**.
+  `NetAvatar::punchTile` @ `0x1404FFC20` is the pure sender: same bounce stamp, ORs
+  `TILE_CHANGE|POWER_UP_PUNCH_END` (`0x800800`), then
+  `sendTileChangeRequest(gs, tile, 0x12 /* FIST */, 0, 0.0)`.
+* **Placement**: `NetAvatar::beginPlaceTile` @ `0x140501DB0` ORs
+  `PLACE|TILE_CHANGE` (`0xC00`) and prepares the local preview; the request is sent with
+  the selected item id (seed planting passes `splice`/`item_on_tree`).
+* **Wrench (type 1)** ends in the "can't place" branch for breakable tiles.
+
+So the chained STATE frame's flag word matches the action: `PUNCH|TILE_CHANGE` for a
+punch, `PLACE|TILE_CHANGE` for a placement (both include `0x800`, the `sendTankState`
+poll reset).
+
+### 3.5 The punch repeat
+
+Both paths repeat through the **punch animation** `avatar+0x1A4 == 18`:
+
+* hold ticks: `if (item_type == 0 && avatar[0x1A4] == 18) { HandleTileActionResult(tile); return; }`
+  (`0x1404121BE`); when the animation is not running the hold tick takes the long path
+  and sends;
+* per-tick auto-punch: `NetAvatar::updateTileInteraction` @ `0x1404FFCA0` (4.2) sends only
+  when `0x1A4 != 18`.
+
+The sent cadence is therefore one punch per animation; the measured mode (5/s) is
+consistent with a ~200 ms swing. The exact animation duration lives in the animation
+data and is **not yet extracted** — `PlayerController` models it with
+`PUNCH_REPEAT_MS = 200.0`.
 
 ---
 
 ## 4. Secondary entry points
 
-### 4.1 `NetAvatar::placeSign` @ `0x1404FFC20`
+### 4.1 `NetAvatar::punchTile` @ `0x1404FFC20`
 
-```c
-this[0xD0] = tile->tileX;  this[0xD4] = tile->tileY;  this[0x17C] = 0;
-if (!this[0x120]) this[0x134] |= 0x800800;
-sendTileChangeRequest(GetGameState(), tile, 0x12 /* 18 = SIGN */, 0, 0.0);
-```
-Then `sub_14050B830(this)`.
+Pure punch sender, see 3.4. Its only caller is `sub_1401407F0` (particle effect + punch).
 
-### 4.2 `NetAvatar::updateTileInteraction` @ `0x1404FFCA0` — **per-tick**
+### 4.2 `NetAvatar::updateTileInteraction` @ `0x1404FFCA0` — per-tick
 
-Called from `NetControllerLocal::Update` (`0x140511A50`) when the pet axis settles.
-**This is the one caller on the same per-tick path that emits `STATE`.**
+Called from `NetControllerLocal::Update`. Requires a Fist in the inventory; handles the
+door branch (`GetDamageTileType`); when the punch animation is running
+(`avatar+0x1A4 == 18`) it refreshes `HandleTileActionResult` only; otherwise it scans the
+row at the avatar's position in the facing direction (0..96 px, 32 px steps) and, for the
+first non-empty tile, calls `HandleTileActionResult` + `sendTileChangeRequest(... 18)`.
+This is the client's auto-punch (walking into a block).
 
-```c
-if (isGoblin(localPlayer + 856) || petAxis(localPlayer + 11520) != 0) {
-    if (this[0x138] == 0 && (this[0x188] & 0x800) == 0) {
-        tile = getTileAtPlayerPosition(this);
-        if (isTileDoorTile(tile) && item_type(tile->fg_id) != 43)
-            sub_140504B00(this, tile, 0);                       // door handling
-        if (inventoryHasItem(&gs->inventory.items, 18 /* SIGN */) &&
-            localPlayer[0x1A4] == 18)
-            sub_140500220(localPlayer, tile);                  // sign placement
-        if ((this[0x18A] & 1) == 0 && this[0x2D0] == 5480 && this[0x2CC] != 4288) { ... }
-    }
-}
-```
+### 4.3 `NetAvatar::tryPlaceSeedOrFertilizer` @ `0x140506910` — per-tick, from `tickAux`
 
-### 4.3 `sub_140506910` @ `0x140506910` (11,291 bytes) — 3 call sites
+11 KB function with 3 send sites (0x140506B16 seed planting, 0x140506F89 fist request,
+0x1405070DF selected-item request). Most branches are `isGoblin`/pet/seed-specific
+(work-station interactions); the seed path checks `IsTileBelowPlantable`.
 
-Largest caller of the sender. Not yet classified.
+### 4.4 `handlePveNpcProjectileHit` @ `0x14054ADF0` — dead code
 
-### 4.4 `sendSignDurationRequest` @ `0x14054ADF0` — dead code
-
-Entire body gated behind `getProtocolVersion() >= 999999`. When enabled it either writes
-`0.5f / 1.5f / 1.5f / 1.5f` into the avatar at `+0x20C+44..+56`, or calls
-`sendTileChangeRequest(gs, tile, 0x12, 1, sign->duration)` — the only caller exercising the
-sender's extra-float branch, which is itself killed by the same check.
+Entire body gated behind `getProtocolVersion() >= 999999`.
 
 ---
 
@@ -247,11 +200,26 @@ sender's extra-float branch, which is itself killed by the same check.
 | 9 | 227 |
 | **10** | **94** |
 
-Across **32,432** active seconds the count **never exceeded 10**. The mode is 5/s.
+Across **32,432** active seconds the count **never exceeded 10**.
 
-**Conclusion: a 100 ms floor (max 10 Hz) with the dominant rate landing on 5/s (200 ms) —
-the same period as the `STATE` heartbeat.** The tap handler is gated onto the shared tick
-rather than sending immediately per input event.
+### The gates (found in code)
+
+* **Punch animation** (`avatar+0x1A4 == 18`): one Fist punch per swing — the dominant
+  5/s rate.
+* **Per-tile de-dup** (`state+0xB8`): a placeable item cannot re-trigger the same tile
+  from hold ticks; only a fresh press resets the guard.
+* **Touch-state throttles** (badly named in earlier passes — they take the
+  `TouchInputState *`, not an item id; renamed in the IDB):
+  * `TouchInputState_throttle80ms` (was `GetTileChangeTypeFromItem`) @ `0x140411C40` =
+    **80 ms** gate, stamp at `state+0xE0` (12.5/s ceiling);
+  * `TouchInputState_throttle333ms` (was `GetTileChangeFlagsFromItem`) @ `0x140411C80` =
+    **333 ms** gate, stamp at `state+0xE4`;
+  they run only in the tap branch for the special item types in the `0x2000100100` /
+   107 / 129 sets (work stations and friends), not for the Fist or normal blocks.
+* The 11 s `onTouchHoldTick` timeout stops long holds (4.3 GB: `0x2AF8`).
+
+The earlier "100 ms floor not yet located" open item is therefore resolved: there is no
+global 100 ms sender gate; the measured distribution is the sum of the gates above.
 
 ---
 
@@ -267,64 +235,51 @@ Measured over the same session, client → server:
 
 **32,348 / 32,432 = 99.75 %** of seconds with a tile edit also contain a `STATE` packet.
 
-`STATE` per-second distribution peaks at the same place:
-
-| req/s | seconds (STATE) |
-|---|---|
-| **5** | **22,437** |
-| 6 | 2,089 |
-| 7 | 1,755 |
-| 8 | 2,098 |
-| 9 | 1,853 |
-| 10 | 1,007 |
-| 11 | 8 |
-
-### Interpretation
-
-The two packets are **independent emitters that share a 200 ms tick grid**:
-
-- `STATE` is a **heartbeat** — it runs at ~5 Hz whether or not anything happens, which is why
-  it appears in essentially every active second. It goes up to 11/s, i.e. it is *not* capped
-  at the same 10/s ceiling.
-- `TILE_CHANGE_REQUEST` is **event-driven** — driven by taps — but clamped to the same grid,
-  hence the 5/s mode and the 10/s ceiling.
-- Therefore the observation "a `TILE_CHANGE_REQUEST` usually comes with a `STATE` packet" is
-  explained by **coincidence of a shared clock**, not by one packet triggering the other.
-  No causal dependency has been found in code.
-
-The one genuine code-level coupling is the **position stamp**: the tile packet embeds
-`vector_x`/`vector_y`, so the server can check the edit against the position the client
-asserted in its heartbeat.
+The two packets are **independent emitters that share the tick grid**:
+`STATE` is a ~5 Hz heartbeat (`sendTankState` gate, seen in
+`docs/netavatar-physics.md` §7.1), `TILE_CHANGE_REQUEST` is event-driven. The genuine
+coupling is the **event mask**: the action paths OR `TILE_CHANGE` (and
+`PUNCH`/`PLACE`/`POWER_UP_*`) into `avatar+0x134`; `sendTankState` zeroes its poll timer
+when bit `0x800` is set, so the frame carrying the action bits leaves on the next tick —
+the "chained STATE".
 
 ---
 
 ## 7. Open items
 
-1. `sub_140506910` (`0x140506910`, 3 call sites) is unclassified — the largest caller.
-2. The exact source of the 100 ms floor / 200 ms grid is not yet located in code. Expected
-   near `HandleTouch` or a shared tick dispatcher; note `NetAvatar::CanMessageT4`
-   (`0x1404F7330`) implements a *different* limiter (15,000 ticks) for anti-cheat reports only.
-3. `sub_140554FD0`, `sub_140411C40`, `sub_140411C80`, `sub_1403FE9D0`, `sub_140501DB0`,
-   `sub_1405445F0` (inventory slots 5/6) are still unnamed.
-4. Hand-slot → item-id mapping for `gap224[36]` not yet traced to the inventory.
-5. Place vs break vs plant discrimination is partially mapped (`isBreakTap`, item types
-   37/64/129, `itemId == 18`) but the full decision tree is not yet written out.
+1. The exact punch-animation duration (id 18) — the model uses 200 ms from the measured
+   5/s mode. The animation table was not located.
+2. The two `TouchInputState` drag modes (`+0xDC`, `+0xDD` → `sub_140412D80`,
+   `AppContext+0x27C * 0.05f` scaling) are not classified.
+3. `sub_1403F5AA0` (`var_AF`, item types in `0x10C40000` + type 112) is not classified —
+   it decides the breakable-vs-plant branch for "plant in the air" items.
+4. `isTileBreakable` reads `word[item+0x72] & 2` (the item record's flags2 high bytes);
+   the exact flag name is not mapped to `ItemInfoFlag2`.
+5. Item `9638` (`0x25A6`) is a null item used by the legacy "long hand" reach branch
+   (3.3) — the mod item that carries the flags2 reach bits is not identified.
+6. The wrench (`item_type == 1`) edit path (`HandleTileActionResult` / door branches)
+   is only partially classified.
 
 ---
 
 ## 8. IDB changes applied so far
 
 - `NetAvatar` struct, `TouchInputState`, `SignState` declared and verified.
-- Renamed: `NetAvatar::placeSign`, `NetAvatar::updateTileInteraction`,
-  `NetAvatar::isPetTileInteractionPending`, `findAvatarAtPosition`,
-  `sendSignDurationRequest`.
+- Renamed the two misnamed touch throttles (`GetTileChangeTypeFromItem` /
+  `GetTileChangeFlagsFromItem` → `TouchInputState_throttle80ms` / `_throttle333ms`) with
+  block comments.
+- Renamed: `NetAvatar::punchTile`, `NetAvatar::updateTileInteraction`,
+  `NetAvatar::tryPlaceSeedOrFertilizer`, `NetAvatar::beginPlaceTile`,
+  `NetAvatar::isPetTileInteractionPending`, `HandleTileActionResult`, `findAvatarAtPosition`,
+  `onTouchInput`, `onTouchHoldTick`, `checkIfAbleToPunch`,
+  `handlePunchDisplayEffectAndSfx`, `handlePveNpcProjectileHit`.
 - Signatures applied so parameters propagate as `GameState *` / `Tile *` / `NetAvatar *` /
-  `SignState *` / `TouchInputState *` instead of `__int64`.
-- 5 block comments at `0x140407570`, `0x1404FFC20`, `0x1404FFCA0`, `0x140411CF0`,
-  `0x140513780`, `0x140411CC0`, `0x14054ADF0`.
+  `TouchInputState *` instead of `__int64`.
+- Block comments at `0x140407570`, `0x1404FFC20`, `0x1404FFCA0`, `0x140411CF0`,
+  `0x140414020`, `0x1404146D0`, `0x140513780`, `0x140411CC0`, `0x14054ADF0`.
 
 Tooling notes: `list_funcs` filters under the `filter` key; `rename` on data needs
-`{addr, old, new}`; `declare_type` splits input on commas, so each declaration must be its own
-array element with comma-free comments. IDA inserts alignment padding for odd-offset members
-(`__int16` at `0x1B1`, `__int64` at `0x1B4`) — use `char`/`char[N]` there to keep offsets true.
-
+`{addr, old, new}`; `declare_type` splits input on commas, so each declaration must be its
+own array element with comma-free comments. IDA inserts alignment padding for odd-offset
+members (`__int16` at `0x1B1`, `__int64` at `0x1B4`) — use `char`/`char[N]` there to keep
+offsets true. `read_struct` takes `{struct: "Name"}`, not a bare string.

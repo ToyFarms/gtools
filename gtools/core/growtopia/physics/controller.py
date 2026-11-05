@@ -6,11 +6,12 @@ One class owns everything needed to drive a local player:
   input, collision, hazards, water/slide and the STATE frames -- see
   ``docs/netavatar-physics.md``, every ``_``-prefixed method names the client
   function it mirrors;
-* the outbound tile-change flow (formerly the ``TileChangeSubsystem``): the intent
-  queue, the ~200 ms flush gate, the position-stamped ``TILE_CHANGE_REQUEST``, the
-  chained STATE action bits (``PUNCH|TILE_CHANGE`` / ``PLACE|TILE_CHANGE``), the
-  optional optimistic application and the steam-launcher
-  ``ITEM_ACTIVATE_OBJECT_REQUEST``.
+* the tile-interaction pipeline (the client's ``HandleTouch`` / ``onTouchInput`` /
+  ``onTouchHoldTick``): press/hold/release, the per-tile de-duplication, the reach
+  gate, the position-stamped ``TILE_CHANGE_REQUEST``, the chained STATE action bits
+  (``PUNCH|TILE_CHANGE`` / ``PLACE|TILE_CHANGE``), the optional optimistic
+  application and the steam-launcher ``ITEM_ACTIVATE_OBJECT_REQUEST``. See
+  ``docs/tile-change-request.md`` for the client evidence.
 
 A controller *is* the local avatar: there is no component registry, no world
 subsystem and no attachment step; ``send`` is the single packet sink.
@@ -142,8 +143,13 @@ _WATER_VEHICLES = {
     GOLDEN_JET_SKI,
 }
 
-FIST_ID = 18  # items.dat 18 -- the punch/break pseudo item
-TANK_CHANGE_POLL_MS = 200.0  # the tile-change flush shares the STATE poll grid
+FIST_ID = 18  # ItemInfoType.FIST -- the hand/punch item (client itemId 0x12)
+WRENCH_ID = 32  # ItemInfoType.WRENCH -- the "no item selected" fallback for solid tiles
+TOUCH_REACH_PX = 150.0  # HandleTouch hold-path radius (0x1408EE898 = 150.0f)
+TOUCH_HOLD_TIMEOUT_MS = 11000.0  # onTouchHoldTick stops the hold after 0x2AF8 ms
+# the client gates repeated punches on the punch animation (avatar+0x1A4 == 18);
+# 200 ms is the resulting cadence (measured 5/s mode, docs/tile-change-request.md §5)
+PUNCH_REPEAT_MS = 200.0
 
 # sendTankState's dedupe bypass mask (0x10C16740): a frame carrying any of these
 # event bits is always sent, even when it is identical to the previous one
@@ -167,16 +173,7 @@ SendCallback = Callable[[TankPacket], None]
 DeathCallback = Callable[["PlayerController", int, int], None]
 
 
-@dataclass(slots=True)
-class TileChangeIntent:
-    """A queued outbound tile change (punch / place). Activations send directly."""
 
-    tx: int
-    ty: int
-    id: int
-    event: TankFlags = TankFlags.NONE
-    splice: bool = False
-    item_on_tree: int = 0
 
 
 @dataclass(slots=True)
@@ -238,7 +235,7 @@ class PlayerController:
         auto_respawn: bool = True,
         inventory_provider: Callable[[], "Inventory | None"] | None = None,
         optimistic: bool = True,
-        flush_interval_ms: float = TANK_CHANGE_POLL_MS,
+        hand_item: int = FIST_ID,
         activate_type: TankType = TankType.ITEM_ACTIVATE_OBJECT_REQUEST,
     ) -> None:
         self.world = world
@@ -250,7 +247,7 @@ class PlayerController:
         self.auto_respawn = auto_respawn
         self.inventory_provider = inventory_provider or (lambda: None)
         self.optimistic = optimistic
-        self.flush_interval_ms = flush_interval_ms
+        self.hand_item = hand_item  # the client's selected item (GameState+0x248)
         self.activate_type = activate_type
 
         # -- avatar live state (was PhysicsComponent) --------------------------
@@ -309,11 +306,15 @@ class PlayerController:
         self.last_key: tuple | None = None
         self.dup_pending = False
 
-        # -- controller clock / tile-change queue ------------------------------
+        # -- controller clock / touch state ------------------------------------
+        # mirrors LevelTouchComponent (TouchInputState): +0xB8 lastTileIndex,
+        # +0xC8 holdActive, +0xD8 hold-start tick
         self.tick = 0
         self.time_ms = 0.0
-        self.queue: list[TileChangeIntent] = []
-        self.next_flush_ms = 0.0
+        self.touch_active = False
+        self.touch_start_ms = 0.0
+        self.touch_last_tile: tuple[int, int] | None = None
+        self.punch_ready_ms = 0.0
         self._accumulator = 0.0
 
         self._check_tile_mod()
@@ -393,15 +394,14 @@ class PlayerController:
             self.step()
 
     def step(self) -> None:
-        """One fixed tick: flush tile changes, simulate, send STATE, auto-respawn.
+        """One fixed tick: simulate, send STATE, auto-respawn.
 
-        The tile-change flush runs first so a request queued before the tick is
-        followed by its chained STATE frame in the *same* tick (the client sends
-        TILE_CHANGE_REQUEST and immediately re-arms `sendTankState`).
+        Touch actions arrive from the input layer (`touch_press` / `touch_hold` /
+        `touch_release`) and send immediately (the client's ``HandleTouch`` calls
+        ``SendPacketRaw`` itself); their action bits force the next STATE frame out.
         """
         self.tick += 1
         self.time_ms += self.fixed_dt * 1000.0
-        self._flush_changes()
         self._simulate()
         self._send_state()
         self._auto_respawn()
@@ -1198,43 +1198,137 @@ class PlayerController:
                 if tile is not None and tile.fg_id > 0:
                     yield tx, ty
 
-    # -- outbound tile changes (was TileChangeSubsystem) -------------------------
+    # -- tile interactions (the client's HandleTouch pipeline) -------------------
+
+    def touch_press(self, tx: int, ty: int) -> None:
+        """Button press on the tile at ``(tx, ty)`` -- the client's ``onTouchInput``.
+
+        Arms the hold, resets the per-tile de-duplication (the client writes
+        ``lastTileIndex = -1``) and runs the full tap action (``isBreakTap = true``).
+        """
+        self.touch_active = True
+        self.touch_start_ms = self.time_ms
+        self.touch_last_tile = None
+        self._handle_touch(tx, ty, is_break_tap=True)
+
+    def touch_hold(self, tx: int, ty: int) -> None:
+        """Held-button tick -- the client's ``onTouchHoldTick`` (runs per frame).
+
+        The client re-runs the touch at the cached cursor position while the button
+        is held, stops after ``TOUCH_HOLD_TIMEOUT_MS`` (11 s) and uses the lighter
+        ``isBreakTap = false`` branch of ``HandleTouch``.
+        """
+        if not self.touch_active:
+            return
+
+        if self.time_ms - self.touch_start_ms > TOUCH_HOLD_TIMEOUT_MS:
+            self.touch_release()
+            return
+
+        self._handle_touch(tx, ty, is_break_tap=False)
+
+    def touch_release(self) -> None:
+        """Button release -- the client's ``OnTouchEnd``."""
+        self.touch_active = False
+        self.touch_start_ms = 0.0
+
+    def _handle_touch(self, tx: int, ty: int, *, is_break_tap: bool) -> None:
+        """``HandleTouch`` (0x140411CF0): the gates, then the request.
+
+        Verified client behaviour:
+
+        * the tile is resolved from the cursor (``getTileAtPosition``);
+        * **per-tile de-duplication** -- ``if (item_type != 0 && lastTileIndex ==
+          tile) return``; the Fist's ``item_type`` is ``ItemInfoType.FIST`` (0), so
+          the hand is the only item allowed to re-trigger the same tile (this is
+          what lets a held button keep punching);
+        * **reach** -- the tile must overlap the collision rect expanded by
+          ``(levelReach + 2)`` tiles or be within ``0x1408EE898`` = 150 px of the
+          avatar centre (the flags2 radius variant is gated on dead item 9638);
+        * **item** -- the hand item (client ``GameState+0x248``); 0 falls back to
+          ``WRENCH`` (32) on solid tiles, otherwise ``FIST`` (18);
+        * **hold** ticks never place -- only the tap branch prepares a placement
+          (``beginPlaceTile`` -> ``PLACE|TILE_CHANGE``); repeated punches are gated
+          by the punch animation (``avatar+0x1A4 == 18``), modelled here with
+          ``PUNCH_REPEAT_MS``.
+        """
+        if self.killed:
+            return
+
+        tile = self.world.get_tile(tx, ty)
+        if tile is None:
+            return
+
+        item_id = self.hand_item or (WRENCH_ID if tile.fg_id else FIST_ID)
+        item = item_database.get(item_id)
+
+        if item.item_type != ItemInfoType.FIST and self.touch_last_tile == (tx, ty):
+            return  # the client ignores a repeated touch on the same tile for items
+        self.touch_last_tile = (tx, ty)
+
+        if not self._touch_in_reach(tx, ty):
+            return
+
+        if item.item_type == ItemInfoType.FIST:
+            # the client refreshes the local action result every hold tick and sends
+            # a punch whenever the punch animation is not running (0x1A4 != 18)
+            if self.time_ms < self.punch_ready_ms:
+                return
+
+            self.punch_ready_ms = self.time_ms + PUNCH_REPEAT_MS
+
+        elif item.item_type == ItemInfoType.WRENCH:
+            return  # the wrench never places; it only opens the lock/edit paths
+
+        elif not is_break_tap:
+            return  # hold ticks skip the tap branch's placement preparation
+
+        self.request_change(item_id, tx, ty)
+
+    def _touch_in_reach(self, tx: int, ty: int) -> bool:
+        """HandleTouch reach gate (model of the rect + radius checks)."""
+        margin = 2 * TILE  # client: (levelReach + 2) tiles; levelReach defaults to 0
+        tile_left, tile_top = tx * TILE, ty * TILE
+        if self.x - margin < tile_left + TILE and self.x + self.width + margin > tile_left and self.y - margin < tile_top + TILE and self.y + self.height + margin > tile_top:
+            return True
+
+        # the client's flags2 radius branch (70.4/166.4/102.4 px) is gated on the dead
+        # null item 9638 + a mod item, so only the 150 px radius is modelled
+        dx = tile_left + TILE / 2 - (self.x + self.width / 2)
+        dy = tile_top + TILE / 2 - (self.y + self.height / 2)
+        return dx * dx + dy * dy <= TOUCH_REACH_PX * TOUCH_REACH_PX
+
+    # -- outbound tile changes ---------------------------------------------------
 
     def request_punch(self, tx: int, ty: int) -> None:
-        """Queue a punch/break of the tile at ``(tx, ty)`` (FIST request)."""
-        self.queue.append(TileChangeIntent(tx=tx, ty=ty, id=FIST_ID, event=TankFlags.PUNCH | TankFlags.TILE_CHANGE))
+        """Punch/break ``(tx, ty)`` -- ``NetAvatar::punchTile`` (0x1404FFC20)."""
+        self.request_change(FIST_ID, tx, ty)
 
     def request_place(self, id: int, tx: int, ty: int, *, splice: bool = False, item_on_tree: int = 0) -> None:
-        """Queue placing ``id`` at ``(tx, ty)`` (seed planting uses ``splice``/``item_on_tree``)."""
-        self.queue.append(TileChangeIntent(tx=tx, ty=ty, id=id, event=TankFlags.PLACE | TankFlags.TILE_CHANGE, splice=splice, item_on_tree=item_on_tree))
+        """Place ``id`` at ``(tx, ty)`` (seed planting uses ``splice``/``item_on_tree``)."""
+        self.request_change(id, tx, ty, splice=splice, item_on_tree=item_on_tree)
 
-    def request_activate(self, tx: int, ty: int, id: int) -> None:
-        """Send ``ITEM_ACTIVATE_OBJECT_REQUEST`` for the tile at ``(tx, ty)``.
+    def request_change(self, id: int, tx: int, ty: int, *, splice: bool = False, item_on_tree: int = 0) -> None:
+        """Send ``TILE_CHANGE_REQUEST`` and arm the chained STATE frame.
 
-        The client's landing handler fires this straight from the steam launcher, so it
-        bypasses the 200 ms tile-change flush grid.
+        ``sendTileChangeRequest`` (0x140407570) stamps the player position and
+        ``FACING_LEFT`` and puts the used item id in ``value``. The event mask gets
+        the action bits and forces the next STATE frame out: ``PUNCH|TILE_CHANGE``
+        for the FIST (``HandleTileActionResult``) and ``PLACE|TILE_CHANGE`` for a
+        placement (``beginPlaceTile``).
         """
-        if self.send is None:
-            return
-
-        self.send(TankPacket(type=self.activate_type, net_id=0, int_x=tx, int_y=ty, value=id))
-
-    def _flush_changes(self) -> None:
-        if not self.queue or self.time_ms < self.next_flush_ms:
-            return
-
-        self.next_flush_ms = self.time_ms + self.flush_interval_ms
-        intents, self.queue = self.queue, []
-        for intent in intents:
-            self._send_change(intent)
-
-    def _send_change(self, intent: TileChangeIntent) -> None:
         flags = TankFlags.FACING_LEFT if not self.facing_right else TankFlags.NONE
-        # force the chained STATE frame to carry the action bits (client event mask)
-        self.action_flags |= intent.event
+
+        if id == FIST_ID:
+            self.bounce_tx, self.bounce_ty = tx, ty  # punchTile stamps +0xD0/+0xD4
+            self.bounce_item = 0  # ... and +0x17C (fillTankStatePacket int_x/int_y/value)
+            self.action_flags |= TankFlags.TILE_CHANGE | TankFlags.PUNCH
+        else:
+            self.action_flags |= TankFlags.TILE_CHANGE | TankFlags.PLACE
+            if self.optimistic:
+                self._apply_optimistic(id, tx, ty, flags, splice=splice, item_on_tree=item_on_tree)
+
         self.force_send = True
-        if self.optimistic:
-            self._apply_optimistic(intent, flags)
 
         if self.send is None:
             return
@@ -1244,33 +1338,43 @@ class PlayerController:
                 type=TankType.TILE_CHANGE_REQUEST,
                 net_id=0,
                 flags=flags,
-                value=intent.id,
-                int_x=intent.tx,
-                int_y=intent.ty,
+                value=id,
+                int_x=tx,
+                int_y=ty,
                 vector_x=self.x,
                 vector_y=self.y,
             )
         )
 
-    def _apply_optimistic(self, intent: TileChangeIntent, flags: TankFlags) -> None:
+    def request_activate(self, tx: int, ty: int, id: int) -> None:
+        """Send ``ITEM_ACTIVATE_OBJECT_REQUEST`` for the tile at ``(tx, ty)``.
+
+        The client's landing handler fires this straight from the steam launcher.
+        """
+        if self.send is None:
+            return
+
+        self.send(TankPacket(type=self.activate_type, net_id=0, int_x=tx, int_y=ty, value=id))
+
+    def _apply_optimistic(self, id: int, tx: int, ty: int, flags: TankFlags, *, splice: bool = False, item_on_tree: int = 0) -> None:
         """Apply the change locally (the server broadcast reconciles later)."""
         inventory = self.inventory_provider()
         if inventory is None:
             return
 
-        tile = self.world.get_tile(intent.tx, intent.ty)
+        tile = self.world.get_tile(tx, ty)
         if tile is None:
             return
 
         self.world.tile_change(
             tile,
             inventory,
-            id=intent.id,
+            id=id,
             flags=flags,
             net_id=self.net_id,
-            splice=intent.splice,
+            splice=splice,
             should_take_item=True,
-            item_on_tree=intent.item_on_tree,
+            item_on_tree=item_on_tree,
         )
 
     # -- STATE frame -------------------------------------------------------------
