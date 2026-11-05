@@ -41,6 +41,7 @@ from gtools.baked.items import (
     GIANT_FALLING_SHAMROCK,
     GO_ANYWHERE_SURFBOARD,
     GOLDEN_JET_SKI,
+    GRAVITY_WELL,
     GOLDEN_SILK_SCARF,
     GROW_AIR_BALLOON,
     GROW_X_ROCKET_WINGS,
@@ -93,6 +94,17 @@ if TYPE_CHECKING:
 TILE = 32.0
 HITBOX = (20.0, 30.0)
 FIXED_DT = 1 / 60
+
+# WIND tiles (Conveyor Block / Summer Breeze / ...): validatePhysics pushes the
+# horizontal axis toward the tile's facing; walking against the wind is clamped
+WIND_OPPOSE_SPEED = 100.0  # kBounceClamp_100p0
+WIND_CROSS_ZERO = 1000.0  # kBounceCrossZero_1000p0 (the client's reverse threshold)
+
+# Gravity Well (6772): an active well pulls the nearest avatar toward its centre
+GRAVITY_WELL_PULL = 60.0  # findNearestInteractableTileDirection scales the unit vector by 60
+GRAVITY_WELL_FALL_SPEEDUP = 3.0  # while falling, the horizontal component is tripled
+GRAVITY_WELL_UP_SPEEDUP = 7.0  # a mostly-vertical upward pull is multiplied by 7
+GRAVITY_WELL_RANGE_TILES = 5  # items.dat tile_range of the Gravity Well (the search span)
 
 # adventure gate item ids -> avatar+0x2E8 event-flag index (CanPassThroughTile)
 _ADVENTURE_GATE_FLAGS = {
@@ -550,11 +562,16 @@ class PlayerController:
         else:
             self.vx = self._approach(self.vx, direction * cap, step_v)
 
-        step_x = max(-TILE, min(TILE, self.vx * dt))
-        step_y = max(-TILE, min(TILE, self.vy * dt))
+        self._apply_wind(cap)
+
+        # Gravity Wells fold their pull into the tick's movement delta (the client's
+        # probe uses `(vy + pull.y) * dt`), so the pull goes through collision too
+        pull_x, pull_y = self._gravity_well_pull()
+        step_x = max(-TILE, min(TILE, (self.vx + pull_x) * dt))
+        step_y = max(-TILE, min(TILE, (self.vy + pull_y) * dt))
         self._touch(step_x, step_y)
-        self._move(self.vx * dt, 0)
-        self._move(self.vy * dt, 1)
+        self._move((self.vx + pull_x) * dt, 0)
+        self._move((self.vy + pull_y) * dt, 1)
         self._settle()
 
         self.x = max(0.0, min(self.world.width * TILE - self.width, self.x))
@@ -563,6 +580,113 @@ class PlayerController:
         # the client's tile-step query (sub_140505CB0's sibling) touches CHECKPOINTs from
         # the collision rect; World keeps the MAIN_DOOR fallback and `exit_world` resets it
         self.world.update_local_respawn(self.net_id, self.x, self.y, self.width, self.height)
+
+    def _apply_wind(self, cap: float) -> None:
+        """WIND tiles push the avatar -- ``validatePhysics`` tail (0x14050587E).
+
+        The tile at the collision-rect centre (``getTileAtPlayerPosition``) with
+        ``item_type == WIND`` (60: Summer Breeze / Clover Fan / Conveyor Block /
+        Megawatt Bass Speaker / Space Conveyor Block / Starship Turbo Fan / Winter
+        Wind) drives the horizontal axis toward its facing:
+
+        * not flipped (``tile.flags & 0x20`` clear): pushes **right** to the speed
+          cap; leftward motion is clamped to ``-100``;
+        * flipped (``FLIPPED_X``): pushes **left** to ``-cap``; rightward motion is
+          clamped to ``+100``.
+
+        The client computes ``v49 = 100`` and the cross-zero ``1000`` and rebuilds
+        the axis triplet (``value = base + C; half = base*0.5 + C``); in water/mud
+        the fallback uses the same (already scaled) speed cap as the input.
+        """
+        direction = self._wind_direction()
+        if direction is None:
+            return
+
+        if direction:  # flipped -> push left
+            if self.vx > WIND_OPPOSE_SPEED:
+                self.vx = WIND_OPPOSE_SPEED
+            elif self.vx <= 0.0:
+                self.vx = -cap
+        else:  # push right
+            if self.vx < -WIND_OPPOSE_SPEED:
+                self.vx = -WIND_OPPOSE_SPEED
+            elif self.vx >= 0.0:
+                self.vx = cap
+
+    def _gravity_well_pull(self) -> tuple[float, float]:
+        """The nearest active Gravity Well's pull vector, in px/s.
+
+        Client evidence: ``sub_140572FB0`` (0x140572FB0) tracks gravity wells
+        (item id ``0x1A74`` / 6772 with tile flag ``IS_ON``) in a set on the
+        particle manager (``+0x3668``); ``NetAvatar::tickAux`` (0x140503DAE)
+        copies that set and calls ``findNearestInteractableTileDirection``
+        (0x140510FE0), which picks the nearest well whose centre is inside a
+        ``tile_range * 32`` box (the well's ``tile_range`` is 5, read from the
+        runtime item record at ``+0x25C``) and returns
+        ``normalize(wellCentre - avatarCentre) * 60`` after three modifiers:
+
+        * while falling (``vy > 0``) the horizontal component is tripled;
+        * an upward pull is zeroed when the horizontal offset dominates
+          (``|dx| > |dy|`` or ``|dx| > 16``);
+        * a mostly-vertical upward pull (``|y| > |x|``, ``y < 0``) is multiplied
+          by 7.
+
+        The engine folds the result into the tick's movement delta; the pull is
+        only active while the well's ``IS_ON`` bit is set.
+        """
+        centre_x = self.x + self.width / 2.0
+        centre_y = self.y + self.height / 2.0
+        span = GRAVITY_WELL_RANGE_TILES
+
+        best_delta: tuple[float, float] | None = None
+        best_dist2 = float("inf")
+        for tx in range(int(centre_x // TILE) - span, int(centre_x // TILE) + span + 1):
+            for ty in range(int(centre_y // TILE) - span, int(centre_y // TILE) + span + 1):
+                tile = self.world.get_tile(tx, ty)
+                if tile is None or tile.fg_id != GRAVITY_WELL or not tile.flags & TileFlags.IS_ON:
+                    continue
+
+                item = item_database.get(tile.fg_id)
+                reach = float(getattr(item, "tile_range", 0) or 1) * TILE
+                dx = tx * TILE + TILE / 2.0 - centre_x
+                dy = ty * TILE + TILE / 2.0 - centre_y
+                if reach <= abs(dx) or reach <= abs(dy):
+                    continue
+
+                dist2 = dx * dx + dy * dy
+                if dist2 < best_dist2:
+                    best_dist2, best_delta = dist2, (dx, dy)
+
+        if best_delta is None:
+            return (0.0, 0.0)
+
+        dx, dy = best_delta
+        dist = math.hypot(dx, dy)
+        if dist == 0.0:
+            return (0.0, 0.0)
+
+        pull_x = dx / dist * GRAVITY_WELL_PULL
+        pull_y = dy / dist * GRAVITY_WELL_PULL
+        if self.vy > 0.0:
+            pull_x *= GRAVITY_WELL_FALL_SPEEDUP
+        if pull_y < 0.0 and (abs(dx) > abs(dy) or abs(dx) > 16.0):
+            pull_y = 0.0
+        if pull_y < 0.0 and abs(pull_y) > abs(pull_x):
+            pull_y *= GRAVITY_WELL_UP_SPEEDUP
+
+        return (pull_x, pull_y)
+
+    def _wind_direction(self) -> bool | None:
+        """``True`` when the centre tile is a WIND tile facing left, ``False`` for
+        right, ``None`` when there is no WIND tile under the avatar."""
+        tile = self._centre_tile()
+        if tile is None or tile.fg_id <= 0:
+            return None
+
+        if item_database.get(tile.fg_id).item_type != ItemInfoType.WIND:
+            return None
+
+        return bool(tile.flags & TileFlags.FLIPPED_X)
 
     @staticmethod
     def _approach(value: float, target: float, step: float) -> float:
