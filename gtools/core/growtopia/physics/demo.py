@@ -13,7 +13,19 @@ from imgui_bundle import imgui
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 
 from gtools import setting
-from gtools.baked.items import MAIN_DOOR
+from gtools.baked.items import (
+    GROW_X_ROCKET_WINGS,
+    JET_SKI,
+    LEGENDARY_WINGS,
+    MAGIC_CARPET,
+    MAIN_DOOR,
+    PARASOL,
+    SEA_MONSTER_FLOATIE,
+    SNOWSHOES,
+    SODA_JETPACK,
+    STEAMPUNK_ARM,
+    SURFBOARD,
+)
 from gtools.core.growtopia.world import World
 from gtools.core.growtopia.player import Player
 from gtools.gui.event import EventRouter, KeyEvent, MouseButtonEvent, ResizeEvent
@@ -63,8 +75,6 @@ _PHYSICS_KEYS = {
     glfw.KEY_UP,
     glfw.KEY_DOWN,
     glfw.KEY_SPACE,
-    glfw.KEY_F4,
-    glfw.KEY_F5,
 }
 
 _KEY_NAMES = {
@@ -151,26 +161,13 @@ class GPUPhysicsDemo:
 
         self.keys_pressed = set()
         self.mouse_held = False
+        self._context_tile: tuple[int, int] | None = None
         self.event_router = EventRouter(self.window)
 
         self.dt = FIXED_DT
         self.running = True
 
-        self.show_debug = True
-
         print("GPU Physics Demo initialized")
-        print("Controls:")
-        print("  A/D or Left/Right - Move")
-        print("  W/Space/Up - Jump")
-        print("  R - Reset position")
-        print("  Left click / hold - Punch the tile under the cursor (client cadence)")
-        print("  Mouse wheel - Zoom")
-        print("  Middle mouse drag - Pan camera")
-        print("  Tab - Toggle settings")
-        print("  F3 - Toggle debug overlay")
-        print("  F6 - Start/stop physics recording (JSONL)")
-        print("  Water/slide are detected automatically from the tiles.")
-        print("  ESC - Quit")
 
     def _rand_iter[T](self, iter: Iterator[T]) -> T:
         try:
@@ -314,7 +311,7 @@ class GPUPhysicsDemo:
         }
         self._write_record(header)
         print(f"Recording started: {self._recording_path}")
-        print("  Press F6 again to stop and save.")
+        print("  Use the Player menu to stop and save.")
 
     def _stop_recording(self) -> None:
         if self._recording_file is None:
@@ -468,21 +465,10 @@ class GPUPhysicsDemo:
                     self.keys_pressed.add(event.key)
                     if event.key == glfw.KEY_ESCAPE:
                         self.running = False
-                    elif event.key == glfw.KEY_R:
-                        self._reset_avatar()
-                    elif event.key == glfw.KEY_F3:
-                        self.show_debug = not self.show_debug
-                    elif event.key == glfw.KEY_F6:
-                        self._toggle_recording()
                 elif event.action == glfw.RELEASE:
                     self.keys_pressed.discard(event.key)
 
-                if event.key in _PHYSICS_KEYS or event.key in (
-                    glfw.KEY_ESCAPE,
-                    glfw.KEY_R,
-                    glfw.KEY_F3,
-                    glfw.KEY_F6,
-                ):
+                if event.key in _PHYSICS_KEYS or event.key == glfw.KEY_ESCAPE:
                     continue
 
             if isinstance(event, MouseButtonEvent) and event.button == glfw.MOUSE_BUTTON_LEFT:
@@ -493,6 +479,11 @@ class GPUPhysicsDemo:
                     self.mouse_held = False
                     self.controller.touch_release()
                 continue  # left click no longer pans the camera
+
+            if isinstance(event, MouseButtonEvent) and event.button == glfw.MOUSE_BUTTON_RIGHT and event.action == glfw.PRESS:
+                tx, ty = self._tile_at_screen(event.screen_x, event.screen_y)
+                if 0 <= tx < self.world.width and 0 <= ty < self.world.height:
+                    self._context_tile = (tx, ty)  # the renderer still opens its own menu
 
             if isinstance(event, ResizeEvent):
                 self.world_renderer._camera.resize(event.width, event.height)
@@ -555,58 +546,83 @@ class GPUPhysicsDemo:
 
         self.world_renderer._dirty = True
 
-    def render_debug_overlay(self) -> None:
-        if not self.show_debug:
+    def render_world_context_menu(self) -> None:
+        """Append the demo's entries to the renderer's right-click menu (demo-only).
+
+        The renderer builds `world_context_menu` inline in `render()`; re-beginning
+        the same popup while it is open adds our items after its own, with no
+        change to `WorldRenderer`. Must run inside the host window so the popup ID
+        resolves against the same window.
+        """
+        if self._context_tile is None or not imgui.is_popup_open("world_context_menu"):
             return
 
-        imgui.set_next_window_pos((10, 10), imgui.Cond_.first_use_ever)
-        imgui.set_next_window_size((300, 400), imgui.Cond_.first_use_ever)
-
-        if imgui.begin("Physics Debug", flags=imgui.WindowFlags_.always_auto_resize)[0]:
-            camera = self.world_renderer._camera
-            imgui.text(f"FPS: {imgui.get_io().framerate:.1f}")
-            imgui.text(f"Tick: {self.controller.tick}")
-            imgui.text(f"Zoom: {camera.zoom:.2f}")
-            imgui.text(f"Camera: ({camera.pos.x:.1f}, {camera.pos.y:.1f})")
-            c, st = self.controller, self.controller.state
-            imgui.text(f"Pos: ({c.x:.1f}, {c.y:.1f})")
-            imgui.text("Tile: " f"({math.floor((c.x + self.controller.width / 2) / TILE)}, " f"{math.floor((c.y + self.controller.height / 2) / TILE)})")
-            imgui.text(f"Players drawn: {len(self.world.players)}")
-            imgui.text(f"VX: {c.vx:.1f}")
-            imgui.text(f"VY: {c.vy:.1f}")
-            imgui.text(f"Input: L={int(c.left)} R={int(c.right)} J={int(c.jump)}")
-            imgui.text(f"Jump latch: {c.jump_latch}")
-            imgui.text(f"Accel H/V: {st.horizontal_accel:.1f} / {st.vertical_accel:.1f}")
-            imgui.text(f"Max vel: {st.max_velocity:.1f}  Water vel: {st.velocity_in_water:.1f}")
-            imgui.text(f"Grounded: {c.grounded}")
-            imgui.text(f"Double Jump Used: {c.double_jumped}")
-            imgui.text(f"Water: {c.in_water}")
-            imgui.text(f"Slide: {c.sliding}")
-            imgui.text(f"Killed: {c.killed}  Fire: {c.on_fire}  Acid: {c.on_acid}")
-            imgui.text(f"Damaged: {c.damaged}  Damage slip: {c.damage_slip}")
-            imgui.text(f"Parasol: {c.parasol}  Glide: {c.glide}  Mud: {c.mud}")
-            imgui.text(f"Water float: {c.water_float}  Coyote: {c.left_ground}")
-            if self._recording_file is not None:
-                imgui.text(f"RECORDING: {self._recording_ticks} ticks, " f"{self._recording_frames} frames")
-                if self._recording_path is not None:
-                    imgui.text(f"  {self._recording_path.name}")
-                imgui.text("  F6 - stop and save")
-            else:
-                imgui.text("Recording: off (F6 to start)")
+        if imgui.begin_popup("world_context_menu"):
             imgui.separator()
-            imgui.text("Controls:")
-            imgui.text("A/D or Left/Right - Move")
-            imgui.text("W/Space/Up - Jump")
-            imgui.text("R - Reset position")
-            imgui.text("Left click/hold - Punch tile")
-            imgui.text("Mouse wheel - Zoom")
-            imgui.text("Middle drag - Pan")
-            imgui.text("Tab - Settings")
-            imgui.text("F3 - Debug overlay")
-            imgui.text("F6 - Start/stop recording")
-            imgui.text("Water/slide are detected from tiles")
-            imgui.text("ESC - Quit")
+            if imgui.menu_item("Teleport here", "", False)[0]:
+                self._teleport_to_tile(*self._context_tile)
+                imgui.close_current_popup()
+            imgui.end_popup()
+
+    def _teleport_to_tile(self, tx: int, ty: int) -> None:
+        """Stand the local player on top of the tile at ``(tx, ty)``."""
+        w, h = self.controller.width, self.controller.height
+        self.controller.teleport(tx * TILE + (TILE - w) / 2.0, (ty + 1) * TILE - h)
+        self.controller.jump_latch = False
+        self.controller.double_jumped = False
+        self._camera_snapped = False
+        self._sync_player_entity()
+
+    def render_menu(self) -> None:
+        """User-facing player menu: toggles only, no developer stats or key hints."""
+        imgui.set_next_window_pos((10, 10), imgui.Cond_.first_use_ever)
+        imgui.set_next_window_size((240, 0), imgui.Cond_.first_use_ever)
+
+        if imgui.begin("Player", flags=imgui.WindowFlags_.always_auto_resize)[0]:
+            if imgui.collapsing_header("Character"):
+                self._flag_checkbox("Double jump", CharacterFlags.DOUBLE_JUMP)
+                self._flag_checkbox("No clip", CharacterFlags.NOCLIP)
+                self._flag_checkbox("Ignore lava", CharacterFlags.IGNORE_LAVA)
+                self._flag_checkbox("Ignore spikes", CharacterFlags.IGNORE_SPIKES)
+
+            if imgui.collapsing_header("Items"):
+                imgui.text_disabled("Hand")
+                self._clothing_checkbox("Parasol", "hand", PARASOL)
+                self._clothing_checkbox("Steampunk arm", "hand", STEAMPUNK_ARM)
+                imgui.text_disabled("Shoes")
+                self._clothing_checkbox("Snowshoes", "shoes", SNOWSHOES)
+                self._clothing_checkbox("Surfboard", "shoes", SURFBOARD)
+                self._clothing_checkbox("Jet ski", "shoes", JET_SKI)
+                self._clothing_checkbox("Magic carpet", "shoes", MAGIC_CARPET)
+                imgui.text_disabled("Back")
+                self._clothing_checkbox("Legendary wings", "back", LEGENDARY_WINGS)
+                self._clothing_checkbox("Jetpack", "back", SODA_JETPACK)
+                self._clothing_checkbox("Grow-X wings", "back", GROW_X_ROCKET_WINGS)
+                imgui.text_disabled("Neck")
+                self._clothing_checkbox("Floatie", "neck", SEA_MONSTER_FLOATIE)
+
+            if imgui.button("Reset position"):
+                self._reset_avatar()
+
+            recording = self._recording_file is not None
+            changed, value = imgui.checkbox("Record session", recording)
+            if changed and value != recording:
+                self._toggle_recording()
         imgui.end()
+
+    def _flag_checkbox(self, label: str, flag: CharacterFlags) -> None:
+        changed, value = imgui.checkbox(label, bool(self.controller.state.flags & flag))
+        if changed:
+            if value:
+                self.controller.state.flags |= flag
+            else:
+                self.controller.state.flags &= ~flag
+
+    def _clothing_checkbox(self, label: str, slot: str, item: int) -> None:
+        clothing = self.player.clothing
+        changed, value = imgui.checkbox(label, getattr(clothing, slot) == item)
+        if changed:
+            setattr(clothing, slot, item if value else 0)
 
     def run(self) -> None:
         last_time = glfw.get_time()
@@ -650,10 +666,11 @@ class GPUPhysicsDemo:
             imgui.begin("##gpu_physics_world", flags=host_flags)
             self.world_renderer.set_active(True)
             self.world_renderer.render()
+            self.render_world_context_menu()
             imgui.end()
             imgui.pop_style_var()
 
-            self.render_debug_overlay()
+            self.render_menu()
 
             imgui.render()
             self.imgui_renderer.render(imgui.get_draw_data())
