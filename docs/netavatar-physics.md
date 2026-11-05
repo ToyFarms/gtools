@@ -485,7 +485,7 @@ if (inputAxis == 0.0 && avatar[0x131] == 0 && avatar[0x0DD] == 0) {
 
 The damped axis is **`+0x0E4` (horizontal velocity)**, not `+0x0F4`. The
 vertical axis has no idle damping; it is governed by gravity in
-`integrateVerticalAxis`. `engine.py` mirrors this in `_simulate` — with no
+`integrateVerticalAxis`. `controller.py` mirrors this in `_simulate` — with no
 input the `_approach` helper decelerates `vx` toward zero at
 `horizontal_accel * dt` (1200 px/s²), and the vertical axis is only ever
 touched by gravity / the jump cut / the landing clamps. (An earlier port of
@@ -517,13 +517,13 @@ If `sub_140512960` fails — no `isOn` tile overlaps the player rect, which is
 the normal case while airborne — `sub_140505CB0` jumps to its exit and leaves
 `+0xDD` **unchanged**. Jumping off a slippery tile therefore preserves the
 slide flag and horizontal momentum; the flag clears only when a non-slippery
-tile is found on landing. `engine.py`'s `_check_tile_mod` does this: it only
+tile is found on landing. `controller.py`'s `_check_tile_mod` does this: it only
 clears `sliding` in the `elif c.grounded` branch, so an airborne frame with no
 slippery tile underneath keeps the previous flag.
 
 `NetAvatar::setJumpHeld` (`0x14050C280`) writes only `+0x105` and `+0x130`; it
 does **not** touch the on-ground flag `+0xDC`. The engine's
-`PhysicsComponent.grounded` is the +0xDC mirror, and `set_input` likewise never
+`PlayerController.grounded` is the +0xDC mirror, and `set_input` likewise never
 writes it — the launch impulse is applied while the old `grounded` value is
 still set, which is what gives the launch tick its gravity-free travel (§10).
 Otherwise holding jump would make the avatar look grounded on the next tick,
@@ -592,7 +592,7 @@ The observable behaviour is exactly "launched in the direction you were
 moving, then slippery and barely steerable until you land": the Y response
 same-direction-clamps `vx` to at least `±300`, friction is off while airborne,
 input only pushes at 15 % strength, and touching any floor restores normal
-control. `engine.py` models this with `PhysicsComponent.damage_slip`
+control. `controller.py` models this with `PlayerController.damage_slip`
 (`_simulate` scales `step_v` and bypasses `_approach`, `_settle` clears it when
 it grounds).
 
@@ -632,7 +632,7 @@ transient `+0x134` mask when `0x1A1` is set; `fillTankStatePacket`
 (`0x1404FBEB0`) ORs `+0x134` into the packet flags and sets `TANKFLAG_SLIDE`
 from `0x0DD`.
 
-The engine (`gtools/core/growtopia/physics/engine.py`) mirrors this in
+The engine (`gtools/core/growtopia/physics/controller.py`) mirrors this in
 `_check_tile_mod`, called once per `_simulate` (i.e. every fixed tick):
 
 - water: the tile at the **collision-rect centre** — the engine position is
@@ -1312,7 +1312,7 @@ the upward velocity survives and resumes when the avatar moves out from under
 the ceiling. Zeroing the velocity on contact turns a jump into a dead stop —
 that was the demo bug.
 
-`gtools/core/growtopia/physics/engine.py` implements this model, wrapped by
+`gtools/core/growtopia/physics/controller.py` implements this model, wrapped by
 the renderer shell `demo.py`:
 
 - `JUMP_SPEED = 450`, `JUMP_CUT_ACCEL = 5000`, `MAX_FALL = 400`; there is no
@@ -1371,7 +1371,7 @@ client is *when* those handlers run and what they are handed, which lives in
    predicate rejects. The body stops *on* a tile edge; it is never pushed
    inside and then resolved back out.
 
-`engine.py` implements this as `_touch` (called from `_simulate` after the
+`controller.py` implements this as `_touch` (called from `_simulate` after the
 velocity integration and **before** `_move`, mirroring the probe-before-move
 order) plus `_move` / `_blocked_x` / `_blocked_y`, with `_settle` re-deriving
 the grounded flag from the floor afterwards. The previous implementation
@@ -1576,7 +1576,7 @@ Details that matter for a port:
 - In the engine this contract becomes: `_kill` (through `_is_deadly`) latches
   `killed`, arms `killed_pending`, sets `force_send` (the poll reset), fires
   `on_death(c, tx, ty)` once per death and `_simulate` returns early while the
-  latch is set. Since we have no server, `PhysicsEngine` (with
+  latch is set. Since we have no server, `PlayerController` (with
   `auto_respawn=True`, the default) teleports the **local** player
   (`World.is_local_player`) back to `World.get_respawn_position()` immediately
   after the kill frame; `teleport()` clears the latch (and `damage_slip`),
@@ -1732,7 +1732,7 @@ verified slot-by-slot against `items.dat` (`clothing_type`):
 | 7 | `hair` | `5712` Will of the Wild |
 
 The Will of the Wild additionally requires a client-side toggle (bit 8 of
-`avatar+0x18C`). The climb grab is **not ported** to `engine.py` yet — the
+`avatar+0x18C`). The climb grab is **not ported** to `controller.py` yet — the
 client checks **inventory** slots, while the engine only has the player's worn
 `Player.clothing` (used for the slow-fall/water physics, §6B), so it remains a
 client-only mechanic for now.
@@ -1801,7 +1801,7 @@ struct, protocol version in the client's global):
   avatar+0x2E0 and compares `getForeground(tile)` with the wanted item id.
 
 This is the port of "which tiles get a wall response": platforms are excluded
-exactly like `engine.py`'s `_interaction_blocked` in the X probe, and the
+exactly like `controller.py`'s `_interaction_blocked` in the X probe, and the
 `X - Y*0.5` door/adventure branches are why locked doors and adventure gates
 still stop you.
 
@@ -1817,21 +1817,21 @@ still stop you.
 > `_can_enter_x`/`_can_enter_y` vs `_interaction_blocked`; the per-type port
 > checklist lives in `docs/collision-port-backlog.md`.
 
-### 12.5 Port map — `engine.py`
+### 12.5 Port map — `PlayerController` (`controller.py`)
 
-The first implementation pass is in `gtools/core/growtopia/physics/engine.py`:
+The first implementation pass is in `gtools/core/growtopia/physics/controller.py`:
 
-| Client | `engine.py` |
+| Client | `controller.py` |
 |---|---|
 | `NOCLIP` gate | `_touch` early return on `state.flags & NOCLIP` |
 | dispatch probes | `_touch` runs the X probe (rect translated by the tick's X displacement) then the Y probe (with the grounded `+1` px quirk), in the client's column-major scan order; `_is_deadly` / `_damaging_event` reproduce the two hazard predicates and their `IS_ON`/`ON_FIRE`/`flags2` bit tests |
-| deadly branch + `IGNORE_SPIKES` | `_kill` (via `_is_deadly`): the probe skips it when `state.flags & IGNORE_SPIKES` (the client's fall-through goes on to the damaging/bouncy/wall branches); latches `killed`, arms `killed_pending`, sets `force_send` (→ the `GOT_KILLED` frame leaves immediately, as the client's `0x800` poll reset does), fires `on_death` (component-level or engine-level callback) — **once per death**; `_simulate` returns early while `killed` is set; `teleport()` clears `killed` and `damage_slip`, mirroring the server snapshot |
+| deadly branch + `IGNORE_SPIKES` | `_kill` (via `_is_deadly`): the probe skips it when `state.flags & IGNORE_SPIKES` (the client's fall-through goes on to the damaging/bouncy/wall branches); latches `killed`, arms `killed_pending`, sets `force_send` (→ the `GOT_KILLED` frame leaves immediately, as the client's `0x800` poll reset does), fires the `on_death` callback — **once per death**; `_simulate` returns early while `killed` is set; `teleport()` clears `killed` and `damage_slip`, mirroring the server snapshot |
 | — (server responsibility) | respawn: the client answers `killPlayer` with `action|respawn_spike` and waits for the server snap; the engine auto-respawns the **local** player (`World.is_local_player`) at `World.get_respawn_position()` right after the `GOT_KILLED` frame (`auto_respawn=True`, the default), while still firing `on_death(c, tx, ty)` for callers. `_simulate` also feeds `World.update_local_respawn(...)` every tick so touching a `CHECKPOINT` moves the respawn tile; `MAIN_DOOR` is the fallback and `World.exit_world()` resets it |
 | damaging branch + `IGNORE_LAVA` | the probe skips `_damaging_event` entirely when `IGNORE_LAVA` is set (then falls through to bouncy/wall like the client). Otherwise it arms `on_fire` / `on_acid` / `damaged` (no `force_send`: the bits ride the next poll) and breaks the scan. `_damaging_x` matches `handleDamagingTileCollision`: invert the collided X, clamp to exactly ±300 (`DAMAGING_KNOCKBACK_SPEED`) unless `damage_slip`. `_damaging_y` matches `sub_1404FC0B0`: vertical `−800` (`DAMAGING_LAUNCH_SPEED`) when falling, sign-flip when rising, `−50` (`DAMAGING_LAUNCH_NO_GRAVITY_SPEED`) with the vertical-acceleration axis disabled; clears `grounded`, seeds `vx` from the facing when zero, same-direction-clamps to ±300, sets `damage_slip`. The client has **no head-contact hazard pass**; `FindNearestInteractableTile` only probes the body rect plus 1 px below the feet, so the engine does not add one |
-| damage-slip state (`0x131`) | `PhysicsComponent.damage_slip` (§6.4.1): set by `_damaging_y`, so while airborne `_simulate` scales `step_v` by `SLIDE_ACCEL_SCALE` **and** takes the no-friction/no-above-cap-decel branch, and the jump cut uses `0.85 * JUMP_CUT_ACCEL`; `_settle` clears the flag the moment it grounds (the `sub_140505CB0` tile-found path), `teleport()` clears it like a server snapshot. This is the "launched in your movement direction, slippery and barely steerable until you land" behaviour |
+| damage-slip state (`0x131`) | `PlayerController.damage_slip` (§6.4.1): set by `_damaging_y`, so while airborne `_simulate` scales `step_v` by `SLIDE_ACCEL_SCALE` **and** takes the no-friction/no-above-cap-decel branch, and the jump cut uses `0.85 * JUMP_CUT_ACCEL`; `_settle` clears the flag the moment it grounds (the `sub_140505CB0` tile-found path), `teleport()` clears it like a server snapshot. This is the "launched in your movement direction, slippery and barely steerable until you land" behaviour |
 | BOUNCY break | unchanged `_bounce` + `break`; `_on_tile_bounce_hit` also records the tile/item for the next STATE frame (`int_x`/`int_y`/`value`, §7.2) |
 | wall response `else` branch | `_touch` runs it through `_interaction_blocked` (after the hazard/bounce checks) and, like the client, **keeps scanning** the probe rect instead of breaking; the `0x131` multiplier (`DAMAGE_SLIP_WALL_BOUNCE = −0.01`) and the slide `−0.7` are applied in that order (`damage_slip` wins, matching the client's if/else-if) |
-| door/lock permission layer (§12.4) | `CollisionPermissions` (a `PhysicsComponent` field) carries the user id, guild/rank, team, adventure event flags, the five-slot touch cache, friend state and protocol version, threaded as `c` into `_can_enter_x` / `_can_enter_y` / `_interaction_blocked` / `_is_ground` / `_blocks_like_client`. `_lock_passes` mirrors `canDoorPassedThrough` (public bit, owner break-tap, guild branch, access list), `_lock_check` mirrors `canDoorPassedThrough_1` (own lock extra → `parent_index` → `World.get_world_lock()`), `_gateway_open` / `_vip_door_open` / `_friend_entrance_open` / `_adventure_open` / `_faction_open` / `_guild_open` mirror the per-type branches; `_cache_touch` fills the `TileExistsAt` cache from the two probes; `World.get_owner_user_id()` = `World::getOwnerUserID` |
+| door/lock permission layer (§12.4) | `CollisionPermissions` (a `PlayerController` field) carries the user id, guild/rank, team, adventure event flags, the five-slot touch cache, friend state and protocol version, threaded as `c` into `_can_enter_x` / `_can_enter_y` / `_interaction_blocked` / `_is_ground` / `_blocks_like_client`. `_lock_passes` mirrors `canDoorPassedThrough` (public bit, owner break-tap, guild branch, access list), `_lock_check` mirrors `canDoorPassedThrough_1` (own lock extra → `parent_index` → `World.get_world_lock()`), `_gateway_open` / `_vip_door_open` / `_friend_entrance_open` / `_adventure_open` / `_faction_open` / `_guild_open` mirror the per-type branches; `_cache_touch` fills the `TileExistsAt` cache from the two probes; `World.get_owner_user_id()` = `World::getOwnerUserID` |
 | slow fall (`0x0DF`/`0x0E0`) | `_slow_fall_flags` over the player's `Clothing`, applied in `_simulate` while falling + jump held + not water + not `ZOMBIE`: `accel *= SLOW_FALL_ACCEL_SCALE` (0.3) and the per-tick `parasol`/`glide` flags are reported as `TankFlags.PARASOL` / `TankFlags.UNK_GRAVITY_RELATED` (§6B.2) |
 | water vertical | `_simulate`: `accel *= 0.3, max_fall = 120`; `water_float` (`+0x1FB9`) zeroes both; floaties (`_is_floatie`) use `-12` / `-320` and clamp the fall to `40`; the `accel < 0` upward clamp matches the client |
 | water-float lifecycle (`0x7C`/`0x1FB9`) | `_check_tile_mod` → `_update_water_state`: on entry with a water vehicle (`sub_14053C770` list + JET_SKI/GOLDEN_JET_SKI) set `water_float`, timestamp `water_enter_ms`; clear after `WATER_FLOAT_DURATION_MS` (3000) unless FISHING_DINGHY/JET_SKI/GOLDEN_JET_SKI; clear out of water |

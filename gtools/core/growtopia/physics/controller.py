@@ -1,6 +1,25 @@
+"""PlayerController -- the local player's simulation and outbound tile-change flow.
+
+One class owns everything needed to drive a local player:
+
+* the per-tick physics port (formerly ``PhysicsEngine`` + ``PhysicsComponent``):
+  input, collision, hazards, water/slide and the STATE frames -- see
+  ``docs/netavatar-physics.md``, every ``_``-prefixed method names the client
+  function it mirrors;
+* the outbound tile-change flow (formerly the ``TileChangeSubsystem``): the intent
+  queue, the ~200 ms flush gate, the position-stamped ``TILE_CHANGE_REQUEST``, the
+  chained STATE action bits (``PUNCH|TILE_CHANGE`` / ``PLACE|TILE_CHANGE``), the
+  optional optimistic application and the steam-launcher
+  ``ITEM_ACTIVATE_OBJECT_REQUEST``.
+
+A controller *is* the local avatar: there is no component registry, no world
+subsystem and no attachment step; ``send`` is the single packet sink.
+"""
+
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from gtools.baked.items import (
     ADVENTURE_BARRIER,
@@ -67,6 +86,9 @@ from gtools.core.growtopia.packet import TankFlags, TankPacket, TankType
 from gtools.core.growtopia.player import CharacterFlags, CharacterState, Clothing
 from gtools.core.growtopia.world import BalloonOMaticTile, LockTile, StormyCloudTile, Tile, TileFlags, World
 
+if TYPE_CHECKING:
+    from gtools.core.growtopia.inventory import Inventory
+
 TILE = 32.0
 HITBOX = (20.0, 30.0)
 FIXED_DT = 1 / 60
@@ -120,8 +142,41 @@ _WATER_VEHICLES = {
     GOLDEN_JET_SKI,
 }
 
-StateCallback = Callable[[TankPacket], None]
-DeathCallback = Callable[["PhysicsComponent", int, int], None]
+FIST_ID = 18  # items.dat 18 -- the punch/break pseudo item
+TANK_CHANGE_POLL_MS = 200.0  # the tile-change flush shares the STATE poll grid
+
+# sendTankState's dedupe bypass mask (0x10C16740): a frame carrying any of these
+# event bits is always sent, even when it is identical to the previous one
+_STATE_EVENT_FLAGS = (
+    TankFlags.FIRE_DAMAGE
+    | TankFlags.GOT_KILLED
+    | TankFlags.PUNCH
+    | TankFlags.PLACE
+    | TankFlags.TILE_CHANGE
+    | TankFlags.GOT_PUNCHED
+    | TankFlags.RESPAWN
+    | TankFlags.OBJECT_COLLECT
+    | TankFlags.TRAMPOLINE
+    | TankFlags.DAMAGE
+    | TankFlags.POWER_UP_PUNCH_START
+    | TankFlags.POWER_UP_PUNCH_END
+    | TankFlags.UNK_TILE_CHANGE
+)
+
+SendCallback = Callable[[TankPacket], None]
+DeathCallback = Callable[["PlayerController", int, int], None]
+
+
+@dataclass(slots=True)
+class TileChangeIntent:
+    """A queued outbound tile change (punch / place). Activations send directly."""
+
+    tx: int
+    ty: int
+    id: int
+    event: TankFlags = TankFlags.NONE
+    splice: bool = False
+    item_on_tree: int = 0
 
 
 @dataclass(slots=True)
@@ -157,117 +212,134 @@ class CollisionPermissions:
     protocol_version: int = 999999999
 
 
-@dataclass(slots=True)
-class PhysicsComponent:
-    net_id: int
-    x: float
-    y: float
-    state: CharacterState = field(default_factory=CharacterState)
-    on_state: StateCallback | None = None
-    on_death: DeathCallback | None = None
-    permissions: CollisionPermissions = field(default_factory=CollisionPermissions)
+class PlayerController:
+    """The local player: per-tick simulation + outbound tile-change requests.
 
-    vx: float = 0.0
-    vy: float = 0.0
-    facing_right: bool = True
-    grounded: bool = False
-    sliding: bool = False
-    in_water: bool = False
+    One instance simulates one local avatar. ``send`` is the single packet sink for
+    both the STATE frames and the tile-change requests; ``on_death`` is called once
+    per death, before the optional auto-respawn.
 
-    left: bool = False
-    right: bool = False
-    jump: bool = False
-    jump_latch: bool = False
-    double_jumped: bool = False
+    The live avatar state mirrors the client ``NetAvatar`` fields documented in
+    ``docs/netavatar-physics.md`` (offsets in the field comments).
+    """
 
-    force_send: bool = False
-
-    # hazards / death -- mirrors NetAvatar::killPlayer (0x1405024E0) and the damaging probes
-    killed: bool = False  # avatar+0x138 == 2 (dying latch)
-    killed_pending: bool = False  # one-shot GOT_KILLED event bit (avatar+0x134)
-    on_fire: bool = False  # one-shot FIRE_DAMAGE event bit
-    on_acid: bool = False  # one-shot ACID_DAMAGE event bit
-    damaged: bool = False  # one-shot DAMAGE event bit
-    # avatar+0x131: set by the Y damaging response, cleared by the tile-below query
-    # (sub_140505CB0) the moment the avatar touches the ground / by a server snapshot.
-    # While set, validatePhysics scales the input acceleration to 0.15 and skips the
-    # idle friction lerp (slippery, barely-controllable air state), see `_simulate`.
-    damage_slip: bool = False
-
-    # vertical-axis state (NetAvatar::integrateVerticalAxis 0x140510580)
-    water_float: bool = False  # avatar+0x1FB9: water vehicles suppress water gravity for 3 s
-    water_enter_ms: float = 0.0  # avatar+0x07C: getTick() when the avatar entered water
-    mud: bool = False  # avatar+0x0DE: standing in MUD (reduced jump + 0.6 speed cap)
-    left_ground: bool = False  # avatar+0x140: coyote flag, set when walking off an edge
-    parasol: bool = False  # avatar+0x0DF per-tick state -> TankFlags.PARASOL (0x40000)
-    glide: bool = False  # avatar+0x0E0 per-tick state -> TankFlags.UNK_GRAVITY_RELATED (0x80000)
-
-    # last bounce, reported in the STATE frame's int_x/int_y/value (fillTankStatePacket, 0x1404FBEB0)
-    bounce_tx: int = -1
-    bounce_ty: int = -1
-    bounce_item: int = 0
-
-    frac_x: float = 0.0
-    frac_y: float = 0.0
-    next_poll_ms: float = 0.0
-    last_key: tuple | None = None
-    dup_pending: bool = False
-
-
-class PhysicsEngine:
     def __init__(
         self,
         world: World,
         *,
+        net_id: int = 1,
+        x: float = 0.0,
+        y: float = 0.0,
+        state: CharacterState | None = None,
         hitbox: tuple[float, float] = HITBOX,
         fixed_dt: float = FIXED_DT,
-        on_state: StateCallback | None = None,
+        send: SendCallback | None = None,
         on_death: DeathCallback | None = None,
         auto_respawn: bool = True,
+        inventory_provider: Callable[[], "Inventory | None"] | None = None,
+        optimistic: bool = True,
+        flush_interval_ms: float = TANK_CHANGE_POLL_MS,
+        activate_type: TankType = TankType.ITEM_ACTIVATE_OBJECT_REQUEST,
     ) -> None:
         self.world = world
+        self.net_id = net_id
         self.width, self.height = hitbox
         self.fixed_dt = fixed_dt
-        self.on_state = on_state
+        self.send = send
         self.on_death = on_death
         self.auto_respawn = auto_respawn
-        self.components: dict[int, PhysicsComponent] = {}
+        self.inventory_provider = inventory_provider or (lambda: None)
+        self.optimistic = optimistic
+        self.flush_interval_ms = flush_interval_ms
+        self.activate_type = activate_type
+
+        # -- avatar live state (was PhysicsComponent) --------------------------
+        self.x = float(x)
+        self.y = float(y)
+        self.state = state or CharacterState()
+        # local-player context for the lock/door branches (avatar+0x13C, +0x94, ...)
+        self.permissions = CollisionPermissions()
+
+        self.vx = 0.0
+        self.vy = 0.0
+        self.facing_right = True
+        self.grounded = False
+        self.sliding = False
+        self.in_water = False
+
+        self.left = False
+        self.right = False
+        self.jump = False
+        self.jump_latch = False
+        self.double_jumped = False
+
+        self.force_send = False
+
+        # hazards / death -- mirrors NetAvatar::killPlayer (0x1405024E0) and the damaging probes
+        self.killed = False  # avatar+0x138 == 2 (dying latch)
+        self.killed_pending = False  # one-shot GOT_KILLED event bit (avatar+0x134)
+        self.on_fire = False  # one-shot FIRE_DAMAGE event bit
+        self.on_acid = False  # one-shot ACID_DAMAGE event bit
+        self.damaged = False  # one-shot DAMAGE event bit
+        # one-shot action bits (PUNCH / PLACE / TILE_CHANGE) set by the tile-change
+        # flow; the client ORs its event mask into the next STATE frame (fillTankStatePacket)
+        self.action_flags = TankFlags.NONE
+        # avatar+0x131: set by the Y damaging response, cleared by the tile-below query
+        # (sub_140505CB0) the moment the avatar touches the ground / by a server snapshot.
+        # While set, validatePhysics scales the input acceleration to 0.15 and skips the
+        # idle friction lerp (slippery, barely-controllable air state), see `_simulate`.
+        self.damage_slip = False
+
+        # vertical-axis state (NetAvatar::integrateVerticalAxis 0x140510580)
+        self.water_float = False  # avatar+0x1FB9: water vehicles suppress water gravity for 3 s
+        self.water_enter_ms = 0.0  # avatar+0x07C: getTick() when the avatar entered water
+        self.mud = False  # avatar+0x0DE: standing in MUD (reduced jump + 0.6 speed cap)
+        self.left_ground = False  # avatar+0x140: coyote flag, set when walking off an edge
+        self.parasol = False  # avatar+0x0DF per-tick state -> TankFlags.PARASOL (0x40000)
+        self.glide = False  # avatar+0x0E0 per-tick state -> TankFlags.UNK_GRAVITY_RELATED (0x80000)
+
+        # last bounce, reported in the STATE frame's int_x/int_y/value (fillTankStatePacket, 0x1404FBEB0)
+        self.bounce_tx = -1
+        self.bounce_ty = -1
+        self.bounce_item = 0
+
+        self.frac_x = 0.0
+        self.frac_y = 0.0
+        self.next_poll_ms = 0.0
+        self.last_key: tuple | None = None
+        self.dup_pending = False
+
+        # -- controller clock / tile-change queue ------------------------------
         self.tick = 0
         self.time_ms = 0.0
+        self.queue: list[TileChangeIntent] = []
+        self.next_flush_ms = 0.0
         self._accumulator = 0.0
 
-    def register(
-        self,
-        net_id: int,
-        x: float,
-        y: float,
-        *,
-        state: CharacterState | None = None,
-        on_state: StateCallback | None = None,
-        on_death: DeathCallback | None = None,
-    ) -> PhysicsComponent:
-        if net_id in self.components:
-            raise ValueError(f"net_id {net_id} is already registered")
-        c = PhysicsComponent(net_id, x, y, state or CharacterState(), on_state, on_death)
-        self._check_tile_mod(c)
-        self.components[net_id] = c
+        self._check_tile_mod()
 
-        return c
+    # -- placement -------------------------------------------------------------
 
-    def unregister(self, net_id: int) -> PhysicsComponent | None:
-        return self.components.pop(net_id, None)
+    def spawn(self, x: float, y: float, *, state: CharacterState | None = None) -> "PlayerController":
+        """Place the local player at ``(x, y)``; optionally replace its CharacterState."""
+        if state is not None:
+            self.state = state
+        self.teleport(x, y)
 
-    def set_input(self, net_id: int, *, left: bool = False, right: bool = False, jump: bool = False) -> None:
-        c = self.components[net_id]
-        c.left, c.right = left, right
-        if jump != c.jump:
-            c.jump_latch = jump
+        return self
+
+    # -- input -----------------------------------------------------------------
+
+    def set_input(self, *, left: bool = False, right: bool = False, jump: bool = False) -> None:
+        self.left, self.right = left, right
+        if jump != self.jump:
+            self.jump_latch = jump
             if jump:
-                self._jump(c)
+                self._jump()
 
-        c.jump = jump
+        self.jump = jump
 
-    def _jump(self, c: PhysicsComponent) -> None:
+    def _jump(self) -> None:
         """The jump action -- `TryPlaceSeedAtTile` (0x140506430) + `NetAvatar::onJump` (0x1404FE4A50).
 
         The launch is only allowed when grounded, inside the `left_ground` coyote window
@@ -277,43 +349,42 @@ class PhysicsEngine:
         refill the token. The strength is `-450`, reduced to `-270` in water, on hay,
         on snow without SNOWSHOES, in mud and on a slippery pole.
         """
-        clothing = self._clothing(c)
-        below = self._below_tile(c)
-        centre = self._centre_tile(c)
+        clothing = self._clothing()
+        below = self._below_tile()
+        centre = self._centre_tile()
         antigrav = (below is not None and below.fg_id == HYPERTECH_ANTIGRAVITY_FIELD) or (centre is not None and centre.fg_id == HYPERTECH_ANTIGRAVITY_FIELD)
         pole = (centre is not None and centre.fg_id == SLIPPERY_FLAG_POLE) or (below is not None and below.fg_id == SLIPPERY_FLAG_POLE)
-        double_jump = bool(c.state.flags & CharacterFlags.DOUBLE_JUMP) and not c.double_jumped
-        can_swim = c.in_water and (c.vy > 0.0 or c.water_float)
-        can_jump = c.grounded or c.left_ground or double_jump or bool(c.state.flags & CharacterFlags.NOCLIP) or antigrav or pole or can_swim
+        double_jump = bool(self.state.flags & CharacterFlags.DOUBLE_JUMP) and not self.double_jumped
+        can_swim = self.in_water and (self.vy > 0.0 or self.water_float)
+        can_jump = self.grounded or self.left_ground or double_jump or bool(self.state.flags & CharacterFlags.NOCLIP) or antigrav or pole or can_swim
 
         # the client consumes the coyote flag on every jump action, successful or not
-        c.left_ground = False
+        self.left_ground = False
         if not can_jump:
             return
 
-        was_grounded = c.grounded
+        was_grounded = self.grounded
         shoes = clothing.shoes if clothing is not None else 0
         snow_locked = below is not None and below.fg_id == SNOW_BLOCK and shoes != SNOWSHOES
-        reduced = c.in_water or c.mud or pole or (below is not None and below.fg_id == HAY) or snow_locked
+        reduced = self.in_water or self.mud or pole or (below is not None and below.fg_id == HAY) or snow_locked
         # NOTE: `grounded` is intentionally left for `_settle` to re-derive at the end of
         # the tick -- like the STATE-driven launch the recorded fits in §10 analyse, the
         # launch tick then skips gravity and travels the full -450.
-        c.vy = -JUMP_SPEED * (JUMP_REDUCED_SCALE if reduced else 1.0)
+        self.vy = -JUMP_SPEED * (JUMP_REDUCED_SCALE if reduced else 1.0)
         if not was_grounded:
-            c.double_jumped = True  # an airborne launch consumes the token (`unk_1F8 = 0`)
+            self.double_jumped = True  # an airborne launch consumes the token (`unk_1F8 = 0`)
         if antigrav or pole:
-            c.double_jumped = False  # `unk_1F8 = 1` before onJump refills it
+            self.double_jumped = False  # `unk_1F8 = 1` before onJump refills it
 
-    def teleport(self, net_id: int, x: float, y: float) -> None:
-        c = self.components[net_id]
-        c.x, c.y = x, y
-        c.vx = c.vy = c.frac_x = c.frac_y = 0.0
-        c.grounded = c.sliding = c.in_water = False
+    def teleport(self, x: float, y: float) -> None:
+        self.x, self.y = x, y
+        self.vx = self.vy = self.frac_x = self.frac_y = 0.0
+        self.grounded = self.sliding = self.in_water = False
         # a server position snap (ProcessTankUpdatePacket -> sub_140501290) clears
         # avatar+0x138 (dying) and avatar+0x131 (damage slip state)
-        c.killed = False
-        c.damage_slip = False
-        self._check_tile_mod(c)
+        self.killed = False
+        self.damage_slip = False
+        self._check_tile_mod()
 
     def update(self, dt: float) -> None:
         self._accumulator += dt
@@ -322,227 +393,233 @@ class PhysicsEngine:
             self.step()
 
     def step(self) -> None:
+        """One fixed tick: flush tile changes, simulate, send STATE, auto-respawn.
+
+        The tile-change flush runs first so a request queued before the tick is
+        followed by its chained STATE frame in the *same* tick (the client sends
+        TILE_CHANGE_REQUEST and immediately re-arms `sendTankState`).
+        """
         self.tick += 1
         self.time_ms += self.fixed_dt * 1000.0
-        for c in list(self.components.values()):
-            self._simulate(c)
-            self._send_state(c)
-            self._auto_respawn(c)
+        self._flush_changes()
+        self._simulate()
+        self._send_state()
+        self._auto_respawn()
 
-    def _auto_respawn(self, c: PhysicsComponent) -> None:
+    def _auto_respawn(self) -> None:
         """Mirror the server's answer to `action|respawn_spike` without a server.
 
         The client sends that text packet from killPlayer and waits for the server to
-        snap it back home; with auto_respawn (the default) the engine teleports the
+        snap it back home; with auto_respawn (the default) the controller teleports the
         local player to `World.get_respawn_position()` right after the GOT_KILLED
         frame left in `_send_state`. Callers can turn this off and respawn on
         `on_death` themselves.
         """
-        if not (c.killed and self.auto_respawn) or not self.world.is_local_player(c.net_id):
+        if not (self.killed and self.auto_respawn) or not self.world.is_local_player(self.net_id):
             return
 
         pos = self.world.get_respawn_position((self.width, self.height))
         if pos is not None:
-            self.teleport(c.net_id, *pos)
+            self.teleport(*pos)
 
-    def build_state_packet(self, net_id: int) -> TankPacket:
-        c = self.components[net_id]
+    def build_state_packet(self) -> TankPacket:
         flags = TankFlags.NONE
-        if c.grounded:
+        if self.grounded:
             flags |= TankFlags.STANDING
-        if not c.facing_right:
+        if not self.facing_right:
             flags |= TankFlags.FACING_LEFT
-        if c.sliding:
+        if self.sliding:
             flags |= TankFlags.SLIDE
-        if c.in_water:
+        if self.in_water:
             flags |= TankFlags.SWIM
-        if c.double_jumped:
+        if self.double_jumped:
             flags |= TankFlags.DOUBLE_JUMPED
-        if c.jump:
+        if self.jump:
             flags |= TankFlags.JUMP
-        if c.parasol:
+        if self.parasol:
             flags |= TankFlags.PARASOL  # avatar+0x0DF
-        if c.glide:
+        if self.glide:
             flags |= TankFlags.UNK_GRAVITY_RELATED  # avatar+0x0E0
         # one-shot event bits -- ORed in like avatar+0x134 and consumed by `_send_state`
-        if c.killed_pending:
+        if self.killed_pending:
             flags |= TankFlags.GOT_KILLED
-        if c.on_fire:
+        if self.on_fire:
             flags |= TankFlags.FIRE_DAMAGE
-        if c.on_acid:
+        if self.on_acid:
             flags |= TankFlags.ACID_DAMAGE
-        if c.damaged:
+        if self.damaged:
             flags |= TankFlags.DAMAGE
+        # pending tile-change action bits (PUNCH / PLACE | TILE_CHANGE), consumed by `_send_state`
+        flags |= self.action_flags
 
         return TankPacket(
             type=TankType.STATE,
-            net_id=net_id,
+            net_id=self.net_id,
             flags=flags,
-            vector_x=float(math.floor(c.x + 0.5)),
-            vector_y=float(math.floor(c.y + 0.5)),
-            vector_x2=c.vx,
-            vector_y2=c.vy,
-            float_var=c.state.velocity_in_water,
-            value=c.bounce_item,
-            int_x=c.bounce_tx,
-            int_y=c.bounce_ty,
+            vector_x=float(math.floor(self.x + 0.5)),
+            vector_y=float(math.floor(self.y + 0.5)),
+            vector_x2=self.vx,
+            vector_y2=self.vy,
+            float_var=self.state.velocity_in_water,
+            value=self.bounce_item,
+            int_x=self.bounce_tx,
+            int_y=self.bounce_ty,
         )
 
-    def _simulate(self, c: PhysicsComponent) -> None:
-        if c.killed:
+    def _simulate(self) -> None:
+        if self.killed:
             # NetControllerLocal::Update (0x140511A50) skips the physics step while
             # avatar+0x138 (dying) is set -- the corpse does not integrate.
             return
 
-        dt, st = self.fixed_dt, c.state
-        self._check_tile_mod(c)
+        dt, st = self.fixed_dt, self.state
+        self._check_tile_mod()
 
         # vertical -- NetAvatar::integrateVerticalAxis (0x140510580)
-        c.parasol = c.glide = False  # +0xDF/+0xE0 are per-tick wire state
-        centre = self._centre_tile(c)
-        if c.grounded:
-            c.vy = min(c.vy, 0.0)
+        self.parasol = self.glide = False  # +0xDF/+0xE0 are per-tick wire state
+        centre = self._centre_tile()
+        if self.grounded:
+            self.vy = min(self.vy, 0.0)
         else:
             accel = st.vertical_accel  # base, the water scale is applied below
             max_fall = MAX_FALL
             if accel > 0.0:
-                if c.vy < 0.0 and not c.jump_latch:
+                if self.vy < 0.0 and not self.jump_latch:
                     accel += JUMP_CUT_ACCEL
-                elif c.damage_slip:
+                elif self.damage_slip:
                     # +0x131 branch: += 0.85 * 5000
                     accel += JUMP_CUT_ACCEL * 0.85
                 # slow fall: parachute-like items while the jump button is held
-                if c.vy > 0.0 and c.jump_latch and not c.in_water and not (c.state.flags & CharacterFlags.ZOMBIE):
-                    slow = self._slow_fall_flags(c)
+                if self.vy > 0.0 and self.jump_latch and not self.in_water and not (self.state.flags & CharacterFlags.ZOMBIE):
+                    slow = self._slow_fall_flags()
                     if slow is not None:
                         accel *= SLOW_FALL_ACCEL_SCALE
-                        c.parasol, c.glide = slow
+                        self.parasol, self.glide = slow
                 # antigravity field / hover particle
                 if centre is not None and centre.fg_id == HYPERTECH_ANTIGRAVITY_FIELD:
                     accel *= ANTIGRAVITY_ACCEL_SCALE
-            if c.in_water:
+            if self.in_water:
                 accel *= WATER_VERTICAL_SCALE
                 max_fall = MAX_FALL * WATER_VERTICAL_SCALE
-                if c.water_float:
+                if self.water_float:
                     # a water vehicle suppresses water gravity entirely (+0x1FB9)
                     accel = 0.0
                     max_fall = 0.0
-                if self._is_floatie(c):
+                if self._is_floatie():
                     accel = WATER_FLOAT_ACCEL
-                    if c.vy > 0.0:
+                    if self.vy > 0.0:
                         accel = WATER_FLOAT_FALL_ACCEL
-                        c.vy = min(c.vy, WATER_FLOAT_MAX_FALL)
+                        self.vy = min(self.vy, WATER_FLOAT_MAX_FALL)
             elif centre is not None and centre.fg_id == SLIPPERY_FLAG_POLE:
                 accel *= WATER_VERTICAL_SCALE
                 max_fall = MAX_FALL * WATER_VERTICAL_SCALE
-            c.vy = min(c.vy + dt * accel, max_fall)
+            self.vy = min(self.vy + dt * accel, max_fall)
             if accel < 0.0:
-                c.vy = max(c.vy, -max_fall)
+                self.vy = max(self.vy, -max_fall)
 
         # horizontal
-        direction = int(c.right) - int(c.left)
+        direction = int(self.right) - int(self.left)
         if direction:
-            c.facing_right = direction > 0
-        elif c.vx:
-            c.facing_right = c.vx > 0.0
-        cap = st.velocity_in_water if c.in_water else st.max_velocity
-        if c.mud:
+            self.facing_right = direction > 0
+        elif self.vx:
+            self.facing_right = self.vx > 0.0
+        cap = st.velocity_in_water if self.in_water else st.max_velocity
+        if self.mud:
             cap *= MUD_SPEED_SCALE  # +0xDE, validatePhysics's BYTE6 branch
         step_v = st.horizontal_accel * dt
-        if c.sliding and c.vy <= 0.0:
+        if self.sliding and self.vy <= 0.0:
             step_v *= SLIDE_ACCEL_SCALE
-        if c.damage_slip:
+        if self.damage_slip:
             # validatePhysics scales the whole input magnitude by 0.15 while +0x131 is
             # set (the scale stacks with the ice slide one)
             step_v *= SLIDE_ACCEL_SCALE
-        if c.sliding or c.damage_slip:
+        if self.sliding or self.damage_slip:
             # neither state applies idle damping, and neither decelerates a momentum
             # that is already outside the speed cap -- both client paths skip it
-            if direction > 0 and c.vx < cap:
-                c.vx = min(c.vx + step_v, cap)
-            elif direction < 0 and c.vx > -cap:
-                c.vx = max(c.vx - step_v, -cap)
+            if direction > 0 and self.vx < cap:
+                self.vx = min(self.vx + step_v, cap)
+            elif direction < 0 and self.vx > -cap:
+                self.vx = max(self.vx - step_v, -cap)
         else:
-            c.vx = self._approach(c.vx, direction * cap, step_v)
+            self.vx = self._approach(self.vx, direction * cap, step_v)
 
-        step_x = max(-TILE, min(TILE, c.vx * dt))
-        step_y = max(-TILE, min(TILE, c.vy * dt))
-        self._touch(c, step_x, step_y)
-        self._move(c, c.vx * dt, 0)
-        self._move(c, c.vy * dt, 1)
-        self._settle(c)
+        step_x = max(-TILE, min(TILE, self.vx * dt))
+        step_y = max(-TILE, min(TILE, self.vy * dt))
+        self._touch(step_x, step_y)
+        self._move(self.vx * dt, 0)
+        self._move(self.vy * dt, 1)
+        self._settle()
 
-        c.x = max(0.0, min(self.world.width * TILE - self.width, c.x))
-        c.y = max(0.0, min(self.world.height * TILE - self.height, c.y))
+        self.x = max(0.0, min(self.world.width * TILE - self.width, self.x))
+        self.y = max(0.0, min(self.world.height * TILE - self.height, self.y))
 
         # the client's tile-step query (sub_140505CB0's sibling) touches CHECKPOINTs from
         # the collision rect; World keeps the MAIN_DOOR fallback and `exit_world` resets it
-        self.world.update_local_respawn(c.net_id, c.x, c.y, self.width, self.height)
+        self.world.update_local_respawn(self.net_id, self.x, self.y, self.width, self.height)
 
     @staticmethod
     def _approach(value: float, target: float, step: float) -> float:
         return min(value + step, target) if value < target else max(value - step, target)
 
-    @staticmethod
-    def _vertical_accel(c: PhysicsComponent) -> float:
-        return c.state.vertical_accel * WATER_VERTICAL_SCALE if c.in_water else c.state.vertical_accel
+    def _vertical_accel(self) -> float:
+        return self.state.vertical_accel * WATER_VERTICAL_SCALE if self.in_water else self.state.vertical_accel
 
-    def _touch(self, c: PhysicsComponent, step_x: float, step_y: float) -> None:
-        if c.state.flags & CharacterFlags.NOCLIP:
+    def _touch(self, step_x: float, step_y: float) -> None:
+        if self.state.flags & CharacterFlags.NOCLIP:
             return  # avatar+0x188 bit 0 -- no tile interaction at all, not even bounce
 
         w, h = self.width, self.height
-        ignore_spikes = bool(c.state.flags & CharacterFlags.IGNORE_SPIKES)
-        ignore_lava = bool(c.state.flags & CharacterFlags.IGNORE_LAVA)
+        ignore_spikes = bool(self.state.flags & CharacterFlags.IGNORE_SPIKES)
+        ignore_lava = bool(self.state.flags & CharacterFlags.IGNORE_LAVA)
 
         # X probe -- NetAvatar::handleTileInteraction (0x140501DF0). The probe rect is the
         # collision rect translated by the tick's X displacement; only the hazard and the
         # bounce branches stop the column-major scan, a deadly hit keeps it going.
-        for tx, ty in self._overlap(c.x + step_x, c.y, c.x + step_x + w, c.y + h):
-            self._cache_touch(c, tx, ty)
+        for tx, ty in self._overlap(self.x + step_x, self.y, self.x + step_x + w, self.y + h):
+            self._cache_touch(tx, ty)
             if not ignore_spikes and self._is_deadly(tx, ty):
-                self._kill(c, tx, ty)
+                self._kill(tx, ty)
                 continue
 
             hazard = None if ignore_lava else self._damaging_event(tx, ty)
             if hazard is not None:
-                self._damaging_x(c, hazard)
+                self._damaging_x(hazard)
                 break
 
             if self._item_type(tx, ty) == ItemInfoType.BOUNCY:
-                self._bounce(c, tx, ty)
+                self._bounce(tx, ty)
                 break
 
-            if self._interaction_blocked(c, tx, ty):
-                if c.damage_slip:
-                    c.vx *= DAMAGE_SLIP_WALL_BOUNCE
+            if self._interaction_blocked(tx, ty):
+                if self.damage_slip:
+                    self.vx *= DAMAGE_SLIP_WALL_BOUNCE
                 else:
-                    c.vx = c.vx * SLIDE_WALL_BOUNCE if c.sliding else 0.0
+                    self.vx = self.vx * SLIDE_WALL_BOUNCE if self.sliding else 0.0
 
         # Y probe -- NetAvatar vfunc_48 (0x1405021D0). The `+1` px quirk keeps a grounded
         # avatar in contact with whatever it is standing on; deadly returns 1 (continue),
         # damaging/bouncy/launch act and stop the scan.
-        probe = 1.0 if (step_y == 0.0 and c.grounded) else step_y
-        for tx, ty in self._overlap(c.x, c.y + probe, c.x + w, c.y + probe + h):
-            self._cache_touch(c, tx, ty)
+        probe = 1.0 if (step_y == 0.0 and self.grounded) else step_y
+        for tx, ty in self._overlap(self.x, self.y + probe, self.x + w, self.y + probe + h):
+            self._cache_touch(tx, ty)
             if not ignore_spikes and self._is_deadly(tx, ty):
-                self._kill(c, tx, ty)
+                self._kill(tx, ty)
                 continue
 
             hazard = None if ignore_lava else self._damaging_event(tx, ty)
             if hazard is not None:
-                self._damaging_y(c, hazard)
+                self._damaging_y(hazard)
                 break
 
             kind = self._item_type(tx, ty)
             if kind == ItemInfoType.BOUNCY:
-                self._bounce(c, tx, ty)
+                self._bounce(tx, ty)
                 break
 
-            launch = self._landing_launch(c, tx, ty, kind)
+            launch = self._landing_launch(tx, ty, kind)
             if launch is not None:
-                c.vy = launch
-                c.grounded = False
+                self.vy = launch
+                self.grounded = False
                 break
 
     def _is_deadly(self, tx: int, ty: int) -> bool:
@@ -578,126 +655,127 @@ class PhysicsEngine:
 
         return None
 
-    def _kill(self, c: PhysicsComponent, tx: int, ty: int) -> None:
+    def _kill(self, tx: int, ty: int) -> None:
         """NetAvatar::killPlayer (0x1405024E0): latch the dying state and arm GOT_KILLED."""
-        if c.killed:
+        if self.killed:
             return  # guarded by avatar+0x138 -- one kill per death
 
-        c.killed = True
-        c.killed_pending = True
-        c.force_send = True
-        if (send := c.on_death or self.on_death) is not None:
-            send(c, tx, ty)
+        self.killed = True
+        self.killed_pending = True
+        self.force_send = True
+        if (send := self.on_death) is not None:
+            send(self, tx, ty)
 
-    @staticmethod
-    def _apply_damage(c: PhysicsComponent, event: TankFlags) -> None:
+    def _apply_damage(self, event: TankFlags) -> None:
         # the event bits ride the next 200 ms poll: unlike the kill (which sets the poll
         # reset bit 0x800 through onPositionSnapped) they do not expedite the send gate
         if event & TankFlags.FIRE_DAMAGE:
-            c.on_fire = True
+            self.on_fire = True
         elif event & TankFlags.ACID_DAMAGE:
-            c.on_acid = True
+            self.on_acid = True
         else:
-            c.damaged = True
+            self.damaged = True
 
-    def _damaging_x(self, c: PhysicsComponent, event: TankFlags) -> None:
+    def _damaging_x(self, event: TankFlags) -> None:
         """NetAvatar::handleDamagingTileCollision (0x1404FBFF0): invert the collided X
         axis and clamp it to at least 300 px/s away from the tile."""
-        self._apply_damage(c, event)
-        c.vx = -c.vx
-        if not c.damage_slip:
-            if c.vx < 0.0:
-                c.vx = min(-DAMAGING_KNOCKBACK_SPEED, c.vx)
+        self._apply_damage(event)
+        self.vx = -self.vx
+        if not self.damage_slip:
+            if self.vx < 0.0:
+                self.vx = min(-DAMAGING_KNOCKBACK_SPEED, self.vx)
             else:
-                c.vx = max(DAMAGING_KNOCKBACK_SPEED, c.vx)
+                self.vx = max(DAMAGING_KNOCKBACK_SPEED, self.vx)
 
-    def _damaging_y(self, c: PhysicsComponent, event: TankFlags) -> None:
+    def _damaging_y(self, event: TankFlags) -> None:
         """sub_1404FC0B0 (0x1404FC0B0): -800 launch when falling (or a sign flip while
         rising, -50 without a vertical acceleration axis) plus a same-direction
         horizontal clamp. Also sets avatar+0x131 (the damage slip state): while
         airborne the input acceleration is scaled to 0.15 and idle friction is
         suppressed, until the tile-below query finds ground again (see `_simulate`,
         `_settle`)."""
-        if c.state.vertical_accel <= 0.0:
-            c.vy = DAMAGING_LAUNCH_NO_GRAVITY_SPEED
-        elif c.vy < 0.0:
-            c.vy = -c.vy
+        if self.state.vertical_accel <= 0.0:
+            self.vy = DAMAGING_LAUNCH_NO_GRAVITY_SPEED
+        elif self.vy < 0.0:
+            self.vy = -self.vy
         else:
-            c.vy = DAMAGING_LAUNCH_SPEED
+            self.vy = DAMAGING_LAUNCH_SPEED
 
-        c.grounded = False
-        self._apply_damage(c, event)
+        self.grounded = False
+        self._apply_damage(event)
 
-        if c.vx == 0.0:
-            c.vx = -1.0 if not c.facing_right else 1.0
+        if self.vx == 0.0:
+            self.vx = -1.0 if not self.facing_right else 1.0
 
-        if c.vx < 0.0:
-            c.vx = min(-DAMAGING_KNOCKBACK_SPEED, c.vx)
+        if self.vx < 0.0:
+            self.vx = min(-DAMAGING_KNOCKBACK_SPEED, self.vx)
         else:
-            c.vx = max(DAMAGING_KNOCKBACK_SPEED, c.vx)
+            self.vx = max(DAMAGING_KNOCKBACK_SPEED, self.vx)
 
-        c.damage_slip = True
+        self.damage_slip = True
 
-    def _bounce(self, c: PhysicsComponent, tx: int, ty: int) -> None:
+    def _bounce(self, tx: int, ty: int) -> None:
         angle = math.atan2(
-            c.y + self.height / 2 - (ty * TILE + TILE / 2),
-            c.x + self.width / 2 - (tx * TILE + TILE / 2),
+            self.y + self.height / 2 - (ty * TILE + TILE / 2),
+            self.x + self.width / 2 - (tx * TILE + TILE / 2),
         )
-        c.vx, c.vy = math.cos(angle) * BOUNCY_SPEED, math.sin(angle) * BOUNCY_SPEED
-        c.grounded = False
-        c.jump_latch = False
-        c.sliding = True
-        self._on_tile_bounce_hit(c, tx, ty)
+        self.vx, self.vy = math.cos(angle) * BOUNCY_SPEED, math.sin(angle) * BOUNCY_SPEED
+        self.grounded = False
+        self.jump_latch = False
+        self.sliding = True
+        self._on_tile_bounce_hit(tx, ty)
 
-    def _landing_launch(self, c: PhysicsComponent, tx: int, ty: int, kind: int | None) -> float | None:
+    def _landing_launch(self, tx: int, ty: int, kind: int | None) -> float | None:
         tile = self.world.get_tile(tx, ty)
         steam = tile is not None and tile.fg_id == STEAM_LAUNCHER and tile.flags & TileFlags.IS_ON
         if kind not in (ItemInfoType.TRAMPOLINE, ItemInfoType.TRAMPOLINE_MOMENTUM) and not steam:
             return
 
-        if self._vertical_accel(c) <= 0.0 or c.vy < 0.0:
+        if self._vertical_accel() <= 0.0 or self.vy < 0.0:
             return
 
-        if ty * TILE < c.y + self.height - _EPS:
+        if ty * TILE < self.y + self.height - _EPS:
             return
 
-        self._on_tile_bounce_hit(c, tx, ty)
+        self._on_tile_bounce_hit(tx, ty)
         if kind == ItemInfoType.TRAMPOLINE_MOMENTUM:
             return TRAMPOLINE_MOMENTUM_SPEED
 
         if steam and tile is not None:
-            # TODO: client also sends a tile-activate request
+            # the client clears IS_ON and sends the activate request from the landing
+            # handler (sendTileActivateRequest), not on the 200 ms tile-change grid
             tile.flags &= ~TileFlags.IS_ON
+            self.request_activate(tx, ty, tile.fg_id)
 
         return TRAMPOLINE_SPEED
 
-    def _on_tile_bounce_hit(self, c: PhysicsComponent, tx: int, ty: int) -> None:
+    def _on_tile_bounce_hit(self, tx: int, ty: int) -> None:
         """NetAvatar::onTileBounceHit (0x140502AB0): remember the bounce for the next STATE frame."""
         tile = self.world.get_tile(tx, ty)
-        c.bounce_tx, c.bounce_ty = tx, ty
-        c.bounce_item = tile.fg_id if tile is not None else 0
+        self.bounce_tx, self.bounce_ty = tx, ty
+        self.bounce_item = tile.fg_id if tile is not None else 0
 
-    def _move(self, c: PhysicsComponent, delta: float, axis: int) -> None:
-        total = delta + (c.frac_x if axis == 0 else c.frac_y)
+    def _move(self, delta: float, axis: int) -> None:
+        total = delta + (self.frac_x if axis == 0 else self.frac_y)
         steps = math.floor(total + 0.5)
         if axis == 0:
-            c.frac_x = total - steps
+            self.frac_x = total - steps
         else:
-            c.frac_y = total - steps
+            self.frac_y = total - steps
         direction = 1 if steps > 0 else -1
         for _ in range(abs(steps)):
             if axis == 0:
-                if self._blocked_x(c, c.x + direction, c.y, direction):
+                if self._blocked_x(self.x + direction, self.y, direction):
                     return
 
-                c.x += direction
+                self.x += direction
             else:
-                if self._blocked_y(c, c.x, c.y + direction, direction):
+                if self._blocked_y(self.x, self.y + direction, direction):
                     return
 
-                c.y += direction
+                self.y += direction
 
-    def _can_enter_x(self, c: PhysicsComponent, tx: int, ty: int, direction: int) -> bool:
+    def _can_enter_x(self, tx: int, ty: int, direction: int) -> bool:
         """Movement-layer X predicate -- collectStepTiles + canMoveXInto (0x1405617E0 / 0x140512A40)."""
         entry = self._active_tile(tx, ty)
         if entry is None:
@@ -710,9 +788,9 @@ class PhysicsEngine:
             flipped = bool(tile.flags & TileFlags.FLIPPED_X)
             return (flipped and direction < 0) or (not flipped and direction > 0)
 
-        return not self._blocks_like_client(c, tile, kind)
+        return not self._blocks_like_client(tile, kind)
 
-    def _can_enter_y(self, c: PhysicsComponent, tx: int, ty: int, y: float, direction: int) -> bool:
+    def _can_enter_y(self, tx: int, ty: int, y: float, direction: int) -> bool:
         """Movement-layer Y predicate -- canMoveYInto (0x140512A80). `y` is the step's new top."""
         entry = self._active_tile(tx, ty)
         if entry is None:
@@ -729,55 +807,55 @@ class PhysicsEngine:
         if kind == ItemInfoCollisionType.ONE_WAY:
             return True  # never collected for the vertical step
 
-        return not self._blocks_like_client(c, tile, kind)
+        return not self._blocks_like_client(tile, kind)
 
-    def _blocked_x(self, c: PhysicsComponent, x: float, y: float, direction: int) -> bool:
+    def _blocked_x(self, x: float, y: float, direction: int) -> bool:
         edge = x + self.width if direction > 0 else x
         tx = math.floor((edge - direction * _EPS) / TILE)
         return any(
-            not self._can_enter_x(c, tx, ty, direction) for ty in range(math.floor((y + _EPS) / TILE), math.floor((y + self.height - _EPS) / TILE) + 1)
+            not self._can_enter_x(tx, ty, direction) for ty in range(math.floor((y + _EPS) / TILE), math.floor((y + self.height - _EPS) / TILE) + 1)
         )
 
-    def _blocked_y(self, c: PhysicsComponent, x: float, y: float, direction: int) -> bool:
+    def _blocked_y(self, x: float, y: float, direction: int) -> bool:
         edge = y + self.height if direction > 0 else y
         ty = math.floor((edge - direction * _EPS) / TILE)
         return any(
-            not self._can_enter_y(c, tx, ty, y, direction) for tx in range(math.floor((x + _EPS) / TILE), math.floor((x + self.width - _EPS) / TILE) + 1)
+            not self._can_enter_y(tx, ty, y, direction) for tx in range(math.floor((x + _EPS) / TILE), math.floor((x + self.width - _EPS) / TILE) + 1)
         )
 
-    def _settle(self, c: PhysicsComponent) -> None:
-        feet = c.y + self.height
+    def _settle(self) -> None:
+        feet = self.y + self.height
         row = math.floor((feet + 0.5) / TILE)
-        support = any(self._is_ground(c, tx, row) for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0))
-        if support and abs(feet - row * TILE) <= 0.5 and c.vy >= 0.0:
-            c.y = row * TILE - self.height
-            c.vy = 0.0
-            c.grounded = True
-            c.double_jumped = False
+        support = any(self._is_ground(tx, row) for tx in self._columns(self.x + 2.0, self.x + self.width - 2.0))
+        if support and abs(feet - row * TILE) <= 0.5 and self.vy >= 0.0:
+            self.y = row * TILE - self.height
+            self.vy = 0.0
+            self.grounded = True
+            self.double_jumped = False
             # sub_140505CB0 clears avatar+0x131 as soon as the tile-below query finds
             # ground -- touching down restores normal control
-            c.damage_slip = False
+            self.damage_slip = False
         else:
-            if c.grounded:
-                c.left_ground = True  # +0x140 is set when the ground query stops finding floor
-            c.grounded = False
+            if self.grounded:
+                self.left_ground = True  # +0x140 is set when the ground query stops finding floor
+            self.grounded = False
 
-    def _check_tile_mod(self, c: PhysicsComponent) -> None:
-        centre = self.world.get_tile(math.floor((c.x + self.width / 2) / TILE), math.floor((c.y + self.height / 2) / TILE))
-        was_water = c.in_water
-        c.in_water = bool(centre and centre.flags & TileFlags.IS_WET)
+    def _check_tile_mod(self) -> None:
+        centre = self.world.get_tile(math.floor((self.x + self.width / 2) / TILE), math.floor((self.y + self.height / 2) / TILE))
+        was_water = self.in_water
+        self.in_water = bool(centre and centre.flags & TileFlags.IS_WET)
 
-        row = math.floor((c.y + self.height) / TILE)
-        below = [tile for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0) if (tile := self.world.get_tile(tx, row)) is not None]
+        row = math.floor((self.y + self.height) / TILE)
+        below = [tile for tx in self._columns(self.x + 2.0, self.x + self.width - 2.0) if (tile := self.world.get_tile(tx, row)) is not None]
         if any(self._is_slippery(tile) for tile in below):
-            c.sliding = True
-        elif c.grounded:
-            c.sliding = False
-        c.mud = any(tile.fg_id > 0 and item_database.get(tile.fg_id).item_type == ItemInfoType.MUD for tile in below)
+            self.sliding = True
+        elif self.grounded:
+            self.sliding = False
+        self.mud = any(tile.fg_id > 0 and item_database.get(tile.fg_id).item_type == ItemInfoType.MUD for tile in below)
 
-        self._update_water_state(c, was_water)
+        self._update_water_state(was_water)
 
-    def _update_water_state(self, c: PhysicsComponent, was_water: bool) -> None:
+    def _update_water_state(self, was_water: bool) -> None:
         """`updateBlockStateFromPlayerInteraction` (0x140509C20): the water-float state.
 
         Entering water with a water vehicle (surfboards/boats/JET_SKI/...) turns on
@@ -785,46 +863,46 @@ class PhysicsEngine:
         GOLDEN_JET_SKI keep it while in water. While set, `integrateVerticalAxis`
         zeroes both the water gravity and the fall speed.
         """
-        if c.in_water and not was_water:
-            c.water_enter_ms = self.time_ms
-            if self._has_water_vehicle(c):
-                c.water_float = True
-        if not c.in_water:
-            c.water_float = False
-        elif self.time_ms - c.water_enter_ms > WATER_FLOAT_DURATION_MS and not self._has_water_float_perm(c):
-            c.water_float = False
+        if self.in_water and not was_water:
+            self.water_enter_ms = self.time_ms
+            if self._has_water_vehicle():
+                self.water_float = True
+        if not self.in_water:
+            self.water_float = False
+        elif self.time_ms - self.water_enter_ms > WATER_FLOAT_DURATION_MS and not self._has_water_float_perm():
+            self.water_float = False
 
     # -- clothing / item helpers -------------------------------------------------
 
-    def _clothing(self, c: PhysicsComponent) -> Clothing | None:
-        player = self.world.players.get(c.net_id)
+    def _clothing(self) -> Clothing | None:
+        player = self.world.players.get(self.net_id)
         return player.clothing if player is not None else None
 
-    def _has_water_vehicle(self, c: PhysicsComponent) -> bool:
-        clothing = self._clothing(c)
+    def _has_water_vehicle(self) -> bool:
+        clothing = self._clothing()
         if clothing is None:
             return False
 
         return clothing.hand in _WATER_VEHICLES or clothing.shoes in _WATER_VEHICLES
 
-    def _has_water_float_perm(self, c: PhysicsComponent) -> bool:
-        clothing = self._clothing(c)
+    def _has_water_float_perm(self) -> bool:
+        clothing = self._clothing()
         return clothing is not None and clothing.shoes in (FISHING_DINGHY, JET_SKI, GOLDEN_JET_SKI)
 
-    def _is_floatie(self, c: PhysicsComponent) -> bool:
-        clothing = self._clothing(c)
+    def _is_floatie(self) -> bool:
+        clothing = self._clothing()
         if clothing is None:
             return False
 
         return clothing.neck in (SEA_MONSTER_FLOATIE, UNICORN_FLOATIE) or clothing.hand in (WATER_WINGS, FLAMING_FLOATIES)
 
-    def _slow_fall_flags(self, c: PhysicsComponent) -> tuple[bool, bool] | None:
+    def _slow_fall_flags(self) -> tuple[bool, bool] | None:
         """The two parachute groups of integrateVerticalAxis (0x140510580).
 
         Returns `(parasol, glide)` -- `parasol` maps to avatar+0xDF and the PARASOL
         event bit (0x40000), `glide` to avatar+0xE0 and UNK_GRAVITY_RELATED (0x80000).
         """
-        clothing = self._clothing(c)
+        clothing = self._clothing()
         if clothing is None:
             return None
 
@@ -860,13 +938,13 @@ class PhysicsEngine:
 
         return None
 
-    def _centre_tile(self, c: PhysicsComponent) -> Tile | None:
-        return self.world.get_tile(math.floor((c.x + self.width / 2) / TILE), math.floor((c.y + self.height / 2) / TILE))
+    def _centre_tile(self) -> Tile | None:
+        return self.world.get_tile(math.floor((self.x + self.width / 2) / TILE), math.floor((self.y + self.height / 2) / TILE))
 
-    def _below_tile(self, c: PhysicsComponent) -> Tile | None:
+    def _below_tile(self) -> Tile | None:
         """First foreground tile at the row under the feet (the jump/mud surface)."""
-        row = math.floor((c.y + self.height) / TILE)
-        for tx in self._columns(c.x + 2.0, c.x + self.width - 2.0):
+        row = math.floor((self.y + self.height) / TILE)
+        for tx in self._columns(self.x + 2.0, self.x + self.width - 2.0):
             tile = self.world.get_tile(tx, row)
             if tile is not None and tile.fg_id > 0:
                 return tile
@@ -893,7 +971,7 @@ class PhysicsEngine:
 
         return tile, self._collision(tx, ty)
 
-    def _interaction_blocked(self, c: PhysicsComponent, tx: int, ty: int) -> bool:
+    def _interaction_blocked(self, tx: int, ty: int) -> bool:
         """CanPassThroughTile (0x140554C10, isBreakTap=1) -- the wall response + climb gate."""
         entry = self._active_tile(tx, ty)
         if entry is None:
@@ -902,52 +980,52 @@ class PhysicsEngine:
         tile, kind = entry
         if kind in (ItemInfoCollisionType.JUMP_THROUGH, ItemInfoCollisionType.JUMP_DOWN, ItemInfoCollisionType.ONE_WAY):
             return False  # probes only, never a wall response
-        return self._blocks_like_client(c, tile, kind)
+        return self._blocks_like_client(tile, kind)
 
-    def _blocks_like_client(self, c: PhysicsComponent, tile: Tile, kind: ItemInfoCollisionType) -> bool:
+    def _blocks_like_client(self, tile: Tile, kind: ItemInfoCollisionType) -> bool:
         """The per-type switch of CanPassThroughTile (1 = blocking/interactive)."""
         if kind == ItemInfoCollisionType.NONE:
             return False
         if kind == ItemInfoCollisionType.ONE_WAY:
             return False  # directional, never collected for the vertical step
         if kind == ItemInfoCollisionType.GATEWAY:
-            return not self._gateway_open(c, tile)
+            return not self._gateway_open(tile)
         if kind == ItemInfoCollisionType.VIP_DOOR:
-            return not self._vip_door_open(c, tile)
+            return not self._vip_door_open(tile)
         if kind == ItemInfoCollisionType.FRIEND_ENTRANCE:
-            return not self._friend_entrance_open(c, tile)
+            return not self._friend_entrance_open(tile)
         if kind == ItemInfoCollisionType.ADVENTURE:
-            return not self._adventure_open(c, tile)
+            return not self._adventure_open(tile)
         if kind == ItemInfoCollisionType.FACTION:
-            return not self._faction_open(c, tile)
+            return not self._faction_open(tile)
         if kind == ItemInfoCollisionType.GUILD:
-            return not self._guild_open(c, tile)
+            return not self._guild_open(tile)
         if kind == ItemInfoCollisionType.CLOUD:
             # client reads extra+0x140; a cloud without its extra blocks too
             extra = tile.extra
             return not isinstance(extra, StormyCloudTile) or extra.is_solid > 0
         return True  # FULL and the state-gated COLLIDE_IF variants
 
-    def _is_ground(self, c: PhysicsComponent, tx: int, ty: int) -> bool:
+    def _is_ground(self, tx: int, ty: int) -> bool:
         """Ground support (sub_140564570 with a7=1): blocking tiles except JUMP_DOWN."""
         entry = self._active_tile(tx, ty)
         if entry is None or entry[1] == ItemInfoCollisionType.JUMP_DOWN:
             return False
-        return self._blocks_like_client(c, *entry)
+        return self._blocks_like_client(*entry)
 
-    def _cache_touch(self, c: PhysicsComponent, tx: int, ty: int) -> None:
+    def _cache_touch(self, tx: int, ty: int) -> None:
         """Record a touched tile in the five-slot cache scanned by ``TileExistsAt``.
 
         The client keeps the last five tiles the avatar touched at avatar+0x2E0
         and ``TileExistsAt`` (0x140519D80) only compares their foreground ids.
-        The adventure key gate reads this cache, so the engine tracks the same
-        ids (most recent last, duplicates moved to the back).
+        The adventure key gate reads this cache, so the controller tracks the
+        same ids (most recent last, duplicates moved to the back).
         """
         tile = self.world.get_tile(tx, ty)
         if tile is None or tile.fg_id <= 0:
             return
 
-        cache = c.permissions.tile_cache
+        cache = self.permissions.tile_cache
         if tile.fg_id in cache:
             cache.remove(tile.fg_id)
         cache.append(tile.fg_id)
@@ -955,7 +1033,7 @@ class PhysicsEngine:
 
     # -- lock / door permissions (CanPassThroughTile + canDoorPassedThrough) ------
 
-    def _lock_passes(self, c: PhysicsComponent, extra, tile: Tile | None, is_break_tap: bool) -> bool:
+    def _lock_passes(self, extra, tile: Tile | None, is_break_tap: bool) -> bool:
         """canDoorPassedThrough (0x140557A20).
 
         Pass when the tile is open to public, when break-tapping one's own lock,
@@ -970,7 +1048,7 @@ class PhysicsEngine:
         if extra is None or not hasattr(extra, "owner_uid"):
             return False
 
-        perms = c.permissions
+        perms = self.permissions
         if is_break_tap and perms.user_id == extra.owner_uid:
             return True
 
@@ -988,7 +1066,7 @@ class PhysicsEngine:
 
         return perms.user_id in getattr(extra, "access_uids", ())
 
-    def _lock_check(self, c: PhysicsComponent, tile: Tile) -> bool:
+    def _lock_check(self, tile: Tile) -> bool:
         """canDoorPassedThrough_1 (0x140555950).
 
         The tile's own lock extra wins; otherwise the tile's ``parent_index``
@@ -1007,7 +1085,7 @@ class PhysicsEngine:
             if tile is None:
                 return False
             extra = tile.extra
-        return self._lock_passes(c, extra, tile, True)
+        return self._lock_passes(extra, tile, True)
 
     @staticmethod
     def _guild_required_rank(extra) -> int:
@@ -1022,17 +1100,17 @@ class PhysicsEngine:
             return 1
         return 2 if state & 0x40 else 3
 
-    def _gateway_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+    def _gateway_open(self, tile: Tile) -> bool:
         """GATEWAY: ``canDoorPassedThrough_1`` or the public flag."""
-        return bool(tile.flags & TileFlags.IS_OPEN_TO_PUBLIC) or self._lock_check(c, tile)
+        return bool(tile.flags & TileFlags.IS_OPEN_TO_PUBLIC) or self._lock_check(tile)
 
-    def _vip_door_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+    def _vip_door_open(self, tile: Tile) -> bool:
         """VIP_DOOR: ``canDoorPassedThrough(extra, userID, tile, 1)``; no extra blocks."""
         if tile.extra is None:
             return False
-        return self._lock_passes(c, tile.extra, tile, True)
+        return self._lock_passes(tile.extra, tile, True)
 
-    def _friend_entrance_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+    def _friend_entrance_open(self, tile: Tile) -> bool:
         """FRIEND_ENTRANCE -- canFriendEntrancePassedThrough (0x1405587B0).
 
         The lock/access path runs with ``isBreakTap=0``; then the extra's
@@ -1044,10 +1122,10 @@ class PhysicsEngine:
         if extra is None:
             return False
 
-        perms = c.permissions
+        perms = self.permissions
         owner_uid = self.world.get_owner_user_id()
         friend_state = perms.friend and owner_uid >= 0
-        if self._lock_passes(c, extra, tile, False):
+        if self._lock_passes(extra, tile, False):
             return True
         if getattr(extra, "placed_timestamp", 0) != 1:
             return False
@@ -1055,14 +1133,14 @@ class PhysicsEngine:
             return False
         return True
 
-    def _adventure_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+    def _adventure_open(self, tile: Tile) -> bool:
         """ADVENTURE branch of CanPassThroughTile.
 
         ``LOCKED_ADVENTURE_DOOR`` needs the adventure key in the avatar's touch
         cache (``TileExistsAt`` + ``ADVENTURE_ITEM_KEY``); the barrier / idol /
         tomb gates toggle on the avatar+0x2E8[40/41/42] event flags.
         """
-        perms = c.permissions
+        perms = self.permissions
         if tile.fg_id == LOCKED_ADVENTURE_DOOR:
             return ADVENTURE_ITEM_KEY in perms.tile_cache
 
@@ -1074,29 +1152,29 @@ class PhysicsEngine:
             return not on  # event flag set: open while IS_ON is clear
         return on  # otherwise: open while IS_ON is set
 
-    def _faction_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+    def _faction_open(self, tile: Tile) -> bool:
         """FACTION branch: team byte (extra+0x80), public flag, access list."""
-        perms = c.permissions
+        perms = self.permissions
         extra = tile.extra
         team = extra.team_type if isinstance(extra, BalloonOMaticTile) else 0
         public = bool(tile.flags & TileFlags.IS_OPEN_TO_PUBLIC)
         if perms.has_team:
             if public:
                 return perms.team == team
-            return self._lock_check(c, tile) and perms.team == team
+            return self._lock_check(tile) and perms.team == team
         if not public:
-            return self._lock_check(c, tile)
+            return self._lock_check(tile)
         return True
 
-    def _guild_open(self, c: PhysicsComponent, tile: Tile) -> bool:
+    def _guild_open(self, tile: Tile) -> bool:
         """GUILD branch: guild id/rank gate, then the lock path, then public."""
         extra = tile.extra
         if not isinstance(extra, LockTile):
             return False
 
-        perms = c.permissions
+        perms = self.permissions
         guild_ok = bool(extra.guild_id) and perms.guild_id == extra.guild_id and perms.guild_rank >= self._guild_required_rank(extra)
-        return guild_ok or self._lock_check(c, tile) or bool(tile.flags & TileFlags.IS_OPEN_TO_PUBLIC)
+        return guild_ok or self._lock_check(tile) or bool(tile.flags & TileFlags.IS_OPEN_TO_PUBLIC)
 
     def _item_type(self, tx: int, ty: int) -> int | None:
         tile = self.world.get_tile(tx, ty)
@@ -1120,32 +1198,110 @@ class PhysicsEngine:
                 if tile is not None and tile.fg_id > 0:
                     yield tx, ty
 
-    def _send_state(self, c: PhysicsComponent) -> None:
-        send = c.on_state or self.on_state
+    # -- outbound tile changes (was TileChangeSubsystem) -------------------------
+
+    def request_punch(self, tx: int, ty: int) -> None:
+        """Queue a punch/break of the tile at ``(tx, ty)`` (FIST request)."""
+        self.queue.append(TileChangeIntent(tx=tx, ty=ty, id=FIST_ID, event=TankFlags.PUNCH | TankFlags.TILE_CHANGE))
+
+    def request_place(self, id: int, tx: int, ty: int, *, splice: bool = False, item_on_tree: int = 0) -> None:
+        """Queue placing ``id`` at ``(tx, ty)`` (seed planting uses ``splice``/``item_on_tree``)."""
+        self.queue.append(TileChangeIntent(tx=tx, ty=ty, id=id, event=TankFlags.PLACE | TankFlags.TILE_CHANGE, splice=splice, item_on_tree=item_on_tree))
+
+    def request_activate(self, tx: int, ty: int, id: int) -> None:
+        """Send ``ITEM_ACTIVATE_OBJECT_REQUEST`` for the tile at ``(tx, ty)``.
+
+        The client's landing handler fires this straight from the steam launcher, so it
+        bypasses the 200 ms tile-change flush grid.
+        """
+        if self.send is None:
+            return
+
+        self.send(TankPacket(type=self.activate_type, net_id=0, int_x=tx, int_y=ty, value=id))
+
+    def _flush_changes(self) -> None:
+        if not self.queue or self.time_ms < self.next_flush_ms:
+            return
+
+        self.next_flush_ms = self.time_ms + self.flush_interval_ms
+        intents, self.queue = self.queue, []
+        for intent in intents:
+            self._send_change(intent)
+
+    def _send_change(self, intent: TileChangeIntent) -> None:
+        flags = TankFlags.FACING_LEFT if not self.facing_right else TankFlags.NONE
+        # force the chained STATE frame to carry the action bits (client event mask)
+        self.action_flags |= intent.event
+        self.force_send = True
+        if self.optimistic:
+            self._apply_optimistic(intent, flags)
+
+        if self.send is None:
+            return
+
+        self.send(
+            TankPacket(
+                type=TankType.TILE_CHANGE_REQUEST,
+                net_id=0,
+                flags=flags,
+                value=intent.id,
+                int_x=intent.tx,
+                int_y=intent.ty,
+                vector_x=self.x,
+                vector_y=self.y,
+            )
+        )
+
+    def _apply_optimistic(self, intent: TileChangeIntent, flags: TankFlags) -> None:
+        """Apply the change locally (the server broadcast reconciles later)."""
+        inventory = self.inventory_provider()
+        if inventory is None:
+            return
+
+        tile = self.world.get_tile(intent.tx, intent.ty)
+        if tile is None:
+            return
+
+        self.world.tile_change(
+            tile,
+            inventory,
+            id=intent.id,
+            flags=flags,
+            net_id=self.net_id,
+            splice=intent.splice,
+            should_take_item=True,
+            item_on_tree=intent.item_on_tree,
+        )
+
+    # -- STATE frame -------------------------------------------------------------
+
+    def _send_state(self) -> None:
+        send = self.send
         if send is None:
             return
 
-        if c.force_send:
-            c.force_send = False
-            c.next_poll_ms = 0.0
-        if self.time_ms < c.next_poll_ms:
+        if self.force_send:
+            self.force_send = False
+            self.next_poll_ms = 0.0
+        if self.time_ms < self.next_poll_ms:
             return
 
-        c.next_poll_ms = self.time_ms + TANK_STATE_POLL_MS
+        self.next_poll_ms = self.time_ms + TANK_STATE_POLL_MS
 
-        pkt = self.build_state_packet(c.net_id)
+        pkt = self.build_state_packet()
         key = (pkt.vector_x, pkt.vector_y, pkt.vector_x2, pkt.vector_y2, int(pkt.flags), pkt.float_var)
-        if key != c.last_key:
-            c.last_key = key
-            c.dup_pending = True
-        elif c.dup_pending:
-            c.dup_pending = False
-        else:
+        if key != self.last_key:
+            self.last_key = key
+            self.dup_pending = True
+        elif self.dup_pending:
+            self.dup_pending = False
+        elif not (int(pkt.flags) & int(_STATE_EVENT_FLAGS)):
             return
 
         # the client's fillTankStatePacket clears avatar+0x134 and the bounce tile after
         # building the frame, so the event bits and the bounce coordinates ride one packet
-        c.killed_pending = c.on_fire = c.on_acid = c.damaged = False
-        c.bounce_tx = c.bounce_ty = -1
-        c.bounce_item = 0
+        self.killed_pending = self.on_fire = self.on_acid = self.damaged = False
+        self.action_flags = TankFlags.NONE
+        self.bounce_tx = self.bounce_ty = -1
+        self.bounce_item = 0
         send(pkt)

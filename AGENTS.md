@@ -13,7 +13,7 @@ player, and **tests are the contract**.
 
 | Path | Role |
 |---|---|
-| `gtools/core/growtopia/physics/engine.py` | local-player physics engine (the physics port target) |
+| `gtools/core/growtopia/physics/controller.py` | `PlayerController` — the local player: physics port + outbound tile-change flow (the port target) |
 | `gtools/core/growtopia/physics/demo.py` | interactive demo, not required by tests |
 | `gtools/core/growtopia/world.py` | `World`, `Tile`, `TileFlags`, `TileExtra` subclasses (`LockTile`, `VipEntranceTile`, `FriendsEntranceTile`, `StormyCloudTile`, ...) |
 | `gtools/core/growtopia/items_dat.py` | `ItemInfoType`, `ItemInfoCollisionType`, `item_database` |
@@ -229,26 +229,34 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
 | `0x140555160` | `isLockTile` | extra type == `LOCK_TILE` |
 | `0x140019D30` | init jump const | `X - Y*0.5 == -450` |
 
-## 5. Engine conventions
+## 5. Controller conventions
 
-- `c.x`/`c.y` is the **collision-rect top-left** (the client stores the same,
-  see `getPlayerCollisionRect`); hitbox `20×30`, `TILE = 32`.
+- A `PlayerController` **is** the local avatar: no component registry, no world
+  subsystem. `send` is the single packet sink (STATE + tile-change requests).
+- `controller.x`/`controller.y` is the **collision-rect top-left** (the client
+  stores the same, see `getPlayerCollisionRect`); hitbox `20×30`, `TILE = 32`.
 - `vy > 0` = falling; `CharacterState` axis triplets are the packet constants.
 - `_simulate` order: `_check_tile_mod` → vertical → horizontal → `_touch`
   (probes) → `_move` (pixel steps) → `_settle`.
+- `step()` order: `_flush_changes` (tile-change queue) → `_simulate` →
+  `_send_state` → `_auto_respawn`.
 - Collision helpers: `_active_tile`, `_can_enter_x/_can_enter_y`,
   `_blocked_x/_blocked_y`, `_interaction_blocked`, `_blocks_like_client`,
   `_is_ground`; permission logic: `_lock_passes`, `_lock_check`, the per-type
-  `_*_open` helpers and `PhysicsComponent.permissions`
+  `_*_open` helpers and `PlayerController.permissions`
   (`CollisionPermissions`).
+- Tile changes: `request_punch`/`request_place` queue and flush on the ~200 ms
+  grid with the local position stamped in; the queued intent marks its action
+  bits so the chained STATE frame carries `PUNCH|TILE_CHANGE` /
+  `PLACE|TILE_CHANGE`. `request_activate` (steam launcher) bypasses the grid.
 - `World.from_tiles()` does **not** set `Tile.index` for explicitly supplied
   tiles (only `World.fill()` assigns indices). Compute indices with
   `World.index_tile(pos)` when resolving `parent_index`-style links.
 - Item constants come from `gtools.baked.items`
   (`from gtools.baked.items import DIRT, MAIN_DOOR`).
-- Tests build small worlds, register a component, and drive
-  `set_input(1, ...)` + `step()` loops, asserting on `c.x` / `c.y` /
-  `c.grounded`.
+- Tests build small worlds, `spawn()` a controller, and drive
+  `set_input(...)` + `step()` loops, asserting on the returned controller's
+  `x` / `y` / `grounded`.
 
 ## 6. Snippets
 
@@ -262,10 +270,11 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
 
 ```python
 # generic collision harness used by the tests
-from gtools.core.growtopia.physics.engine import PhysicsEngine
+from gtools.core.growtopia.physics.controller import PlayerController
 from gtools.core.growtopia.world import World, Tile, TileFlags
-# build World.from_tiles([...]) with a floor, register a component,
-# engine.set_input(1, right=True); engine.step() loop; assert c.x / c.y / c.grounded
+# build World.from_tiles([...]) with a floor, controller = PlayerController(world),
+# c = controller.spawn(x, y); controller.set_input(right=True); controller.step()
+# loop; assert c.x / c.y / c.grounded
 ```
 
 ## 7. Documentation conventions

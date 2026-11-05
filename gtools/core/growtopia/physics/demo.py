@@ -16,12 +16,12 @@ from gtools import setting
 from gtools.baked.items import MAIN_DOOR
 from gtools.core.growtopia.world import World
 from gtools.core.growtopia.player import Player
-from gtools.gui.event import EventRouter, KeyEvent, ResizeEvent
+from gtools.gui.event import EventRouter, KeyEvent, MouseButtonEvent, ResizeEvent
 from gtools.gui.lib.world_renderer import WorldRenderer
+from gtools.core.growtopia.packet import TankPacket
 from gtools.core.growtopia.player import CharacterFlags, CharacterState
-from gtools.core.growtopia.physics.engine import (
-    PhysicsEngine,
-    PhysicsComponent,
+from gtools.core.growtopia.physics.controller import (
+    PlayerController,
     TILE,
     HITBOX,
     FIXED_DT,
@@ -117,9 +117,10 @@ class GPUPhysicsDemo:
         self.world = self.load_world(world_path)
         self.world_path = world_path
 
-        self.engine = PhysicsEngine(self.world, on_state=lambda x: print(x.compact_repr()))
+        # no server/inventory in the demo: punch requests are logged, not applied
+        self.controller = PlayerController(self.world, net_id=PLAYER_NET_ID, send=self._log_packet, optimistic=False)
         self.spawn = self._find_spawn(self.world)
-        self.body: PhysicsComponent = self.engine.register(PLAYER_NET_ID, *self.spawn, state=CharacterState(flags=CharacterFlags.DOUBLE_JUMP))
+        self.controller.spawn(*self.spawn, state=CharacterState(flags=CharacterFlags.DOUBLE_JUMP))
         self._accumulator = 0.0
 
         self._recording_file = None
@@ -134,7 +135,7 @@ class GPUPhysicsDemo:
         self.player = Player(
             net_id=PLAYER_NET_ID,
             name=b"Player",
-            colrect=vec4(0.0, 0.0, self.engine.width, self.engine.height),
+            colrect=vec4(0.0, 0.0, self.controller.width, self.controller.height),
             pos=vec2(*self._render_pos()),
         )
         self.world.add_player(self.player)
@@ -161,6 +162,7 @@ class GPUPhysicsDemo:
         print("  A/D or Left/Right - Move")
         print("  W/Space/Up - Jump")
         print("  R - Reset position")
+        print("  Left click - Punch the tile under the cursor (request logged)")
         print("  Mouse wheel - Zoom")
         print("  Middle mouse drag - Pan camera")
         print("  Tab - Toggle settings")
@@ -192,34 +194,51 @@ class GPUPhysicsDemo:
             for tx in range(world.width):
                 tile = world.get_tile(tx, ty)
                 if tile is not None and tile.fg_id == MAIN_DOOR:
-                    w, h = self.engine.width, self.engine.height
+                    w, h = HITBOX
                     return tx * TILE + (TILE - w) / 2.0, (ty + 1) * TILE - h
 
         return 0.0, 0.0
 
     def _render_pos(self) -> tuple[float, float]:
-        return self.body.x, self.body.y
+        return self.controller.x, self.controller.y
 
     def _camera_target_point(self) -> tuple[float, float]:
         x, y = self._render_pos()
-        return x + self.engine.width / 2.0, y + self.engine.height / 2.0
+        return x + self.controller.width / 2.0, y + self.controller.height / 2.0
 
     def _reset_avatar(self) -> None:
-        self.engine.teleport(PLAYER_NET_ID, *self.spawn)
-        self.body.jump_latch = False
-        self.body.double_jumped = False
+        self.controller.teleport(*self.spawn)
+        self.controller.jump_latch = False
+        self.controller.double_jumped = False
         self._camera_snapped = False
         self._sync_player_entity()
 
     def _sync_player_entity(self) -> None:
         self.player.pos = vec2(*self._render_pos())
-        self.player.flags = self.engine.build_state_packet(PLAYER_NET_ID).flags
+        self.player.flags = self.controller.build_state_packet().flags
 
     def handle_input(self) -> None:
         left = glfw.KEY_A in self.keys_pressed or glfw.KEY_LEFT in self.keys_pressed
         right = glfw.KEY_D in self.keys_pressed or glfw.KEY_RIGHT in self.keys_pressed
         jump = glfw.KEY_W in self.keys_pressed or glfw.KEY_SPACE in self.keys_pressed or glfw.KEY_UP in self.keys_pressed
-        self.engine.set_input(PLAYER_NET_ID, left=left, right=right, jump=jump)
+        self.controller.set_input(left=left, right=right, jump=jump)
+
+    @staticmethod
+    def _log_packet(pkt: TankPacket) -> None:
+        print(f"[packet] {pkt.compact_repr()}")
+
+    def _punch_at_screen(self, sx: float, sy: float) -> None:
+        lx, ly = self.world_renderer._to_local(sx, sy)
+        world_pos = self.world_renderer._camera.screen_to_world(lx, ly)
+        tx = math.floor(world_pos.x / TILE)
+        ty = math.floor(world_pos.y / TILE)
+
+        if not (0 <= tx < self.world.width and 0 <= ty < self.world.height):
+            print(f"punch ignored: ({tx}, {ty}) is outside the world")
+            return
+
+        print(f"punch -> tile ({tx}, {ty})")
+        self.controller.request_punch(tx, ty)
 
     def _toggle_recording(self) -> None:
         if self._recording_file is not None:
@@ -252,7 +271,7 @@ class GPUPhysicsDemo:
             "world_path": str(self.world_path) if self.world_path else None,
             "world_name": (self.world.name.decode("utf-8", "replace") if self.world is not None and getattr(self.world, "name", None) else None),
             "world_size": ([int(self.world.width), int(self.world.height)] if self.world is not None else None),
-            "fixed_dt": self.engine.fixed_dt,
+            "fixed_dt": self.controller.fixed_dt,
             "constants": {
                 "TILE": TILE,
                 "HITBOX": list(HITBOX),
@@ -336,7 +355,7 @@ class GPUPhysicsDemo:
             self._recording_path = None
 
     def _state_snapshot(self) -> dict:
-        st = self.body.state
+        st = self.controller.state
         return {
             "flags": int(st.flags),
             "max_velocity": st.max_velocity,
@@ -346,7 +365,7 @@ class GPUPhysicsDemo:
         }
 
     def _snapshot(self) -> dict:
-        c = self.body
+        c = self.controller
         return {
             "x": round(c.x, 4),
             "y": round(c.y, 4),
@@ -387,8 +406,8 @@ class GPUPhysicsDemo:
             {
                 "type": "tick",
                 "t": round(glfw.get_time() - self._recording_started_at, 6),
-                "tick": int(self.engine.tick),
-                "dt": round(self.engine.fixed_dt, 6),
+                "tick": int(self.controller.tick),
+                "dt": round(self.controller.fixed_dt, 6),
                 "keys_pressed": sorted(_KEY_NAMES.get(key, f"KEY_{key}") for key in self.keys_pressed),
                 "events": events,
                 "avatar": self._snapshot(),
@@ -408,7 +427,7 @@ class GPUPhysicsDemo:
                 "t": round(glfw.get_time() - self._recording_started_at, 6),
                 "frame": self._recording_frames,
                 "dt": round(dt, 6),
-                "tick": int(self.engine.tick),
+                "tick": int(self.controller.tick),
                 "keys_pressed": sorted(_key_name(k) for k in self.keys_pressed),
                 "events": events,
                 "avatar": self._snapshot(),
@@ -454,6 +473,10 @@ class GPUPhysicsDemo:
                 ):
                     continue
 
+            if isinstance(event, MouseButtonEvent) and event.button == glfw.MOUSE_BUTTON_LEFT and event.action == glfw.PRESS:
+                self._punch_at_screen(event.screen_x, event.screen_y)
+                continue  # left click no longer pans the camera
+
             if isinstance(event, ResizeEvent):
                 self.world_renderer._camera.resize(event.width, event.height)
                 self.world_renderer._camera3d.resize(event.width, event.height)
@@ -464,9 +487,9 @@ class GPUPhysicsDemo:
 
     def update_physics(self, dt: float) -> None:
         self._accumulator += dt
-        while self._accumulator >= self.engine.fixed_dt:
-            self._accumulator -= self.engine.fixed_dt
-            self.engine.step()
+        while self._accumulator >= self.controller.fixed_dt:
+            self._accumulator -= self.controller.fixed_dt
+            self.controller.step()
             self._record_tick()
 
         self._sync_player_entity()
@@ -523,12 +546,12 @@ class GPUPhysicsDemo:
         if imgui.begin("Physics Debug", flags=imgui.WindowFlags_.always_auto_resize)[0]:
             camera = self.world_renderer._camera
             imgui.text(f"FPS: {imgui.get_io().framerate:.1f}")
-            imgui.text(f"Tick: {self.engine.tick}")
+            imgui.text(f"Tick: {self.controller.tick}")
             imgui.text(f"Zoom: {camera.zoom:.2f}")
             imgui.text(f"Camera: ({camera.pos.x:.1f}, {camera.pos.y:.1f})")
-            c, st = self.body, self.body.state
+            c, st = self.controller, self.controller.state
             imgui.text(f"Pos: ({c.x:.1f}, {c.y:.1f})")
-            imgui.text("Tile: " f"({math.floor((c.x + self.engine.width / 2) / TILE)}, " f"{math.floor((c.y + self.engine.height / 2) / TILE)})")
+            imgui.text("Tile: " f"({math.floor((c.x + self.controller.width / 2) / TILE)}, " f"{math.floor((c.y + self.controller.height / 2) / TILE)})")
             imgui.text(f"Players drawn: {len(self.world.players)}")
             imgui.text(f"VX: {c.vx:.1f}")
             imgui.text(f"VY: {c.vy:.1f}")
@@ -556,6 +579,7 @@ class GPUPhysicsDemo:
             imgui.text("A/D or Left/Right - Move")
             imgui.text("W/Space/Up - Jump")
             imgui.text("R - Reset position")
+            imgui.text("Left click - Punch tile (logged)")
             imgui.text("Mouse wheel - Zoom")
             imgui.text("Middle drag - Pan")
             imgui.text("Tab - Settings")

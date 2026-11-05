@@ -60,7 +60,7 @@ return canDoorPassedThrough(tile->extra, userID, tile, /*isBreakTap=*/1);
 → world lock.** An area lock therefore *overrides* the world lock for the
 tiles it covers (matching the in-game rule that a small/big/huge lock can be
 more restrictive than the world lock). The engine mirrors it in
-`PhysicsEngine._lock_check` (`gtools/core/growtopia/physics/engine.py`).
+`PlayerController._lock_check` (`gtools/core/growtopia/physics/controller.py`).
 
 > Note: tiles linked by an area lock while standing on the world lock's
 > access list still resolve to the **area lock** — being an admin on the

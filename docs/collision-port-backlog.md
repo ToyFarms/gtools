@@ -1,9 +1,9 @@
-# Collision port backlog — `engine.py`
+# Collision port backlog — `controller.py` (`PlayerController`)
 
 ## Goal
 
 Port the client's `ItemInfoCollisionType` handling into
-`gtools/core/growtopia/physics/engine.py` completely and faithfully:
+`gtools/core/growtopia/physics/controller.py` completely and faithfully:
 every type's movement rules (`canMoveXInto`/`canMoveYInto` + the candidate
 collector) and interaction rules (`CanPassThroughTile`, including all door,
 adventure, faction, guild and friend permissions), each backed by IDA evidence
@@ -128,7 +128,7 @@ Per-type pass conditions (return 0), `isBreakTap = 1`:
 
 ### Pass 1 — movement/interaction split + simple types (this commit)
 
-`engine.py`:
+`controller.py`:
 - Split the old `_is_solid` into `_interaction_blocked` (CanPassThroughTile with
   `isBreakTap = 1`, used by `_touch`'s wall response) and the movement predicates
   `_can_enter_x`/`_can_enter_y` (used by `_blocked_x`/`_blocked_y` per pixel).
@@ -146,12 +146,12 @@ through landing, jump-down rising/falling, storm-cloud solidness).
 
 ### Pass 2 — lock permission layer + all door types (this commit)
 
-`engine.py`:
-- `CollisionPermissions` on `PhysicsComponent` (user id, guild id/rank,
+`controller.py`:
+- `CollisionPermissions` on `PlayerController` (user id, guild id/rank,
   team/has-team, adventure event flags, five-slot touch cache, friend state,
-  protocol version); `c` threaded through `_can_enter_x` / `_can_enter_y` /
-  `_blocked_x` / `_blocked_y` / `_interaction_blocked` / `_blocks_like_client`
-  / `_is_ground`.
+  protocol version); the controller's live state is read directly by
+  `_can_enter_x` / `_can_enter_y` / `_blocked_x` / `_blocked_y` /
+  `_interaction_blocked` / `_blocks_like_client` / `_is_ground`.
 - `_lock_passes` (`canDoorPassedThrough`, 0x140557A20) and `_lock_check`
   (`canDoorPassedThrough_1`, 0x140555950: own lock extra → `parent_index` →
   `World.get_world_lock()`).
