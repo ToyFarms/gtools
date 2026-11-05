@@ -18,6 +18,7 @@ from gtools.core.growtopia.physics.controller import (
     PUNCH_REPEAT_MS,
     TOUCH_HOLD_TIMEOUT_MS,
     PlayerController,
+    _STATE_EVENT_FLAGS,
 )
 from gtools.core.growtopia.player import CharacterFlags, CharacterState, Player
 from gtools.core.growtopia.world import Tile, TileFlags, World
@@ -256,6 +257,17 @@ def test_double_jump_flag_is_a_one_shot_event() -> None:
         controller.step()
 
     assert sum(1 for p in session.frames if int(p.flags) & int(TankFlags.DOUBLE_JUMPED)) == 1
+
+
+def test_forced_send_mask_matches_the_client() -> None:
+    """`sendTankState` bypasses its duplicate check for `pkt.flags & 0x10C16740`.
+
+    Verified in the binary at 0x1404F5F30 (`test dword ptr [rbx+18h], 10C16740h`,
+    bytes `F7 43 18 40 67 C1 10`). It is exactly these ten bits -- notably NOT
+    TILE_CHANGE (0x800), which instead resets the 200 ms poll timer at
+    0x1404F5E4C, and not GOT_PUNCHED/TRAMPOLINE/UNK_TILE_CHANGE.
+    """
+    assert int(_STATE_EVENT_FLAGS) == 0x10C16740
 
 
 def test_steam_launcher_clears_is_on_and_requests_activate() -> None:
