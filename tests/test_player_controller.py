@@ -19,7 +19,7 @@ from gtools.core.growtopia.physics.controller import (
     TOUCH_HOLD_TIMEOUT_MS,
     PlayerController,
 )
-from gtools.core.growtopia.player import Player
+from gtools.core.growtopia.player import CharacterFlags, CharacterState, Player
 from gtools.core.growtopia.world import Tile, TileFlags, World
 
 FLOOR_Y = 8
@@ -195,6 +195,67 @@ def test_punch_stamps_facing_left() -> None:
     session.controller.step()
 
     assert session.requests[0].flags & TankFlags.FACING_LEFT
+
+
+def test_jump_flag_is_a_one_shot_event() -> None:
+    """`JUMP` rides exactly one STATE frame -- it is an event (avatar+0x134), not state.
+
+    Traffic proof (traffic.txt 17:47:50): one `FACING_LEFT|JUMP` frame, then
+    `FACING_LEFT` alone while the avatar is still rising with the button held.
+    Client code: TryPlaceSeedAtTile ORs 0x80 on every launch (0x1405066DE).
+    """
+    session = Session()
+    controller = session.controller
+    controller.step()  # settle on the floor
+
+    controller.set_input(jump=True)
+    for _ in range(15):  # the bit waits for the next ~200 ms STATE poll, like the client
+        controller.step()
+
+    assert controller.vy < 0.0
+    assert sum(1 for p in session.frames if int(p.flags) & int(TankFlags.JUMP)) == 1
+
+    for _ in range(30):  # airborne, button still held
+        controller.step()
+
+    assert sum(1 for p in session.frames if int(p.flags) & int(TankFlags.JUMP)) == 1
+
+
+def test_double_jump_flag_is_a_one_shot_event() -> None:
+    """`DOUBLE_JUMPED` is armed on an *airborne* launch only and rides one frame.
+
+    Traffic proof (traffic.txt 17:48:10-11): the grounded first jump carries `JUMP`
+    alone, the airborne second carries `JUMP|DOUBLE_JUMPED` once, then the flag is
+    gone while still in the air. Client code: onJump ORs 0x4000000 only when
+    avatar+0xDC == 0 (0x1404FEE5B skips the branch while grounded; the OR is at
+    0x1404FF0D7).
+    """
+    session = Session(state=CharacterState(flags=CharacterFlags.DOUBLE_JUMP))
+    controller = session.controller
+    controller.step()  # settle on the floor
+
+    controller.set_input(jump=True)  # grounded launch
+    for _ in range(15):  # wait out the STATE poll
+        controller.step()
+
+    first = [p for p in session.frames if int(p.flags) & int(TankFlags.JUMP)]
+    assert len(first) == 1
+    assert not int(first[0].flags) & int(TankFlags.DOUBLE_JUMPED), "grounded launch must not set it"
+
+    controller.set_input(jump=False)
+    controller.step()
+    controller.set_input(jump=True)  # airborne launch consumes the double-jump token
+    for _ in range(15):  # wait out the STATE poll
+        controller.step()
+
+    double_frames = [p for p in session.frames if int(p.flags) & int(TankFlags.DOUBLE_JUMPED)]
+    assert len(double_frames) == 1
+    assert int(double_frames[0].flags) & int(TankFlags.JUMP)  # the launch event rides with it
+
+    for _ in range(20):  # still airborne
+        controller.step()
+
+    assert sum(1 for p in session.frames if int(p.flags) & int(TankFlags.DOUBLE_JUMPED)) == 1
 
 
 def test_steam_launcher_clears_is_on_and_requests_activate() -> None:

@@ -649,9 +649,15 @@ The engine (`gtools/core/growtopia/physics/controller.py`) mirrors this in
   under the feet the previous slide flag is preserved (matching
   `sub_140505CB0`'s early exit), so a jump off a slippery tile keeps its
   horizontal momentum;
-- `build_state_packet` reports the flags: `TankFlags.SWIM` from `in_water`,
-  `TankFlags.SLIDE` from `sliding` (alongside `STANDING`, `FACING_LEFT`,
-  `DOUBLE_JUMPED`, `JUMP` and the one-shot event bits).
+- `build_state_packet` reports the persistent flags: `TankFlags.SWIM` from
+  `in_water`, `TankFlags.SLIDE` from `sliding`, `STANDING` from `grounded`,
+  `FACING_LEFT` from the facing, plus the one-shot event bits (hazard/death,
+  `PUNCH`/`PLACE`/`TILE_CHANGE`). **`JUMP` and `DOUBLE_JUMPED` are also one-shot
+  events**, not state: `_jump` arms them in `action_flags` (JUMP on every launch,
+  DOUBLE_JUMPED only for an airborne launch — the client's onJump skips the
+  branch while `+0xDC` is set) and they ride exactly one built frame, then are
+  cleared like `avatar+0x134`. See `docs/02_packet` (`TANK_FLAGS` → one-shot
+  events) and the traffic sample there.
 
 ### 6.7 Recording physics for analysis (F6)
 

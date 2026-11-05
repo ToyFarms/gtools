@@ -575,7 +575,11 @@ TANK_FLAGS,
             address     function                       bits         trigger
             0x1404fe64e NetAvatar::onBurn              0x40         FIRE_DAMAGE
             0x1404fef10 NetAvatar::onJump              0x80000      UNK_GRAVITY_RELATED
+                                                                    (airborne launch +
+                                                                    wing/glide hand item)
             0x1404ff0d7 NetAvatar::onJump              0x4000000    DOUBLE_JUMPED
+                                                                    (airborne launch
+                                                                    only, see below)
             0x1404fc5be NetAvatar::onAcidBurn          0x10000000   ACID_DAMAGE
             0x1404fdcde NetAvatar::onDamagingTile      0x10000      DAMAGE
             0x1404fe85c sub_1404FE720                  0x20000      SLIDE (punch knockback)
@@ -596,7 +600,7 @@ TANK_FLAGS,
             0x1405034a2 NetAvatar::tickAux             0x1000800    UNK_TILE_CHANGE|
                                                                     TILE_CHANGE
             0x1405065f3 TryPlaceSeedAtTile             0x100000     SWIM
-            0x1405066de TryPlaceSeedAtTile             0x80         JUMP
+            0x1405066de TryPlaceSeedAtTile             0x80         JUMP (every launch)
             0x14050cba0 applyTankStateAndEvents        0xc00        re-broadcast PLACE
             0x14050cc3b applyTankStateAndEvents        0x2800       re-broadcast RESPAWN
             0x140510857 integrateVerticalAxis          0x40000      PARASOL (slow-fall A)
@@ -607,6 +611,37 @@ TANK_FLAGS,
         WALK (0x1), FLYING (0x2), OBJECT_COLLECT (0x4000), HAY_CART_RELATED
         (0x2000000) and UNK3 (0x8000000) have no writer in the client; they are
         only meaningful on packets the server sends.
+
+    one-shot events vs state (JUMP / DOUBLE_JUMPED),
+        both bits live in avatar+0x134. fillTankStatePacket ORs the whole mask
+        into the frame and then zeroes it, so each bit rides exactly one *built*
+        frame -- even when the send gate later drops the frame. neither bit is in
+        the 0x10C16740 force mask and neither resets the poll timer (only
+        TILE_CHANGE 0x800 does), so the frame carrying the event is the next
+        scheduled ~200 ms STATE poll. they are NOT re-sent while the jump button
+        stays held or while the avatar is still airborne.
+
+        traffic evidence (traffic.txt, client -> server STATE, button held):
+            17:47:50  flags=FACING_LEFT|JUMP              vector_y2=-414.29
+            17:47:50  flags=FACING_LEFT                   vector_y2=-271.49  <- rising
+            17:48:10  flags=FACING_LEFT|JUMP              vector_y2=-450.0   <- jump 1
+            17:48:11  flags=FACING_LEFT|JUMP|DOUBLE_JUMPED vector_y2=-438.10 <- jump 2
+            17:48:11  flags=FACING_LEFT                   vector_y2=-295.29  <- rising
+        the y2 values already show gravity applied: the event waited for the poll.
+
+        conditions:
+            JUMP          TryPlaceSeedAtTile ORs 0x80 (0x1405066DE) on *every*
+                          successful onJump launch, grounded or airborne.
+            DOUBLE_JUMPED onJump ORs 0x4000000 (0x1404FF0D7) only when the launch
+                          happens while avatar+0xDC == 0: the grounded path jumps
+                          straight to 0x1404FF0E8 (0x1404FEE5B), skipping the
+                          branch. the airborne branch additionally needs a
+                          double-jump/wing item on the hand or `charFlags_188 & 2`,
+                          and it set avatar+0xE1 (double-jump animation) too.
+                          that is why the first (grounded) jump of a double-jump
+                          pair never carries DOUBLE_JUMPED.
+            UNK_GRAVITY_RELATED (0x80000) uses the same airborne-only gate in
+                          onJump, with a glide/wing hand item, and sets +0xE0.
 
     server -> client (STATE),
         NetAvatar::applyTankStateAndEvents @ 0x14050C560 (rdi = pkt) decodes the

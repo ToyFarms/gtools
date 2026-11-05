@@ -369,6 +369,16 @@ class PlayerController:
         # the tick -- like the STATE-driven launch the recorded fits in §10 analyse, the
         # launch tick then skips gravity and travels the full -450.
         self.vy = -JUMP_SPEED * (JUMP_REDUCED_SCALE if reduced else 1.0)
+
+        # the jump bits are one-shot events (avatar+0x134), not on-wire state:
+        # TryPlaceSeedAtTile ORs JUMP on *every* launch (0x1405066DE), and onJump
+        # adds DOUBLE_JUMPED for an airborne launch only -- it skips that branch
+        # while on-ground (0x1404FEE5B), which is why the first jump never carries
+        # it (traffic.txt 17:48:10-11: `JUMP` once, then `JUMP|DOUBLE_JUMPED` once).
+        self.action_flags |= TankFlags.JUMP
+        if not was_grounded and (double_jump or antigrav or pole):
+            self.action_flags |= TankFlags.DOUBLE_JUMPED
+
         if not was_grounded:
             self.double_jumped = True  # an airborne launch consumes the token (`unk_1F8 = 0`)
         if antigrav or pole:
@@ -429,10 +439,10 @@ class PlayerController:
             flags |= TankFlags.SLIDE
         if self.in_water:
             flags |= TankFlags.SWIM
-        if self.double_jumped:
-            flags |= TankFlags.DOUBLE_JUMPED
-        if self.jump:
-            flags |= TankFlags.JUMP
+        # NOTE: JUMP and DOUBLE_JUMPED are *one-shot* events, not state -- they are
+        # armed by `_jump` in `action_flags` and ride exactly one built frame. The
+        # client never re-sends them while the button stays held or while airborne
+        # (traffic.txt 17:47:50: `FACING_LEFT|JUMP` once, then `FACING_LEFT` rising).
         if self.parasol:
             flags |= TankFlags.PARASOL  # avatar+0x0DF
         if self.glide:
@@ -1390,7 +1400,17 @@ class PlayerController:
         self.next_poll_ms = self.time_ms + TANK_STATE_POLL_MS
 
         pkt = self.build_state_packet()
-        key = (pkt.vector_x, pkt.vector_y, pkt.vector_x2, pkt.vector_y2, int(pkt.flags), pkt.float_var)
+        # the client memcmps the whole 56-byte frame; compare every field we fill
+        key = (pkt.net_id, int(pkt.flags), pkt.vector_x, pkt.vector_y, pkt.vector_x2, pkt.vector_y2, pkt.float_var, pkt.value, pkt.int_x, pkt.int_y)
+
+        # fillTankStatePacket consumes avatar+0x134 and the bounce tile while it *builds*
+        # the frame -- even when the send gate then drops it -- so the one-shot bits
+        # (incl. JUMP/DOUBLE_JUMPED) ride exactly one attempt
+        self.killed_pending = self.on_fire = self.on_acid = self.damaged = False
+        self.action_flags = TankFlags.NONE
+        self.bounce_tx = self.bounce_ty = -1
+        self.bounce_item = 0
+
         if key != self.last_key:
             self.last_key = key
             self.dup_pending = True
@@ -1399,10 +1419,4 @@ class PlayerController:
         elif not (int(pkt.flags) & int(_STATE_EVENT_FLAGS)):
             return
 
-        # the client's fillTankStatePacket clears avatar+0x134 and the bounce tile after
-        # building the frame, so the event bits and the bounce coordinates ride one packet
-        self.killed_pending = self.on_fire = self.on_acid = self.damaged = False
-        self.action_flags = TankFlags.NONE
-        self.bounce_tx = self.bounce_ty = -1
-        self.bounce_item = 0
         send(pkt)
