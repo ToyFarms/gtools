@@ -151,22 +151,19 @@ TOUCH_HOLD_TIMEOUT_MS = 11000.0  # onTouchHoldTick stops the hold after 0x2AF8 m
 # 200 ms is the resulting cadence (measured 5/s mode, docs/tile-change-request.md §5)
 PUNCH_REPEAT_MS = 200.0
 
-# sendTankState's dedupe bypass mask (0x10C16740): a frame carrying any of these
-# event bits is always sent, even when it is identical to the previous one
+# sendTankState's dedupe bypass mask (0x10C16740, verified at 0x1404F5F30): a
+# frame carrying any of these event bits is always sent, even when identical
 _STATE_EVENT_FLAGS = (
-    TankFlags.FIRE_DAMAGE
-    | TankFlags.GOT_KILLED
-    | TankFlags.PUNCH
-    | TankFlags.PLACE
-    | TankFlags.TILE_CHANGE
-    | TankFlags.GOT_PUNCHED
-    | TankFlags.RESPAWN
-    | TankFlags.OBJECT_COLLECT
-    | TankFlags.TRAMPOLINE
-    | TankFlags.DAMAGE
-    | TankFlags.POWER_UP_PUNCH_START
-    | TankFlags.POWER_UP_PUNCH_END
-    | TankFlags.UNK_TILE_CHANGE
+    TankFlags.FIRE_DAMAGE  # 0x40
+    | TankFlags.GOT_KILLED  # 0x100
+    | TankFlags.PUNCH  # 0x200
+    | TankFlags.PLACE  # 0x400
+    | TankFlags.RESPAWN  # 0x2000
+    | TankFlags.OBJECT_COLLECT  # 0x4000
+    | TankFlags.DAMAGE  # 0x10000
+    | TankFlags.POWER_UP_PUNCH_START  # 0x400000
+    | TankFlags.POWER_UP_PUNCH_END  # 0x800000
+    | TankFlags.ACID_DAMAGE  # 0x10000000
 )
 
 SendCallback = Callable[[TankPacket], None]

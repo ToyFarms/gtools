@@ -27,7 +27,7 @@ tank packet,
         animation_type   :u8,
         net_id           :u32,
         target_net_id    :u32
-        flags            :u32 (tank flags),
+        flags            :u32 (tank flags, see TANK_FLAGS),
         float_var        :f32,
         value            :u32,
         vector_x         :f32,
@@ -460,4 +460,244 @@ NETWORLD_STATE,
         - the client keeps the same {frame, flags} records in its input history.
           on a NETWORLD_SNAPSHOT correction it replays the records after the server
           tick through the controller.
+
+TANK_FLAGS,
+    the u32 at tank packet +0x0C. the bitfield has three jobs depending on the
+    direction and packet type, so read it in context:
+
+        client -> server STATE   the local avatar's frame, built by
+                                 NetAvatar::fillTankStatePacket (0x1404FBEB0)
+        server -> client STATE   what the client applies to an avatar / reacts
+                                 to, NetAvatar::applyTankStateAndEvents
+                                 (0x14050C560) and applyTankStatePacket
+                                 (0x1404F58C0)
+        per-type extras          FACING_LEFT in TILE_CHANGE_REQUEST, EXTENDED as
+                                 the "extended_data follows" marker,
+                                 RESET_VISUAL_STATE in the STATE snapshot
+
+    bits,
+        0x00000001 WALK
+        0x00000002 FLYING
+        0x00000004 RESET_VISUAL_STATE
+        0x00000008 EXTENDED
+        0x00000010 FACING_LEFT
+        0x00000020 STANDING
+        0x00000040 FIRE_DAMAGE
+        0x00000080 JUMP
+        0x00000100 GOT_KILLED
+        0x00000200 PUNCH
+        0x00000400 PLACE
+        0x00000800 TILE_CHANGE
+        0x00001000 GOT_PUNCHED
+        0x00002000 RESPAWN
+        0x00004000 OBJECT_COLLECT
+        0x00008000 TRAMPOLINE
+        0x00010000 DAMAGE
+        0x00020000 SLIDE
+        0x00040000 PARASOL
+        0x00080000 UNK_GRAVITY_RELATED
+        0x00100000 SWIM
+        0x00200000 WALL_HANG
+        0x00400000 POWER_UP_PUNCH_START
+        0x00800000 POWER_UP_PUNCH_END
+        0x01000000 UNK_TILE_CHANGE
+        0x02000000 HAY_CART_RELATED
+        0x04000000 DOUBLE_JUMPED
+        0x08000000 UNK3
+        0x10000000 ACID_DAMAGE
+
+    quick reference (c->s = the client writes it into its STATE event mask,
+    s->c = the client acts on it in a received STATE, pkt = other packet types),
+        bit        flag                  c->s  s->c  client behaviour / notes
+        0x1        WALK                   -     -   no writer/consumer found
+        0x2        FLYING                 -     -   no writer/consumer found
+        0x4        RESET_VISUAL_STATE    yes   yes   sendTankState one-shot;
+                                                     applyTankStatePacket resets
+                                                     the visual block
+        0x8        EXTENDED               pkt   pkt  extended data at +0x38
+        0x10       FACING_LEFT           yes   yes   facing; also stamped on
+                                                     TILE_CHANGE_REQUEST
+        0x20       STANDING              yes   yes   on-ground
+        0x40       FIRE_DAMAGE           yes   yes   onBurn both ways
+        0x80       JUMP                  yes   yes   TryPlaceSeedAtTile -> onJump
+        0x100      GOT_KILLED            yes   yes   kill: onPositionSnapped arms
+                                                     it; receive = position snap
+        0x200      PUNCH                 yes   yes   punch: receive = tile result +
+                                                     OnPunched/GOT_PUNCHED send
+        0x400      PLACE                 yes   yes   placement: receive = bounce
+                                                     fields + re-broadcast
+        0x800      TILE_CHANGE           yes   yes   rides every action frame;
+                                                     resets the STATE send gate
+        0x1000     GOT_PUNCHED           yes   yes   hit reaction
+        0x2000     RESPAWN               yes   yes   respawn: receive re-broadcasts
+        0x4000     OBJECT_COLLECT         -    yes   receive plays
+                                                     audio/object_collect.wav
+        0x8000     TRAMPOLINE            yes   yes   bounce hit bookkeeping
+        0x10000    DAMAGE                yes   yes   onDamagingTile both ways
+        0x20000    SLIDE                 yes   yes   slide state
+        0x40000    PARASOL               yes   yes   slow-fall group A
+        0x80000    UNK_GRAVITY_RELATED   yes   yes   slow-fall group B / jump anim
+        0x100000   SWIM                  yes    -    no receive handler found
+        0x200000   WALL_HANG             yes   yes   grounded climb state
+        0x400000   POWER_UP_PUNCH_START  yes   yes   charge start
+        0x800000   POWER_UP_PUNCH_END    yes   yes   punch release
+        0x1000000  UNK_TILE_CHANGE       yes   yes   tickAux; receive = pet axis
+        0x2000000  HAY_CART_RELATED       -     -    no writer/consumer found
+        0x4000000  DOUBLE_JUMPED         yes   yes   receive -> avatar+0xE1
+        0x8000000  UNK3                   -     -    no writer/consumer found
+        0x10000000 ACID_DAMAGE           yes   yes   onAcidBurn both ways
+
+    client -> server (STATE),
+        NetAvatar::fillTankStatePacket @ 0x1404FBEB0 builds every outgoing STATE
+        frame. pkt.flags starts at 0 (sendTankState @ 0x1404F5EE0 writes it)
+        and is then ORed with:
+            FACING_LEFT (0x10)      if avatar+0x61 != 0
+            STANDING (0x20)         if avatar+0xDC != 0 (on-ground)
+            WALL_HANG (0x200000)    if on-ground and avatar+0x2088 == 0x14;
+                                    the on-ground branch otherwise clears bit
+                                    21 (`and pkt.flags, 0xFFDFFFFF`)
+            SLIDE (0x20000)         if avatar+0xDD != 0
+            event mask              pkt.flags |= avatar+0x134 (the whole dword,
+                                    one-shot events; see the writer table below)
+        then it clears avatar+0x134 = 0, bounceTileX/Y = -1, bounceItemId = 0
+        (their values already rode pkt.int_x/int_y/value) and sets
+        pkt.float_var = getTick() as float.
+
+        sendTankState @ 0x1404F5E30 owns the ~200 ms gate and adds one more bit:
+            RESET_VISUAL_STATE (0x4)  one-shot latch obj+0x8C -> pkt.flags |= 4
+        (0x1404F5EF9). the send itself is skipped while the body is identical to
+        the previous frame, unless one of the forced bits below is set.
+
+    the one-shot event mask (avatar+0x134),
+        every `or dword ptr [reg+134h], <imm>` writer in the binary, with the
+        trigger known from the surrounding function:
+
+            address     function                       bits         trigger
+            0x1404fe64e NetAvatar::onBurn              0x40         FIRE_DAMAGE
+            0x1404fef10 NetAvatar::onJump              0x80000      UNK_GRAVITY_RELATED
+            0x1404ff0d7 NetAvatar::onJump              0x4000000    DOUBLE_JUMPED
+            0x1404fc5be NetAvatar::onAcidBurn          0x10000000   ACID_DAMAGE
+            0x1404fdcde NetAvatar::onDamagingTile      0x10000      DAMAGE
+            0x1404fe85c sub_1404FE720                  0x20000      SLIDE (punch knockback)
+            0x1404ff324 NetAvatar::onPositionSnapped   0x904        GOT_KILLED|
+                                                                    TILE_CHANGE|
+                                                                    RESET_VISUAL_STATE
+            0x1404ff7f3 sub_1404FF6C0                  0x1800       GOT_PUNCHED|TILE_CHANGE
+            0x1404ffc3f NetAvatar::punchTile           0x800800     POWER_UP_PUNCH_END|
+                                                                    TILE_CHANGE
+            0x1405001e1 sub_140500110                  0x1800       GOT_PUNCHED|TILE_CHANGE
+            0x1405006b6 HandleTileActionResult         0x400000     POWER_UP_PUNCH_START
+            0x1405006ca HandleTileActionResult         0xa00        PUNCH|TILE_CHANGE
+            0x1405008fc NetAvatar::OnPunched           0x1800       GOT_PUNCHED|TILE_CHANGE
+            0x140500a83 sub_140500A70                  0x2800       RESPAWN|TILE_CHANGE
+            0x140501dba NetAvatar::beginPlaceTile      0xc00        PLACE|TILE_CHANGE
+            0x140502cab NetAvatar::onTileBounceHit     0x8000       TRAMPOLINE
+            0x140502ccf NetAvatar::onTileBounceHit     0x20000      SLIDE (BOUNCY hit)
+            0x1405034a2 NetAvatar::tickAux             0x1000800    UNK_TILE_CHANGE|
+                                                                    TILE_CHANGE
+            0x1405065f3 TryPlaceSeedAtTile             0x100000     SWIM
+            0x1405066de TryPlaceSeedAtTile             0x80         JUMP
+            0x14050cba0 applyTankStateAndEvents        0xc00        re-broadcast PLACE
+            0x14050cc3b applyTankStateAndEvents        0x2800       re-broadcast RESPAWN
+            0x140510857 integrateVerticalAxis          0x40000      PARASOL (slow-fall A)
+            0x1405108eb integrateVerticalAxis          0x40000      PARASOL
+            0x140510a93 integrateVerticalAxis          0x80000      UNK_GRAVITY_RELATED (B)
+            0x140510b1e integrateVerticalAxis          0x80000      UNK_GRAVITY_RELATED
+
+        WALK (0x1), FLYING (0x2), OBJECT_COLLECT (0x4000), HAY_CART_RELATED
+        (0x2000000) and UNK3 (0x8000000) have no writer in the client; they are
+        only meaningful on packets the server sends.
+
+    server -> client (STATE),
+        NetAvatar::applyTankStateAndEvents @ 0x14050C560 (rdi = pkt) decodes the
+        received flags (addresses in the 0x14050C6xx-0x14050CCxx range):
+
+            bit 4  0x10        -> avatar+0x61 (facing left)
+            bit 5  0x20        -> avatar+0xDC (on-ground)
+            bit 6  0x40        -> NetAvatar::onBurn
+            bit 7  0x80        -> NetAvatar::onJump
+            bit 8  0x100       -> avatar pos = pkt.vector_x/vector_y then
+                                  NetAvatar::onPositionSnapped
+            bit 9  0x200       -> tile = getTileAt(pkt.int_x, pkt.int_y) ->
+                                  HandleTileActionResult; if the local player's
+                                  collision rect overlaps that tile ->
+                                  NetAvatar::OnPunched(localPlayer, at, attacker)
+                                  and the client sends GOT_PUNCHED (type 23)
+            bit 10 0x400       -> tile -> bounceTileX/Y = int_x/int_y and
+                                  bounceItemId = pkt.value + effect
+                                  (sub_14012ECC0); unless a state block is
+                                  pending (avatar+0x120) the client re-broadcasts
+                                  PLACE|TILE_CHANGE by ORing its own event mask;
+                                  a missing tile logs "All, hell naw"
+            bit 11 0x800       -> (with bit 9: `test flags, 0x280`) audio effect
+                                  sub_140118B10
+            bit 12 0x1000      -> NetAvatar::onPunched (being-hit reaction)
+            bit 13 0x2000      -> re-broadcasts RESPAWN|TILE_CHANGE; controller
+                                  +0x8C = 1; sub_1404F7410 + respawn effect
+            bit 14 0x4000      -> plays "audio/object_collect.wav"
+            bit 15 0x8000      -> NetAvatar::onTileBounceHit(pkt.value, int_x,
+                                  int_y)
+            bit 16 0x10000     -> `test byte [pkt+0x0E], 1` -> onDamagingTile
+            bit 17 0x20000     -> avatar+0xDD (slide)
+            bit 18 0x40000     -> avatar+0xDF (slow-fall A / parasol)
+            bit 19 0x80000     -> avatar+0xE0 (slow-fall B / glide)
+            bit 21 0x200000    -> wall-hang effect; else if avatar+0x2088 == 0x14
+                                  -> avatar+0x2088 = 2
+            bit 22 0x400000    -> pet axis + handlePunchDisplayEffectAndSfx
+            bit 23 0x800000    -> pet axis + local OnPunched + send GOT_PUNCHED
+            bit 24 0x1000000   -> pet axis += 1 while effective < 3
+            bit 26 0x4000000   -> avatar+0xE1 (double-jump animation)
+            bit 28 0x10000000  -> NetAvatar::onAcidBurn
+
+        no handler was found for bits 0, 1, 2, 20, 25, 27 in this function
+        (bit 2 is handled by applyTankStatePacket instead, below).
+
+        NetAvatar::applyTankStatePacket @ 0x1404F58C0 (the avatar+0x10 network
+        state block) copies pkt+0x04..0x34 into avatar+0x10..0x47 first, then
+        tests `byte [pkt+0x0C] & 4` (RESET_VISUAL_STATE): when set, the snapshot
+        is copied into the visual block avatar+0x80..+0xB7, avatar+0x1C |= 4 and
+        the render position snaps to avatar+0x98/0x9C; when clear the visual
+        block is rebuilt from the avatar via fillTankStatePacket.
+
+    forced-send mask (0x10C16740),
+        sendTankState force-sends the frame (bypassing the body memcmp) whenever
+        `pkt.flags & 0x10C16740 != 0` (0x1404F5F30). the mask is exactly ten
+        one-shot bits:
+            0x40 FIRE_DAMAGE           0x4000 OBJECT_COLLECT
+            0x100 GOT_KILLED           0x10000 DAMAGE
+            0x200 PUNCH                0x400000 POWER_UP_PUNCH_START
+            0x400 PLACE                0x800000 POWER_UP_PUNCH_END
+            0x2000 RESPAWN             0x10000000 ACID_DAMAGE
+        TILE_CHANGE (0x800) and GOT_PUNCHED (0x1000) are NOT in the mask. an
+        action frame leaves immediately because avatar+0x134 & 0x800
+        (TILE_CHANGE) resets the 200 ms poll timer at the top of sendTankState
+        (0x1404F5E4C).
+
+    per-type flags,
+        TILE_CHANGE_REQUEST (3): sendTileChangeRequest @ 0x140407570 sets
+            FACING_LEFT (0x10) from the local player's facing (0x14040760F);
+            value/int_x/int_y carry the item and the target tile, vector_x/y the
+            position stamp. no other flags.
+        CALL_FUNCTION (1), SEND_LOCK (15), NPC, PET_BATTLE, SELECT_TILE_INDEX:
+            EXTENDED (0x8) means extended_data follows at pkt+0x38.
+            tankGetExtended @ 0x14053F9D0 returns pkt+0x38 iff the bit is set;
+            SendPacketRaw @ 0x140541BF0 appends pkt->extended_len bytes when it
+            is (0x140541C5D); readers: ProcessTankUpdatePacket (many sites),
+            handleNPC, handlePetBattle, handleSelectTileIndex, handleSendLock,
+            sub_1403F29C0, sub_1403F43E0.
+        GOT_PUNCHED (23), APP_CHECK_RESPONSE (24), APP_INTEGRITY_FAIL (25):
+            the flag word is zero / unused (the app-check hash and the integrity
+            code live in `value`).
+        NETWORLD_SNAPSHOT player records: the per-player `flags` field is a
+            TankFlags dword (samples above show FACING_LEFT, STANDING,
+            DOUBLE_JUMPED); it is kept in the 12-slot snapshot ring and used
+            during interpolation.
+
+    unknowns,
+        - WALK/FLYING/HAY_CART_RELATED/UNK3: no client writer or consumer found
+          in this pass.
+        - SWIM is written by the client but has no receive handler in
+          applyTankStateAndEvents.
+        - the exact triggers of sub_1404FF6C0 / sub_140500110 / sub_140500A70
+          (all `0x1800`/`0x2800` re-broadcast-style writers) are not classified.
 
