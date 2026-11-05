@@ -23,18 +23,28 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from gtools.baked.items import (
+    ABOMINABLE_SNOWMAN_MASK,
+    ABOMINABLE_SNOWMAN_SUIT,
     ADVENTURE_BARRIER,
     ADVENTURE_IDOL_GATE,
     ADVENTURE_ITEM_KEY,
+    ADVENTURE_ITEM_ROPE,
+    ADVENTURE_ROPE_PITON,
     ADVENTURE_TOMB_GATE,
     ANGEL_OF_MERCY_S_WINGS,
+    BOB_THE_GROSS_BLOB,
     CARDBOARD_NESSIE,
     CELESTIAL_HALO,
+    CLAWS_OF_BARKO,
+    CLIMBING_BOOTS,
+    CLIMBING_PICKS,
+    CLIMBING_WALL,
     CLOAK_OF_FALLING_WATERS,
     CLOAK_OF_HOVERATION,
     DA_VINCI_WINGS,
     DARKEST_SKULL_PARASOL,
     DRACONIC_ROCKET_PARASOL,
+    EZIO_S_BOOTS,
     FISHING_DINGHY,
     FLAMING_FLOATIES,
     FLOATING_LEAF,
@@ -50,12 +60,14 @@ from gtools.baked.items import (
     HELPING_HAND,
     HYPERTECH_ANTIGRAVITY_FIELD,
     ICE_CRUST_BLOCK,
+    ICE_SKATES_OF_WINTER,
     JET_SKI,
     JET_SKI_CHARIOT,
     LEGENDARY_WINGS,
     LIGHTNING_UMBRELLA,
     LOCKED_ADVENTURE_DOOR,
     MAGIC_CARPET,
+    MOUNTAIN_BOOTS,
     OIL_PAPER_UMBRELLA,
     PARASOL,
     POSSESSING_SCARF,
@@ -63,6 +75,8 @@ from gtools.baked.items import (
     RING_OF_WINDS,
     SEA_MONSTER_FLOATIE,
     SILK_SCARF,
+    SLEDDING_PENGUIN,
+    SLIPPERY_CHEMICAL_COAT,
     SLIPPERY_FLAG_POLE,
     SNOWSHOES,
     SNOW_BLOCK,
@@ -78,9 +92,11 @@ from gtools.baked.items import (
     SURFBOARD_FLAME,
     SURFBOARD_WAVE,
     SWAN_BOAT,
+    TARANTULA_LEGS,
     TURKEY_HAT,
     UNICORN_FLOATIE,
     WATER_WINGS,
+    WILL_OF_THE_WILD,
     ZEPHYR_HELM,
 )
 from gtools.core.growtopia.items_dat import ItemInfoCollisionType, ItemInfoFlag2, ItemInfoType, item_database
@@ -278,6 +294,7 @@ class PlayerController:
         self.jump = False
         self.jump_latch = False
         self.double_jumped = False
+        self.climbing = False  # Wall Climbing grip (handleTileInteraction grab)
 
         self.force_send = False
 
@@ -372,6 +389,8 @@ class PlayerController:
         self.left_ground = False
         if not can_jump:
             return
+
+        self.climbing = False  # a jump releases the climb grip
 
         was_grounded = self.grounded
         shoes = clothing.shoes if clothing is not None else 0
@@ -676,6 +695,88 @@ class PlayerController:
 
         return (pull_x, pull_y)
 
+    def _slippery_clothing(self) -> bool:
+        """The Slippery mod (''glide on any surface'').
+
+        ``sub_140505CB0`` (the tile-below query) ORs slide clothing into its
+        result: Abominable Snowman Mask (7410, hat) + Suit (7408, shirt), Bob The
+        Gross Blob (8374, neck), Slippery Chemical Coat (9078, shirt) or Sledding
+        Penguin (10404, shoes) -- offsets ``+0x2C6/+0x2C8/+0x2D6/+0x2CC``.
+        """
+        clothing = self._clothing()
+        if clothing is None:
+            return False
+
+        return (
+            (clothing.hat == ABOMINABLE_SNOWMAN_MASK and clothing.shirt == ABOMINABLE_SNOWMAN_SUIT)
+            or clothing.neck == BOB_THE_GROSS_BLOB
+            or clothing.shirt == SLIPPERY_CHEMICAL_COAT
+            or clothing.shoes == SLEDDING_PENGUIN
+        )
+
+    def _wearing_skates(self) -> bool:
+        """The Skating mod: ``ICE_SKATES_OF_WINTER`` cancels the slide flag."""
+        clothing = self._clothing()
+
+        return clothing is not None and clothing.shoes == ICE_SKATES_OF_WINTER
+
+    def _climb_gear(self) -> bool:
+        """Wall Climbing gear -- the client checks inventory slots 5/3/7.
+
+        ``handleTileInteraction`` accepts hand ``3588`` Climbing Picks / ``8042``
+        Claws of Barko; shoes ``3590`` Climbing Boots / ``8018`` S.P.I.D.E.R.
+        Legs / ``9034`` Tarantula Legs / ``5440`` Mountain Boots / ``7094``
+        Ezio's Boots; hair ``5712`` Will of the Wild (the client additionally
+        requires its toggle bit 8 in ``avatar+0x18C``, not modelled here).
+        """
+        clothing = self._clothing()
+        if clothing is None:
+            return False
+
+        if clothing.hand in (CLIMBING_PICKS, CLAWS_OF_BARKO):
+            return True
+        if clothing.shoes in (CLIMBING_BOOTS, 8018, TARANTULA_LEGS, MOUNTAIN_BOOTS, EZIO_S_BOOTS):
+            return True
+
+        return clothing.hair == WILL_OF_THE_WILD
+
+    def _climb_surface(self) -> Tile | None:
+        """The climbable tile at the avatar centre, if the gear/rope allows it."""
+        tile = self._centre_tile()
+        if tile is None or tile.fg_id <= 0:
+            return None
+
+        if tile.fg_id == CLIMBING_WALL:
+            return tile if self._climb_gear() else None
+        if tile.fg_id == ADVENTURE_ROPE_PITON:
+            return tile if ADVENTURE_ITEM_ROPE in self.permissions.tile_cache else None
+
+        return None
+
+    def _try_climb(self) -> bool:
+        """Climb grab -- the wall-response branch of ``handleTileInteraction``.
+
+        With ``vy >= 0`` (falling or level), not grounded, the tile at the
+        collision-rect centre (``getTileAtPlayerPosition``) must be a
+        ``CLIMBING_WALL`` (3586) while the climb gear is worn, or an
+        ``ADVENTURE_ROPE_PITON`` (4700) with the Adventure Rope (1694) in the
+        avatar's five-slot touch cache (``TileExistsAt``). The grab zeroes both
+        axes and sets grounded; while ``climbing`` the tick stays grounded (the
+        client's grab sets ``0xDC`` and the tile-step query leaves it set when no
+        ground tile is found), so the avatar hangs until it jumps or the centre
+        tile stops being climbable.
+        """
+        if self.climbing or self.vy < 0.0 or self.grounded:
+            return False
+        if self._climb_surface() is None:
+            return False
+
+        self.climbing = True
+        self.vx = self.vy = 0.0
+        self.grounded = True
+
+        return True
+
     def _wind_direction(self) -> bool | None:
         """``True`` when the centre tile is a WIND tile facing left, ``False`` for
         right, ``None`` when there is no WIND tile under the avatar."""
@@ -726,6 +827,10 @@ class PlayerController:
                     self.vx *= DAMAGE_SLIP_WALL_BOUNCE
                 else:
                     self.vx = self.vx * SLIDE_WALL_BOUNCE if self.sliding else 0.0
+                # the client's climb grab lives in this wall-response branch and can
+                # freeze the avatar on a Climbing Wall / roped piton
+                if self._try_climb():
+                    return
 
         # Y probe -- NetAvatar vfunc_48 (0x1405021D0). The `+1` px quirk keeps a grounded
         # avatar in contact with whatever it is standing on; deadly returns 1 (continue),
@@ -955,6 +1060,14 @@ class PlayerController:
         )
 
     def _settle(self) -> None:
+        if self.climbing:
+            # the grab keeps the avatar grounded; the client's tile-step query leaves
+            # 0xDC set while no ground tile is found under the climbable column
+            self.grounded = True
+            self.vy = 0.0
+
+            return
+
         feet = self.y + self.height
         row = math.floor((feet + 0.5) / TILE)
         support = any(self._is_ground(tx, row) for tx in self._columns(self.x + 2.0, self.x + self.width - 2.0))
@@ -973,12 +1086,17 @@ class PlayerController:
 
     def _check_tile_mod(self) -> None:
         centre = self.world.get_tile(math.floor((self.x + self.width / 2) / TILE), math.floor((self.y + self.height / 2) / TILE))
+        if self.climbing and self._climb_surface() is None:
+            self.climbing = False  # walked off the column / gear changed
         was_water = self.in_water
         self.in_water = bool(centre and centre.flags & TileFlags.IS_WET)
 
         row = math.floor((self.y + self.height) / TILE)
         below = [tile for tx in self._columns(self.x + 2.0, self.x + self.width - 2.0) if (tile := self.world.get_tile(tx, row)) is not None]
-        if any(self._is_slippery(tile) for tile in below):
+        # `sub_140505CB0` also honours the Slippery clothing (slide on any surface)
+        # and the Skating mod (ICE_SKATES_OF_WINTER forces the slide flag off)
+        slippery = not self._wearing_skates() and (self._slippery_clothing() or any(self._is_slippery(tile) for tile in below))
+        if slippery:
             self.sliding = True
         elif self.grounded:
             self.sliding = False

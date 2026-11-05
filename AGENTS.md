@@ -245,6 +245,11 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
   `_is_ground`; permission logic: `_lock_passes`, `_lock_check`, the per-type
   `_*_open` helpers and `PlayerController.permissions`
   (`CollisionPermissions`).
+- Special tiles / clothing: `_apply_wind` (WIND push tiles),
+  `_gravity_well_pull` (Gravity Well), `_try_climb` + `climbing` (Wall Climbing
+  gear via `Player.clothing`), `_slippery_clothing` / `_wearing_skates`
+  (Slippery / Skating). Evidence and the mods classification: see
+  `docs/netavatar-physics.md` §13 and `docs/02_packet` for the wire flags.
 - Tile changes: `touch_press`/`touch_hold`/`touch_release` model the client
   `HandleTouch` pipeline — per-tile de-dup (the Fist's `item_type` 0 repeats,
   items do not), 150 px reach, the 11 s hold timeout, `PUNCH_REPEAT_MS` for the

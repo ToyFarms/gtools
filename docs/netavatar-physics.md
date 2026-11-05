@@ -1738,10 +1738,13 @@ verified slot-by-slot against `items.dat` (`clothing_type`):
 | 7 | `hair` | `5712` Will of the Wild |
 
 The Will of the Wild additionally requires a client-side toggle (bit 8 of
-`avatar+0x18C`). The climb grab is **not ported** to `controller.py` yet — the
-client checks **inventory** slots, while the engine only has the player's worn
-`Player.clothing` (used for the slow-fall/water physics, §6B), so it remains a
-client-only mechanic for now.
+`avatar+0x18C`) which `PlayerController` does not model. The climb grab **is
+ported**: the engine's `Player.clothing` holds the equipped items, so
+`_climb_gear` (`climb` in §12.5) maps the client's inventory slots 5/3/7 onto
+`hand`/`shoes`/`hair`, and `_try_climb` re-checks the centre tile every
+wall-response. The grab is sticky through `PlayerController.climbing` (the
+client's grab sets `0xDC = 1` and the tile-step query leaves it set while no
+ground tile is found); jumping or leaving the column clears it.
 
 Behaviour summary: **falling onto/into a Climbing Wall column (or grabbing a
 piton with a rope placed nearby) while wearing any of the gear freezes you in
@@ -1845,6 +1848,65 @@ The first implementation pass is in `gtools/core/growtopia/physics/controller.py
 | mud (`0x0DE`) | `_check_tile_mod` sets `mud` from `ItemInfoType.MUD` under the feet; the horizontal cap becomes `max_velocity * 0.6` and the jump is reduced |
 | — (mods) | `modBit0` charged jump (`unk_090[56]`, `+0xC8`), `modBit2` → `flag_1B1` → `accelMulFlag` (15x dive) and the `charFlags & 1` flying path are **not** modelled (no server mods in the engine) |
 | — (particles) | the hover-particle gravity override (flag `0x40`) and particle type `7` are not modelled (no particle manager) |
-| climb grab | **not ported** — the client only reaches it through the wall branch while `vy >= 0 && !grounded`, gated on **inventory** gear (`GetInventorySlot` slots 5/3/7: `3588`/`8042` hand, `3590`/`8018`/`9034`/`5440`/`7094` shoes, `5712` hair with `avatar[0x18C] & 0x100`) for `CLIMBING_WALL(3586)`, or `ADVENTURE_ROPE_PITON(4700)` with item `1694` nearby; the grab zeroes both axes, clears `0xCC` and sets `grounded`. Worn `Player.clothing` is now available to the engine, but inventory is not |
+| climb grab | `_try_climb` / `_climb_surface` / `_climb_gear` / `PlayerController.climbing`: the wall-response branch with `vy >= 0 && !grounded`, centre tile `CLIMBING_WALL(3586)` with gear (`Player.clothing` hand `3588`/`8042`, shoes `3590`/`8018`/`9034`/`5440`/`7094`, hair `5712`) or `ADVENTURE_ROPE_PITON(4700)` with `1694` in `permissions.tile_cache`; zeroes both axes and holds `grounded` until a jump or the column ends |
+| WIND tiles | `_apply_wind` / `_wind_direction` (§6.2.3): centre tile `item_type == WIND`, push toward `TileFlags.FLIPPED_X`, `100` oppose clamp, speed-cap fallback |
+| Gravity Well | `_gravity_well_pull` (see §13.2): active `6772` + `IS_ON` wells, nearest inside `tile_range * 32`, `normalize * 60` with the falling/upward modifiers |
 | — (extra axes) | `handleDamagingTileCollision`/`sub_1404FC0B0` also call `sub_14050B830` when the `0x2CF0`/`0x2CFC` axis pair is perturbed; those axes are not modelled |
+
+---
+
+## 13. Clothing / tile mods — port status
+
+`mods.txt` (the wiki mod list) classified against the client code. "client
+physics" means the client changes movement locally; the rest is
+server-authoritative (axis deltas arrive via `SET_CHARACTER_STATE`, §6A) or has
+no movement effect.
+
+### 13.1 Client-side, ported
+
+| mod | items | client code | engine |
+|---|---|---|---|
+| Slow Fall (A/B) | parasol / wing lists (§5.2) | `integrateVerticalAxis` (`+0xDF`/`+0xE0`, event bits `0x40000`/`0x80000`) | `_slow_fall_flags` |
+| Float on Water | floaties + vehicle lists (§6B.3) | `updateBlockStateFromPlayerInteraction` (`+0x1FB9`) | `_update_water_state` |
+| Double Jump | wing list or `charFlags & 2` | `onJump` (airborne only, event bit 26) | `_jump` token + `DOUBLE_JUMPED` event |
+| Wall Climbing | hand 3588/8042, shoes 3590/8018/9034/5440/7094, hair 5712 | `handleTileInteraction` wall branch (0x140501DF0) | `_try_climb` / `climbing` |
+| Slippery | hat 7410 + shirt 7408, neck 8374, shirt 9078, shoes 10404 | `sub_140505CB0` slide clothing | `_slippery_clothing` |
+| Skating | shoes 5418 | `sub_140505CB0` exclusion | `_wearing_skates` |
+| reduced jumps | HAY, SNOW_BLOCK without SNOWSHOES, MUD, water, flag pole | `onJump` `-270` | `_jump` reduced launch |
+| water speed | any | `validatePhysics` `velocityInWater` cap | `_simulate` cap |
+
+### 13.2 Tile effects added with the same pass
+
+* **WIND** (`ItemInfoType.WIND`, 60): the tail of `validatePhysics`
+  (0x14050587E) pushes the horizontal axis toward the tile facing — tile flag
+  `0x20` = `FLIPPED_X` — to the speed cap, with motion against the wind clamped
+  to `100` (`kBounceClamp_100p0`) and the `1000` cross-zero threshold
+  (`kBounceCrossZero_1000p0`). Items: Summer Breeze 2864, Clover Fan 10704,
+  Conveyor Block 11192, Megawatt Bass Speaker 5518, Space Conveyor Block 11424,
+  Starship Turbo Fan 7018, Winter Wind 3232. Engine: `_apply_wind`
+  (`tests/test_physics_wind.py`).
+* **Gravity Well** (6772): `sub_140572FB0` tracks wells with their `IS_ON` bit in
+  a set on the particle manager (`+0x3668`); `NetAvatar::tickAux` (0x140503DAE)
+  copies the set and calls `findNearestInteractableTileDirection`
+  (0x140510FE0), which selects the nearest well whose centre falls inside a
+  `tile_range * 32` box (the well's `tile_range` is 5, runtime item offset
+  `+0x25C`) and returns `normalize(wellCentre - avatarCentre) * 60` with:
+  while falling the horizontal component ×3; an upward pull is zeroed when
+  `|dx| > |dy|` or `|dx| > 16`; a mostly-vertical upward pull (`|y| > |x|`) ×7.
+  Engine: `_gravity_well_pull` folded into the tick's movement delta
+  (`tests/test_physics_gravity_well.py`). The exact client application of the
+  vector inside `tickAux` (velocity clamps around the interaction probe) is not
+  fully decoded; the engine's move-delta application is a model.
+
+### 13.3 Server-side (no client movement branch)
+
+Speedy, Speedy in Water, High Jump, Low Jump, Punch Damage, Punch Range, Punch
+Power, Punch Pull, Build Range, Extra Gems, Extra Blocks, Fireproof, Ghost
+Immunity, Healing, Skin Color, Knock Back Reduction, Damage Reduction, Tree
+Harvesting, Light Source, XP Buff, Grow Effect, Zombie Weapon, Cookie Hunter and
+the Miscellaneous items. Speedy / High Jump / Low Jump arrive as
+`SET_CHARACTER_STATE` axis deltas (§6A) — the client launch is always
+`-450`/`-270` and the horizontal cap is the gravity axis — so they need no
+client-side branch. Punch Range is the dead legacy item-9638 path
+(`docs/tile-change-request.md` §3.3).
 
