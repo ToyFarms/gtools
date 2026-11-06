@@ -129,8 +129,18 @@ Entry: `(TouchInputState *state, float screenX, vec2f *worldPos, bool isBreakTap
   `TILE_CHANGE|POWER_UP_PUNCH_END` (`0x800800`), then
   `sendTileChangeRequest(gs, tile, 0x12 /* FIST */, 0, 0.0)`.
 * **Placement**: `NetAvatar::beginPlaceTile` @ `0x140501DB0` ORs
-  `PLACE|TILE_CHANGE` (`0xC00`) and prepares the local preview; the request is sent with
-  the selected item id (seed planting passes `splice`/`item_on_tree`).
+  `PLACE|TILE_CHANGE` (`0xC00`) and prepares the local preview (pending tile + item id
+  in `bounceTileX/Y` and `+0x17C`); it does **not** send — `HandleTouch`'s tail calls
+  `sendTileChangeRequest(gs, tile, itemId, 0, 0.0)` for the send. A **seed plant is the
+  same request** as a block placement: the `hasExtraFloat`/`float_var` variant is dead
+  in the shipped build (`getProtocolVersion() >= 999999` kill switch at `0x1404075D8`),
+  so the wire packet carries only the item id (the seed's odd id), the tile and the
+  position stamp. Seeds differ only in the client-side validation (`isItemSeed` +
+  `IsTileBelowPlantable`, "Can't plant a tree in the air!") and in the splice case (a
+  seed on an existing seed tile / `BUNNY_EGG`); the splice is marked by the *server*
+  broadcast's `jump_count == 1` -> `WILL_SPAWN_SEEDS_TOO`. See `docs/02_packet`
+  ("tile harvest / plant") for the harvest (tractor) and plant (chicken plow) flows
+  ported in `PlayerController._walk_item_mods`.
 * **Wrench (type 1)** ends in the "can't place" branch for breakable tiles.
 
 So the chained STATE frame's flag word matches the action: `PUNCH|TILE_CHANGE` for a
@@ -172,8 +182,16 @@ This is the client's auto-punch (walking into a block).
 ### 4.3 `NetAvatar::tryPlaceSeedOrFertilizer` @ `0x140506910` — per-tick, from `tickAux`
 
 11 KB function with 3 send sites (0x140506B16 seed planting, 0x140506F89 fist request,
-0x1405070DF selected-item request). Most branches are `isGoblin`/pet/seed-specific
-(work-station interactions); the seed path checks `IsTileBelowPlantable`.
+0x1405070DF selected-item request). Most branches are pet/seed-label/work-station
+specific; the seed path checks `IsTileBelowPlantable`. The walk-over item mods live
+here: **Tree Harvesting** shoes (898/1830/1966/9650/10504) send the FIST request for a
+planted seed tile (0x140506F89) and **Chicken Plow / Doom Plow** (5022/5212) send the
+selected seed's placement request while walking (0x140506B16, plus the splice re-request
+for an already-planted tile). The state gate shared with `HandleTouch` and
+`updateTileInteraction` is `canAvatarInteract` (renamed from `isGoblin` — it is not a
+goblin test; only its fallback branch reads the Present Goblin Disguise item 4260).
+Full packet/field breakdown: `docs/02_packet` ("tile harvest / plant"); port:
+`PlayerController._walk_item_mods`.
 
 ### 4.4 `handlePveNpcProjectileHit` @ `0x14054ADF0` — dead code
 

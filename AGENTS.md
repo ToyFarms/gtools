@@ -250,6 +250,14 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
   gear via `Player.clothing`), `_slippery_clothing` / `_wearing_skates`
   (Slippery / Skating). Evidence and the mods classification: see
   `docs/netavatar-physics.md` §13 and `docs/02_packet` for the wire flags.
+- Walk-over item mods: `_walk_item_mods` (called from `step()`) ports
+  `NetAvatar::tryPlaceSeedOrFertilizer` (0x140506910) — the Tree Harvesting shoes
+  (898/1830/1966/9650/10504) send the FIST request for a planted seed tile, the
+  Chicken/Doom Plow (5022/5212) plant the selected seed (the splice re-request on
+  an already-planted tile). A seed is *validated* on the tap path (`HandleTouch`:
+  `IsTileBelowPlantable`, else "Can't plant a tree in the air!") but uses the
+  same `TILE_CHANGE_REQUEST` as a block — evidence: `docs/02_packet` ("tile
+  harvest / plant").
 - Tile changes: `touch_press`/`touch_hold`/`touch_release` model the client
   `HandleTouch` pipeline — per-tile de-dup (the Fist's `item_type` 0 repeats,
   items do not), 150 px reach, the 11 s hold timeout, `PUNCH_REPEAT_MS` for the

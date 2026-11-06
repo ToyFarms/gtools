@@ -33,8 +33,10 @@ from gtools.baked.items import (
     ADVENTURE_TOMB_GATE,
     ANGEL_OF_MERCY_S_WINGS,
     BOB_THE_GROSS_BLOB,
+    BUNNY_EGG,
     CARDBOARD_NESSIE,
     CELESTIAL_HALO,
+    CHICKEN_PLOW,
     CLAWS_OF_BARKO,
     CLIMBING_BOOTS,
     CLIMBING_PICKS,
@@ -43,6 +45,8 @@ from gtools.baked.items import (
     CLOAK_OF_HOVERATION,
     DA_VINCI_WINGS,
     DARKEST_SKULL_PARASOL,
+    DEAR_JOHN_TRACTOR,
+    DOOM_PLOW,
     DRACONIC_ROCKET_PARASOL,
     EZIO_S_BOOTS,
     FISHING_DINGHY,
@@ -55,6 +59,8 @@ from gtools.baked.items import (
     GOLDEN_SILK_SCARF,
     GROW_AIR_BALLOON,
     GROW_X_ROCKET_WINGS,
+    HARVESTER,
+    HARVESTER_OF_SORROWS,
     HARVEST_SCARF,
     HAY,
     HELPING_HAND,
@@ -70,6 +76,7 @@ from gtools.baked.items import (
     MOUNTAIN_BOOTS,
     OIL_PAPER_UMBRELLA,
     PARASOL,
+    PINEAPPLE_PLOUGH,
     POSSESSING_SCARF,
     RAYMAN_S_HAIR,
     RING_OF_WINDS,
@@ -97,12 +104,13 @@ from gtools.baked.items import (
     UNICORN_FLOATIE,
     WATER_WINGS,
     WILL_OF_THE_WILD,
+    ZAMGROWNI,
     ZEPHYR_HELM,
 )
 from gtools.core.growtopia.items_dat import ItemInfoCollisionType, ItemInfoFlag2, ItemInfoType, item_database
 from gtools.core.growtopia.packet import TankFlags, TankPacket, TankType
 from gtools.core.growtopia.player import CharacterFlags, CharacterState, Clothing
-from gtools.core.growtopia.world import BalloonOMaticTile, LockTile, StormyCloudTile, Tile, TileFlags, World
+from gtools.core.growtopia.world import BalloonOMaticTile, DoorTile, LockTile, SeedTile, StormyCloudTile, Tile, TileFlags, World
 
 if TYPE_CHECKING:
     from gtools.core.growtopia.inventory import Inventory
@@ -221,6 +229,12 @@ CLIMB_GEAR_ITEMS = frozenset({CLIMBING_PICKS, CLAWS_OF_BARKO, CLIMBING_BOOTS, 80
 SLIPPERY_ITEMS = frozenset({ABOMINABLE_SNOWMAN_SUIT, ABOMINABLE_SNOWMAN_MASK, BOB_THE_GROSS_BLOB, SLIPPERY_CHEMICAL_COAT, SLEDDING_PENGUIN})
 _SLIPPERY_ALONE = SLIPPERY_ITEMS - {ABOMINABLE_SNOWMAN_MASK, ABOMINABLE_SNOWMAN_SUIT}
 SKATING_ITEMS = frozenset({ICE_SKATES_OF_WINTER})
+
+# -- walk-over item mods (NetAvatar::tryPlaceSeedOrFertilizer, 0x140506910) ------------
+# Tree Harvesting shoes: harvest the tree on the tile the avatar walks over.
+TREE_HARVESTING_ITEMS = frozenset({DEAR_JOHN_TRACTOR, HARVESTER, HARVESTER_OF_SORROWS, PINEAPPLE_PLOUGH, ZAMGROWNI})
+# Chicken Plow / Doom Plow: plant the selected seed while walking (splice on a seed tile).
+PLOW_ITEMS = frozenset({CHICKEN_PLOW, DOOM_PLOW})
 
 FIST_ID = 18  # ItemInfoType.FIST -- the hand/punch item (client itemId 0x12)
 WRENCH_ID = 32  # ItemInfoType.WRENCH -- the "no item selected" fallback for solid tiles
@@ -492,6 +506,7 @@ class PlayerController:
         self.tick += 1
         self.time_ms += self.fixed_dt * 1000.0
         self._simulate()
+        self._walk_item_mods()  # NetAvatar::tryPlaceSeedOrFertilizer (0x140506910)
         self._send_state()
         self._auto_respawn()
 
@@ -814,6 +829,79 @@ class PlayerController:
         self.grounded = True
 
         return True
+
+    # -- walk-over item mods (NetAvatar::tryPlaceSeedOrFertilizer) -----------------
+
+    @staticmethod
+    def _is_seed_item(item_id: int) -> bool:
+        """``isItemSeed`` (0x1403F5B80): the item is a seed (the odd-half of each pair)."""
+        item = item_database.get(item_id)
+
+        return item is not None and item.item_type == ItemInfoType.SEED
+
+    def _collision_on(self, tx: int, ty: int) -> bool:
+        """``isTileCollisionOn`` (0x140554F60): the tile's collision is active.
+
+        ``IsTileBelowPlantable`` (0x140561B60) resolves ``(tileX, tileY + 1)`` and requires
+        this -- a seed needs a solid tile under it.
+        """
+        return self._collision(tx, ty) != ItemInfoCollisionType.NONE
+
+    def _tree_ready(self, tile: Tile) -> bool:
+        """The Tree Harvesting growth gate.
+
+        ``tryPlaceSeedOrFertilizer`` harvests when the seed's remaining growth
+        (``extra+0x74``, refreshed by ``setSeedTimeCountdown``) is below the tree item's
+        in-memory ``unk5`` (ItemDat+0xD0). The engine has no growth clock and cannot map
+        that field from items.dat, so a seed tile carrying its extra counts as ready --
+        the request is server-validated either way (docs/02_packet).
+        """
+        return isinstance(tile.extra, SeedTile)
+
+    def _walk_item_mods(self) -> None:
+        """The per-tick walk-over mods -- ``NetAvatar::tryPlaceSeedOrFertilizer`` (0x140506910).
+
+        Verified branches (both additionally gated on the client's ``canAvatarInteract``,
+        a state/velocity gate the engine does not model):
+
+        * **Tree Harvesting** shoes (898 Dear John Tractor, 1830 Harvester, 1966 Harvester
+          Of Sorrows, 9650 Pineapple Plough, 10504 Zamgrowni): the tile at the player
+          position must be a planted seed with its extra; the request is the FIST
+          ``TILE_CHANGE_REQUEST`` (value ``0x12``) -- the same packet as a manual punch --
+          and the server answers with the harvest broadcast. The client also bumps its
+          ``axis80`` animation axis here, which the engine has no equivalent for.
+        * **Chicken Plow / Doom Plow**: only while grounded and moving (``vx != 0``, the
+          client's ``horizontalVelocity`` test):
+          - an empty centre tile that is not a door, whose tile below has collision on,
+            with a seed selected -> send the placement request with the selected seed id;
+          - an existing seed tile with an extra that is not already spliced
+            (``flags & WAS_SPLICED``) and a seed selected -> send the same request again;
+            the server marks the splice (``WILL_SPAWN_SEEDS_TOO``).
+        """
+        clothing = self._clothing()
+        if clothing is None:
+            return
+
+        tile = self._centre_tile()
+        if tile is None:
+            return
+
+        if clothing.shoes in TREE_HARVESTING_ITEMS:
+            if self._tree_ready(tile):
+                self.request_punch(tile.pos.x, tile.pos.y)
+            return
+
+        if clothing.shoes not in PLOW_ITEMS or not self.grounded or self.vx == 0.0:
+            return
+        if not self._is_seed_item(self.hand_item):
+            return
+
+        tx, ty = tile.pos.x, tile.pos.y
+        if tile.fg_id == 0:
+            if not isinstance(tile.extra, DoorTile) and self._collision_on(tx, ty + 1):
+                self.request_place(self.hand_item, tx, ty)
+        elif self._tree_ready(tile) and not tile.flags & TileFlags.WAS_SPLICED:
+            self.request_place(self.hand_item, tx, ty, splice=True)
 
     def _wind_direction(self) -> bool | None:
         """``True`` when the centre tile is a WIND tile facing left, ``False`` for
@@ -1513,7 +1601,14 @@ class PlayerController:
         * **hold** ticks never place -- only the tap branch prepares a placement
           (``beginPlaceTile`` -> ``PLACE|TILE_CHANGE``); repeated punches are gated
           by the punch animation (``avatar+0x1A4 == 18``), modelled here with
-          ``PUNCH_REPEAT_MS``.
+          ``PUNCH_REPEAT_MS``;
+        * **seeds are validated locally, not sent differently** -- for a seed
+          (``isItemSeed``) on an empty tile the client requires
+          ``IsTileBelowPlantable`` and otherwise aborts with "(Can't plant a tree in
+          the air!)" without sending; the request itself is the same
+          ``TILE_CHANGE_REQUEST`` as a block placement (docs/02_packet -- the
+          ``hasExtraFloat``/splice field is behind the protocol kill switch). A seed
+          placed on an existing seed tile (or ``BUNNY_EGG``) is the *splice* case.
         """
         if self.killed:
             return
@@ -1545,6 +1640,13 @@ class PlayerController:
 
         elif not is_break_tap:
             return  # hold ticks skip the tap branch's placement preparation
+
+        if self._is_seed_item(item_id):
+            if tile.fg_id == 0 and not self._collision_on(tx, ty + 1):
+                return  # "(Can't plant a tree in the air!)" -- the client sends nothing
+            if isinstance(tile.extra, SeedTile) or tile.fg_id == BUNNY_EGG:
+                self.request_change(item_id, tx, ty, splice=True)  # second seed -> splice
+                return
 
         self.request_change(item_id, tx, ty)
 

@@ -85,16 +85,55 @@ payload is determiend through the type,
                                              extended_data=b'\x01\x00\x02\x15\x00\x00\x00OnClearItemTransforms',
                                          )
     UPDATE_STATUS                    (2 ): (todo)
-    TILE_CHANGE_REQUEST              (3 ): (todo)
+    TILE_CHANGE_REQUEST              (3 ): every tile edit -- punch/harvest, block
+                                         place, seed plant. sendTileChangeRequest @
+                                         0x140407570 builds it (56 bytes, channel 4):
+                                         value = the used item id (0x12 = FIST
+                                         punch/harvest, an odd id = seed plant -- seeds
+                                         are always the odd half of the pair -- else the
+                                         placed item), int_x/int_y = the target tile
+                                         (tile->tileX/Y), vector_x/vector_y = the local
+                                         player's position stamp (the server's
+                                         reach-validation input), flags |=
+                                         FACING_LEFT (0x10) when the player faces left
+                                         (0x14040760F). float_var (+0x10) is only
+                                         written on the hasExtraFloat path, which aborts
+                                         unless getProtocolVersion() >= 999999
+                                         (0x1404075D8) -- dead in the shipped build, so
+                                         a seed plant is byte-identical in shape to a
+                                         block place; see the tile harvest/plant block
+                                         below.
+                                         the server -> client broadcast of the same
+                                         type carries the placement results:
+                                         jump_count == 1 -> WILL_SPAWN_SEEDS_TOO (the
+                                         splice), IS_SEEDLING is set for seed tiles,
+                                         animation_type -> changeTileExtraType(extra),
+                                         target_net_id -> setSeedPlacedTime(extra),
+                                         flags & FACING_LEFT -> FLIPPED_X for FLIPPABLE
+                                         items (handleTileTreeState @ 0x14055E300).
     SEND_MAP_DATA                    (4 ): (todo)
     SEND_TILE_UPDATE_DATA            (5 ): (todo)
     SEND_TILE_UPDATE_DATA_MULTIPLE   (6 ): (todo)
     TILE_ACTIVATE_REQUEST            (7 ): (todo)
-    TILE_APPLY_DAMAGE                (8 ): (todo)
+    TILE_APPLY_DAMAGE                (8 ): tile on/off toggle, applied by
+                                         handleTileTreeState @ 0x14055E300:
+                                         toggleOnOff(tile, value, flags & UNK3,
+                                         target_net_id) from int_x/int_y; an item_type
+                                         36 tile additionally takes animation_type as
+                                         its extra type (changeTileExtraType).
     SEND_INVENTORY_STATE             (9 ): (todo)
     ITEM_ACTIVATE_REQUEST            (10): (todo)
     ITEM_ACTIVATE_OBJECT_REQUEST     (11): (todo)
     SEND_TILE_TREE_STATE             (12): (todo)
+    SEND_TILE_TREE_STATE             (12): server -> client tree/seed state. applied by
+                                         handleTileTreeState @ 0x14055E300: on a seed
+                                         tile, target_net_id == -1 clears the tree
+                                         (replaceTileForegroud(BLANK) + paint reset) --
+                                         the harvest result; otherwise
+                                         changeTileExtraType(extra, value), jump_count
+                                         == 1 -> WILL_SPAWN_SEEDS_TOO, animation_type ==
+                                         1 -> IS_SEEDLING, and
+                                         setSeedPlacedTime(extra, target_net_id).
     MODIFY_ITEM_INVENTORY            (13): (todo)
     ITEM_CHANGE_OBJECT               (14): (todo)
     SEND_LOCK                        (15): (todo)
@@ -727,6 +766,45 @@ TANK_FLAGS,
             TankFlags dword (samples above show FACING_LEFT, STANDING,
             DOUBLE_JUMPED); it is kept in the 12-slot snapshot ring and used
             during interpolation.
+
+    tile harvest / plant,
+        NetAvatar::tryPlaceSeedOrFertilizer @ 0x140506910 -- per tick from tickAux;
+        ported in PlayerController._walk_item_mods. All three requests below are plain
+        TILE_CHANGE_REQUESTs; there is no separate harvest or plant packet.
+
+        Tree Harvesting shoes (898 Dear John Tractor, 1830 Harvester, 1966 Harvester Of
+            Sorrows, 9650 Pineapple Plough, 10504 Zamgrowni -- clothingShoes @
+            avatar+0x2CC, 0x140506ECF): when the tile at the player position is a
+            planted seed (isTileSeed @ 0x140555260: extra type == SEED_TILE) with its
+            extra, the client sends the FIST TILE_CHANGE_REQUEST (value 0x12) for that
+            tile (0x140506F89) -- harvesting is a punch, not its own packet. The growth
+            gate compares the seed's remaining time (getSeedTimeRemaining @ 0x140557870
+            = extra+0x74 seconds, refreshed by setSeedTimeCountdown @ 0x140557570) with
+            the tree item's in-memory ItemDat field at +0xD0 (read after
+            IsSeedRandomGrow @ 0x140536C60 maps the id to its RANDOM_GROW variant):
+            harvest while remaining < that value. The in-memory item record is a fixed
+            1616-byte layout while items.dat is length-prefixed, so that field cannot be
+            mapped by name from our parser -- the engine treats any seed tile carrying
+            its extra as ready (controller._tree_ready).
+
+        Chicken Plow / Doom Plow (5022 / 5212, 0x140506A2C; additionally gated on
+            onGround and horizontalVelocity != 0) with a seed selected (isItemSeed @
+            0x1403F5B80: item_type == SEED, or ITEM_PLANTER holding one):
+            - an empty tile (fg == BLANK) that is not a door (IsTileDoor @ 0x1405550E0)
+              whose tile below has collision on (IsTileBelowPlantable @ 0x140561B60) ->
+              plant: TILE_CHANGE_REQUEST with value = the selected seed id
+              (0x140506B16);
+            - a tile that already holds a seed with an extra and no WAS_SPLICED (0x4)
+              -> the same request again: the splice (the server broadcasts it back with
+              jump_count == 1 -> WILL_SPAWN_SEEDS_TOO).
+
+        tap path (HandleTouch @ 0x140411CF0): a seed on an empty tile without a
+            plantable tile below aborts locally ("(Can't plant a tree in the air!)")
+            and sends nothing; a seed on an existing seed tile or BUNNY_EGG (610) is
+            the splice case; everything else takes the ordinary beginPlaceTile ->
+            PLACE|TILE_CHANGE -> sendTileChangeRequest path. So the *request* for a seed
+            and for a block is the same packet -- only the client-side validation and
+            the item id differ.
 
     unknowns,
         - WALK/FLYING/HAY_CART_RELATED/UNK3: no client writer or consumer found
