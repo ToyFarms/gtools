@@ -156,8 +156,54 @@ _EPS = 1e-4
 # NOTE: the client has two collision layers (see docs/collision-port-backlog.md):
 #  - movement: WorldView::collectStepTiles + NetAvatar::canMoveXInto/canMoveYInto
 #  - interaction: CanPassThroughTile (wall response + climb), `_interaction_blocked`
+
+# -- clothing modifier groups ----------------------------------------------------------
+# One group per client modifier branch, shared by the per-tick clothing checks and the
+# demo menu so the two cannot drift:
+#   * parasol / glide   -- integrateVerticalAxis (0x140510580, `+0xDF` / `+0xE0`)
+#   * floatie / vehicle -- updateBlockStateFromPlayerInteraction (0x140509C20)
+#   * climb gear        -- handleTileInteraction (0x140501DF0)
+#   * slippery / skates -- sub_140505CB0 (the tile-below query)
+# Every item id has exactly one `clothing_type`, so worn membership alone decides the mod
+# (the client reads the same equipped-item ids).
+PARASOL_ITEMS = frozenset({
+    PARASOL,
+    DRACONIC_ROCKET_PARASOL,
+    DARKEST_SKULL_PARASOL,
+    LIGHTNING_UMBRELLA,
+    OIL_PAPER_UMBRELLA,
+    GIANT_FALLING_SHAMROCK,
+    RING_OF_WINDS,
+    MAGIC_CARPET,
+    FLOATING_LEAF,
+    CELESTIAL_HALO,
+    GROW_X_ROCKET_WINGS,
+})
+GLIDE_ITEMS = frozenset({
+    SODA_JETPACK,
+    SUPER_SQUIRT_GUN_JETPACK,
+    LEGENDARY_WINGS,
+    DA_VINCI_WINGS,
+    CLOAK_OF_FALLING_WATERS,
+    SPECTRAL_MANTLE,
+    CLOAK_OF_HOVERATION,
+    ANGEL_OF_MERCY_S_WINGS,
+    HELPING_HAND,
+    SUPER_SQUIRT_GUN_JETPACK_PANTS,
+    SPACE_THRUSTER_BOOST_BOOTS,
+    GROW_AIR_BALLOON,
+    ZEPHYR_HELM,
+    TURKEY_HAT,
+    RAYMAN_S_HAIR,
+    SILK_SCARF,
+    GOLDEN_SILK_SCARF,
+    POSSESSING_SCARF,
+    HARVEST_SCARF,
+    STEAMPUNK_ARM,
+})
+FLOATIE_ITEMS = frozenset({SEA_MONSTER_FLOATIE, UNICORN_FLOATIE, WATER_WINGS, FLAMING_FLOATIES})
 # `sub_14053C770`: the water vehicles that grant the water-float state on entry
-_WATER_VEHICLES = {
+WATER_VEHICLE_ITEMS = frozenset({
     SURFBOARD,
     SURFBOARD_FLAME,
     SURFBOARD_WAVE,
@@ -169,7 +215,12 @@ _WATER_VEHICLES = {
     SWAN_BOAT,
     JET_SKI,
     GOLDEN_JET_SKI,
-}
+})
+CLIMB_GEAR_ITEMS = frozenset({CLIMBING_PICKS, CLAWS_OF_BARKO, CLIMBING_BOOTS, 8018, TARANTULA_LEGS, MOUNTAIN_BOOTS, EZIO_S_BOOTS, WILL_OF_THE_WILD})
+# the Abominable Snowman pair must be worn together -- see `_slippery_clothing`
+SLIPPERY_ITEMS = frozenset({ABOMINABLE_SNOWMAN_SUIT, ABOMINABLE_SNOWMAN_MASK, BOB_THE_GROSS_BLOB, SLIPPERY_CHEMICAL_COAT, SLEDDING_PENGUIN})
+_SLIPPERY_ALONE = SLIPPERY_ITEMS - {ABOMINABLE_SNOWMAN_MASK, ABOMINABLE_SNOWMAN_SUIT}
+SKATING_ITEMS = frozenset({ICE_SKATES_OF_WINTER})
 
 FIST_ID = 18  # ItemInfoType.FIST -- the hand/punch item (client itemId 0x12)
 WRENCH_ID = 32  # ItemInfoType.WRENCH -- the "no item selected" fallback for solid tiles
@@ -707,18 +758,14 @@ class PlayerController:
         if clothing is None:
             return False
 
-        return (
-            (clothing.hat == ABOMINABLE_SNOWMAN_MASK and clothing.shirt == ABOMINABLE_SNOWMAN_SUIT)
-            or clothing.neck == BOB_THE_GROSS_BLOB
-            or clothing.shirt == SLIPPERY_CHEMICAL_COAT
-            or clothing.shoes == SLEDDING_PENGUIN
-        )
+        if clothing.hat == ABOMINABLE_SNOWMAN_MASK and clothing.shirt == ABOMINABLE_SNOWMAN_SUIT:
+            return True
+
+        return bool(self._worn_items() & _SLIPPERY_ALONE)
 
     def _wearing_skates(self) -> bool:
         """The Skating mod: ``ICE_SKATES_OF_WINTER`` cancels the slide flag."""
-        clothing = self._clothing()
-
-        return clothing is not None and clothing.shoes == ICE_SKATES_OF_WINTER
+        return bool(self._worn_items() & SKATING_ITEMS)
 
     def _climb_gear(self) -> bool:
         """Wall Climbing gear -- the client checks inventory slots 5/3/7.
@@ -729,16 +776,7 @@ class PlayerController:
         Ezio's Boots; hair ``5712`` Will of the Wild (the client additionally
         requires its toggle bit 8 in ``avatar+0x18C``, not modelled here).
         """
-        clothing = self._clothing()
-        if clothing is None:
-            return False
-
-        if clothing.hand in (CLIMBING_PICKS, CLAWS_OF_BARKO):
-            return True
-        if clothing.shoes in (CLIMBING_BOOTS, 8018, TARANTULA_LEGS, MOUNTAIN_BOOTS, EZIO_S_BOOTS):
-            return True
-
-        return clothing.hair == WILL_OF_THE_WILD
+        return bool(self._worn_items() & CLIMB_GEAR_ITEMS)
 
     def _climb_surface(self) -> Tile | None:
         """The climbable tile at the avatar centre, if the gear/rope allows it."""
@@ -1127,12 +1165,16 @@ class PlayerController:
         player = self.world.players.get(self.net_id)
         return player.clothing if player is not None else None
 
-    def _has_water_vehicle(self) -> bool:
+    def _worn_items(self) -> frozenset[int]:
+        """The equipped clothing item ids (all slots), for the modifier-group checks."""
         clothing = self._clothing()
         if clothing is None:
-            return False
+            return frozenset()
 
-        return clothing.hand in _WATER_VEHICLES or clothing.shoes in _WATER_VEHICLES
+        return frozenset(item for _, item in clothing if item)
+
+    def _has_water_vehicle(self) -> bool:
+        return bool(self._worn_items() & WATER_VEHICLE_ITEMS)
 
     def _has_water_float_perm(self) -> bool:
         clothing = self._clothing()
@@ -1143,7 +1185,7 @@ class PlayerController:
         if clothing is None:
             return False
 
-        return clothing.neck in (SEA_MONSTER_FLOATIE, UNICORN_FLOATIE) or clothing.hand in (WATER_WINGS, FLAMING_FLOATIES)
+        return bool(self._worn_items() & FLOATIE_ITEMS)
 
     def _slow_fall_flags(self) -> tuple[bool, bool] | None:
         """The two parachute groups of integrateVerticalAxis (0x140510580).
@@ -1151,38 +1193,10 @@ class PlayerController:
         Returns `(parasol, glide)` -- `parasol` maps to avatar+0xDF and the PARASOL
         event bit (0x40000), `glide` to avatar+0xE0 and UNK_GRAVITY_RELATED (0x80000).
         """
-        clothing = self._clothing()
-        if clothing is None:
-            return None
-
-        if (
-            clothing.hand in (PARASOL, DRACONIC_ROCKET_PARASOL, DARKEST_SKULL_PARASOL, LIGHTNING_UMBRELLA, OIL_PAPER_UMBRELLA, GIANT_FALLING_SHAMROCK, RING_OF_WINDS)
-            or clothing.shoes == MAGIC_CARPET
-            or clothing.back == GROW_X_ROCKET_WINGS
-        ):
+        worn = self._worn_items()
+        if worn & PARASOL_ITEMS:
             return True, False
-        if clothing.shoes == FLOATING_LEAF or clothing.hat == CELESTIAL_HALO:
-            return True, False
-        if (
-            clothing.back
-            in (
-                SODA_JETPACK,
-                SUPER_SQUIRT_GUN_JETPACK,
-                LEGENDARY_WINGS,
-                DA_VINCI_WINGS,
-                CLOAK_OF_FALLING_WATERS,
-                SPECTRAL_MANTLE,
-                CLOAK_OF_HOVERATION,
-                ANGEL_OF_MERCY_S_WINGS,
-                HELPING_HAND,
-            )
-            or clothing.pants == SUPER_SQUIRT_GUN_JETPACK_PANTS
-            or clothing.shoes in (SPACE_THRUSTER_BOOST_BOOTS, GROW_AIR_BALLOON)
-            or clothing.hat in (ZEPHYR_HELM, TURKEY_HAT)
-            or clothing.hair == RAYMAN_S_HAIR
-            or clothing.neck in (SILK_SCARF, GOLDEN_SILK_SCARF, POSSESSING_SCARF, HARVEST_SCARF)
-            or clothing.hand == STEAMPUNK_ARM
-        ):
+        if worn & GLIDE_ITEMS:
             return False, True
 
         return None

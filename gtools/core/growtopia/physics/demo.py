@@ -13,19 +13,8 @@ from imgui_bundle import imgui
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 
 from gtools import setting
-from gtools.baked.items import (
-    GROW_X_ROCKET_WINGS,
-    JET_SKI,
-    LEGENDARY_WINGS,
-    MAGIC_CARPET,
-    MAIN_DOOR,
-    PARASOL,
-    SEA_MONSTER_FLOATIE,
-    SNOWSHOES,
-    SODA_JETPACK,
-    STEAMPUNK_ARM,
-    SURFBOARD,
-)
+from gtools.baked.items import MAIN_DOOR, SNOWSHOES
+from gtools.core.growtopia.items_dat import ItemInfoClothingType, item_database
 from gtools.core.growtopia.world import World
 from gtools.core.growtopia.player import Player
 from gtools.gui.event import EventRouter, KeyEvent, MouseButtonEvent, ResizeEvent
@@ -57,12 +46,79 @@ from gtools.core.growtopia.physics.controller import (
     WATER_FLOAT_FALL_ACCEL,
     WATER_FLOAT_MAX_FALL,
     WATER_FLOAT_DURATION_MS,
+    CLIMB_GEAR_ITEMS,
+    FLOATIE_ITEMS,
+    GLIDE_ITEMS,
+    PARASOL_ITEMS,
+    SKATING_ITEMS,
+    SLIPPERY_ITEMS,
+    WATER_VEHICLE_ITEMS,
 )
 
 PLAYER_NET_ID = 1
 _TILE_HALF = TILE / 2.0
 
 RECORDING_DIR = Path(__file__).resolve().parent / "recordings"
+
+# -- modifier menu ---------------------------------------------------------------------
+# The Player menu lists the engine's clothing *modifiers* (one collapsing header per
+# client branch), not body slots: an item's slot is resolved from items.dat, so the same
+# item can never be listed under the wrong part. The sets come from the controller, which
+# is the single source of truth for the per-tick checks.
+_CLOTHING_SLOTS = {
+    ItemInfoClothingType.HAT: "hat",
+    ItemInfoClothingType.SHIRT: "shirt",
+    ItemInfoClothingType.PANTS: "pants",
+    ItemInfoClothingType.SHOES: "shoes",
+    ItemInfoClothingType.FACE: "face",
+    ItemInfoClothingType.HAND: "hand",
+    ItemInfoClothingType.BACK: "back",
+    ItemInfoClothingType.HAIR: "hair",
+    ItemInfoClothingType.NECK: "neck",
+    ItemInfoClothingType.ARTIFACTS: "artifacts",
+}
+_label_cache: dict[int, str] = {}
+_groups_cache: tuple[tuple[str, tuple[int, ...]], ...] | None = None
+
+
+def _item_name(item: int) -> str:
+    name = item_database.get(item).name
+
+    return name.decode() if isinstance(name, bytes) else name
+
+
+def _clothing_slot(item: int) -> str:
+    """The `Clothing` field an item is worn in (items.dat `clothing_type`)."""
+    return _CLOTHING_SLOTS[item_database.get(item).clothing_type]
+
+
+def _item_label(item: int) -> str:
+    """`Name (slot id)` -- cached, items.dat is only read on first sight of an item."""
+    label = _label_cache.get(item)
+    if label is None:
+        label = f"{_item_name(item)} ({_clothing_slot(item)} {item})"
+        _label_cache[item] = label
+
+    return label
+
+
+def _modifier_groups() -> tuple[tuple[str, tuple[int, ...]], ...]:
+    """`(header, item ids)` per modifier, built lazily (importing the demo must not read items.dat)."""
+    global _groups_cache
+    if _groups_cache is None:
+        groups = (
+            ("Slow fall - parasol (hold jump)", PARASOL_ITEMS),
+            ("Slow fall - wings / jetpack (hold jump)", GLIDE_ITEMS),
+            ("Water float - floatie", FLOATIE_ITEMS),
+            ("Water vehicle - buoyancy (dinghy / jet skis hold it)", WATER_VEHICLE_ITEMS),
+            ("Wall climbing - gear (Climbing Wall / roped piton)", CLIMB_GEAR_ITEMS),
+            ("Slippery - slide on any surface (wear the Snowman Mask + Suit together)", SLIPPERY_ITEMS),
+            ("Skating - cancel the slide (ice control)", SKATING_ITEMS),
+            ("Snowshoes - keep the snow jump", frozenset({SNOWSHOES})),
+        )
+        _groups_cache = tuple((header, tuple(sorted(items, key=lambda i: _item_name(i).lower()))) for header, items in groups)
+
+    return _groups_cache
 
 
 _PHYSICS_KEYS = {
@@ -585,21 +641,11 @@ class GPUPhysicsDemo:
                 self._flag_checkbox("Ignore lava", CharacterFlags.IGNORE_LAVA)
                 self._flag_checkbox("Ignore spikes", CharacterFlags.IGNORE_SPIKES)
 
-            if imgui.collapsing_header("Items"):
-                imgui.text_disabled("Hand")
-                self._clothing_checkbox("Parasol", "hand", PARASOL)
-                self._clothing_checkbox("Steampunk arm", "hand", STEAMPUNK_ARM)
-                imgui.text_disabled("Shoes")
-                self._clothing_checkbox("Snowshoes", "shoes", SNOWSHOES)
-                self._clothing_checkbox("Surfboard", "shoes", SURFBOARD)
-                self._clothing_checkbox("Jet ski", "shoes", JET_SKI)
-                self._clothing_checkbox("Magic carpet", "shoes", MAGIC_CARPET)
-                imgui.text_disabled("Back")
-                self._clothing_checkbox("Legendary wings", "back", LEGENDARY_WINGS)
-                self._clothing_checkbox("Jetpack", "back", SODA_JETPACK)
-                self._clothing_checkbox("Grow-X wings", "back", GROW_X_ROCKET_WINGS)
-                imgui.text_disabled("Neck")
-                self._clothing_checkbox("Floatie", "neck", SEA_MONSTER_FLOATIE)
+            if imgui.collapsing_header("Modifiers (clothing)"):
+                for group, items in _modifier_groups():
+                    if imgui.collapsing_header(group):
+                        for item in items:
+                            self._clothing_checkbox(_item_label(item), _clothing_slot(item), item)
 
             if imgui.button("Reset position"):
                 self._reset_avatar()
