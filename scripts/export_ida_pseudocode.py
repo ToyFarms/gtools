@@ -429,6 +429,31 @@ def _lookup_function_size(client: McpClient, addr: str) -> int:
     return _size_bytes(fn.get("size", "0x0")) if fn else 0
 
 
+def _define_code_range(client: McpClient, addr: str, size: int) -> tuple[bool, int]:
+    """Define instructions one by one across ``[addr, addr+size)``.
+
+    ``define_code`` returns the instruction length, so IDA's own decoder can
+    walk the range even when auto-analysis gives up.  Returns ``(ok, end_ea)``
+    where ``end_ea`` is the end of the last fully defined instruction.
+    """
+    start = int(addr, 0)
+    end = start + size
+    ea = start
+    while ea < end:
+        res = client.call_tool(
+            "define_code", {"items": [{"addr": hex(ea)}]}, timeout=30.0
+        )
+        if not (isinstance(res, list) and res and res[0].get("ok")):
+            return False, ea
+        length = int(res[0].get("length") or 0)
+        if length <= 0:
+            return False, ea
+        if ea + length > end:
+            break
+        ea += length
+    return ea > start, ea
+
+
 def repair_function(client: McpClient, addr: str, fallback_size: int) -> tuple[bool, str]:
     """Repair a function IDA refuses to decompile ("call analysis failed").
 
@@ -479,6 +504,28 @@ def repair_function(client: McpClient, addr: str, fallback_size: int) -> tuple[b
                 best_size, best_detail = new_size, detail
             if new_size >= minimum:
                 return True, f"repaired {addr} ({detail})"
+        # Last resort: define every instruction with IDA's own decoder and
+        # create the function with an explicit end.  Restores the original
+        # extent even when auto-analysis only sees the first instruction.
+        client.call_tool(
+            "undefine", {"items": [{"addr": addr, "size": size}]}, timeout=60.0
+        )
+        ok, defined_end = _define_code_range(client, addr, size)
+        if ok and defined_end > int(addr, 0):
+            defined = client.call_tool(
+                "define_func",
+                {"items": [{"addr": addr, "end": hex(defined_end)}]},
+                timeout=120.0,
+            )
+            if isinstance(defined, list) and defined and defined[0].get("ok"):
+                new_size = _lookup_function_size(client, addr)
+                detail = f"manual: {size:#x} -> {new_size:#x}"
+                if new_size > best_size:
+                    best_size, best_detail = new_size, detail
+                if new_size >= minimum:
+                    return True, f"repaired {addr} ({detail})"
+            elif best_size == 0:
+                best_detail = "manual: define_func failed"
         return False, f"repair: recreated as a stub ({best_detail})"
     except McpError as exc:
         return False, f"repair failed: {exc}"
@@ -554,12 +601,7 @@ def decompile_with_retry(
 
     # "No pseudocode widget" after every retry is often IDA's "call analysis
     # failed".  Optionally undefine/redefine the function and try once more.
-    if (
-        repair_cb is not None
-        and "No function at" not in last_error
-        and "interrupted" not in last_error
-        and "Decompiler action failed" not in last_error
-    ):
+    if repair_cb is not None and "No pseudocode widget" in last_error:
         ok, detail = repair_cb()
         print(f"  {detail}")
         if not ok:

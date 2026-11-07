@@ -148,10 +148,14 @@ the IDB-editing tools needed to fix it:
 
 The manual recipe is: undefine the function, recreate it, and decompile again.
 `--repair-failed` automates that, but it is **opt-in** because it modifies the
-IDB. It tries two variants and keeps the one that produces the full function:
+IDB. It tries three strategies, in order, and keeps the first that produces
+the full function:
 
 1. `undefine` → `define_func` (plain; lets IDA auto-analyse the body);
-2. `undefine` → `define_code` → `define_func` (anchored first instruction).
+2. `undefine` → `define_code` → `define_func` (anchored first instruction);
+3. last resort: `undefine`, then `define_code` for **every** instruction in
+   the original range (each call returns the instruction length, so IDA's own
+   decoder walks the bytes), then `define_func` with an explicit end.
 
 A recreated function smaller than 75 % of the original is treated as a stub
 and rejected, so the exporter logs a failure instead of writing truncated
