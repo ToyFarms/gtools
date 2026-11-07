@@ -78,7 +78,12 @@ return d.pseudocode;
   the first call after idle fails and an **immediate retry succeeds in
   0.03–0.1 s** from the cache. A retry with a small backoff is enough; no
   human needed. Only extend the plugin poll (or poll across event-loop yields)
-  if changing the plugin itself.
+  if changing the plugin itself. After all retries fail, `No pseudocode
+  widget` is often IDA's **"call analysis failed"** instead: the MCP can
+  repair it with `undefine` + (`define_code` +) `define_func` so IDA
+  re-analyses the function. `scripts/export_ida_pseudocode.py --repair-failed`
+  automates both variants and rejects stubs smaller than 75 % of the original
+  (so a failed repair is logged, never exported as truncated pseudocode).
 - **`Decompiler action failed (hx:GenPseudo)` (returns in ~0.01 s) is a
   keyboard-focus problem.** F5 is context-sensitive; it only works when the
   disassembly view (`IDAView`) has keyboard focus. The plugin's
@@ -86,9 +91,14 @@ return d.pseudocode;
   closed a pseudocode tab, or when another dock (Local Types, Strings, the CLI
   line edit) is focused. Manual cure: click IDA and press `Tab`. Programmatic
   cure (Windows/WSL): UIA-select the `IDA View-A` tab item; helper
-  `focus_ida_view()` in `scripts/export_ida_pseudocode.py` does exactly this
-  (run it after the failure, then retry). A single failed call is often
-  self-curing on the next call, but repeated failures can leave IDA stuck.
+  `focus_ida_view()` in `scripts/export_ida_pseudocode.py` does exactly this.
+  It is **foreground-aware**: when another application is active it exits 42
+  (returns `"skipped"`) instead of activating IDA, so a running export never
+  steals the foreground unless `--allow-focus-steal` is passed. The exporter
+  calls it at most once per function and only for this error (not for
+  cold-start widget misses, and not periodically; `--focus-every` is 0 by
+  default). A single failed call is often self-curing on the next call, but
+  repeated failures can leave IDA stuck.
 - **Giant functions can freeze IDA for minutes.** Decompiling
   `sub_1402E5B40` (1 MB of code) kept IDA unresponsive with 4.4 GB RSS and had
   to be killed. Functions above ~16 KB are rare (15 of 22,298) but risky;
@@ -114,6 +124,17 @@ return d.pseudocode;
   `handleSetCharacterState` and `updateBlockStateFromPlayerInteraction` in
   earlier sessions. (Distinct from the widget error above, which is view
   state.)
+- **Persistent call-analysis failures can be a callee-prototype problem.**
+  `sub_1400298D0` and `sub_140029920` refused to decompile even after
+  undefine/redefine. The cause was `Log` (0x140029E50): IDA had inferred an
+  8-named-arg variadic prototype
+  (`AppContext *(CHAR *, BYTE *, int *, __int64, char, unsigned __int16, int, _BYTE *, ...)`),
+  which broke call analysis in its callers. Setting it to
+  `void __fastcall Log(const char *format, ...)` with `set_type` made both
+  callers decompile instantly (and `Log` itself now shows a normal `va_list`).
+  When a function resists repair, decompile its callees / inspect their
+  prototypes (`export_funcs` format `prototypes`) before assuming the body is
+  bad.
 - **`disasm` is the reliable fallback** when `decompile` refuses. Entire
   branches were ported straight from the assembly
   (`getGuildDoorRequiredRank`, `canFriendEntrancePassedThrough`, `isLockTile`,

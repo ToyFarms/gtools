@@ -329,6 +329,18 @@ Add-Type -AssemblyName UIAutomationTypes
 try {
   $proc = Get-Process ida -ErrorAction Stop | Select-Object -First 1
 } catch { exit 2 }
+# Never steal the OS foreground from another application by default.
+if (-not (__ALLOW_STEAL__)) {
+  Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public class FgCheck {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+}
+'@
+  $fg = [FgCheck]::GetForegroundWindow()
+  if ($fg -ne $proc.MainWindowHandle) { exit 42 }
+}
 $root = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
 if (-not $root) { exit 3 }
 $tabs = $root.FindAll(
@@ -359,11 +371,16 @@ exit 1
 """
 
 
-def focus_ida_view(timeout: float = 20.0) -> bool:
-    """Restore keyboard focus to IDA's disassembly view (Windows/WSL only)."""
+def focus_ida_view(timeout: float = 20.0, allow_steal: bool = False) -> str:
+    """Restore keyboard focus to IDA's disassembly view (Windows/WSL only).
+
+    Returns ``"focused"``, ``"skipped"`` (IDA is not the foreground window and
+    ``allow_steal`` is false), or ``"failed"``.
+    """
     if not os.path.exists(POWERSHELL_EXE):
-        return False
-    encoded = base64.b64encode(_FOCUS_PS.encode("utf-16-le")).decode("ascii")
+        return "failed"
+    script = _FOCUS_PS.replace("__ALLOW_STEAL__", "$true" if allow_steal else "$false")
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     try:
         proc = subprocess.run(
             [
@@ -379,12 +396,14 @@ def focus_ida_view(timeout: float = 20.0) -> bool:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"  focus helper failed: {exc}")
-        return False
+        return "failed"
+    if proc.returncode == 42:
+        return "skipped"
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
         print(f"  focus helper exit {proc.returncode}: {detail[:200]}")
-        return False
-    return True
+        return "failed"
+    return "focused"
 
 
 def wait_for_ida(client: McpClient, max_wait_s: float, probe_addr: str) -> bool:
@@ -404,6 +423,67 @@ def wait_for_ida(client: McpClient, max_wait_s: float, probe_addr: str) -> bool:
     return False
 
 
+def _lookup_function_size(client: McpClient, addr: str) -> int:
+    info = client.call_tool("lookup_funcs", {"queries": addr}, timeout=20.0)
+    fn = info[0].get("fn") if isinstance(info, list) and info else None
+    return _size_bytes(fn.get("size", "0x0")) if fn else 0
+
+
+def repair_function(client: McpClient, addr: str, fallback_size: int) -> tuple[bool, str]:
+    """Repair a function IDA refuses to decompile ("call analysis failed").
+
+    The usual fix is to undefine the function and recreate it.  Two variants
+    are needed because either can leave a 4-byte stub depending on the code:
+    plain ``define_func`` (which lets IDA auto-analyse the whole body) and
+    ``define_code`` + ``define_func`` (which anchors the first instruction).
+    A recreated function that is much smaller than the original is rejected so
+    the exporter logs a failure instead of writing truncated pseudocode.
+    Returns ``(ok, detail)``.
+    """
+    try:
+        size = _lookup_function_size(client, addr) or fallback_size
+        if size <= 0:
+            return False, "repair: no function size available"
+        # A correct redefinition should preserve (almost) the whole function.
+        # Allow some slack for alignment/padding, but reject tiny stubs.
+        minimum = max(4, (size * 3) // 4)
+        best_size = 0
+        best_detail = "no attempt"
+        for label, anchor in (("plain", False), ("anchored", True)):
+            client.call_tool(
+                "undefine", {"items": [{"addr": addr, "size": size}]}, timeout=60.0
+            )
+            if anchor:
+                client.call_tool(
+                    "define_code", {"items": [{"addr": addr}]}, timeout=60.0
+                )
+            defined = client.call_tool(
+                "define_func", {"items": [{"addr": addr}]}, timeout=120.0
+            )
+            if not (isinstance(defined, list) and defined and defined[0].get("ok")):
+                detail = f"{label}: define_func failed"
+                if defined:
+                    detail += f" ({defined[0].get('error')})"
+                if best_size == 0:
+                    best_detail = detail
+                continue
+            new_size = _lookup_function_size(client, addr)
+            # IDA may expand a stub a moment later during auto-analysis.
+            for _ in range(4):
+                if new_size >= minimum:
+                    break
+                time.sleep(0.5)
+                new_size = _lookup_function_size(client, addr)
+            detail = f"{label}: {size:#x} -> {new_size:#x}"
+            if new_size > best_size:
+                best_size, best_detail = new_size, detail
+            if new_size >= minimum:
+                return True, f"repaired {addr} ({detail})"
+        return False, f"repair: recreated as a stub ({best_detail})"
+    except McpError as exc:
+        return False, f"repair failed: {exc}"
+
+
 def decompile_with_retry(
     client: McpClient,
     addr: str,
@@ -413,9 +493,11 @@ def decompile_with_retry(
     probe_addr: str,
     ida_recovery_s: float,
     focus_cb: Any = None,
+    repair_cb: Any = None,
 ) -> tuple[dict[str, Any], float]:
     """Decompile one address, retrying cold-start/transient failures."""
     last_error = "unknown error"
+    focus_attempted = False
     started = time.monotonic()
     for attempt in range(attempts):
         if _stop_requested:
@@ -447,18 +529,61 @@ def decompile_with_retry(
         if "No function at" in last_error or "Failed to parse address" in last_error:
             break
 
-        # A cold start usually cures itself on the next call.  A missing focus
-        # ("Decompiler action failed", or repeated widget misses) needs the
-        # disassembly view to be focused again; the plugin's activate_widget
-        # does not always manage that after it has closed a pseudocode tab.
-        if focus_cb is not None and (
-            attempt >= 1 or "Decompiler action failed" in last_error
+        # A cold start usually cures itself on the next call; do not focus for
+        # that.  "Decompiler action failed" is the real focus symptom (F5 is
+        # disabled because the disassembly view lost keyboard focus).  Try the
+        # helper at most once per function, and never let it steal the OS
+        # foreground from another app by default.
+        if (
+            focus_cb is not None
+            and not focus_attempted
+            and "Decompiler action failed" in last_error
         ):
-            if focus_cb():
+            focus_attempted = True
+            result = focus_cb()
+            if result == "focused":
                 print("  refocused IDA View-A")
+            elif result == "skipped":
+                print(
+                    "  focus needed but IDA is not the foreground window; "
+                    "skipping (use --allow-focus-steal to override)"
+                )
         delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
         if attempt + 1 < attempts:
             time.sleep(delay)
+
+    # "No pseudocode widget" after every retry is often IDA's "call analysis
+    # failed".  Optionally undefine/redefine the function and try once more.
+    if (
+        repair_cb is not None
+        and "No function at" not in last_error
+        and "interrupted" not in last_error
+        and "Decompiler action failed" not in last_error
+    ):
+        ok, detail = repair_cb()
+        print(f"  {detail}")
+        if not ok:
+            last_error = f"{last_error} ({detail})"
+        else:
+            for attempt in range(3):
+                if _stop_requested:
+                    break
+                try:
+                    data = client.call_tool(
+                        "decompile", {"addr": addr}, timeout=request_timeout
+                    )
+                except McpError as exc:
+                    last_error = str(exc)
+                else:
+                    if (
+                        isinstance(data, dict)
+                        and data.get("ok")
+                        and isinstance(data.get("pseudocode"), str)
+                    ):
+                        return data, time.monotonic() - started
+                    last_error = str(data.get("error") if isinstance(data, dict) else data)
+                if attempt < 2:
+                    time.sleep(RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)])
     raise ToolError(last_error)
 
 
@@ -534,8 +659,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--focus-every",
         type=int,
-        default=250,
-        help="Proactively refocus IDA View-A every N functions (0 = only on failures)",
+        default=0,
+        help="Proactively refocus IDA View-A every N functions (0 = only on focus errors)",
+    )
+    parser.add_argument(
+        "--allow-focus-steal",
+        action="store_true",
+        help="Allow the focus helper to activate IDA even when another app is foreground",
+    )
+    parser.add_argument(
+        "--repair-failed",
+        action="store_true",
+        help="On persistent failure, undefine+redefine the function and retry (modifies the IDB)",
     )
     parser.add_argument(
         "--progress-every", type=int, default=25, help="Progress line interval (functions)"
@@ -592,14 +727,20 @@ def main(argv: list[str] | None = None) -> int:
     # The probe address is used to test whether IDA's main thread is free.
     probe_addr = all_funcs[0]["addr"]
 
-    focus_cb = None if args.no_focus_helper else focus_ida_view
-    if focus_cb is not None:
-        if focus_cb():
+    focus_cb = None
+    if not args.no_focus_helper:
+        def focus_cb() -> str:
+            return focus_ida_view(allow_steal=args.allow_focus_steal)
+
+        result = focus_cb()
+        if result == "focused":
             print("focused IDA View-A")
+        elif result == "skipped":
+            print("IDA is not the foreground window; skipping startup focus (no focus stealing)")
         else:
             print(
                 "warning: could not focus IDA View-A (helper unavailable?); "
-                "continuing, will retry on failures"
+                "continuing, will retry on focus errors"
             )
 
     # Resume support: final files are written atomically, so existence = done.
@@ -684,6 +825,9 @@ def main(argv: list[str] | None = None) -> int:
         name = f.get("name", "")
         size = f.get("size", "0x0")
         dest = funcs_dir / func_filename(addr, name)
+        repair_cb = None
+        if args.repair_failed:
+            repair_cb = lambda: repair_function(client, addr, _size_bytes(size))
         try:
             result, elapsed = decompile_with_retry(
                 client,
@@ -693,6 +837,7 @@ def main(argv: list[str] | None = None) -> int:
                 probe_addr=probe_addr,
                 ida_recovery_s=args.ida_recovery_wait,
                 focus_cb=focus_cb,
+                repair_cb=repair_cb,
             )
         except KeyboardInterrupt:
             print("\ninterrupted")
@@ -735,6 +880,24 @@ def main(argv: list[str] | None = None) -> int:
                 f"{rate:.2f}s/f | ETA {_fmt_duration(eta)} | "
                 f"fails {len(failed)} | {total_chars/1e6:.1f} MB"
             )
+
+    # Drop resolved entries from failures.jsonl (e.g. after --repair-failed).
+    if failures_path.exists():
+        done_now = load_existing(out_dir)
+        kept: list[str] = []
+        try:
+            for line in failures_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("addr") not in done_now:
+                    kept.append(line)
+            failures_path.write_text(
+                ("\n".join(kept) + "\n") if kept else "", encoding="utf-8"
+            )
+        except OSError as exc:
+            print(f"warning: could not rewrite {failures_path.name}: {exc}")
 
     wall = time.monotonic() - started
     summary = {

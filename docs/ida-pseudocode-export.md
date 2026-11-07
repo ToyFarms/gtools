@@ -22,7 +22,17 @@ cd /home/andra/dev/gtools
 
 # Retry only the failures from a previous run
 .venv/bin/python scripts/export_ida_pseudocode.py --retry-failures
+
+# Optional: repair persistent call-analysis failures (modifies the IDB)
+.venv/bin/python scripts/export_ida_pseudocode.py --repair-failed
+
+# Unattended only: allow the UIA helper to bring IDA forward
+.venv/bin/python scripts/export_ida_pseudocode.py --allow-focus-steal
 ```
+
+The exporter **does not steal the foreground window by default**. The UIA
+focus helper exits early when IDA is not the active application, so the export
+can run while you use the computer.
 
 The exporter is resumable: a function whose `.c` file exists is skipped.
 Each file is written atomically (`.tmp` + rename), so an interrupted run never
@@ -79,14 +89,21 @@ keyboard focus to the `IDAView` and F5 works again (verified: 0.62 s helper,
 then first-try decompiles).
 
 `scripts/export_ida_pseudocode.py` therefore includes a UIA focus helper
-(`focus_ida_view`, Windows/WSL only, via `powershell.exe`):
+(`focus_ida_view`, Windows/WSL only, via `powershell.exe`). It is
+**foreground-aware**:
 
-- run once at startup;
-- proactively every 250 functions (`--focus-every`);
-- immediately after `Decompiler action failed`, or on the second consecutive
-  widget error.
+- it compares `GetForegroundWindow()` with IDA's `MainWindowHandle` and exits
+  with code 42 (helper returns `"skipped"`) if another application is active;
+- it runs once at startup, but does nothing unless IDA is already foreground;
+- it runs **only** for the genuine focus error `Decompiler action failed`, at
+  most once per function — not for cold-start `No pseudocode widget` errors,
+  and not on every retry;
+- proactive refocusing is off by default (`--focus-every 0`).
 
-Disable it with `--no-focus-helper` if running outside Windows/WSL.
+This fixes the earlier behavior where a UIA `SelectionItemPattern.Select()`
+activated IDA on every failed retry and made the machine unusable. Pass
+`--allow-focus-steal` only for an unattended run where bringing IDA forward is
+acceptable. Disable the helper with `--no-focus-helper` outside Windows/WSL.
 
 ### 3. Giant functions can freeze IDA
 
@@ -116,6 +133,62 @@ functions (0.07 %) are affected:
 They are recorded in `skipped_large.jsonl`. A later pass can attempt them one
 at a time with `--max-size 0 --allow-large`, while watching IDA; the exporter
 waits for IDA to become responsive again after a timeout (`--ida-recovery-wait`).
+
+### 4. Persistent failures: "call analysis failed" and the repair tools
+
+After the cold-start retries are exhausted, a `No pseudocode widget` result is
+often IDA's **"call analysis failed"** rather than a timeout. The MCP exposes
+the IDB-editing tools needed to fix it:
+
+| Tool | Effect |
+|---|---|
+| `undefine` | convert a byte range back to undefined bytes |
+| `define_code` | create one instruction at an address |
+| `define_func` | create a function (IDA auto-detects the end) |
+
+The manual recipe is: undefine the function, recreate it, and decompile again.
+`--repair-failed` automates that, but it is **opt-in** because it modifies the
+IDB. It tries two variants and keeps the one that produces the full function:
+
+1. `undefine` → `define_func` (plain; lets IDA auto-analyse the body);
+2. `undefine` → `define_code` → `define_func` (anchored first instruction).
+
+A recreated function smaller than 75 % of the original is treated as a stub
+and rejected, so the exporter logs a failure instead of writing truncated
+pseudocode. IDA sometimes expands a stub a moment after `define_func`, so the
+repair waits and re-checks before rejecting it. Focus errors
+(`Decompiler action failed`) are never repaired.
+
+The seven failures from the first run (all fixed on 2026-11-07) are a useful
+case study:
+
+| Address | Name | Fix |
+|---|---|---|
+| `0x14001dd00` | `stringAppend_0` | plain redefinition (full `0x123` bytes) |
+| `0x14001e770` | `stringConcatInto` | plain redefinition |
+| `0x14001e9f0` | `maybeStrdup` | plain redefinition |
+| `0x140027370` | `variantMemzero` | plain redefinition |
+| `0x1400297d0` | `GetActiveTimingSystem` | plain redefinition |
+| `0x140029ac0` | `createVec2` | plain redefinition |
+| `0x1400298d0` | `sub_1400298D0` | anchored redefinition |
+| `0x140029920` | `sub_140029920` | anchored redefinition |
+
+The last two still failed after redefinition. Their real root cause was the
+**`Log` prototype**: IDA had inferred an eight-named-argument variadic
+signature. Fixing it in the IDB with
+
+```
+set_type 0x140029e50 -> void __fastcall Log(const char *format, ...)
+```
+
+made both callers decompile immediately (18 and 10 lines). `Log` itself now
+decompiles as a normal `va_list` function and other callers remain healthy.
+When a repaired function still fails, check the prototypes of its callees
+before assuming the function body is bad.
+
+If both repair variants leave a stub, the function is recorded in
+`failures.jsonl` and no `.c` file is written. Re-run later (IDA may finish
+auto-analysis) or repair it manually; `--retry-failures` will pick it up.
 
 ## Output layout
 
@@ -161,8 +234,10 @@ int sub_140001000()
 | `--attempts N` | 6 | decompile attempts per function |
 | `--read-timeout S` | 90 | HTTP read timeout per call |
 | `--ida-recovery-wait S` | 300 | how long to wait for a stuck IDA after a timeout |
-| `--focus-every N` | 250 | proactive UIA refocus interval (0 = only on failures) |
+| `--focus-every N` | 0 | proactive UIA refocus interval (0 = only on the `Decompiler action failed` error) |
+| `--allow-focus-steal` | off | let the helper activate IDA even when another app is foreground |
 | `--no-focus-helper` | off | disable the Windows UIA helper |
+| `--repair-failed` | off | try `undefine`+redefine repair on persistent call-analysis failures (modifies the IDB) |
 | `--retry-failures` | off | only retry addresses in `failures.jsonl` |
 | `--progress-every N` | 25 | progress line interval |
 | `--source NAME` | `Growtopia.exe.i64` | label in file headers |
