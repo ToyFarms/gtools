@@ -505,6 +505,7 @@ class PlayerController:
         """
         self.tick += 1
         self.time_ms += self.fixed_dt * 1000.0
+        self.world.advance_time(self.fixed_dt * 1000.0)  # drives the seed growth clock
         self._simulate()
         self._walk_item_mods()  # NetAvatar::tryPlaceSeedOrFertilizer (0x140506910)
         self._send_state()
@@ -847,17 +848,6 @@ class PlayerController:
         """
         return self._collision(tx, ty) != ItemInfoCollisionType.NONE
 
-    def _tree_ready(self, tile: Tile) -> bool:
-        """The Tree Harvesting growth gate.
-
-        ``tryPlaceSeedOrFertilizer`` harvests when the seed's remaining growth
-        (``extra+0x74``, refreshed by ``setSeedTimeCountdown``) is below the tree item's
-        in-memory ``unk5`` (ItemDat+0xD0). The engine has no growth clock and cannot map
-        that field from items.dat, so a seed tile carrying its extra counts as ready --
-        the request is server-validated either way (docs/02_packet).
-        """
-        return isinstance(tile.extra, SeedTile)
-
     def _walk_item_mods(self) -> None:
         """The per-tick walk-over mods -- ``NetAvatar::tryPlaceSeedOrFertilizer`` (0x140506910).
 
@@ -866,17 +856,21 @@ class PlayerController:
 
         * **Tree Harvesting** shoes (898 Dear John Tractor, 1830 Harvester, 1966 Harvester
           Of Sorrows, 9650 Pineapple Plough, 10504 Zamgrowni): the tile at the player
-          position must be a planted seed with its extra; the request is the FIST
-          ``TILE_CHANGE_REQUEST`` (value ``0x12``) -- the same packet as a manual punch --
-          and the server answers with the harvest broadcast. The client also bumps its
-          ``axis80`` animation axis here, which the engine has no equivalent for.
+          position must be a planted seed whose growth has elapsed
+          (``World.tree_ready`` -- the client's ``unk5 < elapsed`` test); the request is
+          the FIST ``TILE_CHANGE_REQUEST`` (value ``0x12``) -- the same packet as a manual
+          punch -- and the server answers with the harvest broadcast. The client also
+          bumps its ``axis80`` animation axis here, which the engine has no equivalent
+          for.
         * **Chicken Plow / Doom Plow**: only while grounded and moving (``vx != 0``, the
           client's ``horizontalVelocity`` test):
           - an empty centre tile that is not a door, whose tile below has collision on,
             with a seed selected -> send the placement request with the selected seed id;
           - an existing seed tile with an extra that is not already spliced
             (``flags & WAS_SPLICED``) and a seed selected -> send the same request again;
-            the server marks the splice (``WILL_SPAWN_SEEDS_TOO``).
+            the server marks the splice (``WILL_SPAWN_SEEDS_TOO``). The client's extra
+            ``unk5 > elapsed`` test on this branch only fires for ``RANDOM_GROW`` seeds
+            and reads the same unmappable ItemDat field, so it is not modelled.
         """
         clothing = self._clothing()
         if clothing is None:
@@ -887,7 +881,7 @@ class PlayerController:
             return
 
         if clothing.shoes in TREE_HARVESTING_ITEMS:
-            if self._tree_ready(tile):
+            if self.world.tree_ready(tile):
                 self.request_punch(tile.pos.x, tile.pos.y)
             return
 
@@ -900,7 +894,7 @@ class PlayerController:
         if tile.fg_id == 0:
             if not isinstance(tile.extra, DoorTile) and self._collision_on(tx, ty + 1):
                 self.request_place(self.hand_item, tx, ty)
-        elif self._tree_ready(tile) and not tile.flags & TileFlags.WAS_SPLICED:
+        elif isinstance(tile.extra, SeedTile) and not tile.flags & TileFlags.WAS_SPLICED:
             self.request_place(self.hand_item, tx, ty, splice=True)
 
     def _wind_direction(self) -> bool | None:

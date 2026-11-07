@@ -108,7 +108,8 @@ payload is determiend through the type,
                                          jump_count == 1 -> WILL_SPAWN_SEEDS_TOO (the
                                          splice), IS_SEEDLING is set for seed tiles,
                                          animation_type -> changeTileExtraType(extra),
-                                         target_net_id -> setSeedPlacedTime(extra),
+                                         target_net_id -> setSeedTimePassed(extra) (the
+                                         seed's growth value; 0 on a fresh plant),
                                          flags & FACING_LEFT -> FLIPPED_X for FLIPPABLE
                                          items (handleTileTreeState @ 0x14055E300).
     SEND_MAP_DATA                    (4 ): (todo)
@@ -133,7 +134,8 @@ payload is determiend through the type,
                                          changeTileExtraType(extra, value), jump_count
                                          == 1 -> WILL_SPAWN_SEEDS_TOO, animation_type ==
                                          1 -> IS_SEEDLING, and
-                                         setSeedPlacedTime(extra, target_net_id).
+                                         setSeedTimePassed(extra, target_net_id) (the
+                                         seed's elapsed growth seconds).
     MODIFY_ITEM_INVENTORY            (13): (todo)
     ITEM_CHANGE_OBJECT               (14): (todo)
     SEND_LOCK                        (15): (todo)
@@ -778,14 +780,19 @@ TANK_FLAGS,
             planted seed (isTileSeed @ 0x140555260: extra type == SEED_TILE) with its
             extra, the client sends the FIST TILE_CHANGE_REQUEST (value 0x12) for that
             tile (0x140506F89) -- harvesting is a punch, not its own packet. The growth
-            gate compares the seed's remaining time (getSeedTimeRemaining @ 0x140557870
-            = extra+0x74 seconds, refreshed by setSeedTimeCountdown @ 0x140557570) with
-            the tree item's in-memory ItemDat field at +0xD0 (read after
-            IsSeedRandomGrow @ 0x140536C60 maps the id to its RANDOM_GROW variant):
-            harvest while remaining < that value. The in-memory item record is a fixed
-            1616-byte layout while items.dat is length-prefixed, so that field cannot be
-            mapped by name from our parser -- the engine treats any seed tile carrying
-            its extra as ready (controller._tree_ready).
+            gate is `item->unk5 < elapsed` (0x140506F68): `elapsed` is
+            getSeedTimePassed @ 0x140557870 (extra+0x74 -- the wire `time_passed`, the
+            seed's ELAPSED growth seconds: a mature Dirt Seed carries time_passed ==
+            grow_time == 31 in world dumps; setSeedTimeCountdown @ 0x140557570 only ages
+            extra types 27/38/46, never SEED_TILE) and `unk5` is the in-memory ItemDat
+            field at +0xD0 (read after IsSeedRandomGrow @ 0x140536C60 maps the id to its
+            RANDOM_GROW variant). Every seed in items.dat carries unk5 == 0, and the
+            in-memory record (fixed 1616-byte expansion of the length-prefixed file
+            record) does not map that field by name for the RANDOM_GROW variants, so the
+            engine's gate is "planted seed aged past its first second" --
+            World.tree_ready / World.seed_growth_time, which model the clock (the
+            controller advances World.time_ms each step and the value caps at the seed's
+            grow_time like the server).
 
         Chicken Plow / Doom Plow (5022 / 5212, 0x140506A2C; additionally gated on
             onGround and horizontalVelocity != 0) with a seed selected (isItemSeed @

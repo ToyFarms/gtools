@@ -46,10 +46,14 @@ def make_world(*, floor: bool = True, extra_tiles: tuple[Tile, ...] = ()) -> Wor
     return World.from_tiles(tiles)
 
 
-def planted(x: int, *, flags: TileFlags = TileFlags.NONE) -> Tile:
-    """A growing seed: the seed foreground id plus its ``SeedTile`` extra."""
+def planted(x: int, *, time_passed: int = 1, flags: TileFlags = TileFlags.NONE) -> Tile:
+    """A planted seed: the seed foreground id plus its ``SeedTile`` extra.
+
+    ``time_passed`` is the elapsed growth seconds; the Tree Harvesting gate needs more
+    than the seed's ``unk5`` (0), so the default is one second of growth.
+    """
     tile = Tile(fg_id=DIRT_SEED, pos=ivec2(x, TREE_ROW), flags=flags | TileFlags.HAS_EXTRA_DATA)
-    tile.extra = SeedTile()
+    tile.extra = SeedTile(time_passed=time_passed)
     return tile
 
 
@@ -118,6 +122,21 @@ def test_tractor_without_the_shoes_does_nothing() -> None:
     controller.step()
 
     assert requests_of(controller) == []
+
+
+def test_tractor_waits_for_the_seed_growth_clock() -> None:
+    world = make_world(extra_tiles=(planted(TREE_TX, time_passed=0),))
+    controller = make_controller(world, shoes=DEAR_JOHN_TRACTOR, tx=TREE_TX)
+    record_requests(controller)
+
+    controller.step()  # freshly planted: elapsed 0 is not above the seed's threshold
+
+    assert requests_of(controller) == []
+
+    for _ in range(61):  # the world clock crosses the first whole second
+        controller.step()
+
+    assert [(p.value, p.int_x, p.int_y) for p in requests_of(controller)][0] == (FIST_ID, TREE_TX, TREE_ROW)
 
 
 def test_tractor_needs_a_seed_tile() -> None:
