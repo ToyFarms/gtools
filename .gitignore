@@ -20,3 +20,6 @@ out/
 *.pdb
 .cmodcache/
 sample/
+
+# IDA pseudocode export output (large, generated)
+export/

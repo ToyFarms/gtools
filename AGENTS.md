@@ -24,6 +24,8 @@ player, and **tests are the contract**.
 | `docs/netavatar_type.h` | explicit `NetAvatar` layout applied to the IDB |
 | `docs/lock-permissions.md` | lock / build-permission model (client-verified vs `[server-side]`) |
 | `docs/collision-port-backlog.md` | the two-layer collision model + the ported per-type checklist |
+| `scripts/export_ida_pseudocode.py` | resumable all-function pseudocode exporter (retries, focus helper, size guard) |
+| `docs/ida-pseudocode-export.md` | root cause + usage/output for the pseudocode export |
 
 ## 2. Environment
 
@@ -68,22 +70,32 @@ return d.pseudocode;
 
 ### IDA / MCP quirks (hard-won)
 
-- **`No pseudocode widget for this function after decompilation` is an IDA
-  GUI-state problem, not a function-size limit.** The `decompile` tool drives
-  IDA Free's GUI (F5 automation — `hexrays_diag` reports no Hex-Rays SDK); it
-  needs IDA to be showing the **decompilation (pseudocode) view**. If IDA is
-  left in the ASM view (which happens after a failed decompile, a `disasm`, or
-  manual navigation), *every* `decompile` call fails with that message — even
-  tiny functions — and each attempt leaves it in the ASM view again. The fix
-  needs the human at the IDA window: click IDA and press `Tab` to switch back
-  to the pseudocode view. Decompiles then work again and are fast (a fresh
-  6 KB function in ~0.1 s, a 10 KB function in ~0.2 s). Verified by calling
-  the MCP endpoint directly with `curl`: raw calls reproduce *and* cure the
-  same behaviour, so it is not an agent-side limitation.
-- Decompiling a very large first-time function can itself trigger that
-  ASM-view state (the automation gives up after ~2.4 s). Prefer `disasm` for
-  big functions; if you do `decompile` one, expect one failed call, ask for
-  the view fix, then retry.
+- **`No pseudocode widget for this function after decompilation` — verified
+  root cause: the plugin only polls for ~2 s.** `decompile` drives IDA Free's
+  GUI (F5 `hx:GenPseudo`, no Hex-Rays SDK) and polls for the pseudocode widget
+  for 40 × 50 ms. IDA Free's GUI/cloud decompiler takes **~2.3–2.7 s for the
+  first decompile after idle** (then ~0.4–0.6 s per function while warm), so
+  the first call after idle fails and an **immediate retry succeeds in
+  0.03–0.1 s** from the cache. A retry with a small backoff is enough; no
+  human needed. Only extend the plugin poll (or poll across event-loop yields)
+  if changing the plugin itself.
+- **`Decompiler action failed (hx:GenPseudo)` (returns in ~0.01 s) is a
+  keyboard-focus problem.** F5 is context-sensitive; it only works when the
+  disassembly view (`IDAView`) has keyboard focus. The plugin's
+  `activate_widget("IDA View-A")` does not always restore it after it has
+  closed a pseudocode tab, or when another dock (Local Types, Strings, the CLI
+  line edit) is focused. Manual cure: click IDA and press `Tab`. Programmatic
+  cure (Windows/WSL): UIA-select the `IDA View-A` tab item; helper
+  `focus_ida_view()` in `scripts/export_ida_pseudocode.py` does exactly this
+  (run it after the failure, then retry). A single failed call is often
+  self-curing on the next call, but repeated failures can leave IDA stuck.
+- **Giant functions can freeze IDA for minutes.** Decompiling
+  `sub_1402E5B40` (1 MB of code) kept IDA unresponsive with 4.4 GB RSS and had
+  to be killed. Functions above ~16 KB are rare (15 of 22,298) but risky;
+  skip them by default and attempt them one at a time only while watching
+  IDA. `disasm` is the safe fallback for those. For all-function exports use
+  `scripts/export_ida_pseudocode.py` (see `docs/ida-pseudocode-export.md`):
+  it retries cold starts, fixes focus, skips >16 KB, and resumes per file.
 - **Large tool outputs are offloaded by the MCP server.** Results over ~30 KB
   arrive truncated (`pseudocode` cut to ~1 KB) with `_output_truncated`,
   `_total_chars`, `_output_id`, `_download_url` and `_download_hint`. Fetch
