@@ -12,11 +12,15 @@
  *     segments.tsv        segment table (name/start/end/size/perm/bitness)
  *     items.tsv           every item head: addr, size, code flag, segment,
  *                         name, type, comments, string value, hex preview
- *     growtopia.idc       built-in full database dump
- *                         (names, data definitions, comments, types)
- *     types.idc           built-in local type library dump
- *                         (GENFLG_IDCTYPE)
- *     growtopia_dump.exe  reconstructed executable image (raw bytes)
+ *
+ * The local type library is exported separately by export_ida_types.idc
+ * (it uses IDA's print_decls() and never walks the database).
+ *
+ * NOTE: the built-in full dump gen_file(OFILE_IDC, ...) is intentionally not
+ * used here: on this database its Functions() section hits a corrupt record
+ * around 0x14040DC30 and IDA pops "The database is corrupted, some
+ * information will not be saved", aborting the script.  The data sections of
+ * that dump (LocalTypes/Bytes) complete, but the TSVs above are sufficient.
  *
  * The script is read-only: it never modifies the database.
  */
@@ -127,46 +131,6 @@ static dump_items(fh)
     }
 }
 
-static dump_builtin()
-{
-    auto d, fh, p;
-
-    d = outdir();
-
-    p = d + "\\growtopia.idc";
-    fh = fopen(p, "w");
-    if (fh != 0)
-    {
-        msg("export: writing %s ...\n", p);
-        gen_file(OFILE_IDC, fh, 0, BADADDR, 0);
-        fclose(fh);
-    }
-    else
-        warning("export: cannot create %s", p);
-
-    p = d + "\\types.idc";
-    fh = fopen(p, "w");
-    if (fh != 0)
-    {
-        msg("export: writing %s ...\n", p);
-        gen_file(OFILE_IDC, fh, 0, BADADDR, GENFLG_IDCTYPE);
-        fclose(fh);
-    }
-    else
-        warning("export: cannot create %s", p);
-
-    p = d + "\\growtopia_dump.exe";
-    fh = fopen(p, "wb");
-    if (fh != 0)
-    {
-        msg("export: writing %s ...\n", p);
-        gen_file(OFILE_EXE, fh, 0, BADADDR, 0);
-        fclose(fh);
-    }
-    else
-        warning("export: cannot create %s", p);
-}
-
 static main()
 {
     auto d, fh;
@@ -193,8 +157,6 @@ static main()
     }
     else
         warning("export: cannot create items.tsv");
-
-    dump_builtin();
 
     msg("export: finished -> %s\n", d);
 }
