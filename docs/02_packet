@@ -789,10 +789,13 @@ TANK_FLAGS,
             RANDOM_GROW variant). Every seed in items.dat carries unk5 == 0, and the
             in-memory record (fixed 1616-byte expansion of the length-prefixed file
             record) does not map that field by name for the RANDOM_GROW variants, so the
-            engine's gate is "planted seed aged past its first second" --
-            World.tree_ready / World.seed_growth_time, which model the clock (the
-            controller advances World.time_ms each step and the value caps at the seed's
-            grow_time like the server).
+            engine's gate is "planted seed aged past its first second".
+            World turns the value into a planting timestamp once
+            (`seed_planted_at_ms = observed_ms - time_passed * 1000`) and derives
+            everything from it: `seed_growth_time` (the client's elapsed reading),
+            `seed_time_left_ms` (0 once grown -- the consumer's "is it complete / when"
+            view) and `tree_ready` (the harvest gate). Nothing ages the stored field and
+            no update loop is involved.
 
         Chicken Plow / Doom Plow (5022 / 5212, 0x140506A2C; additionally gated on
             onGround and horizontalVelocity != 0) with a seed selected (isItemSeed @

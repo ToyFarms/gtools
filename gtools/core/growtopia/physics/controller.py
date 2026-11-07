@@ -505,7 +505,6 @@ class PlayerController:
         """
         self.tick += 1
         self.time_ms += self.fixed_dt * 1000.0
-        self.world.advance_time(self.fixed_dt * 1000.0)  # drives the seed growth clock
         self._simulate()
         self._walk_item_mods()  # NetAvatar::tryPlaceSeedOrFertilizer (0x140506910)
         self._send_state()

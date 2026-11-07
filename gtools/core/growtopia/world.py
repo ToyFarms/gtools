@@ -6,6 +6,7 @@ from enum import Enum, IntFlag, IntEnum, auto
 import itertools
 import logging
 from pathlib import Path
+import time
 from traceback import print_exc
 from typing import Any, Callable, Iterator, Literal, Type, overload
 
@@ -679,10 +680,10 @@ class SeedTile(TileExtra):
     type: TileExtraType = TileExtraType.SEED_TILE
     time_passed: int = 0  # u32 (wire): elapsed growth seconds, the server caps it at grow_time
     item_on_tree: int = 0  # u8
-    # engine-only: the World clock (ms) `time_passed` was last refreshed at; the client
-    # keeps the same stamp in the extra (`setSeedTimeCountdown`'s intParam1) so a tile is
-    # only aged once. Not serialized.
-    update_ms: float = 0.0
+    # engine-only: the World clock (ms) `time_passed` was received at, `None` until the
+    # tile is first seen. Everything else is derived from it (`planted_at = observed_ms -
+    # time_passed * 1000`), so no code has to age this field. Not serialized.
+    observed_ms: float | None = None
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "SeedTile":
@@ -2946,6 +2947,11 @@ class Npc:
         )
 
 
+def _monotonic_ms() -> float:
+    """Monotonic millisecond source -- the engine's ``getTick`` (the client's app tick)."""
+    return time.monotonic() * 1000.0
+
+
 class WorldEvent(Enum):
     TILE_UPDATE = auto()
     DROPPED_UPDATE = auto()
@@ -3002,9 +3008,10 @@ class World:
     local_player: Player | None = field(default=None, repr=False)
     local_net_id: int = 0
     _checkpoint_tile: ivec2 | None = field(default=None, repr=False)
-    # engine clock (ms) the seed growth timers read -- the client's getTick(). Advanced by
-    # the simulation driver (`PlayerController.step` -> `advance_time`).
-    time_ms: float = 0.0
+    # The engine clock (ms) the seed growth timers read, i.e. the client's ``getTick``.
+    # The world reads it lazily when a timer is queried -- nothing has to drive it; a
+    # deterministic callable can be assigned for tests / replays / tools.
+    clock: Callable[[], float] = field(default=_monotonic_ms, repr=False, compare=False)
 
     @overload
     def subscribe(
@@ -3873,8 +3880,10 @@ class World:
             if isinstance(tile.extra, SeedTile):
                 tile.extra.item_on_tree = item_id
                 if time_passed is not None:
+                    # the packet carries the seed's growth value; anchoring it at the
+                    # moment it arrived is all the clock needs (setSeedTimePassed)
                     tile.extra.time_passed = time_passed
-                    tile.extra.update_ms = self.time_ms
+                    tile.extra.observed_ms = self.now_ms()
                 if spawn_seed_flag:
                     tile.flags |= TileFlags.WILL_SPAWN_SEEDS_TOO
                 else:
@@ -3889,32 +3898,54 @@ class World:
 
     # -- seed growth clock -------------------------------------------------------------
 
-    def advance_time(self, dt_ms: float) -> None:
-        """Advance the engine clock the seed growth timers read (the client's ``getTick``)."""
-        self.time_ms += dt_ms
+    def now_ms(self) -> float:
+        """Engine time in ms from ``World.clock`` -- the client's ``getTick``."""
+        return self.clock()
 
-    def seed_growth_time(self, tile: Tile) -> int:
-        """``getSeedTimePassed`` (0x140557870): the seed's elapsed growth seconds, refreshed.
+    def seed_planted_at_ms(self, tile: Tile) -> float | None:
+        """When the seed tile was planted, derived from the growth value it carries.
 
-        The client keeps the server's value in ``TileExtra+0x74`` -- the wire
-        ``time_passed`` of a seed tile, which is **elapsed** seconds: world dumps show a
-        mature Dirt Seed carrying ``time_passed == grow_time == 31``. ``setSeedTimeCountdown``
-        (0x140557570) does *not* age seed tiles (its decrementing branch covers extra
-        types 27 FORGE_TILE / 38 STEAM_ENGINE_TILE / 46 only), so the engine advances the
-        value with ``World.time_ms`` here, capped at the seed's ``grow_time`` like the
-        server does, and re-anchors the tile's clock stamp (the client's ``intParam1``).
+        The wire ``time_passed`` is the seed's **elapsed** growth seconds at the moment
+        the world observed it (``SeedTile.observed_ms``: world-load or the packet that
+        carried it), so ``planted_at = observed_ms - time_passed * 1000``. Every consumer
+        derives what it needs from that anchor -- nothing ages the field and no update
+        loop is involved (``setSeedTimeCountdown`` 0x140557570 never touches SEED_TILE;
+        a mature Dirt Seed simply carries ``time_passed == grow_time == 31`` in dumps).
+
+        ``None`` for anything that is not a planted seed. A tile seen for the first time
+        without a stamp is anchored at ``now``: a value the world just loaded is current.
         """
         extra = tile.extra
         if not isinstance(extra, SeedTile) or tile.fg_id <= 0:
+            return None
+
+        if extra.observed_ms is None:
+            extra.observed_ms = self.now_ms()
+
+        return extra.observed_ms - extra.time_passed * 1000.0
+
+    def seed_growth_time(self, tile: Tile) -> int:
+        """The seed's elapsed growth seconds right now (``getSeedTimePassed``, 0x140557870)."""
+        planted_at = self.seed_planted_at_ms(tile)
+        if planted_at is None:
             return 0
 
-        seconds = int((self.time_ms - extra.update_ms) // 1000)
-        extra.update_ms += seconds * 1000
+        return int((self.now_ms() - planted_at) // 1000)
+
+    def seed_time_left_ms(self, tile: Tile) -> float | None:
+        """Ms until the seed is fully grown -- ``<= 0`` once it is, ``None`` if not a seed.
+
+        The consumer's view of the anchor: for the seed to be complete, add its
+        ``grow_time`` to ``seed_planted_at_ms``.
+        """
+        planted_at = self.seed_planted_at_ms(tile)
+        if planted_at is None:
+            return None
+
         seed = item_database.get(tile.fg_id)
         grow_time = seed.grow_time if seed is not None else 0
-        extra.time_passed = min(extra.time_passed + seconds, grow_time) if grow_time else extra.time_passed + seconds
 
-        return extra.time_passed
+        return planted_at + grow_time * 1000.0 - self.now_ms()
 
     def tree_ready(self, tile: Tile) -> bool:
         """The Tree Harvesting gate -- ``NetAvatar::tryPlaceSeedOrFertilizer`` (0x140506F89).
@@ -3923,7 +3954,7 @@ class World:
         item's in-memory ``unk5`` (ItemDat+0xD0) -- ``unk5 < elapsed`` at 0x140506F68.
         Every seed in items.dat carries ``unk5 == 0``; only the ``IsSeedRandomGrow``
         (0x140536C60) variants carry another threshold, and that field cannot be mapped
-        from the length-prefixed file record by name. A planted seed that has aged past
+        from the length-prefixed file record by name. A planted seed that has grown past
         its first second is therefore ready, which is what the mod's "harvest trees by
         walking through them" means in practice.
         """
@@ -3953,7 +3984,10 @@ class World:
 
         self.place_fg(tile, id)
         assert tile.extra
-        tile.extra.get(SeedTile).item_on_tree = item_on_tree
+        seed = tile.extra.get(SeedTile)
+        seed.item_on_tree = item_on_tree
+        seed.time_passed = 0
+        seed.observed_ms = self.now_ms()  # a fresh seed starts growing now
 
     def tile_change(
         self,

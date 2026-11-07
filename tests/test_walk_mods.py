@@ -40,6 +40,16 @@ SPAWN_TX = 10
 TREE_TX = 14
 
 
+class Clock:
+    """Deterministic stand-in for ``World.clock`` (ms); assign it to the world."""
+
+    def __init__(self, start_ms: float = 0.0) -> None:
+        self.ms = start_ms
+
+    def __call__(self) -> float:
+        return self.ms
+
+
 def make_world(*, floor: bool = True, extra_tiles: tuple[Tile, ...] = ()) -> World:
     tiles = [Tile(fg_id=DIRT, pos=ivec2(x, FLOOR_Y)) for x in range(24) if floor or x != TREE_TX]
     tiles.extend(extra_tiles)
@@ -126,6 +136,8 @@ def test_tractor_without_the_shoes_does_nothing() -> None:
 
 def test_tractor_waits_for_the_seed_growth_clock() -> None:
     world = make_world(extra_tiles=(planted(TREE_TX, time_passed=0),))
+    clock = Clock()
+    world.clock = clock
     controller = make_controller(world, shoes=DEAR_JOHN_TRACTOR, tx=TREE_TX)
     record_requests(controller)
 
@@ -133,8 +145,8 @@ def test_tractor_waits_for_the_seed_growth_clock() -> None:
 
     assert requests_of(controller) == []
 
-    for _ in range(61):  # the world clock crosses the first whole second
-        controller.step()
+    clock.ms += 1000.0  # the world clock crosses the first whole second
+    controller.step()
 
     assert [(p.value, p.int_x, p.int_y) for p in requests_of(controller)][0] == (FIST_ID, TREE_TX, TREE_ROW)
 

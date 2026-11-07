@@ -258,11 +258,14 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
   `IsTileBelowPlantable`, else "Can't plant a tree in the air!") but uses the
   same `TILE_CHANGE_REQUEST` as a block — evidence: `docs/02_packet` ("tile
   harvest / plant").
-- Seed growth: `World` owns the clock — `SeedTile.time_passed` is the wire
-  *elapsed* growth seconds (capped at `grow_time`), `World.advance_time(dt_ms)`
-  (driven from `PlayerController.step`) ages the tiles lazily via
-  `World.seed_growth_time` (`getSeedTimePassed`, 0x140557870), and
-  `World.tree_ready` is the Tree Harvesting gate (`item->unk5 < elapsed`).
+- Seed growth: `World` derives everything from one anchor — `SeedTile.time_passed`
+  is the wire *elapsed* growth seconds and `SeedTile.observed_ms` is when the world
+  received it, so `World.seed_planted_at_ms = observed_ms - time_passed * 1000`.
+  Consumers derive: `seed_growth_time` (elapsed now; `getSeedTimePassed`
+  0x140557870), `seed_time_left_ms` (≤ 0 once grown) and `tree_ready` (the Tree
+  Harvesting gate, `item->unk5 < elapsed`). `World.clock` (monotonic ms, the
+  client's `getTick`) is only read by those queries — nothing ages the field and no
+  update loop or controller driver is involved.
 - Tile changes: `touch_press`/`touch_hold`/`touch_release` model the client
   `HandleTouch` pipeline — per-tile de-dup (the Fist's `item_type` 0 repeats,
   items do not), 150 px reach, the 11 s hold timeout, `PUNCH_REPEAT_MS` for the
