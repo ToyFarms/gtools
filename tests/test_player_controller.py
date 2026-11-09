@@ -277,6 +277,34 @@ def test_forced_send_mask_matches_the_client() -> None:
     assert int(_STATE_EVENT_FLAGS) == 0x10C16740
 
 
+def test_first_state_frame_carries_reset_visual_state() -> None:
+    """AvatarPacketSender+0x8C starts at 1 (sub_1404F5DA0): the first STATE has 0x4.
+
+    Client evidence: the first client STATE after OnSpawn/OnSetPos in
+    ``.gtools/logs/20260327_163020_app.log`` carries RESET_VISUAL_STATE (then
+    RESET_VISUAL_STATE|STANDING on the next poll).
+    """
+    session = Session()
+    session.controller.step()
+
+    assert session.frames, "the first poll sends a STATE frame"
+    assert int(session.frames[0].flags) & int(TankFlags.RESET_VISUAL_STATE)
+
+
+def test_reset_visual_state_is_one_shot_and_teleport_rearms_it() -> None:
+    session = Session()
+    first = session.controller.build_state_packet()
+    assert int(first.flags) & int(TankFlags.RESET_VISUAL_STATE), "sender ctor latch"
+
+    second = session.controller.build_state_packet()
+    assert not int(second.flags) & int(TankFlags.RESET_VISUAL_STATE), "consumed at build time"
+
+    # OnSetPos (sub_140501290) re-arms AvatarPacketSender+0x8C; teleport() is its model
+    session.controller.teleport(5 * 32 + 6.0, STAND_Y)
+    third = session.controller.build_state_packet()
+    assert int(third.flags) & int(TankFlags.RESET_VISUAL_STATE)
+
+
 def test_steam_launcher_clears_is_on_and_sends_tile_activate() -> None:
     world = make_world((STEAM_LAUNCHER, 3, FLOOR_Y - 1, TileFlags.IS_ON))
     packets = []

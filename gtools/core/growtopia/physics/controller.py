@@ -419,6 +419,11 @@ class PlayerController:
         self.next_poll_ms = 0.0
         self.last_key: tuple | None = None
         self.dup_pending = False
+        # AvatarPacketSender+0x8C: sendTankState ORs RESET_VISUAL_STATE into the
+        # next built STATE frame and clears the latch. The sender ctor
+        # (sub_1404F5DA0) starts it at 1, and OnSetPos (sub_140501290) / respawn
+        # (sub_140500A70) re-arm it; `teleport` is the OnSetPos/position-snap model.
+        self.reset_visual_state = True
 
         # -- controller clock / touch state ------------------------------------
         # mirrors LevelTouchComponent (TouchInputState): +0xB8 lastTileIndex,
@@ -508,9 +513,11 @@ class PlayerController:
         self.vx = self.vy = self.frac_x = self.frac_y = 0.0
         self.grounded = self.sliding = self.in_water = False
         # a server position snap (ProcessTankUpdatePacket -> sub_140501290) clears
-        # avatar+0x138 (dying) and avatar+0x131 (damage slip state)
+        # avatar+0x138 (dying) and avatar+0x131 (damage slip state), and sets
+        # AvatarPacketSender+0x8C: the next STATE frame carries RESET_VISUAL_STATE
         self.killed = False
         self.damage_slip = False
+        self.reset_visual_state = True
         self._check_tile_mod()
 
     def update(self, dt: float) -> None:
@@ -579,6 +586,12 @@ class PlayerController:
             flags |= TankFlags.DAMAGE
         # pending tile-change action bits (PUNCH / PLACE | TILE_CHANGE), consumed by `_send_state`
         flags |= self.action_flags
+        # sendTankState (0x1404F5EF9) ORs RESET_VISUAL_STATE from the sender's
+        # one-shot latch and clears it while *building* the frame (before the
+        # memcmp dedupe), exactly like the client
+        if self.reset_visual_state:
+            flags |= TankFlags.RESET_VISUAL_STATE
+            self.reset_visual_state = False
 
         return TankPacket(
             type=TankType.STATE,

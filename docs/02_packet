@@ -133,7 +133,6 @@ payload is determiend through the type,
                                           object uid, vector = avatar pos, int_x =
                                           (int)posx + 4 + (int)posy. See
                                           docs/tile-change-request.md §4.4.
-    SEND_TILE_TREE_STATE             (12): (todo)
     SEND_TILE_TREE_STATE             (12): server -> client tree/seed state. applied by
                                          handleTileTreeState @ 0x14055E300: on a seed
                                          tile, target_net_id == -1 clears the tree
@@ -560,9 +559,15 @@ TANK_FLAGS,
         bit        flag                  c->s  s->c  client behaviour / notes
         0x1        WALK                   -     -   no writer/consumer found
         0x2        FLYING                 -     -   no writer/consumer found
-        0x4        RESET_VISUAL_STATE    yes   yes   sendTankState one-shot;
+        0x4        RESET_VISUAL_STATE    yes   yes   sendTankState one-shot latch
+                                                     (AvatarPacketSender+0x8C;
+                                                     set by its ctor, OnSetPos
+                                                     and the respawn paths) ORs
+                                                     it into the next built STATE;
+                                                     onPositionSnapped's event
+                                                     mask 0x904 also arms it;
                                                      applyTankStatePacket resets
-                                                     the visual block
+                                                     the visual block on receive
         0x8        EXTENDED               pkt   pkt  extended data at +0x38
         0x10       FACING_LEFT           yes   yes   facing; also stamped on
                                                      TILE_CHANGE_REQUEST
@@ -579,7 +584,10 @@ TANK_FLAGS,
                                                      resets the STATE send gate
         0x1000     GOT_PUNCHED           yes   yes   hit reaction
         0x2000     RESPAWN               yes   yes   respawn: receive re-broadcasts
-        0x4000     OBJECT_COLLECT         -    yes   receive plays
+        0x4000     OBJECT_COLLECT         yes   yes   dropped-object collect:
+                                                     sub_1404F71C0(avatar,
+                                                     0x4000) arms it before the
+                                                     type-11 send; receive plays
                                                      audio/object_collect.wav
         0x8000     TRAMPOLINE            yes   yes   bounce hit bookkeeping
         0x10000    DAMAGE                yes   yes   onDamagingTile both ways
@@ -598,7 +606,7 @@ TANK_FLAGS,
 
     client -> server (STATE),
         NetAvatar::fillTankStatePacket @ 0x1404FBEB0 builds every outgoing STATE
-        frame. pkt.flags starts at 0 (sendTankState @ 0x1404F5EE0 writes it)
+        frame. pkt.flags starts at 0 (sendTankState @ 0x1404F5EE3 writes it)
         and is then ORed with:
             FACING_LEFT (0x10)      if avatar+0x61 != 0
             STANDING (0x20)         if avatar+0xDC != 0 (on-ground)
@@ -610,16 +618,32 @@ TANK_FLAGS,
                                     one-shot events; see the writer table below)
         then it clears avatar+0x134 = 0, bounceTileX/Y = -1, bounceItemId = 0
         (their values already rode pkt.int_x/int_y/value) and sets
-        pkt.float_var = getTick() as float.
+        pkt.float_var = (float)(int)sub_1402803C0(sub_1400F5820(appCtx)).
+        That helper returns 0 unless the render/device object is initialised, so
+        the field is a timing value, not a position/velocity (the older
+        "getTick()" label is unverified).
 
-        sendTankState @ 0x1404F5E30 owns the ~200 ms gate and adds one more bit:
-            RESET_VISUAL_STATE (0x4)  one-shot latch obj+0x8C -> pkt.flags |= 4
-        (0x1404F5EF9). the send itself is skipped while the body is identical to
-        the previous frame, unless one of the forced bits below is set.
+        sendTankState @ 0x1404F5E30 (rcx = AvatarPacketSender, held at
+        avatar+0x128) owns the ~200 ms gate and adds one more bit:
+            RESET_VISUAL_STATE (0x4)  one-shot latch AvatarPacketSender+0x8C ->
+                                      pkt.flags |= 4 (0x1404F5EF9), cleared at
+                                      build time (before the memcmp dedupe)
+        the latch starts at 1 in AvatarPacketSender::AvatarPacketSender
+        (0x1404F5DA0) -- so the first STATE after a world join carries it (log
+        20260327_163020: OnSpawn+OnSetPos -> client STATE flags=4 with
+        vector_y2=17.0, then 4|STANDING) -- and is re-armed by OnSetPos
+        (NetAvatar::onSetPos 0x140501290), the local respawn path
+        (NetAvatar::respawnVisualReset 0x140500A70 -> event mask 0x2800) and the
+        received RESPAWN bit 13. the send itself is skipped
+        while the body is identical to the previous frame, unless one of the
+        forced bits below is set.
 
     the one-shot event mask (avatar+0x134),
         every `or dword ptr [reg+134h], <imm>` writer in the binary, with the
-        trigger known from the surrounding function:
+        trigger known from the surrounding function. (The generic
+        `sub_1404F71C0(avatar, mask)` helper is the one exception: it ORs its
+        argument, and requestCollectDroppedObject calls it with 0x4000 --
+        OBJECT_COLLECT. See the quick-reference row above.)
 
             address     function                       bits         trigger
             0x1404fe64e NetAvatar::onBurn              0x40         FIRE_DAMAGE
@@ -634,7 +658,11 @@ TANK_FLAGS,
             0x1404fe85c sub_1404FE720                  0x20000      SLIDE (punch knockback)
             0x1404ff324 NetAvatar::onPositionSnapped   0x904        GOT_KILLED|
                                                                     TILE_CHANGE|
-                                                                    RESET_VISUAL_STATE
+                                                                    RESET_VISUAL_STATE;
+                                                                    also sets
+                                                                    AvatarPacketSender
+                                                                    +0x8E = 1
+                                                                    (forceSend)
             0x1404ff7f3 sub_1404FF6C0                  0x1800       GOT_PUNCHED|TILE_CHANGE
             0x1404ffc3f NetAvatar::punchTile           0x800800     POWER_UP_PUNCH_END|
                                                                     TILE_CHANGE
@@ -657,9 +685,12 @@ TANK_FLAGS,
             0x140510a93 integrateVerticalAxis          0x80000      UNK_GRAVITY_RELATED (B)
             0x140510b1e integrateVerticalAxis          0x80000      UNK_GRAVITY_RELATED
 
-        WALK (0x1), FLYING (0x2), OBJECT_COLLECT (0x4000), HAY_CART_RELATED
-        (0x2000000) and UNK3 (0x8000000) have no writer in the client; they are
-        only meaningful on packets the server sends.
+        WALK (0x1), FLYING (0x2), HAY_CART_RELATED (0x2000000) and UNK3
+        (0x8000000) have no writer in the client; they are only meaningful on
+        packets the server sends. OBJECT_COLLECT (0x4000) *does* have a c->s
+        writer: sub_1404F71C0 (the mask is an argument, so the immediate-OR sweep
+        above misses it) is called with 0x4000 by requestCollectDroppedObject
+        (0x1403F60E0) before the type-11 collect.
 
     one-shot events vs state (JUMP / DOUBLE_JUMPED),
         both bits live in avatar+0x134. fillTankStatePacket ORs the whole mask
@@ -716,8 +747,10 @@ TANK_FLAGS,
             bit 11 0x800       -> (with bit 9: `test flags, 0x280`) audio effect
                                   sub_140118B10
             bit 12 0x1000      -> NetAvatar::onPunched (being-hit reaction)
-            bit 13 0x2000      -> re-broadcasts RESPAWN|TILE_CHANGE; controller
-                                  +0x8C = 1; sub_1404F7410 + respawn effect
+            bit 13 0x2000      -> re-broadcasts RESPAWN|TILE_CHANGE;
+                                  AvatarPacketSender+0x8C = 1 (re-arms
+                                  RESET_VISUAL_STATE); sub_1404F7410 + respawn
+                                  effect
             bit 14 0x4000      -> plays "audio/object_collect.wav"
             bit 15 0x8000      -> NetAvatar::onTileBounceHit(pkt.value, int_x,
                                   int_y)

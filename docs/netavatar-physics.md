@@ -869,37 +869,38 @@ called from `NetAvatar::tickAux` every fixed tick, so the *attempt* runs at
 tick rate and the gates below decide what goes on the wire):
 
 ```c
-// v3 = the object behind obj->unknown_8C (not fully mapped; +0x134/0x138/0x1A2
-// match NetAvatar offsets, so v3 is most likely the avatar):
-//   force path: avatar+0x134 has bit 0x800 (event bit), or pad_90[11] is set
+// obj = AvatarPacketSender (rcx; the 0x90-byte object held at avatar+0x128):
+//   force path: avatar+0x134 has bit 0x800 (event bit), or obj->dirty is set
 //   -> reset the poll timer so the next tick sends immediately.
-if ( (*(DWORD *)(v3 + 0x134) & 0x800) != 0 || obj->pad_90[11] )
-    obj->pad_90[4] = 0;
+if ( (obj->avatar->eventMask_134 & 0x800) != 0 || obj->dirty )
+    obj->nextSendTick = 0;
 // early-out: avatar byte +0x1A2 set AND dword +0x138 set (the 0x138 "special
 // state" that NetControllerLocal::Update also checks) -> skip this poll.
-else if ( *(BYTE *)(v3 + 0x1A2) && *(DWORD *)(v3 + 0x138) )
+else if ( obj->avatar->flag_1A2 && obj->avatar->specialState_138 )
     return;
 
 // rate gate: attempt at most every 200 ms
-if ( obj->pad_90[4] < getTick(0) )
+if ( obj->nextSendTick < getTick(0) )
 {
-    obj->pad_90[4] = getTick(0) + 200;                 // next poll
+    obj->nextSendTick = getTick(0) + 200;              // next poll
     NetAvatar::fillTankStatePacket(avatar, &obj->pkt); // build the 56-byte frame
-    if ( obj->pad_90[8] ) { obj->pkt.flags |= 4; obj->pad_90[8] = 0; }  // one-shot RESET_VISUAL_STATE
+    if ( obj->resetVisualState ) { obj->pkt.flags |= 4; obj->resetVisualState = 0; }  // one-shot RESET_VISUAL_STATE
+    obj->forceSend = 0;
 
     // send gate: only when the state actually changed
     if ( memcmp(&obj->pkt, &obj->lastSentPkt, 0x38)    // (a) 56-byte compare
       || (obj->pkt.flags & 0x10C16740) != 0            // (b) event flags set
-      || obj->pad_90[11] )                             // (c) forced-send latch
+      || obj->dirty )                                  // (c) forced-send latch
     {
+        obj->dirty = 0;
         memcpy(&obj->lastSentPkt, &obj->pkt, 0x38);
-        obj->pad_90[9] = 0;                            // re-arm the duplicate latch
+        obj->sentExact = 0;                            // re-arm the duplicate latch
         SendPacketRaw(4, &obj->pkt, 56, 0, peer);      // SEND
     }
-    else if ( !obj->pad_90[9] )
+    else if ( !obj->sentExact )
     {
         SendPacketRaw(...);                            // one confirmation copy
-        obj->pad_90[9] = 1;                            // then silence
+        obj->sentExact = 1;                            // then silence
     }
     // else: unchanged state at the poll -> send NOTHING (no idle heartbeat)
 }
@@ -910,14 +911,14 @@ Consequences:
 - **Moving**: position/velocity/flags change every poll → one STATE per
   200 ms (5 Hz). This matches the 190-210 ms log band.
 - **Idle**: the compare succeeds, the confirmation copy is already spent
-  (`pad_90[9]`), and the client simply stops sending STATE until the avatar
+  (`obj->sentExact`), and the client simply stops sending STATE until the avatar
   moves again. There is **no keep-alive at 5 Hz**.
 - **Not-quite-idle**: a sub-pixel change is invisible —
   `fillTankStatePacket` (`0x1404FBEB0`) stores
   `pkt->vector_x = floorf(pos_x + 0.5)` (same for `vector_y`), so only
   whole-pixel differences trip the 56-byte `memcmp`.
 - **Faster than 200 ms**: possible only through the force path —
-  `pad_90[11]` (or the `+0x134` event bit `0x800`) zeroes the poll timer, so
+  `obj->dirty` (or the `+0x134` event bit `0x800`) zeroes the poll timer, so
   the next tick bypasses the gate. Normal motion never exceeds 5 Hz.
 - The event mask **`0x10C16740`** decodes exactly against the `TankFlags`
   enum as the ten one-shot event bits: `FIRE_DAMAGE`, `GOT_KILLED`,
@@ -927,11 +928,23 @@ Consequences:
   again inside `fillTankStatePacket`). `SLIDE`/`SWIM`/`STANDING`/`FACING_LEFT`
   are not in the mask; they send via the `memcmp` path like any other change.
 - The mask alone does **not** expedite a send — only the `0x800` bit in the
-  same `+0x134` word (or the `pad_90[11]` latch) zeroes the poll timer. The
+  same `+0x134` word (or the `obj->dirty` latch) zeroes the poll timer. The
   hazard bits `FIRE_DAMAGE`/`ACID_DAMAGE`/`DAMAGE` therefore ride the next
   ≤200 ms poll, not the current tick; the kill is the only event in this group
   that also arms `0x800` (via `onPositionSnapped`, §12.1), which is why the
   kill frame leaves immediately.
+- **World join / position snap / respawn**: the sender's one-shot
+  `obj->resetVisualState` (+0x8C) is ORed into the next *built* frame
+  (`pkt.flags |= RESET_VISUAL_STATE`, `0x1404F5EF9`) and cleared at build time.
+  It starts at 1 in `AvatarPacketSender::AvatarPacketSender` (`0x1404F5DA0`), so
+  the first STATE after `OnSpawn` carries the bit; `NetAvatar::onSetPos`
+  (`0x140501290`, the `OnSetPos` callback registered by `initFromJoinData`) and
+  the respawn paths (`NetAvatar::respawnVisualReset` `0x140500A70`, received
+  RESPAWN bit 13) re-arm it. `PlayerController.reset_visual_state` mirrors the
+  latch (set by the ctor and `teleport`, consumed by `build_state_packet`).
+  `onPositionSnapped` (`0x1404FF2D0`) is the other source: it ORs `0x904`
+  (`GOT_KILLED|TILE_CHANGE|RESET_VISUAL_STATE`) into `+0x134` and sets
+  `obj->forceSend` (+0x8E).
 - The sub-200 ms bursts in the logs (p50 0.066 / 0.010) are the *other*
   client->server packets (SET_ICON_STATE etc.); they are unaffected by this
   gate, which governs only `TankPacket.type == STATE`.
@@ -969,7 +982,10 @@ pkt->flags |= eventMask_134;                            // one-shot bits, then c
 pkt->int_x = bounceTileX;                               // last bounce (0xD0)
 pkt->int_y = bounceTileY;                               //             (0xD4)
 pkt->value = bounceItemId;                              //             (0x17C)
-pkt->float_var = current time (ms, as float);
+pkt->float_var = (float)(int)sub_1402803C0(sub_1400F5820(appCtx));
+                                           // timing/device counter (0 on most
+                                           // frames; the "getTick()" label was
+                                           // not verified)
 eventMask_134 = 0;  bounceTileX = bounceTileY = -1;  bounceItemId = 0;
 ```
 
