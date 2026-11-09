@@ -35,6 +35,8 @@ from gtools.baked.items import (
     BOB_THE_GROSS_BLOB,
     BUNNY_EGG,
     CARDBOARD_NESSIE,
+    CARRIED_GAME_EGG,
+    CARRIED_GAME_FLAG,
     CELESTIAL_HALO,
     CHICKEN_PLOW,
     CLAWS_OF_BARKO,
@@ -46,12 +48,14 @@ from gtools.baked.items import (
     DA_VINCI_WINGS,
     DARKEST_SKULL_PARASOL,
     DEAR_JOHN_TRACTOR,
+    DISPLAY_BOX,
     DOOM_PLOW,
     DRACONIC_ROCKET_PARASOL,
     EZIO_S_BOOTS,
     FISHING_DINGHY,
     FLAMING_FLOATIES,
     FLOATING_LEAF,
+    GEMS,
     GIANT_FALLING_SHAMROCK,
     GO_ANYWHERE_SURFBOARD,
     GOLDEN_JET_SKI,
@@ -64,6 +68,7 @@ from gtools.baked.items import (
     HARVEST_SCARF,
     HAY,
     HELPING_HAND,
+    HEROIC_TIGHTS_OF_PREVENTION,
     HYPERTECH_ANTIGRAVITY_FIELD,
     ICE_CRUST_BLOCK,
     ICE_SKATES_OF_WINTER,
@@ -73,13 +78,16 @@ from gtools.baked.items import (
     LIGHTNING_UMBRELLA,
     LOCKED_ADVENTURE_DOOR,
     MAGIC_CARPET,
+    MAGIC_MAGNET,
     MOUNTAIN_BOOTS,
     OIL_PAPER_UMBRELLA,
     PARASOL,
     PINEAPPLE_PLOUGH,
     POSSESSING_SCARF,
+    PRESENT_GOBLIN_DISGUISE,
     RAYMAN_S_HAIR,
     RING_OF_WINDS,
+    ROYAL_WINTER_SEAL,
     SEA_MONSTER_FLOATIE,
     SILK_SCARF,
     SLEDDING_PENGUIN,
@@ -100,6 +108,7 @@ from gtools.baked.items import (
     SURFBOARD_WAVE,
     SWAN_BOAT,
     TARANTULA_LEGS,
+    TRANSMATTER_FIELD,
     TURKEY_HAT,
     UNICORN_FLOATIE,
     WATER_WINGS,
@@ -110,7 +119,7 @@ from gtools.baked.items import (
 from gtools.core.growtopia.items_dat import ItemInfoCollisionType, ItemInfoFlag2, ItemInfoType, item_database
 from gtools.core.growtopia.packet import TankFlags, TankPacket, TankType
 from gtools.core.growtopia.player import CharacterFlags, CharacterState, Clothing
-from gtools.core.growtopia.world import BalloonOMaticTile, DoorTile, LockTile, SeedTile, StormyCloudTile, Tile, TileFlags, World
+from gtools.core.growtopia.world import BalloonOMaticTile, DoorTile, DroppedItem, LockTile, SeedTile, StormyCloudTile, Tile, TileFlags, World
 
 if TYPE_CHECKING:
     from gtools.core.growtopia.inventory import Inventory
@@ -244,6 +253,17 @@ TOUCH_HOLD_TIMEOUT_MS = 11000.0  # onTouchHoldTick stops the hold after 0x2AF8 m
 # 200 ms is the resulting cadence (measured 5/s mode, docs/tile-change-request.md §5)
 PUNCH_REPEAT_MS = 200.0
 
+# -- dropped-object collection (ITEM_ACTIVATE_OBJECT_REQUEST, TankType 11) -------------
+# The only sender of type 11 is the dropped-object collector, NOT the tile activator
+# (`sendTileActivateRequest` 0x1404074F0 sends TILE_ACTIVATE_REQUEST/7 for the steam
+# launcher) nor the item activator (`sendItemActivateRequest` 0x140407400 sends
+# ITEM_ACTIVATE_REQUEST/10 for the backpack upgrade).
+DROPPED_OBJECT_SIZE = 16.0  # DroppedObject::getRect: AABB = (x, y, x + 16, y + 16)
+OBJECT_SPAWN_ANIM_MS = 630.0  # DroppedObject::getScale: the spawn scale reaches 1.0 at +630 ms
+OBJECT_COLLECT_RETRY_MS = 3000.0  # DroppedObject::getScale clears object+0x1C after 3 s
+# Inventory::canAddItem accepts these regardless of inventory space
+_ALWAYS_COLLECTIBLE = frozenset({GEMS, CARRIED_GAME_FLAG, CARRIED_GAME_EGG})
+
 # sendTankState's dedupe bypass mask (0x10C16740, verified at 0x1404F5F30): a
 # frame carrying any of these event bits is always sent, even when identical
 _STATE_EVENT_FLAGS = (
@@ -300,11 +320,12 @@ class CollisionPermissions:
 
 
 class PlayerController:
-    """The local player: per-tick simulation + outbound tile-change requests.
+    """The local player: per-tick simulation + outbound tile-change/collect requests.
 
     One instance simulates one local avatar. ``send`` is the single packet sink for
-    both the STATE frames and the tile-change requests; ``on_death`` is called once
-    per death, before the optional auto-respawn.
+    the STATE frames, the tile-change/activate requests and the dropped-object
+    collect request; ``on_death`` is called once per death, before the optional
+    auto-respawn.
 
     The live avatar state mirrors the client ``NetAvatar`` fields documented in
     ``docs/netavatar-physics.md`` (offsets in the field comments).
@@ -326,7 +347,6 @@ class PlayerController:
         inventory_provider: Callable[[], "Inventory | None"] | None = None,
         optimistic: bool = True,
         hand_item: int = FIST_ID,
-        activate_type: TankType = TankType.ITEM_ACTIVATE_OBJECT_REQUEST,
     ) -> None:
         self.world = world
         self.net_id = net_id
@@ -338,7 +358,10 @@ class PlayerController:
         self.inventory_provider = inventory_provider or (lambda: None)
         self.optimistic = optimistic
         self.hand_item = hand_item  # the client's selected item (GameState+0x248)
-        self.activate_type = activate_type
+        # dropped-object collection state: client object+0x18 (spawn tick) and
+        # +0x1C (activate tick). Objects already in the world are fully spawned.
+        self._drop_seen_ms: dict[int, float] = {item.uid: 0.0 for item in world.dropped}
+        self._collect_ms: dict[int, float] = {}
 
         # -- avatar live state (was PhysicsComponent) --------------------------
         self.x = float(x)
@@ -507,6 +530,7 @@ class PlayerController:
         self.time_ms += self.fixed_dt * 1000.0
         self._simulate()
         self._walk_item_mods()  # NetAvatar::tryPlaceSeedOrFertilizer (0x140506910)
+        self._collect_dropped_items()  # NetAvatar::collectDroppedItems (0x140506720) in tickAux
         self._send_state()
         self._auto_respawn()
 
@@ -896,6 +920,129 @@ class PlayerController:
         elif isinstance(tile.extra, SeedTile) and not tile.flags & TileFlags.WAS_SPLICED:
             self.request_place(self.hand_item, tx, ty, splice=True)
 
+    def _collect_dropped_items(self) -> None:
+        """The per-tick dropped-object collect -- ``NetAvatar::collectDroppedItems`` (0x140506720).
+
+        ``NetAvatar::tickAux`` calls this every tick. It walks the world's dropped
+        objects, requires the object's spawn animation to be finished
+        (``DroppedObject::getScale`` returns 1.0), tests the 16x16 object AABB against the
+        player collision rect and then calls ``requestCollectDroppedObject`` -- the only sender
+        of ``ITEM_ACTIVATE_OBJECT_REQUEST`` (TankType 11) in the client.
+
+        Objects already present when the controller is built count as fully
+        spawned; objects added later keep the client's 630 ms spawn-in gate.
+        """
+        if self.killed or self.state.flags & CharacterFlags.NOCLIP:
+            return
+
+        left, top = self.x, self.y
+        right, bottom = self.x + self.width, self.y + self.height
+        for item in self.world.dropped:
+            if item.uid not in self._drop_seen_ms:
+                self._drop_seen_ms[item.uid] = self.time_ms
+
+            if self._drop_scale(item.uid) < 1.0:
+                continue
+
+            stamp = self._collect_ms.get(item.uid)
+            if stamp is not None:
+                if self.time_ms - stamp < OBJECT_COLLECT_RETRY_MS:
+                    continue
+                del self._collect_ms[item.uid]
+
+            # DroppedObject::getRect: object AABB = (x, y, x + 16, y + 16)
+            if item.pos.x + DROPPED_OBJECT_SIZE <= left or right <= item.pos.x:
+                continue
+            if item.pos.y + DROPPED_OBJECT_SIZE <= top or bottom <= item.pos.y:
+                continue
+
+            # NetAvatar::collectDroppedItems: team flag/egg objects are hidden while
+            # avatar+0x284[17] == 0xFF (the ctor default) or [18] != 0xFF.
+            if item.id in (CARRIED_GAME_FLAG, CARRIED_GAME_EGG):
+                continue
+
+            if self._drop_tile_blocks(item) or not self._drop_mod_allows(item):
+                continue
+
+            # requestCollectDroppedObject stamps object+0x1C = getTick() before the inventory
+            # test, so a rejected collect retries on the 3 s timer.
+            self._collect_ms[item.uid] = self.time_ms
+            if not self._can_carry_item(item.id):
+                continue
+
+            self.request_collect_object(item)
+
+        live = {item.uid for item in self.world.dropped}
+        for uid in self._drop_seen_ms.keys() - live:
+            self._drop_seen_ms.pop(uid, None)
+            self._collect_ms.pop(uid, None)
+
+    def _drop_scale(self, uid: int) -> float:
+        """``DroppedObject::getScale`` spawn-in scale: 0 -> 1 over 630 ms (1.0 when done)."""
+        spawn = self._drop_seen_ms.get(uid, 0.0)
+        if spawn <= 0.0:
+            return 1.0
+        elapsed = self.time_ms - spawn
+        if elapsed <= 0.0:
+            return 0.0
+        if elapsed >= OBJECT_SPAWN_ANIM_MS:
+            return 1.0
+        ratio = elapsed / OBJECT_SPAWN_ANIM_MS
+        return ratio * ratio
+
+    def _drop_tile_blocks(self, item: DroppedItem) -> bool:
+        """The tile at the object centre -- ``getTileAtPosition`` in ``requestCollectDroppedObject``.
+
+        ``CanPassThroughTile(tile, ..., 1)`` must be 0. Display Box / Transmatter
+        Field tiles are passable normally but additionally require
+        ``canDoorPassedThrough_1`` (the avatar+0x17A owner override is not modelled).
+        """
+        tx = int((item.pos.x + 8.0) / TILE)
+        ty = int((item.pos.y + 8.0) / TILE)
+        if item.pos.x + 8.0 < 0.0 or item.pos.y + 8.0 < 0.0 or tx < 0 or ty < 0:
+            return False
+        tile = self.world.get_tile(tx, ty)
+        if tile is None:
+            return False
+        if self._interaction_blocked(tx, ty):
+            return True
+        if tile.fg_id in (DISPLAY_BOX, TRANSMATTER_FIELD):
+            return not self._lock_check(tile)
+        return False
+
+    def _drop_mod_allows(self, item: DroppedItem) -> bool:
+        """The three clothing gates of ``requestCollectDroppedObject``.
+
+        The client reads ``NetAvatar::getClothingOrMods(avatar, 1)`` -- the clothing mirror at
+        avatar+0x2B4 built by ``NetAvatar::buildClothingMods``: +4 pants, +8 face, +0xA hand.
+        Transmuted clothing variants are not modelled (the controller compares the
+        worn item ids directly).
+        """
+        clothing = self._clothing()
+        if clothing is None:
+            return True
+        if clothing.face == PRESENT_GOBLIN_DISGUISE:
+            return False
+        if clothing.pants == HEROIC_TIGHTS_OF_PREVENTION and item.id != GEMS:
+            return False
+        if clothing.hand == MAGIC_MAGNET and item.id not in (GEMS, ROYAL_WINTER_SEAL):
+            # the client also allows the id in GameState+0xE8 (the local placement
+            # preview); the controller maps that slot to the selected hand item
+            if self.hand_item not in (0, item.id):
+                return False
+        return True
+
+    def _can_carry_item(self, item_id: int) -> bool:
+        """``Inventory::canAddItem``: one more item fits in the inventory (approx. stack cap)."""
+        inventory = self.inventory_provider()
+        if inventory is None or inventory.max_slot <= 0:
+            return True  # no live inventory -> let the server decide
+        if item_id in _ALWAYS_COLLECTIBLE:
+            return True
+        if item_id in inventory:
+            return inventory[item_id].amount < 200
+        return len(inventory) < inventory.max_slot
+
     def _wind_direction(self) -> bool | None:
         """``True`` when the centre tile is a WIND tile facing left, ``False`` for
         right, ``None`` when there is no WIND tile under the avatar."""
@@ -1098,9 +1245,10 @@ class PlayerController:
 
         if steam and tile is not None:
             # the client clears IS_ON and sends the activate request from the landing
-            # handler (sendTileActivateRequest), not on the 200 ms tile-change grid
+            # handler (sendTileActivateRequest -> TILE_ACTIVATE_REQUEST/7), not on the
+            # 200 ms tile-change grid and not the dropped-object type 11
             tile.flags &= ~TileFlags.IS_ON
-            self.request_activate(tx, ty, tile.fg_id)
+            self.request_tile_activate(tx, ty)
 
         return TRAMPOLINE_SPEED
 
@@ -1704,15 +1852,51 @@ class PlayerController:
             )
         )
 
-    def request_activate(self, tx: int, ty: int, id: int) -> None:
-        """Send ``ITEM_ACTIVATE_OBJECT_REQUEST`` for the tile at ``(tx, ty)``.
+    def request_tile_activate(self, tx: int, ty: int) -> None:
+        """Send ``TILE_ACTIVATE_REQUEST`` (TankType 7) for the tile at ``(tx, ty)``.
 
-        The client's landing handler fires this straight from the steam launcher.
+        ``sendTileActivateRequest`` (0x1404074F0) is the client's tile activator:
+        the 56-byte packet is zeroed except ``type``, ``int_x`` = tile->tileX and
+        ``int_y`` = tile->tileY. It carries no ``value`` and no position stamp.
+        The steam launcher's landing branch is its only gameplay caller; it is a
+        different packet from ``ITEM_ACTIVATE_OBJECT_REQUEST`` (11).
         """
         if self.send is None:
             return
 
-        self.send(TankPacket(type=self.activate_type, net_id=0, int_x=tx, int_y=ty, value=id))
+        self.send(TankPacket(type=TankType.TILE_ACTIVATE_REQUEST, net_id=0, int_x=tx, int_y=ty))
+
+    def request_collect_object(self, dropped: DroppedItem) -> None:
+        """Send ``ITEM_ACTIVATE_OBJECT_REQUEST`` (TankType 11) for a dropped object.
+
+        Evidence: ``requestCollectDroppedObject`` (0x1403F60E0), the sole type-11 sender, called
+        by ``NetAvatar::collectDroppedItems`` (0x140506720) from ``NetAvatar::tickAux``. The
+        56-byte packet is zeroed except:
+
+        * ``value`` -- the object uid (object+0x14);
+        * ``vector_x`` / ``vector_y`` -- the avatar collision top-left;
+        * ``int_x`` -- ``(int)posx + 4 + (int)posy`` (a server position stamp);
+        * ``int_y`` -- 0.
+
+        ``net_id`` is 0. The client also ORs ``OBJECT_COLLECT`` (0x4000) into the
+        STATE event mask via ``sub_1404F71C0``; ``_STATE_EVENT_FLAGS`` lets that
+        bit ride the next 200 ms STATE frame past the dedupe.
+        """
+        self.action_flags |= TankFlags.OBJECT_COLLECT
+        if self.send is None:
+            return
+
+        self.send(
+            TankPacket(
+                type=TankType.ITEM_ACTIVATE_OBJECT_REQUEST,
+                net_id=0,
+                value=dropped.uid,
+                vector_x=self.x,
+                vector_y=self.y,
+                int_x=int(self.x) + 4 + int(self.y),
+                int_y=0,
+            )
+        )
 
     def _apply_optimistic(self, id: int, tx: int, ty: int, flags: TankFlags, *, splice: bool = False, item_on_tree: int = 0) -> None:
         """Apply the change locally (the server broadcast reconciles later)."""

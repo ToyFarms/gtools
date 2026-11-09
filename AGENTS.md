@@ -340,8 +340,11 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
   items do not), 150 px reach, the 11 s hold timeout, `PUNCH_REPEAT_MS` for the
   punch-animation gate. `request_change`/`request_punch`/`request_place` send the
   position-stamped `TILE_CHANGE_REQUEST` immediately and arm the chained STATE
-  bits (`PUNCH|TILE_CHANGE` / `PLACE|TILE_CHANGE`); `request_activate` sends the
-  steam-launcher activate. Client evidence: `docs/tile-change-request.md`.
+  bits (`PUNCH|TILE_CHANGE` / `PLACE|TILE_CHANGE`); `request_tile_activate` sends
+  the steam-launcher `TILE_ACTIVATE_REQUEST` (type 7), while the per-tick
+  `_collect_dropped_items` sends `ITEM_ACTIVATE_OBJECT_REQUEST` (type 11) for a
+  walked-over dropped object (`request_collect_object`). Those are three
+  different client senders. Client evidence: `docs/tile-change-request.md`.
 - `World.from_tiles()` does **not** set `Tile.index` for explicitly supplied
   tiles (only `World.fill()` assigns indices). Compute indices with
   `World.index_tile(pos)` when resolving `parent_index`-style links.

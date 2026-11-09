@@ -193,7 +193,68 @@ goblin test; only its fallback branch reads the Present Goblin Disguise item 426
 Full packet/field breakdown: `docs/02_packet` ("tile harvest / plant"); port:
 `PlayerController._walk_item_mods`.
 
-### 4.4 `handlePveNpcProjectileHit` @ `0x14054ADF0` — dead code
+### 4.4 `NetAvatar::collectDroppedItems` @ `0x140506720` — dropped-object collect (type 11)
+
+`NetAvatar::tickAux` (`0x140503160`) calls this every tick. Despite the name it has
+nothing to do with tree tiles: it is the **only** client sender of
+`ITEM_ACTIVATE_OBJECT_REQUEST` (TankType 11). The type number is often confused with
+the tile activator — these are three different packets:
+
+| Type | Sender | Caller |
+|---|---|---|
+| 7 `TILE_ACTIVATE_REQUEST` | `sendTileActivateRequest` `0x1404074F0` | steam launcher landing |
+| 10 `ITEM_ACTIVATE_REQUEST` | `sendItemActivateRequest` `0x140407400` | backpack upgrade |
+| 11 `ITEM_ACTIVATE_OBJECT_REQUEST` | `requestCollectDroppedObject` `0x1403F60E0` | this collector |
+
+Flow (asm cross-checked):
+
+1. `(avatar->charFlags_188 & 1) != 0` (NOCLIP) → return.
+2. `getPlayerCollisionRect` → `(left, top, right, bottom)`. The broad phase
+   `DroppedWorld::collectInRect` selects objects whose centre is near that rect; the narrow phase
+   here tests the object AABB `(x, y, x+16, y+16)` (`DroppedObject::getRect`) strictly against
+   the player rect, and requires the spawn animation to be finished
+   (`DroppedObject::getScale(obj) == 1.0`; the spawn scale reaches 1.0 **630 ms** after
+   object+0x18).
+3. Carried-team-item gate: if the object id is 1626 (flag) or 5996 (egg) and
+   `avatar+0x284[17] == 0xFF || avatar+0x284[18] != 0xFF`, skip. The ctor initialises
+   both bytes to 0xFF, so these objects are skipped in the default state.
+4. `requestCollectDroppedObject` performs the request.
+
+`requestCollectDroppedObject` gates (asm cross-checked):
+
+| Gate | Client test | Port |
+|---|---|---|
+| already collected | `object+0x1C != 0` → return | `_collect_ms` 3 s cooldown |
+| face | `NetAvatar::getClothingOrMods(avatar, 1)[+8] == 4260` → return | `Clothing.face` |
+| tile | `CanPassThroughTile(tile at (x+8, y+8), …, 1) != 0` → return | `_interaction_blocked` |
+| display box / transmatter | `isDisplayBoxOrTransmatterField(tile)` and `!avatar+0x17A` and `!canDoorPassedThrough_1` → return | `_lock_check` |
+| pants | `NetAvatar::getClothingOrMods[+4] == 7138 && item != 112` → return | `Clothing.pants` |
+| hand | `NetAvatar::getClothingOrMods[+0xA] == 8304 && item ∉ {112, 9186} && GameState+0xE8 ∉ {0, item}` → return | `Clothing.hand` + `hand_item` |
+| inventory | `Inventory::canAddItem(inventory, item)` false → chat message, no packet | `_can_carry_item` |
+
+`NetAvatar::getClothingOrMods(avatar, dl=1)` returns `avatar+0x2B4`, the clothing mirror built by
+`NetAvatar::buildClothingMods` from the live slots at `avatar+0x2C6` (hair, shirt, pants, shoes,
+face, hand, back, hat, neck); `+4/+8/+0xA` are pants/face/hand.
+
+The request is built **after** `object+0x1C = getTick()` and the inventory test:
+
+| field | value |
+|---|---|
+| `type` | 11 (`ITEM_ACTIVATE_OBJECT_REQUEST`) |
+| `net_id`, `flags`, `float_var` | 0 |
+| `value` | object uid (object+0x14) |
+| `vector_x`, `vector_y` | avatar `posx`, `posy` (collision top-left) |
+| `int_x` | `(int)posx + 4 + (int)posy` |
+| `int_y` | 0 |
+
+Then `sub_1404F71C0(localPlayer, 0x4000)` ORs `OBJECT_COLLECT` into `avatar+0x134`
+(unless the pending STATE snapshot `avatar+0x120` is non-null) and the 56-byte packet
+goes out through `SendPacketRaw`. `OBJECT_COLLECT` is in `sendTankState`'s forced-send
+mask (`0x10C16740`), so it rides the next 200 ms STATE frame.
+
+Port: `PlayerController._collect_dropped_items` / `request_collect_object`.
+
+### 4.5 `handlePveNpcProjectileHit` @ `0x14054ADF0` — dead code
 
 Entire body gated behind `getProtocolVersion() >= 999999`.
 
@@ -295,6 +356,18 @@ the "chained STATE".
   `TouchInputState *` instead of `__int64`.
 - Block comments at `0x140407570`, `0x1404FFC20`, `0x1404FFCA0`, `0x140411CF0`,
   `0x140414020`, `0x1404146D0`, `0x140513780`, `0x140411CC0`, `0x14054ADF0`.
+- Type-11 collect pass: renamed `sub_1403F60E0` -> `requestCollectDroppedObject`,
+  `HandleTreeTileUpdate` -> `NetAvatar::collectDroppedItems`, `GetPlayerMods` ->
+  `NetAvatar::getClothingOrMods`, `sub_1404F7CB0` -> `NetAvatar::buildClothingMods`,
+  `sub_140560530` -> `DroppedObject::getScale`, `sub_140560690` ->
+  `DroppedObject::getRect`, `sub_140560990` -> `DroppedWorld::collectInRect`,
+  `sub_140543B00` -> `Inventory::canAddItem`, `sub_140544600` ->
+  `Inventory::isItemMaxed`, `sub_140555040` -> `isDisplayBoxOrTransmatterField`.
+- `NetAvatar` corrected at `0x2A4..0x2D8`: added `modClothes[9]` and the nine named
+  live clothing slots (`clothingHair`/`Shirt`/`Pants`/`Shoes`/`Face`/`Hand`/`Back`/
+  `Hat`/`Neck`) in `handleChangeClotheAndSomePunch` write order. The old
+  `clothingHat` @ `0x2C6` and `clothingHair` @ `0x2D4` were swapped. Applied to
+  `docs/netavatar_type.h` and the IDB type library.
 
 Tooling notes: `list_funcs` filters under the `filter` key; `rename` on data needs
 `{addr, old, new}`; `declare_type` splits input on commas, so each declaration must be its

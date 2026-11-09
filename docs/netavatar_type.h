@@ -119,16 +119,17 @@ struct NetAvatar
     _BYTE       unk_284[0x18];            // 0x284
     _DWORD      counter_29C;              // 0x29C  decremented per tick in sub_140505CB0
     _DWORD      counter_2A0;              // 0x2A0  decremented while airborne
-    _BYTE       unk_2A4[0x22];            // 0x2A4
-    ItemID      clothingHat;              // 0x2C6  slow-fall group B / boot list (Celestial Halo, Zephyr Helm, Turkey Hat)
-    _WORD       unk_2C8;                  // 0x2C8
-    ItemID      clothingPants;            // 0x2CA  Super Squirt Gun Jetpack Pants
-    ItemID      clothingShoes;            // 0x2CC  slow-fall/water/boot checks
-    _WORD       unk_2CE;                  // 0x2CE  checked via sub_14053BE70
-    ItemID      clothingHand;             // 0x2D0  parasols, water wings, ...
-    ItemID      clothingBack;             // 0x2D2  wings, jetpacks, cloaks
-    ItemID      clothingHair;             // 0x2D4  Rayman's Hair
-    ItemID      clothingNeck;             // 0x2D6  scarves, floaties
+    _BYTE       unk_2A4[0x10];            // 0x2A4
+    ItemID      modClothes[9];            // 0x2B4  clothing mirror built by NetAvatar::buildClothingMods (+4 pants / +8 face / +0xA hand)
+    ItemID      clothingHair;             // 0x2C6  live slot 1 (handleChangeClotheAndSomePunch order)
+    ItemID      clothingShirt;            // 0x2C8  live slot 2
+    ItemID      clothingPants;            // 0x2CA  live slot 3
+    ItemID      clothingShoes;            // 0x2CC  live slot 4 -- slow-fall/water/boot checks
+    ItemID      clothingFace;             // 0x2CE  live slot 5 -- Present Goblin Disguise 4260 gate
+    ItemID      clothingHand;             // 0x2D0  live slot 6 -- parasols, water wings, ...
+    ItemID      clothingBack;             // 0x2D2  live slot 7 -- wings, jetpacks, cloaks
+    ItemID      clothingHat;              // 0x2D4  live slot 8 -- slow-fall group B / boot list (Celestial Halo, Zephyr Helm, Turkey Hat)
+    ItemID      clothingNeck;             // 0x2D6  live slot 9 -- scarves, floaties
     _BYTE       unk_2D8[8];               // 0x2D8
     _QWORD      tileCache_2E0;            // 0x2E0  passed to TileExistsAt (0x140519D80) for the rope-piton check
     _BYTE       unk_2E8[0x70];            // 0x2E8

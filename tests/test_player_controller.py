@@ -3,13 +3,20 @@
 Covers the press/hold/release model, the per-tile de-duplication (Fist repeats,
 items do not), the reach gate, the punch-animation cadence, the position-stamped
 ``TILE_CHANGE_REQUEST``, the chained STATE action bits (``PUNCH|TILE_CHANGE`` /
-``PLACE|TILE_CHANGE``), the optimistic application and the steam-launcher
-``ITEM_ACTIVATE_OBJECT_REQUEST``.  Client evidence: ``docs/tile-change-request.md``.
+``PLACE|TILE_CHANGE``), the steam-launcher ``TILE_ACTIVATE_REQUEST`` and the
+dropped-object ``ITEM_ACTIVATE_OBJECT_REQUEST``.  Client evidence:
+``docs/tile-change-request.md``.
 """
 
-from pyglm.glm import ivec2
+from pyglm.glm import ivec2, vec2
 
-from gtools.baked.items import DIRT, STEAM_LAUNCHER
+from gtools.baked.items import (
+    DIRT,
+    GEMS,
+    HEROIC_TIGHTS_OF_PREVENTION,
+    PRESENT_GOBLIN_DISGUISE,
+    STEAM_LAUNCHER,
+)
 from gtools.core.growtopia.inventory import Inventory
 from gtools.core.growtopia.packet import TankFlags, TankType
 from gtools.core.growtopia.physics.controller import (
@@ -20,8 +27,8 @@ from gtools.core.growtopia.physics.controller import (
     PlayerController,
     _STATE_EVENT_FLAGS,
 )
-from gtools.core.growtopia.player import CharacterFlags, CharacterState, Player
-from gtools.core.growtopia.world import Tile, TileFlags, World
+from gtools.core.growtopia.player import CharacterFlags, CharacterState, Clothing, Player
+from gtools.core.growtopia.world import DroppedItem, Tile, TileFlags, World
 
 FLOOR_Y = 8
 STAND_Y = FLOOR_Y * 32 - HITBOX[1]
@@ -270,18 +277,101 @@ def test_forced_send_mask_matches_the_client() -> None:
     assert int(_STATE_EVENT_FLAGS) == 0x10C16740
 
 
-def test_steam_launcher_clears_is_on_and_requests_activate() -> None:
+def test_steam_launcher_clears_is_on_and_sends_tile_activate() -> None:
     world = make_world((STEAM_LAUNCHER, 3, FLOOR_Y - 1, TileFlags.IS_ON))
     packets = []
     controller = PlayerController(world, x=3 * 32 + 6.0, y=(FLOOR_Y - 4) * 32, send=packets.append)
 
     for _ in range(40):
         controller.step()
-        if any(p.type == TankType.ITEM_ACTIVATE_OBJECT_REQUEST for p in packets):
+        if any(p.type == TankType.TILE_ACTIVATE_REQUEST for p in packets):
             break
 
-    activates = [p for p in packets if p.type == TankType.ITEM_ACTIVATE_OBJECT_REQUEST]
+    activates = [p for p in packets if p.type == TankType.TILE_ACTIVATE_REQUEST]
     assert len(activates) == 1
     assert (activates[0].int_x, activates[0].int_y) == (3, FLOOR_Y - 1)
-    assert activates[0].value == STEAM_LAUNCHER
+    assert activates[0].value == 0, "type 7 carries no item id"
+    assert (activates[0].vector_x, activates[0].vector_y) == (0.0, 0.0), "no position stamp"
     assert not (world.get_tile(3, FLOOR_Y - 1).flags & TileFlags.IS_ON), "optimistic IS_ON clear"
+
+
+def _dropped_at_player(world: World, *, id: int = DIRT, dy: float = 0.0) -> DroppedItem:
+    dropped = DroppedItem(id=id, pos=vec2(3 * 32 + 6.0, STAND_Y + dy), amount=1)
+    world.dropped.add_item(dropped)
+    return dropped
+
+
+def test_walking_over_a_dropped_object_sends_item_activate_object_request() -> None:
+    """The only type-11 sender is the dropped-object collector (0x1403F60E0)."""
+    world = make_world()
+    dropped = _dropped_at_player(world)
+    packets = []
+    controller = PlayerController(world, x=3 * 32 + 6.0, y=STAND_Y, send=packets.append)
+
+    controller.step()
+
+    collects = [p for p in packets if p.type == TankType.ITEM_ACTIVATE_OBJECT_REQUEST]
+    assert len(collects) == 1
+    pkt = collects[0]
+    assert pkt.net_id == 0
+    assert pkt.value == dropped.uid  # object+0x14
+    assert (pkt.vector_x, pkt.vector_y) == (controller.x, controller.y)
+    assert pkt.int_x == int(controller.x) + 4 + int(controller.y)  # position stamp
+    assert pkt.int_y == 0
+    assert pkt.float_var == 0 and pkt.flags == 0
+    assert not [p for p in packets if p.type == TankType.ITEM_ACTIVATE_REQUEST]
+
+    frame = next(p for p in packets if p.type == TankType.STATE)
+    assert int(frame.flags) & int(TankFlags.OBJECT_COLLECT)
+
+
+def test_dropped_object_collect_retries_after_three_seconds() -> None:
+    world = make_world()
+    _dropped_at_player(world)
+    packets = []
+    controller = PlayerController(world, x=3 * 32 + 6.0, y=STAND_Y, send=packets.append)
+
+    for _ in range(220):  # 3.66 s at 60 Hz
+        controller.step()
+
+    collects = [p for p in packets if p.type == TankType.ITEM_ACTIVATE_OBJECT_REQUEST]
+    assert len(collects) == 2, "object+0x1C is cleared after 3000 ms (DroppedObject::getScale)"
+
+
+def test_solid_tile_at_the_object_centre_blocks_collection() -> None:
+    """requestCollectDroppedObject requires CanPassThroughTile(tile at x+8, y+8, isBreakTap=1) == 0."""
+    world = make_world((DIRT, 3, FLOOR_Y - 1, TileFlags.NONE))
+    _dropped_at_player(world)
+    packets = []
+    controller = PlayerController(world, x=3 * 32 + 6.0, y=STAND_Y, send=packets.append)
+
+    controller.step()
+
+    assert not [p for p in packets if p.type == TankType.ITEM_ACTIVATE_OBJECT_REQUEST]
+
+
+def _collect_packets(world: World) -> list:
+    packets = []
+    controller = PlayerController(world, x=3 * 32 + 6.0, y=STAND_Y, send=packets.append)
+    controller.step()
+    return [p for p in packets if p.type == TankType.ITEM_ACTIVATE_OBJECT_REQUEST]
+
+
+def test_heroic_tights_block_dirt_but_not_gems() -> None:
+    world = make_world()
+    world.players[1] = Player(net_id=1, clothing=Clothing(pants=HEROIC_TIGHTS_OF_PREVENTION))
+    _dropped_at_player(world)
+    assert not _collect_packets(world)
+
+    # 112 (GEMS) is exempt from the Heroic Tights / Magic Magnet gates
+    world = make_world()
+    world.players[1] = Player(net_id=1, clothing=Clothing(pants=HEROIC_TIGHTS_OF_PREVENTION))
+    gems = _dropped_at_player(world, id=GEMS, dy=-1.0)
+    assert [p for p in _collect_packets(world) if p.value == gems.uid]
+
+
+def test_goblin_disguise_face_blocks_all_dropped_object_collection() -> None:
+    world = make_world()
+    world.players[1] = Player(net_id=1, clothing=Clothing(face=PRESENT_GOBLIN_DISGUISE))
+    _dropped_at_player(world)
+    assert not _collect_packets(world)

@@ -115,7 +115,9 @@ payload is determiend through the type,
     SEND_MAP_DATA                    (4 ): (todo)
     SEND_TILE_UPDATE_DATA            (5 ): (todo)
     SEND_TILE_UPDATE_DATA_MULTIPLE   (6 ): (todo)
-    TILE_ACTIVATE_REQUEST            (7 ): (todo)
+    TILE_ACTIVATE_REQUEST            (7 ): steam launcher landing; sendTileActivateRequest
+                                          @ 0x1404074F0 (int_x/int_y = tile coords, no
+                                          value, no position stamp).
     TILE_APPLY_DAMAGE                (8 ): tile on/off toggle, applied by
                                          handleTileTreeState @ 0x14055E300:
                                          toggleOnOff(tile, value, flags & UNK3,
@@ -123,8 +125,14 @@ payload is determiend through the type,
                                          36 tile additionally takes animation_type as
                                          its extra type (changeTileExtraType).
     SEND_INVENTORY_STATE             (9 ): (todo)
-    ITEM_ACTIVATE_REQUEST            (10): (todo)
-    ITEM_ACTIVATE_OBJECT_REQUEST     (11): (todo)
+    ITEM_ACTIVATE_REQUEST            (10): backpack upgrade; sendItemActivateRequest
+                                          @ 0x140407400.
+    ITEM_ACTIVATE_OBJECT_REQUEST     (11): dropped-object collect; the only sender is
+                                          requestCollectDroppedObject @ 0x1403F60E0, called from
+                                          NetAvatar::collectDroppedItems @ 0x140506720. value =
+                                          object uid, vector = avatar pos, int_x =
+                                          (int)posx + 4 + (int)posy. See
+                                          docs/tile-change-request.md §4.4.
     SEND_TILE_TREE_STATE             (12): (todo)
     SEND_TILE_TREE_STATE             (12): server -> client tree/seed state. applied by
                                          handleTileTreeState @ 0x14055E300: on a seed

@@ -428,7 +428,10 @@ this[0xDC] = 0;
 ```
 
 Steam launcher additionally runs `clearTileFlag(IS_ON)` +
-`sendTileActivateRequest` after the launch. The shared bookkeeping helper
+`sendTileActivateRequest` (`TILE_ACTIVATE_REQUEST`, TankType 7) after the launch.
+It is **not** `ITEM_ACTIVATE_OBJECT_REQUEST` (11), whose only sender is the
+dropped-object collector (`docs/tile-change-request.md` §4.4). The shared
+bookkeeping helper
 `NetAvatar::onTileBounceHit` (`0x140502AB0`) stores the bounce tile in
 `avatar+0xD0/0xD4`, ORs an event
 bit into `+0x134`, and plays the bounce audio.
