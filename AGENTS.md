@@ -25,6 +25,7 @@ player, and **tests are the contract**.
 | `docs/lock-permissions.md` | lock / build-permission model (client-verified vs `[server-side]`) |
 | `docs/collision-port-backlog.md` | the two-layer collision model + the ported per-type checklist |
 | `scripts/export_ida_pseudocode.py` | resumable all-function pseudocode exporter (retries, focus helper, size guard) |
+| `scripts/decompile.py` | one-shot decompile wrapper (cold-start/focus/repair/stale-type auto-recovery) |
 | `docs/ida-pseudocode-export.md` | root cause + usage/output for the pseudocode export |
 
 ## 2. Environment
@@ -53,7 +54,8 @@ The client is analysed in IDA (image base `0x140000000`) and driven through the
 1. **Find** — `lookup_funcs` (address or name, auto-detected), `list_funcs`
    (`{filter: "substring"}`), `xrefs_to`, `find` (string / immediate /
    data_ref / code_ref).
-2. **Read** — `decompile` first; `disasm` / `get_bytes` when it misbehaves.
+2. **Read** — `scripts/decompile.py` (robust wrapper, see below) or the raw
+   `decompile`; `disasm` / `get_bytes` when it misbehaves.
 3. **Cross-check the asm** for every branch you are porting — the decompiler
    is lossy around booleans, registers and float/int punning.
 4. **Annotate** the IDB as you verify: `rename` (`{batch: {func: [...]}}`),
@@ -67,6 +69,37 @@ Tool calls go through the Code Mode `execute` tool, e.g.:
 const d = await tools.gt.decompile({addr: "0x140554c10"});
 return d.pseudocode;
 ```
+
+### Decompiling: `scripts/decompile.py` first
+
+The raw MCP `decompile` is GUI automation (F5) and fails in known ways. The
+wrapper applies every verified fix automatically inside a single run:
+
+```sh
+.venv/bin/python scripts/decompile.py 0x140554c10              # pseudocode to stdout
+.venv/bin/python scripts/decompile.py handleSetCharacterState  # by name
+.venv/bin/python scripts/decompile.py CanPassThroughTile --json
+.venv/bin/python scripts/decompile.py 0x140512080 --out /tmp/opencode/move.c
+```
+
+- auto-detects the live MCP port (`.ida-mcp/instances/*.json`; `--url`
+  overrides) and resolves names through `lookup_funcs`;
+- retries cold-start "No pseudocode widget" misses, follows the server's
+  offload URL (full output, never the 1 KB preview), and waits out
+  giant-function stalls (`lookup_funcs` probe) instead of stacking timeouts;
+- on `Decompiler action failed` runs the UIA focus helper once and retries —
+  this briefly activates the IDA window (the verified cure); `--no-steal`
+  skips when IDA is in the background, `--no-focus` disables it;
+- on persistent "No pseudocode widget" undefine/redefines the function
+  (stub-size guarded) and retries; `--no-fix` disables;
+- on `->?` output re-applies the prototype (placeholder → real, **validated
+  first**) and re-decompiles; prototypes with unnamed ordinal types (`#476`)
+  are skipped without touching the IDB; `--no-fix` disables;
+- refuses `sub_1402E5B40`-sized functions (> 0x80000 bytes) unless
+  `--allow-large` is passed.
+
+Only stdout carries pseudocode/JSON, notes go to stderr. Exit codes: 0 ok,
+1 decompile failure, 2 setup/resolution error.
 
 ### IDA / MCP quirks (hard-won)
 
@@ -123,7 +156,10 @@ return d.pseudocode;
   This fixed `fillTankStatePacket`, `setJumpHeld`,
   `handleSetCharacterState` and `updateBlockStateFromPlayerInteraction` in
   earlier sessions. (Distinct from the widget error above, which is view
-  state.)
+  state.) `scripts/decompile.py` does this automatically, but re-applies the
+  captured signature as a no-op check first: unnamed ordinal prototypes
+  (`#476 *ctx`) cannot be set through `set_type` at all, so they are skipped
+  instead of leaving the function half-modified.
 - **Persistent call-analysis failures can be a callee-prototype problem.**
   `sub_1400298D0` and `sub_140029920` refused to decompile even after
   undefine/redefine. The cause was `Log` (0x140029E50): IDA had inferred an
