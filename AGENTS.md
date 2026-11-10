@@ -345,6 +345,11 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
   `_collect_dropped_items` sends `ITEM_ACTIVATE_OBJECT_REQUEST` (type 11) for a
   walked-over dropped object (`request_collect_object`). Those are three
   different client senders. Client evidence: `docs/tile-change-request.md`.
+- Server position sets: `handle_set_pos(x, y)` models `NetAvatar::onSetPos`
+  (0x140501290, the `OnSetPos` call variant): it teleports and re-arms the
+  one-shot `reset_visual_state` latch, so the next STATE frame carries
+  `RESET_VISUAL_STATE`. The proxy state layer maps `Call(OnSetPos, (x, y))` to
+  the self `STATE_PLAYER_UPDATE` (net_id 0).
 - `World.from_tiles()` does **not** set `Tile.index` for explicitly supplied
   tiles (only `World.fill()` assigns indices). Compute indices with
   `World.index_tile(pos)` when resolving `parent_index`-style links.

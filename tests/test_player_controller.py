@@ -305,6 +305,19 @@ def test_reset_visual_state_is_one_shot_and_teleport_rearms_it() -> None:
     assert int(third.flags) & int(TankFlags.RESET_VISUAL_STATE)
 
 
+def test_handle_set_pos_teleports_and_rearms_reset_visual_state() -> None:
+    """The server OnSetPos call (sub_140501290) sets the position and the latch."""
+    session = Session()
+    session.controller.step()  # consume the join latch
+
+    session.controller.handle_set_pos(10 * 32 + 6.0, STAND_Y)
+
+    assert (session.controller.x, session.controller.y) == (10 * 32 + 6.0, STAND_Y)
+    assert session.controller.vx == 0.0 and session.controller.vy == 0.0
+    pkt = session.controller.build_state_packet()
+    assert int(pkt.flags) & int(TankFlags.RESET_VISUAL_STATE)
+
+
 def test_steam_launcher_clears_is_on_and_sends_tile_activate() -> None:
     world = make_world((STEAM_LAUNCHER, 3, FLOOR_Y - 1, TileFlags.IS_ON))
     packets = []

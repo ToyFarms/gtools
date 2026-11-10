@@ -494,6 +494,21 @@ class State:
                                     ),
                                 ),
                             )
+                        elif fn == b"OnSetPos":
+                            # server position set: world entry / teleport / door use
+                            # (NetAvatar::onSetPos 0x140501290). The call carries no
+                            # net id -- it always targets the local player -- so emit
+                            # it as the self update (net_id 0, like a client STATE);
+                            # the flags are preserved because OnSetPos does not
+                            # touch facing/on-ground.
+                            x, y = v.as_vec2[1]
+                            self.send_state_update(
+                                broker,
+                                StateUpdate(
+                                    what=STATE_PLAYER_UPDATE,
+                                    player_update=PlayerUpdate(net_id=0, x=x, y=y, flags=self.me.flags),
+                                ),
+                            )
                     case TankType.ITEM_CHANGE_OBJECT:
                         if pkt.tank.net_id == -1:  # add new
                             self.send_state_update(

@@ -520,6 +520,21 @@ class PlayerController:
         self.reset_visual_state = True
         self._check_tile_mod()
 
+    def handle_set_pos(self, x: float, y: float) -> None:
+        """Handle the server's ``OnSetPos`` call -- ``NetAvatar::onSetPos`` (0x140501290).
+
+        The server sends ``Call(OnSetPos, (x, y))`` on world entry, after a
+        teleport and on a door use. The client writes ``posx``/``posy``, zeros the
+        four velocity-axis entries (``+0xE4/+0xEC/+0xF4/+0xFC``), clears the
+        slide/mud and damage-slip bytes, sets the climb state ``+0x2088 = 2``,
+        refreshes the tile index and sets ``AvatarPacketSender+0x8C`` so the next
+        built STATE frame carries ``RESET_VISUAL_STATE``.
+
+        ``teleport`` implements the position/velocity/reset part; this method is
+        the explicit server-call entry point for a packet-driven client.
+        """
+        self.teleport(x, y)
+
     def update(self, dt: float) -> None:
         self._accumulator += dt
         while self._accumulator >= self.fixed_dt:

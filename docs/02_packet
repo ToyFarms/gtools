@@ -802,6 +802,17 @@ TANK_FLAGS,
             is (0x140541C5D); readers: ProcessTankUpdatePacket (many sites),
             handleNPC, handlePetBattle, handleSelectTileIndex, handleSendLock,
             sub_1403F29C0, sub_1403F43E0.
+        CALL_FUNCTION (1) variants: NetAvatar::initFromJoinData registers the
+            local-avatar callbacks by name in the avatar's callback map. The
+            server sends e.g. OnSetPos -> NetAvatar::onSetPos (0x140501290):
+            posx/posy from the variant's VEC2 payload, the four velocity axes
+            zeroed (+0xE4/+0xEC/+0xF4/+0xFC), the slide/mud byte +0xDD and the
+            damage-slip byte +0x131 cleared, +0x2088 = 2, and
+            AvatarPacketSender+0x8C set so the next built STATE carries
+            RESET_VISUAL_STATE. The proxy maps it to the self
+            STATE_PLAYER_UPDATE (net_id 0, the client STATE convention; flags
+            preserved because OnSetPos does not touch facing/on-ground). Same
+            family: OnSpawn, OnRemove, OnSetClothing.
         GOT_PUNCHED (23), APP_CHECK_RESPONSE (24), APP_INTEGRITY_FAIL (25):
             the flag word is zero / unused (the app-check hash and the integrity
             code live in `value`).
