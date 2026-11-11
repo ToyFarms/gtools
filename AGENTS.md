@@ -359,6 +359,28 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
   `set_input(...)` + `step()` loops, asserting on the returned controller's
   `x` / `y` / `grounded`.
 
+### Pathfinding (`gtools/core/growtopia/physics/pathfinding/`)
+
+- Contract: `docs/pathfinding-plan.md`; durable reference: `docs/pathfinding.md`.
+- The controller is the physics authority. `FastEvaluator` is a tick-exact mirror
+  of `_simulate`; `NumbaBackend` is the same algorithm compiled with `numba.njit`
+  over one flat `int32` grid matrix, selected automatically by `FastEvaluator`.
+- **Any physics change must be mirrored in both kernels.** The gates:
+  `tests/test_path_fastkernel.py` (kernel vs the real controller, per tick) and
+  `tests/test_path_numba.py` (compiled vs Python kernel, per tick + `Outcome`).
+- `PATHFINDING_NO_NUMBA=1` (or `FastEvaluator(..., use_numba=False)`) forces the
+  Python reference path. The compiled backend warms every kernel function in
+  `NumbaBackend.__init__` so JIT compile time never lands inside the planner's
+  `time_budget_ms`.
+- Gated tiles (doors/gates/adventure/cloud/faction/guild) are resolved **once** per
+  snapshot + profile fingerprint with the controller's own predicates; only the
+  `LOCKED_ADVENTURE_DOOR` stays dynamic (avatar touched-tile cache). A dynamic
+  extra that the snapshot does not version needs a `TILE_UPDATE` to be seen.
+- Usage: `SegmentedPathfinder(controller).plan_to_tile(tx, ty)` →
+  `PathFollower(controller, pathfinder, path)`; the follower owns the
+  `set_input` + `step` loop (`tick_inputs`/`observe` when an outer loop steps).
+- Bench: `PYTHONPATH=. .venv/bin/python scripts/bench_pathfinding.py [--quick|--json]`.
+
 ## 6. Snippets
 
 ```sh
