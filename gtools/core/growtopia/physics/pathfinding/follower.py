@@ -33,6 +33,7 @@ class PathFollower:
         position_tolerance: float = 1.5,
         velocity_tolerance: float = 8.0,
         replan_limit: int = 8,
+        replan_budget_ms: float | None = None,
     ) -> None:
         self.controller = controller
         self.pathfinder = pathfinder
@@ -40,6 +41,9 @@ class PathFollower:
         self.position_tolerance = float(position_tolerance)
         self.velocity_tolerance = float(velocity_tolerance)
         self.replan_limit = int(replan_limit)
+        # replans happen *while the avatar is moving*, so they are given a smaller
+        # budget than an explicit plan; refinement makes up the quality afterwards
+        self.replan_budget_ms = replan_budget_ms
 
         self.done = False
         self.failed = False
@@ -89,6 +93,35 @@ class PathFollower:
             return None
 
         return self._segments[self._index].kind
+
+    @property
+    def remaining_cost(self) -> float:
+        """Cost of the rest of the route from where the avatar is now.
+
+        Comparable with a fresh plan's ``path.total_cost`` (both are ticks plus
+        penalties), used to decide whether a re-plan is worth installing.
+        """
+        total = 0.0
+        for index in range(self._index, len(self._segments)):
+            total += self._segments[index].cost
+            if index == self._index:
+                total -= min(self._tick, self._segments[index].ticks)
+
+        return max(0.0, total)
+
+    def improve(self, path: Any) -> bool:
+        """Install ``path`` (planned from the live state) without losing the counters.
+
+        Used by ``PathAutopilot`` refinement: the avatar keeps moving on the frames
+        it was given, and the better route simply replaces the remaining ones.
+        """
+        if self.done or self.failed or path is None or not path.segments:
+            return False
+
+        self._install(path)
+        self._dirty = False
+
+        return True
 
     def step(self) -> bool:
         """Advance one controller tick.  Returns ``self.done``."""
@@ -227,7 +260,7 @@ class PathFollower:
             return
 
         self.replans += 1
-        result = self.pathfinder.plan_from_current()
+        result = self.pathfinder.plan_from_current(time_budget_ms=self.replan_budget_ms)
         if not result.ok or result.path is None or not result.path.segments:
             self.done = True
             self.failed = True

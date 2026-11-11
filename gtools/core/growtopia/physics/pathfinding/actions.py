@@ -95,33 +95,71 @@ class ActionCatalog:
     def paddle_ticks(self) -> int:
         return max(2, int(math.ceil(self.profile.jump_airtime_ticks * 0.5)) + 4)
 
+    @property
+    def jump_ladder(self) -> tuple[tuple[str, int, float], ...]:
+        """``(action suffix, jump-hold ticks, penalty)``, from a hop to a full jump.
+
+        The jump is cut when the button is released (``JUMP_CUT_ACCEL``), so the
+        arc height scales with the hold: a 1-tick hold peaks ~26 px above the
+        ground and a 4-tick hold ~41 px, while ``cut`` and ``full`` peak ~88/101 px
+        on the default profile.  The short holds are what lets a route cross a
+        short gap under a low ceiling instead of walking the long way around it.
+
+        Hops carry a smaller penalty than a full jump: the tie between "hop" and
+        "walk the same distance" still breaks towards walking (a hop is no faster
+        over flat ground), but a hop that genuinely saves ticks -- a gap -- wins.
+        """
+        ladder: list[tuple[str, int, float]] = []
+        seen: set[int] = set()
+        for name, hold, penalty in (
+            ("hop", 1, 0.25),
+            ("hop", 4, 0.25),
+            ("cut", self.cut_ticks, 0.5),
+            ("full", self.hold_ticks, 1.0),
+        ):
+            hold = max(1, int(hold))
+            if hold in seen:
+                continue
+            seen.add(hold)
+            ladder.append((f"{name}{hold}" if name == "hop" else name, hold, penalty))
+
+        return tuple(ladder)
+
     # -- candidate generation --------------------------------------------------
 
-    def candidates(self, state: MotionState) -> list[Segment]:
+    def candidates(self, state: MotionState, *, full: bool = True) -> list[Segment]:
         """All actions worth evaluating from ``state`` (killed states -> none)."""
         segments: list[Segment] = []
-        for action in self.actions(state):
+        for action in self.actions(state, full=full):
             segment = self.evaluate(state, action)
             if segment is not None:
                 segments.append(segment)
 
         return segments
 
-    def actions(self, state: MotionState) -> list[Action]:
-        """The candidate actions for ``state``'s stance (no evaluation yet)."""
+    def actions(self, state: MotionState, *, full: bool = True) -> list[Action]:
+        """The candidate actions for ``state``'s stance (no evaluation yet).
+
+        ``full=False`` selects the **cheap tier**: ground moves and the jump
+        ladder, without the double-jump / glide / paddle / wait variants.  Those
+        are the actions that cost the most physics per evaluation (a double jump
+        averages ~90 simulated ticks), and the planner's first rough pass uses the
+        cheap tier so it reaches a complete route quickly; the refinement passes
+        then run the full set with the incumbent as an upper bound.
+        """
         if state.killed:
             return []
 
         actions: list[Action] = []
         self.killed_candidates = 0
         if state.climbing:
-            actions.extend(self._climb_actions(state))
+            actions.extend(self._climb_actions(state, full))
         elif state.in_water:
-            actions.extend(self._water_actions(state))
+            actions.extend(self._water_actions(state, full))
         elif state.grounded:
-            actions.extend(self._ground_actions(state))
+            actions.extend(self._ground_actions(state, full))
         else:
-            actions.extend(self._air_actions(state))
+            actions.extend(self._air_actions(state, full))
 
         unique: list[Action] = []
         seen: set[str] = set()
@@ -139,44 +177,51 @@ class ActionCatalog:
         """A release tick when the current state still holds jump."""
         return ((direction, False, 1),) if state.jump else ()
 
-    def _ground_actions(self, state: MotionState) -> list[Action]:
+    def _ground_actions(self, state: MotionState, full: bool = True) -> list[Action]:
         actions: list[Action] = []
         for direction in (-1, 0, 1):
             if direction:
                 actions.append(Action(f"walk:{direction}", ((direction, False, self.walk_ticks),), self._walk_stop(direction)))
-            for hold_name, hold in (("cut", self.cut_ticks), ("full", self.hold_ticks)):
+            for hold_name, hold, penalty in self.jump_ladder:
                 frames = self._release(state, direction) + ((direction, True, hold), (direction, False, self.air_ticks))
-                actions.append(Action(f"jump:{hold_name}:{direction}", frames, self._landing_stop(hold), max_ticks=hold + self.air_ticks, penalty=1.0))
-                if self.profile.has_double_jump:
+                actions.append(
+                    Action(f"jump:{hold_name}:{direction}", frames, self._landing_stop(hold), max_ticks=hold + self.air_ticks, penalty=penalty)
+                )
+                # a double jump only extends ``cut``/``full``: a double hop adds
+                # little the single hops do not already cover, and it is the most
+                # expensive action in the catalogue to simulate
+                if full and self.profile.has_double_jump and hold_name in ("cut", "full"):
                     frames = (
                         self._release(state, direction)
                         + ((direction, True, hold), (direction, False, max(2, self.cut_ticks)), (direction, True, hold), (direction, False, self.air_ticks))
                     )
                     actions.append(Action(f"jump2:{hold_name}:{direction}", frames, self._landing_stop(hold * 2 + 2), penalty=1.5))
-        actions.append(Action("wait", ((0, False, 12),), None))
+        if full:
+            actions.append(Action("wait", ((0, False, 12),), None))
         return actions
 
-    def _air_actions(self, state: MotionState) -> list[Action]:
+    def _air_actions(self, state: MotionState, full: bool = True) -> list[Action]:
         actions: list[Action] = []
         for direction in (-1, 0, 1):
             actions.append(Action(f"air:{direction}", ((direction, False, self.air_ticks),), self._landing_stop(0), penalty=0.25))
-            if self.profile.slow_fall:
+            if full and self.profile.slow_fall:
                 frames = self._release(state, direction) + ((direction, True, self.air_ticks),)
                 actions.append(Action(f"glide:{direction}", frames, self._landing_stop(0), penalty=0.5))
-            if self.profile.has_double_jump and not state.double_jumped:
+            if full and self.profile.has_double_jump and not state.double_jumped:
                 frames = self._release(state, direction) + ((direction, True, self.hold_ticks), (direction, False, self.air_ticks))
                 actions.append(Action(f"jump2_air:{direction}", frames, self._landing_stop(self.hold_ticks), penalty=1.5))
         return actions
 
-    def _water_actions(self, state: MotionState) -> list[Action]:
+    def _water_actions(self, state: MotionState, full: bool = True) -> list[Action]:
         actions: list[Action] = []
         for direction in (-1, 0, 1):
             actions.append(Action(f"swim:{direction}", ((direction, False, self.air_ticks),), self._landing_stop(0)))
-            frames = self._release(state, direction) + ((direction, True, 1), (direction, False, self.paddle_ticks))
-            actions.append(Action(f"paddle:{direction}", frames, self._landing_stop(1), penalty=0.5))
+            if full:
+                frames = self._release(state, direction) + ((direction, True, 1), (direction, False, self.paddle_ticks))
+                actions.append(Action(f"paddle:{direction}", frames, self._landing_stop(1), penalty=0.5))
         return actions
 
-    def _climb_actions(self, state: MotionState) -> list[Action]:
+    def _climb_actions(self, state: MotionState, full: bool = True) -> list[Action]:
         actions: list[Action] = [Action("hang", ((0, False, 8),), None)]
         for direction in (-1, 0, 1):
             frames = self._release(state, direction) + ((direction, True, self.cut_ticks), (direction, False, self.air_ticks))
@@ -244,7 +289,7 @@ class ActionCatalog:
 
         return Segment(
             kind=kind,
-            frames=_truncate(action.frames, outcome.ticks),
+            frames=truncate_frames(action.frames, outcome.ticks),
             start=origin,
             end=outcome.state,
             ticks=outcome.ticks,
@@ -282,7 +327,7 @@ class ActionCatalog:
         return SegmentKind.WALK
 
 
-def _truncate(frames: tuple[InputFrame, ...], ticks: int) -> tuple[InputFrame, ...]:
+def truncate_frames(frames: tuple[InputFrame, ...], ticks: int) -> tuple[InputFrame, ...]:
     """Keep only the frames (and partial frame) the program actually executed."""
     kept: list[InputFrame] = []
     remaining = ticks

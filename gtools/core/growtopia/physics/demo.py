@@ -61,6 +61,13 @@ from gtools.core.growtopia.physics.pathfinding import PathAutopilot, SegmentedPa
 from gtools.core.growtopia.physics.pathfinding.types import SegmentKind
 
 PLAYER_NET_ID = 1
+
+# Half a tile, and the renderer's half-tile convention: the GUI world renderer draws
+# tile (tx, ty) *centred* on world pixel (tx*32, ty*32) -- its picture spans
+# [tx*32 - 16, tx*32 + 16] (shaders/world.vert, WorldRenderer._update_hover,
+# chunked_renderer.chunk_bounds) -- while physics positions use the collision-rect
+# space where tile (tx, ty) spans [tx*32, (tx+1)*32].  Convert renderer -> physics
+# with +_TILE_HALF (screen picks) and physics -> renderer with -_TILE_HALF (overlay).
 _TILE_HALF = TILE / 2.0
 
 RECORDING_DIR = Path(__file__).resolve().parent / "recordings"
@@ -108,6 +115,36 @@ _SEGMENT_COLORS: dict[SegmentKind, tuple[float, float, float, float]] = {
 
 def _segment_color(kind: SegmentKind) -> tuple[float, float, float, float]:
     return _SEGMENT_COLORS.get(kind, (0.90, 0.90, 0.90, 1.0))
+
+
+# Search-overlay colours: the cheap "rough" tier against the full action set, and
+# the frontier (generated, not yet expanded) against the expanded states.
+_TIER_COLORS = ((0.35, 0.85, 0.95), (0.55, 0.65, 1.00))
+
+
+def _tier_color(tier: int) -> tuple[float, float, float]:
+    return _TIER_COLORS[min(max(int(tier), 0), len(_TIER_COLORS) - 1)]
+
+
+def _segment_frames(segment) -> list[tuple[int, bool]]:
+    """The per-tick ``(direction, jump)`` input the segment actually plays."""
+    frames: list[tuple[int, bool]] = []
+    for direction, jump, count in segment.frames:
+        frames.extend([(direction, jump)] * max(0, int(count)))
+
+    return frames
+
+
+def _input_edges(frames: list[tuple[int, bool]]) -> list[tuple[int, int, bool]]:
+    """``(tick index, direction, jump)`` where the input *changes* (for markers)."""
+    edges: list[tuple[int, int, bool]] = []
+    previous: tuple[int, bool] | None = None
+    for index, frame in enumerate(frames):
+        if frame != previous:
+            edges.append((index, frame[0], frame[1]))
+            previous = frame
+
+    return edges
 
 
 def _item_name(item: int) -> str:
@@ -253,13 +290,18 @@ class GPUPhysicsDemo:
         # The pathfinder only *reads* the controller to plan; the autopilot drives it
         # exclusively through `set_input(left, right, jump)`, and the fixed-step loop
         # below calls `step()` -- the physics engine.  Nothing here writes x/y/vx/vy.
-        self.pathfinder = SegmentedPathfinder(self.controller, time_budget_ms=150.0)
+        self.pathfinder = SegmentedPathfinder(self.controller, time_budget_ms=150.0, record_search=True)
         self.autopilot = PathAutopilot(self.controller, self.pathfinder)
         self.path_status = "idle"
         self.show_path = True
         self.show_path_labels = True
         self.show_path_trail = True
+        self.show_path_inputs = True
+        self.show_search_nodes = True
+        self.show_search_frontier = True
+        self.show_search_detail = True
         self._path_trail: deque[tuple[float, float]] = deque(maxlen=900)
+        self._hover_search_node = None
 
         self.dt = FIXED_DT
         self.running = True
@@ -392,10 +434,16 @@ class GPUPhysicsDemo:
         print(f"[packet] {pkt.compact_repr()}")
 
     def _tile_at_screen(self, sx: float, sy: float) -> tuple[int, int]:
+        """The tile under the cursor, resolved the way the renderer highlights it.
+
+        The drawn tile is centred on ``pos*32``, i.e. half a tile up/left of its
+        physics extent, so shift the world position by ``+_TILE_HALF`` before
+        flooring -- same rule as ``WorldRenderer._update_hover``.
+        """
         lx, ly = self.world_renderer._to_local(sx, sy)
         world_pos = self.world_renderer._camera.screen_to_world(lx, ly)
 
-        return math.floor(world_pos.x / TILE), math.floor(world_pos.y / TILE)
+        return math.floor((world_pos.x + _TILE_HALF) / TILE), math.floor((world_pos.y + _TILE_HALF) / TILE)
 
     def _touch_at_screen(self, sx: float, sy: float) -> None:
         tx, ty = self._tile_at_screen(sx, sy)
@@ -761,13 +809,20 @@ class GPUPhysicsDemo:
     # -- path overlay ----------------------------------------------------------
 
     def _overlay_point(self, wx: float, wy: float) -> tuple[float, float]:
-        """World -> absolute screen: the renderer draws its FBO at ``_image_origin``."""
-        point = self.world_renderer._camera.world_to_screen(wx, wy)
+        """Physics world -> absolute screen: the renderer draws its FBO at ``_image_origin``.
+
+        ``(wx, wy)`` is a physics pixel (the avatar's collision-rect space); the
+        renderer draws tile ``(tx, ty)`` *centred* on world pixel ``(tx*32, ty*32)``,
+        i.e. half a tile up/left of its physics extent, so both axes are shifted by
+        ``-_TILE_HALF`` to convert into the drawn world before projecting.
+        """
+        point = self.world_renderer._camera.world_to_screen(wx - _TILE_HALF, wy - _TILE_HALF)
         ox, oy = self.world_renderer._image_origin
 
         return ox + point.x, oy + point.y
 
     def _segment_points(self, segment) -> tuple[tuple[float, float], tuple[float, float]]:
+        """Start/end *hitbox centres* in screen space (the chord fallback)."""
         hw = self.controller.width / 2.0
         hh = self.controller.height / 2.0
 
@@ -776,23 +831,157 @@ class GPUPhysicsDemo:
             self._overlay_point(segment.end.x + hw, segment.end.y + hh),
         )
 
+    def _segment_polyline(self, segment) -> list:
+        """The segment's recorded trajectory as screen points: its real curve.
+
+        ``Segment.trace`` holds the state the physics produced on every tick, so a
+        jump bows up and over, a fall drops and a bounce reverses -- the route is
+        drawn as it will be *executed* instead of as a straight chord between its
+        ends (a chord used to cut through walls and to point the wrong way on a
+        segment that doubles back).  Only the ends exist for a trace-less segment,
+        which is then drawn as the chord.
+        """
+        hw = self.controller.width / 2.0
+        hh = self.controller.height / 2.0
+        trace = segment.trace
+        if len(trace) >= 2:
+            return [imgui.ImVec2(*self._overlay_point(x + hw, y + hh)) for x, y, _grounded in trace]
+
+        return [imgui.ImVec2(*point) for point in self._segment_points(segment)]
+
+    def _middle_point(self, points: list) -> tuple[float, float]:
+        if not points:
+            return 0.0, 0.0
+        middle = points[len(points) // 2]
+
+        return middle.x, middle.y
+
+    def _draw_search_overlay(self, draw, u32, trace) -> None:
+        """The planner's last search: expanded states, frontier, and the hover.
+
+        Green-blue dots are the states the search *looked at*; the fainter hollow
+        ones are still on the frontier when the budget ran out.  Hovering a dot
+        shows what the planner knew about it (cost, heuristic, pass, tier).
+        """
+        mouse = imgui.get_mouse_pos()
+        nearest = None
+        nearest_distance = 14.0
+        hw = self.controller.width / 2.0
+        hh = self.controller.height / 2.0
+
+        for record in trace.nodes:
+            if not record.expanded and not self.show_search_frontier:
+                continue
+            x, y = self._overlay_point(record.x + hw, record.y + hh)
+            r, g, b = _tier_color(record.tier)
+            if record.expanded:
+                draw.add_circle_filled(imgui.ImVec2(x, y), 3.0, u32((r, g, b, 0.55)))
+            else:
+                draw.add_circle(imgui.ImVec2(x, y), 2.0, u32((r, g, b, 0.30)), 0, 1.0)
+
+            if self.show_search_detail:
+                distance = ((mouse.x - x) ** 2 + (mouse.y - y) ** 2) ** 0.5
+                if distance < nearest_distance:
+                    nearest, nearest_distance = record, distance
+
+        self._hover_search_node = nearest
+        if nearest is None:
+            return
+
+        x, y = self._overlay_point(nearest.x + hw, nearest.y + hh)
+        stance = ("grounded", "climb", "water", "air", "platform")
+        state = "expanded" if nearest.expanded else "frontier"
+        lines = [
+            f"{nearest.note or 'start'}",
+            f"g {nearest.g:.0f}  h {nearest.h:.0f}  f {nearest.f:.0f}",
+            f"w {nearest.weight:.1f}  tier {'full' if nearest.tier else 'cheap'}  pass #{nearest.pass_index}  depth {nearest.depth}",
+            f"tile {nearest.key[0]},{nearest.key[1]}  {stance[nearest.key[2]] if len(nearest.key) > 2 else '?'}  {state}",
+        ]
+        text_size = max(imgui.calc_text_size(line).x for line in lines)
+        line_height = imgui.get_text_line_height()
+        padding = 6.0
+        width = text_size + padding * 2.0
+        height = line_height * len(lines) + padding * 2.0
+        top_left = (x + 16.0, y - height - 8.0)
+        bottom_left = (x + 16.0, y + 10.0)
+
+        viewport = imgui.get_window_pos(), imgui.get_window_size()
+        if top_left[1] < viewport[0].y:
+            top_left = bottom_left
+
+        rect_min = imgui.ImVec2(*top_left)
+        rect_max = imgui.ImVec2(top_left[0] + width, top_left[1] + height)
+        draw.add_rect_filled(rect_min, rect_max, u32((0.05, 0.06, 0.08, 0.92)), 4.0)
+        # note the signature: (p_min, p_max, col, rounding, flags, thickness)
+        draw.add_rect(rect_min, rect_max, u32((1.0, 1.0, 1.0, 0.30)), 4.0, 0, 1.0)
+        for index, line in enumerate(lines):
+            draw.add_text(
+                imgui.ImVec2(top_left[0] + padding, top_left[1] + padding + index * line_height),
+                u32((0.92, 0.95, 1.0, 1.0)),
+                line,
+            )
+
+    def _draw_input_markers(self, draw, u32, segment, points: list, active: bool) -> None:
+        """Where the *input* changes along a segment: direction arrows and jump edges.
+
+        The frames are the actual per-tick program the follower plays, so this is a
+        direct view of what the path is asking the physics engine to do.  Jump
+        presses (the interesting decisions) get a caret, direction changes an arrow.
+        """
+        frames = _segment_frames(segment)
+        if not frames:
+            return
+
+        alpha = 0.95 if active else 0.5
+        for tick, direction, jump in _input_edges(frames):
+            point = points[min(max(tick, 0), len(points) - 1)]
+            if jump:
+                color = u32((0.35, 1.0, 0.45, alpha))
+                tip = imgui.ImVec2(point.x, point.y - 15.0)
+                draw.add_triangle_filled(
+                    tip,
+                    imgui.ImVec2(point.x - 5.0, point.y - 7.0),
+                    imgui.ImVec2(point.x + 5.0, point.y - 7.0),
+                    color,
+                )
+                draw.add_text(imgui.ImVec2(point.x + 7.0, point.y - 23.0), color, "jump")
+            if direction:
+                color = u32((1.0, 0.85, 0.35, alpha)) if direction > 0 else u32((1.0, 0.45, 0.75, alpha))
+                reach = 11.0 * direction
+                draw.add_line(imgui.ImVec2(point.x, point.y + 9.0), imgui.ImVec2(point.x + reach, point.y + 9.0), color, 2.0)
+                draw.add_triangle_filled(
+                    imgui.ImVec2(point.x + reach + 5.0 * direction, point.y + 9.0),
+                    imgui.ImVec2(point.x + reach, point.y + 5.0),
+                    imgui.ImVec2(point.x + reach, point.y + 13.0),
+                    color,
+                )
+
     def render_path_overlay(self) -> None:
         """Draw the planned route in world space (2D view only, inside the host window).
 
-        One polyline per segment, coloured by the *observed* movement method, with
-        the traversed part dimmed and the segment the avatar is executing
-        highlighted.  The goal tile is outlined.  Purely visual: the follower
-        drives the avatar through ``set_input`` and nothing here touches it.
+        Layers, back to front: the planner's search states, the avatar's own trail,
+        the goal tile, then one polyline per segment following its *recorded
+        trajectory* (so a jump is drawn as the arc it is), coloured by the observed
+        movement method, with the traversed part dimmed, the executed segment
+        highlighted, and the input frames marked along it.  Purely visual: the
+        follower drives the avatar through ``set_input`` and nothing here touches it.
         """
         if not self.show_path or self.world_renderer.mode_3d:
             return
 
+        trace = self.pathfinder.search_trace
+        show_search = self.show_search_nodes and trace is not None and trace.nodes
         path = self._active_path()
-        if path is None and self.autopilot.target is None:
+        if path is None and self.autopilot.target is None and not show_search:
             return
 
         draw = imgui.get_window_draw_list()
         u32 = imgui.get_color_u32
+
+        if show_search:
+            self._draw_search_overlay(draw, u32, trace)
+        else:
+            self._hover_search_node = None
 
         if self.show_path_trail and len(self._path_trail) >= 2:
             previous = self._overlay_point(*self._path_trail[0])
@@ -804,10 +993,13 @@ class GPUPhysicsDemo:
         if self.autopilot.target is not None:
             tx, ty = self.autopilot.target
             if 0 <= tx < self.world.width and 0 <= ty < self.world.height:
+                # The tile's physics extent; `_overlay_point` applies the renderer's
+                # half-tile tile-centring shift, so these corners frame exactly the
+                # drawn tile (and the renderer's hover highlight for it).
                 lo = self._overlay_point(tx * TILE, ty * TILE)
                 hi = self._overlay_point((tx + 1) * TILE, (ty + 1) * TILE)
                 goal_color = (1.0, 0.85, 0.25, 0.95)
-                draw.add_rect(imgui.ImVec2(*lo), imgui.ImVec2(*hi), u32(goal_color), 2.0)
+                draw.add_rect(imgui.ImVec2(*lo), imgui.ImVec2(*hi), u32(goal_color), 0.0, 0, 2.0)
                 draw.add_rect_filled(imgui.ImVec2(*lo), imgui.ImVec2(*hi), u32((1.0, 0.85, 0.25, 0.12)))
                 label = "goal"
                 draw.add_text(imgui.ImVec2(lo[0] + 3.0, lo[1] - 15.0), u32(goal_color), label)
@@ -817,28 +1009,42 @@ class GPUPhysicsDemo:
 
         segments = path.segments
         current = self.autopilot.progress[0] if self.autopilot.active else -1
+        played = self.autopilot.progress[1] if self.autopilot.active else 0
         labelled = self.show_path_labels and len(segments) <= 12
+        # input markers on every segment only for a short plan shown idle; while
+        # executing, the noise is limited to the segment being played
+        all_markers = not self.autopilot.active and len(segments) <= 8
 
         for index, segment in enumerate(segments):
-            start, end = self._segment_points(segment)
+            points = self._segment_polyline(segment)
             r, g, b, a = _segment_color(segment.kind)
             if index < current:
-                alpha, thickness = a * 0.28, 2.0
+                alpha, thickness = a * 0.25, 2.5
             elif current >= 0 and index == current:
                 alpha, thickness = a, 4.0
             else:
-                alpha, thickness = a * 0.75, 3.0
+                alpha, thickness = a * 0.7, 3.0
 
             color = u32((r, g, b, alpha))
-            draw.add_line(imgui.ImVec2(*start), imgui.ImVec2(*end), color, thickness)
-            dot = 4.5 if index == current else 3.0
-            draw.add_circle_filled(imgui.ImVec2(*start), dot, color)
-            draw.add_circle_filled(imgui.ImVec2(*end), dot, color)
+            draw.add_polyline(points, color, 0, thickness)
+            dot = 4.5 if index == current else 2.5
+            draw.add_circle_filled(points[0], dot, color)
+            draw.add_circle_filled(points[-1], dot, color)
+
+            if index == current and played > 1:
+                # the part of the segment already played, so the dimming above does
+                # not hide how far along the avatar is
+                done = points[: min(played, len(points))]
+                if len(done) >= 2:
+                    draw.add_polyline(done, u32((1.0, 1.0, 1.0, 0.85)), 0, 2.0)
 
             if labelled or index == current:
-                mx, my = (start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0
+                mx, my = self._middle_point(points)
                 prefix = "! " if segment.damage_hits else ""
                 draw.add_text(imgui.ImVec2(mx + 6.0, my - 7.0), u32((r, g, b, 1.0)), f"{prefix}{segment.kind.name}")
+
+            if self.show_path_inputs and (index == current or all_markers):
+                self._draw_input_markers(draw, u32, segment, points, index == current)
 
     def render_menu(self) -> None:
         """User-facing player menu: toggles only, no developer stats or key hints."""
@@ -883,7 +1089,8 @@ class GPUPhysicsDemo:
 
                 if self.autopilot.active:
                     index, tick, total = self.autopilot.progress
-                    imgui.text(f"Executing: segment {index + 1}/{total}, tick {tick}, replans {self.autopilot.replans}")
+                    imgui.text(f"Executing: segment {index + 1}/{total}, tick {tick}")
+                    imgui.text(f"Replans: {self.autopilot.replans}   Refines: {self.autopilot.refines}")
                     if imgui.button("Stop pathfinding"):
                         self._release_path("stopped")
                 else:
@@ -891,23 +1098,174 @@ class GPUPhysicsDemo:
                     imgui.button("Stop pathfinding")
                     imgui.end_disabled()
 
+                if imgui.collapsing_header("Input state"):
+                    self._render_input_state(path)
+
+                if imgui.collapsing_header("Search"):
+                    self._render_search_stats()
+
                 changed, value = imgui.checkbox("Show path", self.show_path)
                 if changed:
                     self.show_path = value
                 changed, value = imgui.checkbox("Segment labels", self.show_path_labels)
                 if changed:
                     self.show_path_labels = value
+                changed, value = imgui.checkbox("Input markers", self.show_path_inputs)
+                if changed:
+                    self.show_path_inputs = value
                 changed, value = imgui.checkbox("Avatar trail", self.show_path_trail)
                 if changed:
                     self.show_path_trail = value
                     if not value:
                         self._path_trail.clear()
+                changed, value = imgui.checkbox("Search nodes", self.show_search_nodes)
+                if changed:
+                    self.show_search_nodes = value
+                changed, value = imgui.checkbox("  frontier", self.show_search_frontier)
+                if changed:
+                    self.show_search_frontier = value
+                changed, value = imgui.checkbox("  node details", self.show_search_detail)
+                if changed:
+                    self.show_search_detail = value
 
             recording = self._recording_file is not None
             changed, value = imgui.checkbox("Record session", recording)
             if changed and value != recording:
                 self._toggle_recording()
         imgui.end()
+
+    def _input_lamp(self, label: str, on: bool, color: tuple[float, float, float] = (0.40, 0.95, 0.50)) -> None:
+        if on:
+            imgui.text_colored(imgui.ImVec4(color[0], color[1], color[2], 1.0), f"[{label}]")
+        else:
+            imgui.text_disabled(f" {label} ")
+
+    def _current_input_frame(self) -> tuple[int, bool] | None:
+        """``(direction, jump)`` the autopilot is feeding the controller right now."""
+        follower = self.autopilot.follower
+        if follower is None or follower.done:
+            return None
+
+        index, tick, _total = follower.progress
+        if index >= len(follower.path.segments):
+            return None
+
+        frames = _segment_frames(follower.path.segments[index])
+        if not frames:
+            return None
+
+        return frames[min(max(tick - 1, 0), len(frames) - 1)]
+
+    def _render_input_state(self, path) -> None:
+        """What the controller is being fed, tick by tick.
+
+        The physics engine only ever sees ``set_input(left, right, jump)``; this is
+        that state, live lamps for the current tick plus the tick-level program of
+        the segment being executed (a bar per tick: direction by colour, jump as a
+        raised pip, the playhead showing how far it has been played).
+        """
+        controller = self.controller
+        imgui.text_disabled("live")
+        imgui.same_line()
+        self._input_lamp("L", controller.left, (0.95, 0.55, 0.80))
+        imgui.same_line()
+        self._input_lamp("R", controller.right, (0.45, 0.85, 1.00))
+        imgui.same_line()
+        self._input_lamp("JUMP", controller.jump, (0.40, 0.95, 0.50))
+        imgui.same_line()
+        frame = self._current_input_frame()
+        imgui.text_disabled(f"| frame dir {frame[0]:+d} jump {int(frame[1])}" if frame else "| manual input")
+
+        state = "grounded" if controller.grounded else "air"
+        extras = [name for name in ("sliding", "in_water", "climbing", "mud", "damage_slip") if getattr(controller, name, False)]
+        imgui.text_disabled(f"{state}{' ' + ' '.join(extras) if extras else ''}   vx {controller.vx:+.0f} vy {controller.vy:+.0f}")
+
+        if path is None or not path.segments:
+            return
+
+        index, tick, total = self.autopilot.progress if self.autopilot.active else (0, 0, len(path.segments))
+        index = min(index, len(path.segments) - 1)
+        segment = path.segments[index]
+        frames = _segment_frames(segment)
+        imgui.text_disabled(f"segment {index + 1}/{len(path.segments)}: {segment.kind.name} ({segment.note}), {len(frames)} ticks")
+        self._draw_input_strip(frames, tick if self.autopilot.active else 0)
+
+    def _draw_input_strip(self, frames: list[tuple[int, bool]], played: int) -> None:
+        """One cell per tick: colour = direction, raised pip = jump held."""
+        if not frames:
+            return
+
+        width = imgui.get_content_region_avail().x
+        height = 9.0
+        origin = imgui.get_cursor_screen_pos()
+        imgui.dummy(imgui.ImVec2(width, height + 6.0))
+
+        draw = imgui.get_window_draw_list()
+        u32 = imgui.get_color_u32
+        step = max(width / len(frames), 1.0)
+        for index, (direction, jump) in enumerate(frames):
+            x0 = origin.x + index * step
+            if direction > 0:
+                color = (0.45, 0.85, 1.00, 0.95)
+            elif direction < 0:
+                color = (0.95, 0.55, 0.80, 0.95)
+            else:
+                color = (0.45, 0.45, 0.50, 0.95)
+
+            alpha = 0.45 if index < played else 1.0
+            draw.add_rect_filled(
+                imgui.ImVec2(x0, origin.y + 4.0),
+                imgui.ImVec2(min(x0 + step, origin.x + width), origin.y + 4.0 + height),
+                u32((color[0], color[1], color[2], color[3] * alpha)),
+            )
+            if jump:
+                draw.add_rect_filled(
+                    imgui.ImVec2(x0, origin.y),
+                    imgui.ImVec2(min(x0 + step, origin.x + width), origin.y + 3.0),
+                    u32((0.40, 0.95, 0.50, alpha)),
+                )
+
+        if played > 0:
+            head = origin.x + min(played, len(frames)) * step
+            draw.add_line(
+                imgui.ImVec2(head, origin.y - 1.0),
+                imgui.ImVec2(head, origin.y + height + 5.0),
+                u32((1.0, 1.0, 1.0, 0.9)),
+                2.0,
+            )
+
+    def _render_search_stats(self) -> None:
+        """Per-pass view of the anytime planner: weight, tier, expansions, outcome."""
+        trace = self.pathfinder.search_trace
+        if trace is None:
+            imgui.text_disabled("search recording is off")
+            return
+
+        expanded = sum(1 for record in trace.nodes if record.expanded)
+        frontier = len(trace.nodes) - expanded
+        imgui.text(f"{expanded} expanded, {frontier} on the frontier")
+        imgui.text_disabled(f"{trace.expansions} expansions in {trace.elapsed_ms:.0f} ms   status {trace.status.name}")
+        if trace.goal != (-1, -1):
+            imgui.text_disabled(f"goal tile {trace.goal[0]}, {trace.goal[1]}")
+
+        for index, record in enumerate(trace.passes):
+            tier = "full" if record.full_actions else "cheap"
+            if record.found:
+                outcome = "route"
+            elif record.exhausted:
+                outcome = "drained"
+            else:
+                outcome = "cut"
+            imgui.text(f"#{index} w{record.weight:.1f} {tier}: {record.expansions} exp, {outcome}, {record.elapsed_ms:.0f} ms")
+
+        hover = self._hover_search_node
+        if hover is not None:
+            imgui.separator()
+            imgui.text_disabled(f"hover: {hover.note or 'start'} @ tile {hover.key[0]},{hover.key[1]}")
+            imgui.text_disabled(
+                f"g {hover.g:.0f}  h {hover.h:.0f}  f {hover.f:.0f}  "
+                f"{'full' if hover.tier else 'cheap'}/#{hover.pass_index}  depth {hover.depth}"
+            )
 
     def _flag_checkbox(self, label: str, flag: CharacterFlags) -> None:
         changed, value = imgui.checkbox(label, bool(self.controller.state.flags & flag))

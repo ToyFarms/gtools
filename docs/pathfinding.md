@@ -172,10 +172,33 @@ Coordinates go through `Camera2D.world_to_screen` plus the renderer's
 
 - `plan_*` returns `PlanResult(status, path, reason, nodes_expanded, elapsed_ms,
   profile_fingerprint)`; `status ∈ {FOUND, NO_SAFE_ROUTE, UNREACHABLE, PARTIAL, BUDGET}`.
+  `.ok` means "there is a route to follow" (a `BUDGET` partial qualifies); `.complete`
+  means it reaches the goal.
 - Goal semantics: the collision rect overlaps the target tile **or** stands on its top
-  edge; `plan_to_xy` uses a centre-distance tolerance.
+  edge; `plan_to_xy` uses a centre-distance tolerance.  A segment is **also cut off at
+  the first tick that enters the goal region** (the planner's `touch` callback), so a
+  goal the avatar only flies through -- a tile above the floor, a wall face, a ledge it
+  jumps past -- is reached; without that, such a click burned the whole budget because
+  only landing states were ever tested.
+- **Anytime planning.** `plan()` runs passes of *decreasing* heuristic weight over
+  increasing action coverage: a rough pass on the cheap action tier (no double jumps /
+  glides / waits) at an inflated weight, then the full catalogue at `heuristic_weight`
+  and finally at 1.0, each pruned by the incumbent (`g + h < best`).  The first pass
+  gets `first_pass_share` (0.5) of the budget so the full tier still gets a turn.
+  Whatever happens, the caller gets the best route the budget allowed: a complete one
+  if any pass found it, otherwise the **partial** route ending at the closest approach
+  (selected by `h`, then by pixel distance, because `h` is flat inside a tile).
 - `walk_tiles` splits long straight walks into segments (`SegmentKind.WALK`), so a
   route is a list of resumable movement chunks rather than one giant replay.
+- **Jump ladder.** Ground moves include `jump:hop1`/`jump:hop4` (1- and 4-tick holds)
+  beside `jump:cut`/`jump:full` and the double jumps.  The jump is cut when the button
+  is released, so a hop peaks at ~26/41 px against ~88/101 px for cut/full: the short
+  rungs are what cross a gap under a low ceiling.  Hops carry a smaller penalty (0.25)
+  than a full jump (1.0) so a hop that saves ticks wins while flat-ground ties still
+  break towards walking.
+- The heuristic has a **vertical term** (`|goal row - feet row| / jump speed`): a
+  horizontal-only bound is flat inside the goal column, and on a parkour world the
+  search then had no reason to prefer the goal's row.
 - Segment kinds are classified from the **observed** state delta, not the attempted
   action: a "jump" into water is `SWIM`, a damage launch is `DAMAGE_LAUNCH`.
 - Adaptation: `PathFollower` compares per tick the controller state against the
@@ -186,10 +209,23 @@ Coordinates go through `Camera2D.world_to_screen` plus the renderer's
   avatar has not moved yet.
 
 Knobs on `SegmentedPathfinder`: `damage_penalty`, `walk_tiles`, `max_expansions`
-(4000), `time_budget_ms` (250), `max_damage_hits`, `max_segments` (64),
-`heuristic_weight` (1.5, weighted A*), `validate` (**default off** — a full
-`ControllerOracle` replay costs ~110 ms per 1100-tick path; the follower's per-tick
-trace comparison catches drift for free, so enable it in CI or when debugging).
+(4000, per plan), `time_budget_ms` (250), `max_damage_hits`, `max_segments` (64),
+`heuristic_weight` (1.5, the *quality* weight of the anytime schedule),
+`validate` (**default off** — a full `ControllerOracle` replay costs ~110 ms per
+1100-tick path; the follower's per-tick trace comparison catches drift for free, so
+enable it in CI or when debugging) and `record_search` (default off: keep the last
+search -- passes, generated and expanded states -- for an inspector).
+
+Per-call budgets: every `plan_*` accepts `time_budget_ms`, which is how
+`PathFollower` gives re-plans *during* motion a smaller slice (`replan_budget_ms`,
+default 60) than an explicit plan.
+
+**Refinement while moving.** `PathAutopilot.advance()` re-plans from the live state
+every `refine_every` ticks for `refine_budget_ms`, and installs the result when it is
+better (complete beats partial, cheaper beats costlier, and between two partials the
+one that ends closer to the goal wins).  That is what turns a rough first route, or a
+chunked sequence of partials, into a good one without ever making the caller wait for a
+full search.
 
 ---
 
@@ -234,13 +270,20 @@ Cost notes:
   (tractor/plows), STATE sending, auto-respawn and dropped-object collection are
   deliberately outside the search (the follower drives the real controller, so they
   still happen live).
-- Weighted A* (`heuristic_weight=1.5`) is not cost-optimal by design: it cuts
-  expansions ~9× on long corridors for ~0.4 % extra path length. Set it to `1.0` for
-  optimal routes.
+- The result is not cost-optimal by design: the schedule starts inflated and stops as
+  soon as a pass fails to improve on the incumbent, and a goal hit is reported as soon
+  as it is *generated* rather than when popped (a tile key buckets several exact
+  states, so a goal state can be dominated by a cheaper non-goal state in the same
+  tile and would never be popped).  Later passes refine against it.
+- A partial route can still walk the avatar into a pocket it cannot leave (the field
+  lands on a hazard or a one-way col): re-planning then reports `NO_PATH` with the
+  reason, which is honest -- the route was reachable, the *state* is not.
 - `validate=False` by default (see §3); the planned oracle replay is opt-in.
-- The demo overlay is 2D-only (`WorldRenderer.mode_3d` skips it) and the segment
-  lines are straight start→end chords: the exact trajectory is in `Segment.trace`
-  if a future overlay wants the per-tick polyline.
+- The demo overlay is 2D-only (`WorldRenderer.mode_3d` skips it).  It draws each
+  segment as its recorded per-tick trajectory (`Segment.trace`), so jumps bow and
+  falls drop instead of showing as chords -- note that the trace of a *goal-truncated*
+  segment is only filled because the truncation re-simulates with `record_trace=True`
+  (the follower's deviation check uses it too).
 - Doors/world transitions, multiplayer avatars and item-collection routing are
   out of scope (see the plan's non-goals).
 

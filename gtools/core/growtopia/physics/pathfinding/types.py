@@ -266,7 +266,20 @@ class PlanResult:
 
     @property
     def ok(self) -> bool:
-        return self.status in (PlanStatus.FOUND, PlanStatus.PARTIAL) and self.path is not None
+        """There is a route to follow -- possibly a *partial* one.
+
+        A budget-exhausted plan still hands back the farthest progress it found
+        (``BUDGET``), and the whole point of the segmented design is that the caller
+        starts moving on it and re-plans from there.
+        """
+        return self.status in (PlanStatus.FOUND, PlanStatus.PARTIAL, PlanStatus.BUDGET) and bool(
+            self.path is not None and self.path.segments
+        )
+
+    @property
+    def complete(self) -> bool:
+        """The route reaches the goal tile (as opposed to only making progress)."""
+        return self.status is PlanStatus.FOUND and bool(self.path is not None and self.path.segments)
 
     @classmethod
     def failure(cls, status: PlanStatus, reason: str) -> "PlanResult":

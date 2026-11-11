@@ -376,6 +376,11 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
   snapshot + profile fingerprint with the controller's own predicates; only the
   `LOCKED_ADVENTURE_DOOR` stays dynamic (avatar touched-tile cache). A dynamic
   extra that the snapshot does not version needs a `TILE_UPDATE` to be seen.
+- **Anytime**: `plan()` runs decreasing-weight passes over an increasing action set
+  (cheap tier first) and always returns the best route the budget allowed — complete,
+  or a **partial** ending at the closest approach (`.ok` follows either, `.complete`
+  only a finished one).  Goals are also satisfied by *entering* the tile mid-action
+  (`touch`), so clicking a tile in the air works.
 - Usage: `SegmentedPathfinder(controller).plan_to_tile(tx, ty)` →
   `PathFollower(controller, pathfinder, path)`; the follower owns the
   `set_input` + `step` loop (`tick_inputs`/`observe` when an outer loop steps).
@@ -385,9 +390,14 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
   states, execution only calls `set_input(left, right, jump)` — pinned by the
   write-rejecting proxy controller in `tests/test_path_follower.py`.
 - Demo: Ctrl+Left-Click (or right click → *Pathfind here*) plans and follows;
-  the *Pathfinding* menu shows status and toggles the segment overlay
-  (per-kind colours, traversed part dimmed, current segment thick, goal outlined,
-  avatar trail). Overlay is 2D-only.
+  the *Pathfinding* menu shows status and toggles the overlay: per-kind colours along
+  each segment's recorded **trajectory** (jumps bow, falls drop), traversed part
+  dimmed, current segment thick, **input markers** (jump carets / direction arrows at
+  input changes), the avatar trail, and the **search nodes** (expanded vs frontier,
+  hover for g/h/f/pass/tier) recorded via `record_search=True`.  Overlay is 2D-only.
+- Overlay draw calls are smoke-tested headlessly in `tests/test_demo_path_overlay.py`
+  (an ImGui frame needs no GL context); check the ImDrawList signatures there —
+  `add_rect` takes `(p_min, p_max, col, rounding, flags, thickness)`.
 - Bench: `PYTHONPATH=. .venv/bin/python scripts/bench_pathfinding.py [--quick|--json]`.
 
 ## 6. Snippets

@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import heapq
 import itertools
+import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from gtools.core.growtopia.physics.controller import TILE
-from gtools.core.growtopia.physics.pathfinding.actions import ActionCatalog, node_key
+from gtools.core.growtopia.physics.pathfinding.actions import ActionCatalog, node_key, truncate_frames
 from gtools.core.growtopia.physics.pathfinding.profile import CapabilityProfile
 from gtools.core.growtopia.physics.pathfinding.snapshot import WorldSnapshot
 from gtools.core.growtopia.physics.pathfinding.types import (
@@ -32,6 +33,88 @@ from gtools.core.growtopia.physics.pathfinding.types import (
 
 Goal = Callable[[MotionState], bool]
 Heuristic = Callable[[MotionState], float]
+# Pixel-level distance to the goal, used only to break ties between states that
+# the tile-scale heuristic cannot separate (``h`` is flat inside a tile).  It
+# decides which node a *partial* (budget-exhausted) path ends at.
+Progress = Callable[[MotionState], float]
+# Positional form of the goal: ``touch(x, y)`` on the avatar's collision-rect
+# origin.  A route is complete once the avatar *enters* the goal region, which is
+# what lets a goal in mid-air (a tile above the floor, the face of a wall) be
+# planned at all: segment endpoints only ever land on something.
+Touch = Callable[[float, float], bool]
+
+
+@dataclass(slots=True)
+class SearchNodeRecord:
+    """One search state, kept only when a ``SearchTrace`` is attached.
+
+    ``expanded`` is False while the state is on the frontier (generated, not yet
+    expanded), which is what an inspector wants to see: where the search *looked*
+    versus where it still *plans to look*.
+    """
+
+    x: float
+    y: float
+    g: float
+    h: float
+    f: float
+    weight: float
+    depth: int
+    pass_index: int
+    tier: int  # 0 = cheap action tier, 1 = full action set
+    expanded: bool = False
+    goal: bool = False
+    note: str = ""
+    key: tuple = ()
+
+
+@dataclass(slots=True)
+class SearchPassRecord:
+    """What one weighted-A* pass did."""
+
+    weight: float
+    full_actions: bool
+    expansions: int = 0
+    elapsed_ms: float = 0.0
+    found: bool = False
+    partial_h: float = math.inf
+    exhausted: bool = False
+    capped: bool = False
+
+
+@dataclass(slots=True)
+class SearchTrace:
+    """A record of the last plan, for visualisation (opt-in, per planner).
+
+    ``SegmentedPathfinder(record_search=True)`` attaches one and the demo draws
+    it: every generated state, every expansion and every pass.  A benchmark or a
+    game client leaves it off -- the allocation per successor is not free.
+    """
+
+    goal: tuple[int, int] = (-1, -1)
+    start: tuple[float, float] = (0.0, 0.0)
+    passes: list[SearchPassRecord] = field(default_factory=list)
+    nodes: list[SearchNodeRecord] = field(default_factory=list)
+    solved: bool = False
+    status: PlanStatus = PlanStatus.NO_PATH
+    expansions: int = 0
+    elapsed_ms: float = 0.0
+
+    def reset(self) -> None:
+        self.passes.clear()
+        self.nodes.clear()
+        self.solved = False
+        self.status = PlanStatus.NO_PATH
+        self.expansions = 0
+        self.elapsed_ms = 0.0
+
+    @property
+    def expanded(self) -> list[SearchNodeRecord]:
+        return [record for record in self.nodes if record.expanded]
+
+    @property
+    def frontier(self) -> list[SearchNodeRecord]:
+        return [record for record in self.nodes if not record.expanded]
 
 
 @dataclass(slots=True)
@@ -46,6 +129,21 @@ class _Node:
     parent: "_Node | None"
     segment: Segment | None
     depth: int = 0
+    record: SearchNodeRecord | None = None
+
+
+@dataclass(slots=True)
+class _Pass:
+    """One weighted-A* run: the route it completed and the best progress it made."""
+
+    node: "_Node | None" = None
+    partial: "_Node | None" = None
+    partial_key: tuple[float, float] = (math.inf, math.inf)
+    expansions: int = 0
+    killed_seen: int = 0
+    exhausted: bool = False
+    capped: bool = False
+    full_actions: bool = True
 
 
 class SegmentedPlanner:
@@ -63,6 +161,7 @@ class SegmentedPlanner:
         max_segments: int = 64,
         edge_cache: dict | None = None,
         heuristic_weight: float = 1.5,
+        trace: SearchTrace | None = None,
     ) -> None:
         self.catalog = catalog
         self.profile = profile
@@ -72,7 +171,14 @@ class SegmentedPlanner:
         self.max_damage_hits = max_damage_hits
         self.max_segments = int(max_segments)
         self.edge_cache = edge_cache if edge_cache is not None else {}
+        # opt-in search recording for the demo's node overlay
+        self.trace = trace
+        self._tier = 1
+        self._pass_index = 0
         self._fingerprint = profile.fingerprint()
+        # share of the budget the rough (cheap-tier, inflated-weight) pass may use
+        # before the full action set gets its turn
+        self.first_pass_share = 0.5
         # weighted A*: inflating ``h`` trades bounded suboptimality for a much
         # smaller expansion count (a 150-tile corridor: 196 -> 22 nodes for a
         # +0.4 % path length).  1.0 restores plain admissible A*.
@@ -116,21 +222,204 @@ class SegmentedPlanner:
 
     # -- search ----------------------------------------------------------------
 
-    def plan(self, start: MotionState, goal: Goal, heuristic: Heuristic) -> PlanResult:
+    @property
+    def weight_schedule(self) -> tuple[float, ...]:
+        """Decreasing heuristic weights: a rough route first, then refinements.
+
+        ``heuristic_weight`` stays the "quality" weight; the first pass runs
+        inflated (``max(3.0, 2 * heuristic_weight)``) so it is nearly greedy and
+        completes after very few expansions, and the remaining budget is then spent
+        lowering the weight towards 1.0 (plain admissible A*).  Refinement passes
+        are pruned by the incumbent's cost, so they only look where an improvement
+        is still possible.
+        """
+        weights = [max(3.0, 2.0 * self.heuristic_weight)]
+        for weight in (self.heuristic_weight, 1.0):
+            if weight < weights[-1] - 1e-9:
+                weights.append(float(weight))
+
+        return tuple(weights)
+
+    def plan(
+        self,
+        start: MotionState,
+        goal: Goal,
+        heuristic: Heuristic,
+        progress: Progress | None = None,
+        *,
+        touch: Touch | None = None,
+        touch_box: tuple[int, int, int, int] | None = None,
+        time_budget_ms: float | None = None,
+    ) -> PlanResult:
+        """Anytime plan: return the best complete route the budget allows.
+
+        The contract is "never leave the caller without a route it can start
+        moving on".  Passes run in order of decreasing heuristic weight and
+        increasing action coverage:
+
+        1. cheap action tier (no double jumps / glides / waits) at the inflated
+           weight -- a few expansions produce a rough but complete route;
+        2. the full action set at ``heuristic_weight`` and then at 1.0, each
+           pruned by ``g + h < incumbent``, so they only improve on it.
+
+        If no pass completes a route, the best *progress* node seen is returned as
+        a partial path (``BUDGET``): the follower walks it and re-plans from the
+        new state, which is what makes a long route advance in chunks instead of
+        failing outright.
+        """
         begun = time.perf_counter()
         if start.killed:
             return PlanResult.failure(PlanStatus.KILLED, "start state is dead")
 
+        budget_ms = self.time_budget_ms if time_budget_ms is None else float(time_budget_ms)
+        deadline = begun + budget_ms / 1000.0
+        first_slice = min(deadline, begun + budget_ms * self.first_pass_share / 1000.0)
+        schedule = self.weight_schedule
+        trace = self.trace
+        if trace is not None:
+            trace.reset()
+            trace.start = (start.x, start.y)
+        expansions = 0
+        killed_seen = 0
+        best: _Node | None = None
+        best_cost = math.inf
+        best_weight = schedule[0]
+        partial: _Node | None = None
+        partial_key: tuple[float, float] = (math.inf, math.inf)
+        last_pass: _Pass | None = None
+
+        for index, weight in enumerate(schedule):
+            if index and time.perf_counter() >= deadline:
+                break
+
+            pass_begun = time.perf_counter()
+            pass_record = SearchPassRecord(weight=weight, full_actions=index > 0) if trace is not None else None
+            if trace is not None:
+                trace.passes.append(pass_record)
+
+            outcome = self._search(
+                start,
+                goal,
+                heuristic,
+                progress=progress,
+                touch=touch,
+                touch_box=touch_box,
+                weight=weight,
+                # the rough pass gets a slice only: if it cannot finish, the full
+                # action tier below still has budget to find a route the cheap tier
+                # cannot express (double jumps, glides, waiting)
+                deadline=first_slice if index == 0 else deadline,
+                incumbent=best_cost,
+                # the expansion cap is a budget for the *plan*, not per pass, so a
+                # caller that wants "one expansion" still gets one
+                expansion_budget=self.max_expansions - expansions,
+                # the first, rough pass uses the cheap tier: those are the actions
+                # that dominate the physics cost (a double jump is ~90 simulated
+                # ticks per evaluation), and a route that needs them is still
+                # found by the passes below
+                full_actions=index > 0,
+            )
+            last_pass = outcome
+            expansions += outcome.expansions
+            killed_seen += outcome.killed_seen
+            if outcome.partial is not None and outcome.partial_key < partial_key:
+                partial, partial_key = outcome.partial, outcome.partial_key
+            if pass_record is not None:
+                pass_record.expansions = outcome.expansions
+                pass_record.elapsed_ms = (time.perf_counter() - pass_begun) * 1000.0
+                pass_record.found = outcome.node is not None
+                pass_record.partial_h = outcome.partial_key[0]
+                pass_record.exhausted = outcome.exhausted
+                pass_record.capped = outcome.capped
+
+            if outcome.node is not None:
+                if outcome.node.g < best_cost - 1e-9:
+                    best, best_cost, best_weight = outcome.node, outcome.node.g, weight
+                    continue
+                # a refinement found nothing better, and further passes are
+                # bounded by the same incumbent: stop refining
+                break
+
+            if outcome.exhausted:
+                # this tier is fully explored -- the next pass sees more actions
+                continue
+
+            if time.perf_counter() >= deadline:
+                break
+
+            # expansion cap with time to spare: the next weight may still get lucky
+            continue
+
+        if trace is not None:
+            trace.expansions = expansions
+            trace.elapsed_ms = (time.perf_counter() - begun) * 1000.0
+            trace.solved = best is not None
+
+        if best is not None:
+            result = self._result(best, PlanStatus.FOUND, expansions, begun)
+            result.reason = "" if best_weight >= self.heuristic_weight - 1e-9 else f"rough route (weight {best_weight:.1f})"
+            if trace is not None:
+                trace.status = PlanStatus.FOUND
+
+            return result
+
+        status = PlanStatus.NO_SAFE_ROUTE if killed_seen else PlanStatus.NO_PATH
+        # "drained" means a pass that had the *full* action set explored everything
+        # reachable; a cheap-tier pass running out is only a small space, not proof
+        drained = last_pass is not None and last_pass.exhausted and last_pass.full_actions
+        if partial is not None and partial.segment is not None and not drained:
+            # partial progress towards the goal: the caller can start moving and
+            # re-plan from there -- the "chunked" mode of long routes.  A search
+            # that drained the whole space instead really has no route to offer.
+            result = self._result(partial, PlanStatus.BUDGET, expansions, begun)
+            result.reason = "budget exhausted"
+            if trace is not None:
+                trace.status = PlanStatus.BUDGET
+
+            return result
+
+        failure = PlanResult.failure(status, "no route")
+        failure.nodes_expanded = expansions
+        failure.elapsed_ms = (time.perf_counter() - begun) * 1000.0
+        failure.profile_fingerprint = self._fingerprint
+        if trace is not None:
+            trace.status = status
+
+        return failure
+
+    def _search(
+        self,
+        start: MotionState,
+        goal: Goal,
+        heuristic: Heuristic,
+        *,
+        progress: Progress | None = None,
+        touch: Touch | None = None,
+        touch_box: tuple[int, int, int, int] | None = None,
+        weight: float,
+        deadline: float,
+        incumbent: float,
+        expansion_budget: int,
+        full_actions: bool,
+    ) -> _Pass:
+        """One weighted-A* pass.  Stops on the first complete route."""
         root_key = node_key(start, self.profile.height)
         root = _Node(root_key, start, 0.0, 0, None, None)
         nodes: dict[tuple, _Node] = {root_key: root}
         counter = itertools.count()
-        weight = self.heuristic_weight
-        heap: list[tuple[float, float, int, tuple]] = [(heuristic(start) * weight, 0.0, next(counter), root_key)]
-        expanded = 0
-        closest = root
-        closest_h = heuristic(start)
+        root_h = heuristic(start)
+        # the root is the fallback partial, and it yields an empty path: only a
+        # real successor (``partial_key`` strictly better) replaces it
+        heap: list[tuple[float, float, int, tuple]] = [(root_h * weight, 0.0, next(counter), root_key)]
+        pass_ = _Pass(
+            partial=root,
+            partial_key=(root_h, progress(start) if progress is not None else 0.0),
+            full_actions=full_actions,
+        )
         killed_seen = 0
+        trace = self.trace
+        self._pass_index = len(trace.passes) - 1 if trace is not None else 0
+        self._tier = 1 if full_actions else 0
 
         while heap:
             f, g, _, key = heap[0]
@@ -141,24 +430,36 @@ class SegmentedPlanner:
             heapq.heappop(heap)
 
             if goal(node.state):
-                return self._result(node, PlanStatus.FOUND, expanded, begun)
+                pass_.node = node
+                pass_.killed_seen = killed_seen
+                return pass_
 
-            if expanded >= self.max_expansions or (time.perf_counter() - begun) * 1000.0 > self.time_budget_ms:
-                status = PlanStatus.BUDGET
-                return self._result(closest, status, expanded, begun)
+            # ``g + h`` is a lower bound on the cost of any route through this
+            # node, so an incumbent that is already better prunes it outright
+            if node.g + heuristic(node.state) >= incumbent - 1e-9:
+                continue
+
+            if pass_.expansions >= expansion_budget or time.perf_counter() >= deadline:
+                pass_.capped = True
+                pass_.killed_seen = killed_seen
+                return pass_
 
             if node.depth >= self.max_segments:
                 continue
 
-            expanded += 1
-            actions = self.catalog.actions(node.state)
+            if node.record is not None:
+                node.record.expanded = True
+
+            pass_.expansions += 1
+            actions = self.catalog.actions(node.state, full=full_actions)
             killed_seen += self.catalog.killed_candidates
             for action in actions:
+                deaths = self.catalog.killed_candidates
                 segment = self._cached(node.state, action.name)
                 if segment is None:
                     segment = self.catalog.evaluate(node.state, action)
                     if segment is None:
-                        killed_seen += self.catalog.killed_candidates
+                        killed_seen += self.catalog.killed_candidates - deaths
                         continue
                     self._store(node.state, action.name, segment)
                 if segment.end.killed:
@@ -167,25 +468,141 @@ class SegmentedPlanner:
                 if self.max_damage_hits is not None and damage > self.max_damage_hits:
                     continue
 
-                child_key = node_key(segment.end, self.profile.height)
-                child_g = node.g + segment.cost
-                existing = nodes.get(child_key)
-                if existing is not None and child_g >= existing.g - 1e-9:
-                    continue
-
-                child = _Node(child_key, segment.end, child_g, damage, node, segment, node.depth + 1)
-                nodes[child_key] = child
+                # the best *partial* target is tracked from every realised move,
+                # including the ones the key-level dominance rule drops below: a
+                # budget-exhausted plan needs a place to walk to, not a search node
                 h = heuristic(segment.end)
-                heapq.heappush(heap, (child_g + h * weight, child_g, next(counter), child_key))
-                if h < closest_h:
-                    closest_h, closest = h, child
+                key_ = (h, progress(segment.end) if progress is not None else 0.0)
+                if key_ < pass_.partial_key:
+                    pass_.partial_key, pass_.partial = key_, _Node(
+                        node_key(segment.end, self.profile.height), segment.end, node.g + segment.cost, damage, node, segment, node.depth + 1
+                    )
 
-        status = PlanStatus.NO_SAFE_ROUTE if killed_seen else PlanStatus.NO_PATH
-        failure = PlanResult.failure(status, "no route")
-        failure.nodes_expanded = expanded
-        failure.elapsed_ms = (time.perf_counter() - begun) * 1000.0
-        failure.profile_fingerprint = self._fingerprint
-        return failure
+                # ... and the goal may be *entered* mid-action: a tile in the air,
+                # the face of a wall or a ledge the avatar only flies past can never
+                # satisfy a landing-state test, so the move is also offered cut off
+                # at the first tick that touches the goal region
+                if touch is not None and segment.trace and _boxes_touch(segment.bbox, touch_box):
+                    index = _first_touch(segment.trace, touch)
+                    # trace[i] is the state *after* tick i + 1
+                    tick = None if index is None else index + 1
+                    if tick is not None and tick < segment.ticks:
+                        truncated = self._truncate(node.state, action, segment, tick)
+                        if truncated is not None:
+                            pass_.node = self._offer(
+                                nodes, heap, counter, node, truncated, node.damage_hits + truncated.damage_hits, weight, heuristic
+                            )
+                            pass_.killed_seen = killed_seen
+                            return pass_
+
+                child = self._link(nodes, heap, counter, node, segment, damage, weight, heuristic)
+                # the goal is tested on generation, not only on pop: the tile key
+                # buckets several exact states, so a goal state can be dropped as
+                # "dominated" by a cheaper state in the same tile and would never be
+                # popped.  A* still refines this first hit through the later passes.
+                if goal(segment.end):
+                    pass_.node = child if child is not None else self._make_child(node, segment, damage)
+                    pass_.killed_seen = killed_seen
+                    return pass_
+
+        pass_.exhausted = True
+        pass_.killed_seen = killed_seen
+        return pass_
+
+    def _make_child(self, parent: _Node, segment: Segment, damage: int) -> _Node:
+        return _Node(
+            node_key(segment.end, self.profile.height),
+            segment.end,
+            parent.g + segment.cost,
+            damage,
+            parent,
+            segment,
+            parent.depth + 1,
+        )
+
+    def _link(
+        self,
+        nodes: dict[tuple, _Node],
+        heap: list,
+        counter,
+        parent: _Node,
+        segment: Segment,
+        damage: int,
+        weight: float,
+        heuristic: Heuristic,
+    ) -> _Node | None:
+        """Offer ``segment`` as a successor of ``parent`` (cheapest state per key wins)."""
+        child = self._make_child(parent, segment, damage)
+        existing = nodes.get(child.key)
+        if existing is not None and child.g >= existing.g - 1e-9:
+            return None
+
+        trace = self.trace
+        if trace is not None:
+            h = heuristic(segment.end)
+            child.record = SearchNodeRecord(
+                x=segment.end.x,
+                y=segment.end.y,
+                g=child.g,
+                h=h,
+                f=child.g + h * weight,
+                weight=weight,
+                depth=child.depth,
+                pass_index=self._pass_index,
+                tier=self._tier,
+                note=segment.note,
+                key=child.key,
+            )
+            trace.nodes.append(child.record)
+
+        nodes[child.key] = child
+        h = heuristic(segment.end)
+        heapq.heappush(heap, (child.g + h * weight, child.g, next(counter), child.key))
+
+        return child
+
+    def _offer(
+        self,
+        nodes: dict[tuple, _Node],
+        heap: list,
+        counter,
+        parent: _Node,
+        segment: Segment,
+        damage: int,
+        weight: float,
+        heuristic: Heuristic,
+    ) -> _Node:
+        """``_link`` that always returns the node (a goal hit must not be dropped)."""
+        child = self._link(nodes, heap, counter, parent, segment, damage, weight, heuristic)
+
+        return child if child is not None else self._make_child(parent, segment, damage)
+
+    def _truncate(self, start: MotionState, action: Any, segment: Segment, ticks: int) -> Segment | None:
+        """``segment`` cut off at ``ticks`` (the tick that entered the goal region).
+
+        The frames are re-simulated with ``max_ticks`` instead of replayed from the
+        trace so the end state carries the full motion state the follower compares
+        against -- a trace entry only has position and groundedness.
+        """
+        if ticks <= 0:
+            return None
+
+        outcome = self.catalog.evaluator.simulate(start.clone(), action.frames, max_ticks=ticks, record_trace=True)
+        if outcome.state.killed:
+            return None
+
+        return Segment(
+            kind=self.catalog.classify(outcome, start, action),
+            frames=truncate_frames(action.frames, ticks),
+            start=start.clone(),
+            end=outcome.state,
+            ticks=outcome.ticks,
+            cost=outcome.ticks + action.penalty + outcome.damage_hits * self.catalog.damage_penalty,
+            bbox=outcome.bbox,
+            damage_hits=outcome.damage_hits,
+            note=action.name,
+            trace=outcome.tick_trace,
+        )
 
     # -- result ----------------------------------------------------------------
 
@@ -255,15 +672,61 @@ def tile_goal(tx: int, ty: int, profile: CapabilityProfile) -> Goal:
     return goal
 
 
+def tile_touch(tx: int, ty: int, width: float, height: float) -> Touch:
+    """The positional form of :func:`tile_goal`: does the rect at ``(x, y)`` touch it?"""
+
+    def touch(x: float, y: float) -> bool:
+        return x < (tx + 1) * TILE and x + width > tx * TILE and y < (ty + 1) * TILE and y + height >= ty * TILE
+
+    return touch
+
+
+def _boxes_touch(bbox: tuple[int, int, int, int], box: tuple[int, int, int, int] | None) -> bool:
+    """Cheap pre-filter: can a segment whose tile bbox is ``bbox`` reach ``box``?"""
+    if box is None:
+        return True
+    x0, y0, x1, y1 = bbox
+    bx0, by0, bx1, by1 = box
+
+    return x0 <= bx1 and x1 >= bx0 and y0 <= by1 and y1 >= by0
+
+
+def _first_touch(trace: list[tuple[float, float, bool]], touch: Touch) -> int | None:
+    """Index of the first traced tick that touches the goal region (``None`` if never)."""
+    for index, (x, y, _grounded) in enumerate(trace):
+        if touch(x, y):
+            return index
+
+    return None
+
+
 def tile_heuristic(profile: CapabilityProfile, tx: int, ty: int) -> Heuristic:
-    """Admissible lower bound: horizontal tiles to cover / max speed."""
+    """Admissible lower bound on the ticks needed to reach the goal tile.
+
+    Two terms, because a horizontal-only bound is *flat inside a goal column*: on
+    a parkour world the search then has no reason to prefer the goal's row over
+    any other and spends its budget wandering up and down the column.
+
+    * horizontal: tiles to cover / max speed;
+    * vertical: rows to cover / the fastest possible climb, which is the jump
+      speed itself (a tile of height can never take less than ``32 / jump_speed``
+      ticks, in either direction -- falling only adds time).
+
+    The goal test accepts the collision rect overlapping the tile *or* standing on
+    its top edge, so the feet may legitimately finish one row off; the vertical
+    term keeps that row free.
+    """
     ticks_per_tile = TILE / max(profile.max_velocity * profile.dt, 1e-9)
+    ticks_per_row = TILE / max(profile.jump_speed * profile.dt, 1e-9)
 
     def heuristic(state: MotionState) -> float:
         x0 = int(state.x // TILE)
         x1 = int((state.x + profile.width - 1e-4) // TILE)
         dx = max(0, tx - x1, x0 - tx)
-        return dx * ticks_per_tile
+        feet = int((state.y + profile.height - 1e-4) // TILE)
+        dy = max(0, abs(ty - feet) - 1)
+
+        return dx * ticks_per_tile + dy * ticks_per_row
 
     return heuristic
 
