@@ -2,6 +2,8 @@ import random
 import sys
 import math
 import json
+import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
@@ -53,7 +55,10 @@ from gtools.core.growtopia.physics.controller import (
     SKATING_ITEMS,
     SLIPPERY_ITEMS,
     WATER_VEHICLE_ITEMS,
+    FLOATIE_ITEMS,
 )
+from gtools.core.growtopia.physics.pathfinding import PathAutopilot, SegmentedPathfinder
+from gtools.core.growtopia.physics.pathfinding.types import SegmentKind
 
 PLAYER_NET_ID = 1
 _TILE_HALF = TILE / 2.0
@@ -79,6 +84,30 @@ _CLOTHING_SLOTS = {
 }
 _label_cache: dict[int, str] = {}
 _groups_cache: tuple[tuple[str, tuple[int, ...]], ...] | None = None
+
+# Overlay colour per segment kind -- the movement method, not the action that was
+# attempted: a "jump" that lands in water is SWIM and is drawn as such.
+_SEGMENT_COLORS: dict[SegmentKind, tuple[float, float, float, float]] = {
+    SegmentKind.WALK: (0.36, 0.86, 0.44, 1.0),
+    SegmentKind.JUMP: (0.95, 0.78, 0.25, 1.0),
+    SegmentKind.JUMP_UP: (0.95, 0.62, 0.20, 1.0),
+    SegmentKind.JUMP_OVER: (0.98, 0.50, 0.16, 1.0),
+    SegmentKind.FALL: (0.40, 0.62, 1.00, 1.0),
+    SegmentKind.DROP_THROUGH: (0.35, 0.85, 0.95, 1.0),
+    SegmentKind.CLIMB: (0.85, 0.45, 0.95, 1.0),
+    SegmentKind.SWIM: (0.25, 0.85, 0.90, 1.0),
+    SegmentKind.SLOW_FALL: (0.62, 0.78, 1.00, 1.0),
+    SegmentKind.BOUNCE: (0.70, 0.40, 1.00, 1.0),
+    SegmentKind.BOUNCE_UP: (0.82, 0.35, 1.00, 1.0),
+    SegmentKind.WIND: (0.30, 0.90, 0.70, 1.0),
+    SegmentKind.WELL: (0.55, 0.40, 0.95, 1.0),
+    SegmentKind.DAMAGE_LAUNCH: (0.95, 0.25, 0.25, 1.0),
+    SegmentKind.DAMAGE_KNOCKBACK: (0.95, 0.40, 0.10, 1.0),
+}
+
+
+def _segment_color(kind: SegmentKind) -> tuple[float, float, float, float]:
+    return _SEGMENT_COLORS.get(kind, (0.90, 0.90, 0.90, 1.0))
 
 
 def _item_name(item: int) -> str:
@@ -220,6 +249,18 @@ class GPUPhysicsDemo:
         self._context_tile: tuple[int, int] | None = None
         self.event_router = EventRouter(self.window)
 
+        # -- pathfinding ---------------------------------------------------------
+        # The pathfinder only *reads* the controller to plan; the autopilot drives it
+        # exclusively through `set_input(left, right, jump)`, and the fixed-step loop
+        # below calls `step()` -- the physics engine.  Nothing here writes x/y/vx/vy.
+        self.pathfinder = SegmentedPathfinder(self.controller, time_budget_ms=150.0)
+        self.autopilot = PathAutopilot(self.controller, self.pathfinder)
+        self.path_status = "idle"
+        self.show_path = True
+        self.show_path_labels = True
+        self.show_path_trail = True
+        self._path_trail: deque[tuple[float, float]] = deque(maxlen=900)
+
         self.dt = FIXED_DT
         self.running = True
 
@@ -275,7 +316,76 @@ class GPUPhysicsDemo:
         left = glfw.KEY_A in self.keys_pressed or glfw.KEY_LEFT in self.keys_pressed
         right = glfw.KEY_D in self.keys_pressed or glfw.KEY_RIGHT in self.keys_pressed
         jump = glfw.KEY_W in self.keys_pressed or glfw.KEY_SPACE in self.keys_pressed or glfw.KEY_UP in self.keys_pressed
+
+        if self.autopilot.active:
+            if left or right or jump:
+                # manual input always wins: drop the autopilot and drive normally
+                self._release_path("cancelled by manual input")
+
+            return
+
         self.controller.set_input(left=left, right=right, jump=jump)
+
+    # -- pathfinding -----------------------------------------------------------
+
+    def _pathfind_at_screen(self, sx: float, sy: float) -> None:
+        tx, ty = self._tile_at_screen(sx, sy)
+        if not (0 <= tx < self.world.width and 0 <= ty < self.world.height):
+            print(f"pathfind outside the world: ({tx}, {ty})")
+
+            return
+
+        self._pathfind_to_tile(tx, ty)
+
+    def _pathfind_to_tile(self, tx: int, ty: int) -> None:
+        """Plan to ``(tx, ty)`` and let the autopilot walk/jump the avatar there."""
+        started = time.perf_counter()
+        result = self.autopilot.plan_to_tile(tx, ty)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        path = self.autopilot.path
+        self._path_trail.clear()
+
+        if path is None:
+            self.path_status = self.autopilot.status
+            print(f"pathfind -> ({tx}, {ty}) {self.path_status} [{elapsed_ms:.1f} ms]")
+
+            return
+
+        self.path_status = result.status.name
+        kinds = ", ".join(kind.name for kind in path.kinds()[:8])
+        suffix = ", ..." if len(path.segments) > 8 else ""
+        print(
+            f"pathfind -> ({tx}, {ty}) {result.status.name} in {elapsed_ms:.1f} ms: "
+            f"{len(path.segments)} segments, {path.total_ticks} ticks [{kinds}{suffix}]"
+        )
+
+    def _release_path(self, reason: str | None) -> None:
+        """Stop the autopilot and hand the avatar back to the keyboard.
+
+        Only the input is reset -- the avatar's state is never touched, so it keeps
+        the position/velocity the physics engine produced.
+        """
+        if not self.autopilot.active:
+            return
+
+        self.autopilot.cancel(reason)
+        if reason is not None:
+            print(f"path released: {reason}")
+        self.path_status = self.autopilot.status
+
+    def _active_path(self):
+        return self.autopilot.path
+
+    def _advance_tick(self) -> None:
+        """One fixed tick: the autopilot supplies input, the controller does physics."""
+        was_active = self.autopilot.active
+        self.autopilot.advance()
+        self.controller.step()
+        if was_active and not self.autopilot.active:
+            # the plan just finished: keep the printed status and the drawn route
+            self.path_status = self.autopilot.status
+            print(f"path finished: {self.autopilot.status}")
+
 
     @staticmethod
     def _log_packet(pkt: TankPacket) -> None:
@@ -529,6 +639,15 @@ class GPUPhysicsDemo:
 
             if isinstance(event, MouseButtonEvent) and event.button == glfw.MOUSE_BUTTON_LEFT:
                 if event.action == glfw.PRESS:
+                    modifiers = glfw.get_key(self.window, glfw.KEY_LEFT_CONTROL) or glfw.get_key(
+                        self.window, glfw.KEY_RIGHT_CONTROL
+                    )
+                    if modifiers:
+                        # Ctrl+Click asks the pathfinder for a route (left click alone punches)
+                        self._pathfind_at_screen(event.screen_x, event.screen_y)
+
+                        continue
+
                     self.mouse_held = True
                     self._touch_at_screen(event.screen_x, event.screen_y)
                 elif event.action == glfw.RELEASE:
@@ -555,8 +674,12 @@ class GPUPhysicsDemo:
         self._accumulator += dt
         while self._accumulator >= self.controller.fixed_dt:
             self._accumulator -= self.controller.fixed_dt
-            self.controller.step()
+            self._advance_tick()
             self._record_tick()
+            if self.show_path_trail:
+                self._path_trail.append(
+                    (self.controller.x + self.controller.width / 2.0, self.controller.y + self.controller.height / 2.0)
+                )
 
         self._sync_player_entity()
 
@@ -615,6 +738,12 @@ class GPUPhysicsDemo:
 
         if imgui.begin_popup("world_context_menu"):
             imgui.separator()
+            if imgui.menu_item("Pathfind here", "Ctrl+Click", False)[0]:
+                self._pathfind_to_tile(*self._context_tile)
+                imgui.close_current_popup()
+            if imgui.menu_item("Stop pathfinding", "", False, self.autopilot.active)[0]:
+                self._release_path("stopped")
+                imgui.close_current_popup()
             if imgui.menu_item("Teleport here", "", False)[0]:
                 self._teleport_to_tile(*self._context_tile)
                 imgui.close_current_popup()
@@ -628,6 +757,88 @@ class GPUPhysicsDemo:
         self.controller.double_jumped = False
         self._camera_snapped = False
         self._sync_player_entity()
+
+    # -- path overlay ----------------------------------------------------------
+
+    def _overlay_point(self, wx: float, wy: float) -> tuple[float, float]:
+        """World -> absolute screen: the renderer draws its FBO at ``_image_origin``."""
+        point = self.world_renderer._camera.world_to_screen(wx, wy)
+        ox, oy = self.world_renderer._image_origin
+
+        return ox + point.x, oy + point.y
+
+    def _segment_points(self, segment) -> tuple[tuple[float, float], tuple[float, float]]:
+        hw = self.controller.width / 2.0
+        hh = self.controller.height / 2.0
+
+        return (
+            self._overlay_point(segment.start.x + hw, segment.start.y + hh),
+            self._overlay_point(segment.end.x + hw, segment.end.y + hh),
+        )
+
+    def render_path_overlay(self) -> None:
+        """Draw the planned route in world space (2D view only, inside the host window).
+
+        One polyline per segment, coloured by the *observed* movement method, with
+        the traversed part dimmed and the segment the avatar is executing
+        highlighted.  The goal tile is outlined.  Purely visual: the follower
+        drives the avatar through ``set_input`` and nothing here touches it.
+        """
+        if not self.show_path or self.world_renderer.mode_3d:
+            return
+
+        path = self._active_path()
+        if path is None and self.autopilot.target is None:
+            return
+
+        draw = imgui.get_window_draw_list()
+        u32 = imgui.get_color_u32
+
+        if self.show_path_trail and len(self._path_trail) >= 2:
+            previous = self._overlay_point(*self._path_trail[0])
+            for point in list(self._path_trail)[1:]:
+                current = self._overlay_point(*point)
+                draw.add_line(imgui.ImVec2(*previous), imgui.ImVec2(*current), u32((1.0, 1.0, 1.0, 0.18)), 1.5)
+                previous = current
+
+        if self.autopilot.target is not None:
+            tx, ty = self.autopilot.target
+            if 0 <= tx < self.world.width and 0 <= ty < self.world.height:
+                lo = self._overlay_point(tx * TILE, ty * TILE)
+                hi = self._overlay_point((tx + 1) * TILE, (ty + 1) * TILE)
+                goal_color = (1.0, 0.85, 0.25, 0.95)
+                draw.add_rect(imgui.ImVec2(*lo), imgui.ImVec2(*hi), u32(goal_color), 2.0)
+                draw.add_rect_filled(imgui.ImVec2(*lo), imgui.ImVec2(*hi), u32((1.0, 0.85, 0.25, 0.12)))
+                label = "goal"
+                draw.add_text(imgui.ImVec2(lo[0] + 3.0, lo[1] - 15.0), u32(goal_color), label)
+
+        if path is None:
+            return
+
+        segments = path.segments
+        current = self.autopilot.progress[0] if self.autopilot.active else -1
+        labelled = self.show_path_labels and len(segments) <= 12
+
+        for index, segment in enumerate(segments):
+            start, end = self._segment_points(segment)
+            r, g, b, a = _segment_color(segment.kind)
+            if index < current:
+                alpha, thickness = a * 0.28, 2.0
+            elif current >= 0 and index == current:
+                alpha, thickness = a, 4.0
+            else:
+                alpha, thickness = a * 0.75, 3.0
+
+            color = u32((r, g, b, alpha))
+            draw.add_line(imgui.ImVec2(*start), imgui.ImVec2(*end), color, thickness)
+            dot = 4.5 if index == current else 3.0
+            draw.add_circle_filled(imgui.ImVec2(*start), dot, color)
+            draw.add_circle_filled(imgui.ImVec2(*end), dot, color)
+
+            if labelled or index == current:
+                mx, my = (start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0
+                prefix = "! " if segment.damage_hits else ""
+                draw.add_text(imgui.ImVec2(mx + 6.0, my - 7.0), u32((r, g, b, 1.0)), f"{prefix}{segment.kind.name}")
 
     def render_menu(self) -> None:
         """User-facing player menu: toggles only, no developer stats or key hints."""
@@ -649,6 +860,48 @@ class GPUPhysicsDemo:
 
             if imgui.button("Reset position"):
                 self._reset_avatar()
+
+            if imgui.collapsing_header("Pathfinding"):
+                imgui.text_disabled("Ctrl+Click a tile to pathfind")
+                imgui.text_disabled("Right click -> Pathfind here")
+                imgui.text_disabled("Press a movement key to cancel")
+
+                target = self.autopilot.target
+                imgui.text(f"Target: {target[0]}, {target[1]}" if target else "Target: -")
+                imgui.text_wrapped(f"Status: {self.path_status}")
+
+                path = self._active_path()
+                if path is not None:
+                    counts: dict[str, int] = {}
+                    for segment in path.segments:
+                        counts[segment.kind.name] = counts.get(segment.kind.name, 0) + 1
+                    breakdown = ", ".join(f"{name} x{count}" for name, count in counts.items())
+                    imgui.text_wrapped(f"Segments: {len(path.segments)} ({path.total_ticks} ticks)")
+                    imgui.text_wrapped(breakdown)
+                    if path.damage_hits:
+                        imgui.text_colored(imgui.ImVec4(1.0, 0.4, 0.3, 1.0), f"Damage hits: {path.damage_hits}")
+
+                if self.autopilot.active:
+                    index, tick, total = self.autopilot.progress
+                    imgui.text(f"Executing: segment {index + 1}/{total}, tick {tick}, replans {self.autopilot.replans}")
+                    if imgui.button("Stop pathfinding"):
+                        self._release_path("stopped")
+                else:
+                    imgui.begin_disabled()
+                    imgui.button("Stop pathfinding")
+                    imgui.end_disabled()
+
+                changed, value = imgui.checkbox("Show path", self.show_path)
+                if changed:
+                    self.show_path = value
+                changed, value = imgui.checkbox("Segment labels", self.show_path_labels)
+                if changed:
+                    self.show_path_labels = value
+                changed, value = imgui.checkbox("Avatar trail", self.show_path_trail)
+                if changed:
+                    self.show_path_trail = value
+                    if not value:
+                        self._path_trail.clear()
 
             recording = self._recording_file is not None
             changed, value = imgui.checkbox("Record session", recording)
@@ -712,6 +965,7 @@ class GPUPhysicsDemo:
             imgui.begin("##gpu_physics_world", flags=host_flags)
             self.world_renderer.set_active(True)
             self.world_renderer.render()
+            self.render_path_overlay()
             self.render_world_context_menu()
             imgui.end()
             imgui.pop_style_var()

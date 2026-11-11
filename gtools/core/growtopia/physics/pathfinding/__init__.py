@@ -19,6 +19,7 @@ is its exact performance mirror and is gated by a differential fuzz suite.
 """
 
 from gtools.core.growtopia.physics.pathfinding.actions import Action, ActionCatalog
+from gtools.core.growtopia.physics.pathfinding.autopilot import PathAutopilot
 from gtools.core.growtopia.physics.pathfinding.evaluator import PathEvaluator
 from gtools.core.growtopia.physics.pathfinding.fastkernel import FastEvaluator
 from gtools.core.growtopia.physics.pathfinding.follower import PathFollower
@@ -49,6 +50,7 @@ __all__ = [
     "MotionState",
     "Outcome",
     "Path",
+    "PathAutopilot",
     "PathEvaluator",
     "PathFollower",
     "PlanResult",

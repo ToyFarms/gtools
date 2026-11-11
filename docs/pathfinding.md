@@ -33,6 +33,7 @@ World ──► WorldSnapshot ──► CapabilityProfile ──► FastEvaluato
 | `planner.py` | `SegmentedPlanner`: weighted A* over **segment endpoints** (not pixels), edge cache keyed by profile fingerprint + tile versions, node-object parent links |
 | `pathfinder.py` | `SegmentedPathfinder`: the facade (`plan_to_tile`, `plan_to_xy`, `plan_to_predicate`, `plan_from_current`, `invalidate_tile`) |
 | `follower.py` | `PathFollower`: replays the segment inputs on the real controller, detects deviation / world change / profile change, re-plans |
+| `autopilot.py` | `PathAutopilot`: host-loop adapter (`plan_to_tile` / `advance` / `cancel`) for callers that already call `controller.step()`; used by the demo |
 | `evaluator.py` | `PathEvaluator`: cheap static scoring of a finished path (cost, damage, clearance) |
 
 ### Why two kernels
@@ -123,6 +124,52 @@ controller.step()
 follower.observe()
 ```
 
+### Host loop that owns `step()` (`PathAutopilot`)
+
+`tick_inputs`/`observe` split a tick in two, which is easy to misuse when the host
+loop already steps the controller (the demo does). `PathAutopilot` collapses them
+into one call per tick:
+
+```python
+from gtools.core.growtopia.physics.pathfinding import PathAutopilot
+
+autopilot = PathAutopilot(controller)                  # or PathAutopilot(controller, pathfinder)
+result = autopilot.plan_to_tile(tx, ty)                # result.path / autopilot.status
+while autopilot.active:
+    autopilot.advance()                                # may call set_input(...)
+    controller.step()                                  # the physics engine
+```
+
+**The autopilot never writes avatar state.** Planning observes the controller
+(`CapabilityProfile`, `motion_state`) and evaluates cloned `MotionState`s on a
+`ProbeWorld`; execution writes only `set_input(left, right, jump)` — `step()`
+produces the motion. `tests/test_path_follower.py` pins this with a proxy controller
+that raises on any attribute write, covering the planner and the autopilot together.
+
+`advance()` must be called at most once per `controller.step()` (it pairs the input
+it wrote with the observation of the step it produced). `cancel()` clears the inputs
+and leaves the avatar exactly where the physics left it. `progress`,
+`current_kind`, `replans`, `path` and `status` are read-only views for a UI/overlay.
+
+### Demo integration
+
+`gtools/core/growtopia/physics/demo.py` wires it up:
+
+| Action | Effect |
+|---|---|
+| **Ctrl+Left-Click** a tile (or right click → *Pathfind here*) | plans and starts following |
+| any movement key (A/D/W/arrows/space) | cancels the autopilot and hands control back |
+| right click → *Stop pathfinding*, or the menu button | cancels |
+| menu → *Pathfinding* | target, status, segment breakdown, damage hits, live tick/replan counters, overlay toggles |
+
+The overlay (2D view) draws one line per segment coloured by the *observed*
+`SegmentKind` (green `WALK`, yellow/orange jumps, blue `FALL`, cyan `SWIM`,
+magenta `CLIMB`, purple bounces, teal `WIND`, red `DAMAGE_*`), dims the part already
+traversed, thickens the segment being executed, labels the kinds (`!` = the segment
+takes damage hits), outlines the goal tile and traces the avatar's recent path.
+Coordinates go through `Camera2D.world_to_screen` plus the renderer's
+`_image_origin`, since the world is drawn into an FBO.
+
 - `plan_*` returns `PlanResult(status, path, reason, nodes_expanded, elapsed_ms,
   profile_fingerprint)`; `status ∈ {FOUND, NO_SAFE_ROUTE, UNREACHABLE, PARTIAL, BUDGET}`.
 - Goal semantics: the collision rect overlaps the target tile **or** stands on its top
@@ -191,8 +238,9 @@ Cost notes:
   expansions ~9× on long corridors for ~0.4 % extra path length. Set it to `1.0` for
   optimal routes.
 - `validate=False` by default (see §3); the planned oracle replay is opt-in.
-- No rendering/demo hook yet: `PlayerController` has no `path_to` facade, and the
-  interactive demo does not draw the route. The package API is the integration point.
+- The demo overlay is 2D-only (`WorldRenderer.mode_3d` skips it) and the segment
+  lines are straight start→end chords: the exact trajectory is in `Segment.trace`
+  if a future overlay wants the per-tick polyline.
 - Doors/world transitions, multiplayer avatars and item-collection routing are
   out of scope (see the plan's non-goals).
 

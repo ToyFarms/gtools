@@ -379,6 +379,15 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
 - Usage: `SegmentedPathfinder(controller).plan_to_tile(tx, ty)` →
   `PathFollower(controller, pathfinder, path)`; the follower owns the
   `set_input` + `step` loop (`tick_inputs`/`observe` when an outer loop steps).
+- Host loops that already call `controller.step()` use `PathAutopilot`
+  (`autopilot.advance()` then `step()`, `cancel()`, `progress`). Pathfinding
+  **never writes avatar state**: planning reads the controller / cloned motion
+  states, execution only calls `set_input(left, right, jump)` — pinned by the
+  write-rejecting proxy controller in `tests/test_path_follower.py`.
+- Demo: Ctrl+Left-Click (or right click → *Pathfind here*) plans and follows;
+  the *Pathfinding* menu shows status and toggles the segment overlay
+  (per-kind colours, traversed part dimmed, current segment thick, goal outlined,
+  avatar trail). Overlay is 2D-only.
 - Bench: `PYTHONPATH=. .venv/bin/python scripts/bench_pathfinding.py [--quick|--json]`.
 
 ## 6. Snippets

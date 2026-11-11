@@ -74,6 +74,22 @@ class PathFollower:
         self.pathfinder.invalidate_tile(tx, ty)
         self._dirty = True
 
+    @property
+    def progress(self) -> tuple[int, int, int]:
+        """``(segment index, tick inside it, segment count)`` -- for overlays/UI."""
+        if self.done and self._index >= len(self._segments):
+            return max(0, len(self._segments) - 1), self._tick, len(self._segments)
+
+        return self._index, self._tick, len(self._segments)
+
+    @property
+    def current_kind(self):
+        """The kind of the segment being executed (``None`` once finished)."""
+        if self._index >= len(self._segments):
+            return None
+
+        return self._segments[self._index].kind
+
     def step(self) -> bool:
         """Advance one controller tick.  Returns ``self.done``."""
         if self.done:
