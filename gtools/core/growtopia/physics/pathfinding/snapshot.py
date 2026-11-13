@@ -161,25 +161,52 @@ class WorldSnapshot:
 
     # -- building ---------------------------------------------------------------
 
-    def sync(self, world: Any) -> None:
-        if int(world.width) != self.width or int(world.height) != self.height:
+    def sync(self, world: Any) -> bool:
+        """Re-read ``world``; returns ``True`` when anything changed.
+
+        Only tiles whose foreground, flags or parent link differ are reclassified (their
+        version is bumped, which is what invalidates cached edges), and ``epoch`` only
+        advances when something changed.  Callers can therefore key caches on the epoch
+        and keep them across re-plans of an unchanged world.
+        """
+        resized = int(world.width) != self.width or int(world.height) != self.height
+        if resized:
             self.width = int(world.width)
             self.height = int(world.height)
             self.grid = TileGrid(self.width, self.height)
 
-        self.epoch += 1
+        changed = resized or self.epoch == 0
         self._extras.clear()
         self._tile_cache.clear()
 
+        grid = self.grid
+        size = len(grid.fg_id)
         for idx, tile in world.tiles.items():
-            if 0 <= idx < len(self.grid.fg_id):
-                self._classify(idx, tile)
+            if 0 <= idx < size:
+                if (
+                    resized
+                    or grid.fg_id[idx] != int(tile.fg_id)
+                    or grid.flags[idx] != int(tile.flags)
+                    or grid.parent_index[idx] != int(tile.parent_index)
+                ):
+                    self._classify(idx, tile)
+                    grid.version[idx] += 1
+                    changed = True
                 if tile.extra is not None:
                     self._extras[idx] = tile.extra
 
         lock = world.get_world_lock()
-        self.world_lock_idx = world.index_tile(lock.pos) if lock is not None else -1
-        self.owner_uid = world.get_owner_user_id()
+        lock_idx = world.index_tile(lock.pos) if lock is not None else -1
+        owner = world.get_owner_user_id()
+        if lock_idx != self.world_lock_idx or owner != self.owner_uid:
+            changed = True
+        self.world_lock_idx = lock_idx
+        self.owner_uid = owner
+
+        if changed:
+            self.epoch += 1
+
+        return changed
 
     def sync_tile(self, world: Any, x: int, y: int) -> bool:
         idx = self.grid.index(int(x), int(y))

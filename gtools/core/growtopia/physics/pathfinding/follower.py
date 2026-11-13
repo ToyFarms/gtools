@@ -95,6 +95,23 @@ class PathFollower:
         return self._segments[self._index].kind
 
     @property
+    def remaining_damage_hits(self) -> int:
+        """Damaging hits the rest of the route still takes -- a *lower* bound.
+
+        A segment already under way may have taken its hits, or may still take them;
+        the recorded trace cannot say which.  It is counted as spent, so this never
+        overstates what is left, and a replacement route is compared against the
+        strictest reading (``PathAutopilot._is_better`` rejects anything worse).
+        """
+        total = 0
+        for index in range(self._index, len(self._segments)):
+            if index == self._index and self._tick > 0:
+                continue
+            total += self._segments[index].damage_hits
+
+        return total
+
+    @property
     def remaining_cost(self) -> float:
         """Cost of the rest of the route from where the avatar is now.
 

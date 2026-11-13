@@ -26,7 +26,7 @@ STAND_Y = FLOOR_Y * 32 - HITBOX[1]
 
 
 def build(tiles, *, width=32, height=16, start_tx=4):
-    world = World.from_tiles(tiles, width=width, height=height) if False else World.from_tiles(tiles)
+    world = World.from_tiles(tiles)
     world.set_local_player(1)
     controller = PlayerController(world, net_id=1, send=None, auto_respawn=False)
     controller.spawn(start_tx * TILE + 6.0, STAND_Y)
@@ -48,6 +48,30 @@ def floor_with_gap(width, gap, *, ceiling_gap=2, floor_y=FLOOR_Y):
             tiles.append(Tile(fg_id=DIRT, pos=ivec2(x, floor_y - 1 - ceiling_gap)))
 
     return tiles
+
+
+def switchback(width=30, rows=8, *, floor_y=FLOOR_Y):
+    """Solid rows two apart; each has a platform (up) and a gap (down) at one end,
+    alternating sides.  The route from the top corridor to the bottom one is long
+    and must go to the *far* end of every corridor -- a straight corridor no longer
+    needs a long search (a run + an aligned stop reaches its end in two expansions)."""
+    from gtools.baked.items import DIRT as _DIRT
+
+    solid = {}
+    for r in range(rows + 1):
+        for x in range(width):
+            solid[(x, floor_y + 2 * r)] = _DIRT
+    for x in range(width):
+        solid[(x, floor_y + 2 * rows + 2)] = _DIRT
+    for r in range(rows + 1):
+        y = floor_y + 2 * r
+        gap, platform = (1, 2) if r % 2 == 0 else (width - 2, width - 3)
+        solid.pop((gap, y))
+        solid[(platform, y)] = 102  # Wooden Platform
+    tiles = [Tile(fg_id=fg, pos=ivec2(x, y)) for (x, y), fg in solid.items()]
+    tiles.append(Tile(fg_id=MAIN_DOOR, pos=ivec2(0, floor_y - 1)))
+
+    return tiles, floor_y + 2 * rows + 1  # the bottom corridor's row
 
 
 def test_the_jump_ladder_starts_at_a_one_tick_hop():
@@ -110,16 +134,18 @@ def test_a_goal_the_avatar_only_flies_through_is_reached():
 
 
 def test_budget_exhaustion_returns_a_usable_partial_path():
-    _, controller = build(floor_with_gap(220, set(), ceiling_gap=None))
+    tiles, bottom = switchback()
+    _, controller = build(tiles)
     pathfinder = SegmentedPathfinder(controller, time_budget_ms=1.0, max_expansions=2)
 
-    result = pathfinder.plan_to_tile(200, FLOOR_Y - 1)
+    result = pathfinder.plan_to_tile(3, bottom)
     assert result.status == PlanStatus.BUDGET
     assert result.ok, "a partial route is still a route the caller can follow"
     assert not result.complete
     assert result.path.segments
-    started = pathfinder.motion_state().x
-    assert result.path.end.x > started, "a partial route must still make progress"
+    started = pathfinder.motion_state()
+    end = result.path.end
+    assert abs(end.x - started.x) >= 1 or abs(end.y - started.y) >= 1, "a partial route must still make progress"
 
 
 def test_chunked_following_reaches_a_goal_a_single_plan_cannot():
@@ -145,12 +171,13 @@ def test_chunked_following_reaches_a_goal_a_single_plan_cannot():
 
 
 def test_refinement_replaces_a_partial_route_with_a_complete_one():
-    _, controller = build(floor_with_gap(120, set(), ceiling_gap=None))
+    tiles, bottom = switchback()
+    _, controller = build(tiles)
     # only the *time* budget is tiny: refinement gets a normal one
     pathfinder = SegmentedPathfinder(controller, time_budget_ms=1.0)
-    autopilot = PathAutopilot(controller, pathfinder, refine_budget_ms=200.0)
+    autopilot = PathAutopilot(controller, pathfinder, refine_budget_ms=2000.0)
 
-    result = autopilot.plan_to_tile(100, FLOOR_Y - 1)
+    result = autopilot.plan_to_tile(3, bottom)
     assert result.status == PlanStatus.BUDGET
     assert autopilot.path.partial
 

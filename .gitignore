@@ -21,5 +21,8 @@ out/
 .cmodcache/
 sample/
 
-# IDA pseudocode export output (large, generated)
 export/
+opencode.json
+.opencode/
+.tmp_tex/
+gtools/core/growtopia/physics/recordings/
