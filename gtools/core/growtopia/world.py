@@ -54,6 +54,7 @@ from gtools.baked.items import (
     CAVE_PLATFORM,
     CLIMBING_BOOTS_SEED,
     CLIMBING_WALL,
+    COUNTRY_FLAG,
     DARK_CAVE_BACKGROUND,
     DATA_BEDROCK,
     DATA_BEDROCK_CANDY,
@@ -329,7 +330,9 @@ class TileExtraType(IntEnum):
     DISPLAY_BLOCK_TILE = 0x17
     VENDING_MACHINE_TILE = 0x18
     GIVING_TREE_TILE = 0x1C
+    GIVING_TREE_STUMP_TILE = 0x1D  # FISH_TANK_PORT_TILE|SEED_TILE in the client switch
     COUNTRY_FLAG_TILE = 0x21
+    LUCKY_TICKET_TILE = 0x40  # determineTileExtraType: IITM2_LUCKY_TICKET -> 64
     WEATHER_MACHINE_TILE = 0x28
     DATA_BEDROCK_TILE = 0x2A
     SPOTLIGHT_TILE = 0x16
@@ -393,6 +396,7 @@ _ITEMINFO_TO_TILEEXTRA: dict[ItemInfoType, TileExtraType] = {
     ItemInfoType.USER_DOOR: TileExtraType.DOOR_TILE,
     ItemInfoType.LOCK: TileExtraType.LOCK_TILE,
     ItemInfoType.SIGN: TileExtraType.SIGN_TILE,
+    ItemInfoType.BEDROCK: TileExtraType.DATA_BEDROCK_TILE,
     ItemInfoType.DOOR: TileExtraType.DOOR_TILE,
     ItemInfoType.USER_DOOR: TileExtraType.DOOR_TILE,
     ItemInfoType.SEED: TileExtraType.SEED_TILE,
@@ -407,7 +411,7 @@ _ITEMINFO_TO_TILEEXTRA: dict[ItemInfoType, TileExtraType] = {
     ItemInfoType.DONATION_BOX: TileExtraType.DONATION_BOX_TILE,
     ItemInfoType.TOYBOX: TileExtraType.STUFF_FOR_TOYS_TILE,
     ItemInfoType.MANNEQUIN: TileExtraType.MANNEQUIN_TILE,
-    # ItemInfoType.CAMERA                  : , what is the extra type for jammer again?
+    ItemInfoType.CAMERA: TileExtraType.BULLETIN_TILE,  # determineTileExtraType: `*(_WORD*)&type = 2055` -> BULLETIN_TILE
     ItemInfoType.MAGICEGG: TileExtraType.BUNNY_EGG_TILE,
     ItemInfoType.TEAM: TileExtraType.TEAM_TILE,
     ItemInfoType.GAME_GEN: TileExtraType.GAME_GENERATOR_TILE,
@@ -422,7 +426,7 @@ _ITEMINFO_TO_TILEEXTRA: dict[ItemInfoType, TileExtraType] = {
     ItemInfoType.SOLAR: TileExtraType.SOLAR_COLLECTOR_TILE,
     ItemInfoType.FORGE: TileExtraType.FORGE_TILE,
     ItemInfoType.GIVING_TREE: TileExtraType.GIVING_TREE_TILE,
-    ItemInfoType.GIVING_TREE_STUMP: TileExtraType.GIVING_TREE_TILE,
+    ItemInfoType.GIVING_TREE_STUMP: TileExtraType.GIVING_TREE_STUMP_TILE,
     ItemInfoType.STEAM_ORGAN: TileExtraType.STEAM_ORGAN_TILE,
     ItemInfoType.TAMAGOTCHI: TileExtraType.SILKWORM_TILE,
     ItemInfoType.SEWING: TileExtraType.SEWING_MACHINE_TILE,
@@ -438,7 +442,7 @@ _ITEMINFO_TO_TILEEXTRA: dict[ItemInfoType, TileExtraType] = {
     ItemInfoType.DISPLAY_SHELF: TileExtraType.SHELF_TILE,
     ItemInfoType.VIP_DOOR: TileExtraType.VIP_ENTRANCE_TILE,
     ItemInfoType.CHAL_TIMER: TileExtraType.CHALLENGE_TIMER_TILE,
-    ItemInfoType.CHAL_FLAG: TileExtraType.CHALLENGE_TIMER_TILE,
+    ItemInfoType.CHAL_FLAG: TileExtraType.COUNTRY_FLAG_TILE,
     ItemInfoType.FISH_MOUNT: TileExtraType.FISH_WALL_MOUNT_TILE,
     ItemInfoType.PORTRAIT: TileExtraType.PORTRAIT_TILE,
     ItemInfoType.WEATHER_SPECIAL2: TileExtraType.GUILD_WEATHER_MACHINE_TILE,
@@ -453,13 +457,13 @@ _ITEMINFO_TO_TILEEXTRA: dict[ItemInfoType, TileExtraType] = {
     ItemInfoType.ADVENTURE_RESET: TileExtraType.ADVENTURE_BEGINS_TILE,
     ItemInfoType.TOMB_ROBBER: TileExtraType.TOMB_ROBBER_TILE,
     ItemInfoType.FACTION: TileExtraType.BALLOON_O_MATIC_TILE,
-    # ItemInfoType.RED_FACTION             : , entrance, idk what is the tile extra for this
-    # ItemInfoType.GREEN_FACTION           : ,
-    # ItemInfoType.BLUE_FACTION            : ,
+    ItemInfoType.RED_FACTION: TileExtraType.BALLOON_O_MATIC_TILE,  # gap80[0] = 1..3 (team byte)
+    ItemInfoType.GREEN_FACTION: TileExtraType.BALLOON_O_MATIC_TILE,
+    ItemInfoType.BLUE_FACTION: TileExtraType.BALLOON_O_MATIC_TILE,
     ItemInfoType.FISHGOTCHI_TANK: TileExtraType.TRAINING_PORT_TILE,
     ItemInfoType.ITEM_SUCKER: TileExtraType.ITEM_SUCKER_TILE,
     ItemInfoType.ROBOT: TileExtraType.CYBOT_TILE,
-    ItemInfoType.LUCKY_TICKET: TileExtraType.ANGELIC_COUNTING_CLOUD_TILE,  # maybe? the wiki mentions raffling
+    ItemInfoType.LUCKY_TICKET: TileExtraType.LUCKY_TICKET_TILE,
     ItemInfoType.STATS_BLOCK: TileExtraType.GROWSCAN_TILE,
     ItemInfoType.FIELD_NODE: TileExtraType.CONTAINMENT_FIELD_POWER_NODE_TILE,
     ItemInfoType.OUIJA_BOARD: TileExtraType.SPIRIT_BOARD_TILE,
@@ -478,6 +482,103 @@ _ITEMINFO_TO_TILEEXTRA: dict[ItemInfoType, TileExtraType] = {
     ItemInfoType.FRIENDS_ENTRANCE: TileExtraType.FRIENDS_ENTRANCE_TILE,
 }
 
+
+# Item types for which `replaceTileForegroud` (0x140555EB0) allocates a tile extra and
+# forces `TileFlags.HAS_EXTRA_DATA`, regardless of the flag that was on the wire. Old saves
+# (v0/v3) rely on this: a Main Door / seed tile carries its extra without the flag bit.
+_EXTRA_ITEM_TYPES: frozenset[ItemInfoType] = frozenset(
+    (
+        ItemInfoType.USER_DOOR,
+        ItemInfoType.LOCK,
+        ItemInfoType.SIGN,
+        ItemInfoType.DOOR,
+        ItemInfoType.SEED,
+        ItemInfoType.PORTAL,
+        ItemInfoType.MAILBOX,
+        ItemInfoType.BULLETIN,
+        ItemInfoType.DICE,
+        ItemInfoType.PROVIDER,
+        ItemInfoType.ACHIEVEMENT,
+        ItemInfoType.SUNGATE,
+        ItemInfoType.HEART_MONITOR,
+        ItemInfoType.DONATION_BOX,
+        ItemInfoType.TOYBOX,
+        ItemInfoType.MANNEQUIN,
+        ItemInfoType.CAMERA,
+        ItemInfoType.MAGICEGG,
+        ItemInfoType.TEAM,
+        ItemInfoType.GAME_GEN,
+        ItemInfoType.XENONITE,
+        ItemInfoType.DRESSUP,
+        ItemInfoType.CRYSTAL,
+        ItemInfoType.BURGLAR,
+        ItemInfoType.SPOTLIGHT,
+        ItemInfoType.DISPLAY_BLOCK,
+        ItemInfoType.VENDING,
+        ItemInfoType.FISHTANK,
+        ItemInfoType.SOLAR,
+        ItemInfoType.FORGE,
+        ItemInfoType.GIVING_TREE,
+        ItemInfoType.GIVING_TREE_STUMP,
+        ItemInfoType.STEAM_ORGAN,
+        ItemInfoType.TAMAGOTCHI,
+        ItemInfoType.SEWING,
+        ItemInfoType.FLAG,
+        ItemInfoType.LOBSTER_TRAP,
+        ItemInfoType.ARTCANVAS,
+        ItemInfoType.BATTLE_CAGE,
+        ItemInfoType.PET_TRAINER,
+        ItemInfoType.STEAM_ENGINE,
+        ItemInfoType.LOCK_BOT,
+        ItemInfoType.WEATHER_SPECIAL,
+        ItemInfoType.SPIRIT_STORAGE,
+        ItemInfoType.DISPLAY_SHELF,
+        ItemInfoType.VIP_DOOR,
+        ItemInfoType.CHAL_TIMER,
+        ItemInfoType.CHAL_FLAG,
+        ItemInfoType.FISH_MOUNT,
+        ItemInfoType.PORTRAIT,
+        ItemInfoType.WEATHER_SPECIAL2,
+        ItemInfoType.FOSSIL_PREP,
+        ItemInfoType.DNA_MACHINE,
+        ItemInfoType.BLASTER,
+        ItemInfoType.CHEMTANK,
+        ItemInfoType.STORAGE,
+        ItemInfoType.OVEN,
+        ItemInfoType.SUPER_MUSIC,
+        ItemInfoType.GEIGERCHARGE,
+        ItemInfoType.ADVENTURE_RESET,
+        ItemInfoType.TOMB_ROBBER,
+        ItemInfoType.FACTION,
+        ItemInfoType.RED_FACTION,
+        ItemInfoType.GREEN_FACTION,
+        ItemInfoType.BLUE_FACTION,
+        ItemInfoType.FISHGOTCHI_TANK,
+        ItemInfoType.ITEM_SUCKER,
+        ItemInfoType.ROBOT,
+        ItemInfoType.LUCKY_TICKET,
+        ItemInfoType.STATS_BLOCK,
+        ItemInfoType.FIELD_NODE,
+        ItemInfoType.OUIJA_BOARD,
+        ItemInfoType.AUTO_ACTION_BREAK,
+        ItemInfoType.AUTO_ACTION_HARVEST,
+        ItemInfoType.AUTO_ACTION_HARVEST_SUCK,
+        ItemInfoType.LIGHTNING_CLOUD,
+        ItemInfoType.PHASED_BLOCK,
+        ItemInfoType.PASSWORD_STORAGE,
+        ItemInfoType.PHASED_BLOCK2,
+        ItemInfoType.PVE_NPC,
+        ItemInfoType.INFINITY_WEATHER_MACHINE,
+        ItemInfoType.COMPLETIONIST,
+        ItemInfoType.FEEDING_BLOCK,
+        ItemInfoType.KRANKENS_BLOCK,
+        ItemInfoType.FRIENDS_ENTRANCE,
+    )
+)
+
+
+# newer item than the baked `gtools.baked.items` table, hence spelled out here
+WEATHER_MACHINE_CONCERT_LIGHTS = 16094
 
 CBOR_IDs = [
     PARTY_PROJECTOR,
@@ -501,6 +602,9 @@ CBOR_IDs = [
     BOUNTIFUL_MONKSHOOD_ROOTS,
     BOUNTIFUL_CORPSE_FLOWER_ROOTS,
     BOUNTIFUL_GROWTOPIAN_EATING_LOOMING_PLANT_ROOTS,
+    # the concert lights weather machine stores its light-show sequence
+    # (`{"jsonString": ...}`) in the tile JSON payload
+    WEATHER_MACHINE_CONCERT_LIGHTS,
 ]
 
 
@@ -512,6 +616,11 @@ class TileExtra:
     @classmethod
     def deserialize_extra(cls, s: Buffer, fg: int = -1, bg: int = -1, format_version: int = 999999999) -> "TileExtra":
         type = s.read_u8()
+        if type == TileExtraType.NONE:
+            # TileExtra::Parse: the type byte is consumed, everything else is skipped and the
+            # caller drops the extra (the tile ends up without one)
+            return TileExtra(type=TileExtraType.NONE)
+
         handler = _TILE_EXTRA_REGISTRY.get(type)
         if not handler:
             raise NotImplementedError(f"no tile extra for id {type}, {fg=}, {bg=}")
@@ -539,7 +648,11 @@ class TileExtra:
         s.write_u8(self.type.value)
         self.int__serialize_into(s, fg_id, bg_id, format_version)
         if self.data:
-            self.data.serialize_into(s, fg_id, bg_id, format_version)
+            if isinstance(self.data, TileExtra):
+                # trailing guild data: the payload is read without a type byte of its own
+                self.data.int__serialize_into(s, fg_id, bg_id, format_version)
+            else:
+                self.data.serialize_into(s, fg_id, bg_id, format_version)
 
     def serialize(self, fg_id: int, bg_id: int, format_version: int = 999999999) -> bytes:
         s = Buffer()
@@ -1118,19 +1231,37 @@ class VendingMachineTile(TileExtra):
 @dataclass(slots=True)
 class GivingTreeTile(TileExtra):
     type: TileExtraType = TileExtraType.GIVING_TREE_TILE
-    unk1: int = 0  # u16
-    unk2: int = 0  # u32
+    door_is_open_to_public: int = 0  # u8
+    time_passed: int = 0  # u32, dword74 on the wire (growth seconds, like SeedTile)
+    tile_type: int = 0  # u8, tileType
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "GivingTreeTile":
         t = cls()
-        t.unk1 = s.read_u16()
-        t.unk2 = s.read_u32()
+        t.door_is_open_to_public = s.read_u8()
+        t.time_passed = s.read_u32()
+        t.tile_type = s.read_u8()
         return t
 
     def int__serialize_into(self, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> None:
-        s.write_u16(self.unk1)
-        s.write_u32(self.unk2)
+        s.write_u8(self.door_is_open_to_public)
+        s.write_u32(self.time_passed)
+        s.write_u8(self.tile_type)
+
+
+@dataclass(slots=True)
+class GivingTreeStumpTile(TileExtra):
+    """`FISH_TANK_PORT_TILE|SEED_TILE` (0x1D): TileExtra::Parse reads no payload beyond the
+    type byte (it only re-inits the countdown locally)."""
+
+    type: TileExtraType = TileExtraType.GIVING_TREE_STUMP_TILE
+
+    @classmethod
+    def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "GivingTreeStumpTile":
+        return cls()
+
+    def int__serialize_into(self, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> None:
+        pass
 
 
 @dataclass(slots=True)
@@ -1141,12 +1272,19 @@ class CountryFlagTile(TileExtra):
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "CountryFlagTile":
         t = cls()
-        t.country = s.read_pascal_bytes("H")
+        # TileExtra::Parse (0x1405588F0) COUNTRY_FLAG_TILE: the world-load path
+        # (someFlag=1) only carries the country-code string for the plain
+        # Country Flag item; challenge flags share this extra type on the wire
+        # (determineTileExtraType maps IITM2_CHAL_FLAG -> COUNTRY_FLAG_TILE) but
+        # carry no payload there.
+        if fg_id == COUNTRY_FLAG:
+            t.country = s.read_pascal_bytes("H")
 
         return t
 
     def int__serialize_into(self, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> None:
-        s.write_pascal_bytes("H", self.country)
+        if fg_id == COUNTRY_FLAG:
+            s.write_pascal_bytes("H", self.country)
 
 
 @dataclass(slots=True)
@@ -2201,6 +2339,23 @@ class AngelicCountingCloudTile(TileExtra):
         s.write_pascal_bytes("H", self.ascii)
 
 
+# determineTileExtraType maps IITM2_LUCKY_TICKET to the raw value 64 (0x40);
+# TileExtra::Parse `case 0x40u:` only reads one string.
+@dataclass(slots=True)
+class LuckyTicketTile(TileExtra):
+    type: TileExtraType = TileExtraType.LUCKY_TICKET_TILE
+    text: bytes = b""
+
+    @classmethod
+    def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "LuckyTicketTile":
+        t = cls()
+        t.text = s.read_pascal_bytes("H")
+        return t
+
+    def int__serialize_into(self, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> None:
+        s.write_pascal_bytes("H", self.text)
+
+
 @dataclass(slots=True)
 class PveNpcData:
     npc_template_id: int = 0  # u32
@@ -2451,6 +2606,7 @@ _TILE_EXTRA_REGISTRY: dict[int, type[TileExtra]] = {
     TileExtraType.DISPLAY_BLOCK_TILE: DisplayBlockTile,
     TileExtraType.VENDING_MACHINE_TILE: VendingMachineTile,
     TileExtraType.GIVING_TREE_TILE: GivingTreeTile,
+    TileExtraType.GIVING_TREE_STUMP_TILE: GivingTreeStumpTile,
     TileExtraType.COUNTRY_FLAG_TILE: CountryFlagTile,
     TileExtraType.WEATHER_MACHINE_TILE: WeatherMachineTile,
     TileExtraType.DATA_BEDROCK_TILE: DataBedrockTile,
@@ -2499,6 +2655,7 @@ _TILE_EXTRA_REGISTRY: dict[int, type[TileExtra]] = {
     TileExtraType.TEMPORARY_PLATFORM_TILE: TemporaryPlatformTile,
     TileExtraType.SAFE_VAULT_TILE: SafeVaultTile,
     TileExtraType.ANGELIC_COUNTING_CLOUD_TILE: AngelicCountingCloudTile,
+    TileExtraType.LUCKY_TICKET_TILE: LuckyTicketTile,
     TileExtraType.PVE_NPC_TILE: PveNpcTile,
     TileExtraType.INFINITY_WEATHER_MACHINE_TILE: InfinityWeatherMachineTile,
     TileExtraType.COMPLETIONIST_TILE: CompletionistTile,
@@ -2692,14 +2849,39 @@ class Tile:
 
         if tile.flags & TileFlags.LOCKED:
             tile.lock_index = s.read_u16()
+            # parseTile reads this second u16 into ``parent_index`` (overwriting the header
+            # value); saved worlds carry the same value in both slots
+            tile.parent_index = tile.lock_index
 
-        if tile.flags & TileFlags.HAS_EXTRA_DATA:
+        has_extra = bool(tile.flags & TileFlags.HAS_EXTRA_DATA)
+        if not has_extra and tile.fg_id > 0:
+            # parseTile calls replaceTileForegroud (0x140555EB0) before the extra gate and
+            # that forces HAS_EXTRA_DATA for the structural item types (doors, seeds, locks,
+            # guild items, ...). Old saves rely on it and omit the flag bit while still
+            # writing the extra, so it must be inferred from the foreground item.
+            item = item_database.items.get(tile.fg_id)
+            if item is not None:
+                has_extra = (
+                    item.item_type in _EXTRA_ITEM_TYPES
+                    or item.flags2 & ItemInfoFlag2.GUILD_ITEM != 0
+                    or tile.fg_id in (DATA_BEDROCK, DATA_STARSHIP_HULL)
+                )
+
+        if has_extra:
             start = s.rpos
             tile.extra = TileExtra.deserialize_extra(s, tile.fg_id, tile.bg_id, format_version)
             extra_size = s.rpos - start
 
             s.rpos = start
             tile._extra_raw = s.read_bytes(extra_size)
+
+            if tile.extra is not None and tile.extra.type == TileExtraType.NONE:
+                # parseTile: a NONE extra is destroyed and HAS_EXTRA_DATA is cleared
+                tile.extra = None
+                tile.flags &= ~TileFlags.HAS_EXTRA_DATA
+            else:
+                # replaceTileForegroud leaves the forced flag set in memory
+                tile.flags |= TileFlags.HAS_EXTRA_DATA
 
         if tile.fg_id in CBOR_IDs:
             tile.json_data = cbor2.loads(s.read_pascal_bytes("I"))
@@ -3582,10 +3764,15 @@ class World:
 
     def get_tile(self, x: ivec2 | int, y: int | None = None) -> Tile | None:
         if isinstance(x, ivec2):
-            idx = x.y * self.width + x.x
-        elif y is None:
-            idx = x
+            x, y = x.x, x.y
+        if y is None:
+            idx = x  # a raw tile index
         else:
+            # ``y * width + x`` wraps: x == width reads the *next row's* first tile and
+            # x == -1 the previous row's last one (a phantom bumper/spike at the world
+            # edge, seen by the physics probes).  A coordinate outside the world has no tile.
+            if not (0 <= x < self.width and 0 <= y < self.height):
+                return None
             idx = y * self.width + x
 
         return self.tiles.get(idx)
@@ -3651,93 +3838,7 @@ class World:
             tile.flags &= ~TileFlags.HAS_EXTRA_DATA
 
         match item.item_type:
-            case (
-                ItemInfoType.USER_DOOR
-                | ItemInfoType.LOCK
-                | ItemInfoType.SIGN
-                | ItemInfoType.DOOR
-                | ItemInfoType.SEED
-                | ItemInfoType.PORTAL
-                | ItemInfoType.MAILBOX
-                | ItemInfoType.BULLETIN
-                | ItemInfoType.DICE
-                | ItemInfoType.PROVIDER
-                | ItemInfoType.ACHIEVEMENT
-                | ItemInfoType.SUNGATE
-                | ItemInfoType.HEART_MONITOR
-                | ItemInfoType.DONATION_BOX
-                | ItemInfoType.TOYBOX
-                | ItemInfoType.MANNEQUIN
-                | ItemInfoType.CAMERA
-                | ItemInfoType.MAGICEGG
-                | ItemInfoType.TEAM
-                | ItemInfoType.GAME_GEN
-                | ItemInfoType.XENONITE
-                | ItemInfoType.DRESSUP
-                | ItemInfoType.CRYSTAL
-                | ItemInfoType.BURGLAR
-                | ItemInfoType.SPOTLIGHT
-                | ItemInfoType.DISPLAY_BLOCK
-                | ItemInfoType.VENDING
-                | ItemInfoType.FISHTANK
-                | ItemInfoType.SOLAR
-                | ItemInfoType.FORGE
-                | ItemInfoType.GIVING_TREE
-                | ItemInfoType.GIVING_TREE_STUMP
-                | ItemInfoType.STEAM_ORGAN
-                | ItemInfoType.TAMAGOTCHI
-                | ItemInfoType.SEWING
-                | ItemInfoType.FLAG
-                | ItemInfoType.LOBSTER_TRAP
-                | ItemInfoType.ARTCANVAS
-                | ItemInfoType.BATTLE_CAGE
-                | ItemInfoType.PET_TRAINER
-                | ItemInfoType.STEAM_ENGINE
-                | ItemInfoType.LOCK_BOT
-                | ItemInfoType.WEATHER_SPECIAL
-                | ItemInfoType.SPIRIT_STORAGE
-                | ItemInfoType.DISPLAY_SHELF
-                | ItemInfoType.VIP_DOOR
-                | ItemInfoType.CHAL_TIMER
-                | ItemInfoType.CHAL_FLAG
-                | ItemInfoType.FISH_MOUNT
-                | ItemInfoType.PORTRAIT
-                | ItemInfoType.WEATHER_SPECIAL2
-                | ItemInfoType.FOSSIL_PREP
-                | ItemInfoType.DNA_MACHINE
-                | ItemInfoType.BLASTER
-                | ItemInfoType.CHEMTANK
-                | ItemInfoType.STORAGE
-                | ItemInfoType.OVEN
-                | ItemInfoType.SUPER_MUSIC
-                | ItemInfoType.GEIGERCHARGE
-                | ItemInfoType.ADVENTURE_RESET
-                | ItemInfoType.TOMB_ROBBER
-                | ItemInfoType.FACTION
-                | ItemInfoType.RED_FACTION
-                | ItemInfoType.GREEN_FACTION
-                | ItemInfoType.BLUE_FACTION
-                | ItemInfoType.FISHGOTCHI_TANK
-                | ItemInfoType.ITEM_SUCKER
-                | ItemInfoType.ROBOT
-                | ItemInfoType.LUCKY_TICKET
-                | ItemInfoType.STATS_BLOCK
-                | ItemInfoType.FIELD_NODE
-                | ItemInfoType.OUIJA_BOARD
-                | ItemInfoType.AUTO_ACTION_BREAK
-                | ItemInfoType.AUTO_ACTION_HARVEST
-                | ItemInfoType.AUTO_ACTION_HARVEST_SUCK
-                | ItemInfoType.LIGHTNING_CLOUD
-                | ItemInfoType.PHASED_BLOCK
-                | ItemInfoType.PASSWORD_STORAGE
-                | ItemInfoType.PHASED_BLOCK2
-                | ItemInfoType.PVE_NPC
-                | ItemInfoType.INFINITY_WEATHER_MACHINE
-                | ItemInfoType.COMPLETIONIST
-                | ItemInfoType.FEEDING_BLOCK
-                | ItemInfoType.KRANKENS_BLOCK
-                | ItemInfoType.FRIENDS_ENTRANCE
-            ):
+            case _ if item.item_type in _EXTRA_ITEM_TYPES:
                 tile.extra = TileExtra.new(TileExtraType.from_item_type(item.item_type))
                 tile.flags |= TileFlags.HAS_EXTRA_DATA
                 # set some default value
@@ -3975,6 +4076,7 @@ class World:
             if tile.lock_index == locked.index:
                 tile.flags &= ~TileFlags.LOCKED
                 tile.lock_index = 0
+                tile.parent_index = 0
                 self.broadcast(WorldEvent.TILE_UPDATE, tile.pos.x, tile.pos.y)
                 yield tile
 
@@ -4119,6 +4221,9 @@ class World:
 
                 target_tile.flags |= TileFlags.LOCKED
                 target_tile.lock_index = lock_tile.index
+                # toggleLockedAndSetParentIndex (0x140556790) writes parent_index; the client
+                # keeps a single lock link there, so mirror it for the lock/permission checks
+                target_tile.parent_index = lock_tile.index
 
                 # self.update_tile_connection(target_tile)
                 self.broadcast(WorldEvent.TILE_UPDATE, target_tile.pos.x, target_tile.pos.y)
@@ -4154,7 +4259,12 @@ class World:
 
     @classmethod
     def from_file(cls, file: Path | str) -> "World":
-        return cls.from_tank(Path(file).read_bytes())
+        # Saved files don't necessarily carry the stray "anomaly byte" that
+        # `NetPacket.deserialize` compensates for; parse the tank payload verbatim so the
+        # last world byte is not dropped (World.deserialize ignores any trailing byte).
+        s = Buffer(Path(file).read_bytes())
+        s.read_u32()  # NetType
+        return cls.from_tank(TankPacket.deserialize(s))
 
     def copy(self) -> "World":
         data = self.serialize()
@@ -4196,11 +4306,13 @@ class World:
             s.write_u8(item.flags)
             s.write_u32(item.uid)
 
-        s.write_u16(self.default_weather.value)
-        s.write_u16(self.terraform.value)
-        s.write_u16(self.active_weather.value)
-        s.write_u16(self.unk8)
-        s.write_u32(self.unk9)
+        # World::LoadFromMem only reads these for version >= 3
+        if self.version >= 3:
+            s.write_u16(self.default_weather.value)
+            s.write_u16(self.terraform.value)
+            s.write_u16(self.active_weather.value)
+            s.write_u16(self.unk8)
+            s.write_u32(self.unk9)
 
         return s.serialize()
 
@@ -4244,11 +4356,13 @@ class World:
             # meaning we can parse it reversed from the end until it failed or found some impossible value
             try:
                 with s.reversed(keep=False):
-                    world.unk9 = s.read_u32()
-                    world.unk8 = s.read_u16()
-                    world.active_weather = WeatherType(s.read_u16())
-                    world.terraform = TerraformType(s.read_u16())
-                    world.default_weather = WeatherType(s.read_u16())
+                    # World::LoadFromMem: the weather block only exists for version >= 3
+                    if world.version >= 3:
+                        world.unk9 = s.read_u32()
+                        world.unk8 = s.read_u16()
+                        world.active_weather = WeatherType(s.read_u16())
+                        world.terraform = TerraformType(s.read_u16())
+                        world.default_weather = WeatherType(s.read_u16())
 
                     while True:
                         item = DroppedItem()
@@ -4299,11 +4413,13 @@ class World:
 
             world.dropped.load_item(item)
 
-        world.default_weather = WeatherType(s.read_u16())
-        world.terraform = TerraformType(s.read_u16())
-        world.active_weather = WeatherType(s.read_u16())
-        world.unk8 = s.read_u16()
-        world.unk9 = s.read_u32()
+        if world.version >= 3:
+            # World::LoadFromMem: the weather block only exists for version >= 3
+            world.default_weather = WeatherType(s.read_u16())
+            world.terraform = TerraformType(s.read_u16())
+            world.active_weather = WeatherType(s.read_u16())
+            world.unk8 = s.read_u16()
+            world.unk9 = s.read_u32()
 
         return world
 

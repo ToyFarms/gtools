@@ -535,3 +535,18 @@ def test_storm_cloud_blocks_only_while_solid():
     c = spawn(controller, world, 8)
     walk(controller, 60, right=True)
     assert c.x > 11 * 32, f"non-solid cloud should pass: x={c.x}"
+
+
+def test_get_tile_does_not_wrap_around_the_world_edge():
+    """x == width used to read the next row's first tile (a phantom bumper/spike)."""
+    from pyglm.glm import ivec2
+
+    from gtools.baked.items import DIRT
+    from gtools.core.growtopia.world import Tile, World
+
+    world = World.from_tiles([Tile(fg_id=DIRT, pos=ivec2(0, 5))])
+    assert world.get_tile(0, 5) is not None
+    assert world.get_tile(world.width, 4) is None  # would alias (0, 5)
+    assert world.get_tile(-1, 6) is None  # would alias (width - 1, 5)
+    assert world.get_tile(ivec2(world.width, 4)) is None
+    assert world.get_tile(0, world.height) is None
