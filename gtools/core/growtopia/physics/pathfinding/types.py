@@ -154,9 +154,24 @@ def _clone_permissions(permissions: Any) -> Any:
     if permissions is None:
         return None
 
-    # CollisionPermissions is a slots dataclass; copy its fields explicitly so
-    # the mutable set/list cannot be shared between simulated branches.
-    clone = type(permissions)()
+    # CollisionPermissions is a slots dataclass.  Only ``tile_cache`` (mutated by every
+    # tick's tile touches) and ``adventure_flags`` are mutable, so they are the only
+    # fields that need a real copy; this is the hottest clone in the planner.
+    cls = type(permissions)
+    if cls.__name__ == "CollisionPermissions":
+        clone = cls.__new__(cls)
+        clone.user_id = permissions.user_id
+        clone.guild_id = permissions.guild_id
+        clone.guild_rank = permissions.guild_rank
+        clone.team = permissions.team
+        clone.has_team = permissions.has_team
+        clone.adventure_flags = permissions.adventure_flags.copy()
+        clone.tile_cache = permissions.tile_cache.copy()
+        clone.friend = permissions.friend
+        clone.protocol_version = permissions.protocol_version
+        return clone
+
+    clone = cls()
     for name in permissions.__dataclass_fields__:
         value = getattr(permissions, name)
         if isinstance(value, (set, list, dict)):
@@ -197,6 +212,7 @@ class Segment:
     damage_hits: int = 0
     note: str = ""
     trace: list[tuple[float, float, bool]] = field(default_factory=list)
+    fragile_checked: bool = False  # the planner priced this segment's hazard margin already
 
     @property
     def volatile(self) -> bool:

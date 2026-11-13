@@ -122,6 +122,13 @@ def _segment_color(kind: SegmentKind) -> tuple[float, float, float, float]:
 _TIER_COLORS = ((0.35, 0.85, 0.95), (0.55, 0.65, 1.00))
 
 
+# Planning runs on the UI thread, so this is a pause per click -- but the segmented search
+# (about 40 kernel runs per expansion) needs far more than the 150 ms the first demo used:
+# it returned a partial route for anything past a gap or two.  This is the pathfinder's
+# own default; the autopilot's mid-route refines have a much smaller budget of their own.
+DEMO_TIME_BUDGET_MS = 1500.0
+
+
 def _tier_color(tier: int) -> tuple[float, float, float]:
     return _TIER_COLORS[min(max(int(tier), 0), len(_TIER_COLORS) - 1)]
 
@@ -290,7 +297,7 @@ class GPUPhysicsDemo:
         # The pathfinder only *reads* the controller to plan; the autopilot drives it
         # exclusively through `set_input(left, right, jump)`, and the fixed-step loop
         # below calls `step()` -- the physics engine.  Nothing here writes x/y/vx/vy.
-        self.pathfinder = SegmentedPathfinder(self.controller, time_budget_ms=150.0, record_search=True)
+        self.pathfinder = SegmentedPathfinder(self.controller, time_budget_ms=DEMO_TIME_BUDGET_MS, record_search=True)
         self.autopilot = PathAutopilot(self.controller, self.pathfinder)
         self.path_status = "idle"
         self.show_path = True
@@ -894,7 +901,7 @@ class GPUPhysicsDemo:
         lines = [
             f"{nearest.note or 'start'}",
             f"g {nearest.g:.0f}  h {nearest.h:.0f}  f {nearest.f:.0f}",
-            f"w {nearest.weight:.1f}  tier {'full' if nearest.tier else 'cheap'}  pass #{nearest.pass_index}  depth {nearest.depth}",
+            f"w {nearest.weight:.1f}  {nearest.stage or '?'}/{'full' if nearest.tier else 'cheap'}  pass #{nearest.pass_index}  depth {nearest.depth}",
             f"tile {nearest.key[0]},{nearest.key[1]}  {stance[nearest.key[2]] if len(nearest.key) > 2 else '?'}  {state}",
         ]
         text_size = max(imgui.calc_text_size(line).x for line in lines)
@@ -1256,7 +1263,7 @@ class GPUPhysicsDemo:
                 outcome = "drained"
             else:
                 outcome = "cut"
-            imgui.text(f"#{index} w{record.weight:.1f} {tier}: {record.expansions} exp, {outcome}, {record.elapsed_ms:.0f} ms")
+            imgui.text(f"#{index} {record.stage or '?'} w{record.weight:.1f} {tier}: {record.expansions} exp, {outcome}, {record.elapsed_ms:.0f} ms")
 
         hover = self._hover_search_node
         if hover is not None:
@@ -1264,7 +1271,7 @@ class GPUPhysicsDemo:
             imgui.text_disabled(f"hover: {hover.note or 'start'} @ tile {hover.key[0]},{hover.key[1]}")
             imgui.text_disabled(
                 f"g {hover.g:.0f}  h {hover.h:.0f}  f {hover.f:.0f}  "
-                f"{'full' if hover.tier else 'cheap'}/#{hover.pass_index}  depth {hover.depth}"
+                f"{hover.stage or '?'}/{'full' if hover.tier else 'cheap'}/#{hover.pass_index}  depth {hover.depth}"
             )
 
     def _flag_checkbox(self, label: str, flag: CharacterFlags) -> None:

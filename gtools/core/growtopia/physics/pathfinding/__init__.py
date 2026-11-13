@@ -25,7 +25,7 @@ from gtools.core.growtopia.physics.pathfinding.fastkernel import FastEvaluator
 from gtools.core.growtopia.physics.pathfinding.follower import PathFollower
 from gtools.core.growtopia.physics.pathfinding.oracle import ControllerOracle, motion_from_controller
 from gtools.core.growtopia.physics.pathfinding.pathfinder import SegmentedPathfinder
-from gtools.core.growtopia.physics.pathfinding.planner import SegmentedPlanner, tile_goal, tile_heuristic
+from gtools.core.growtopia.physics.pathfinding.planner import SegmentedPlanner
 from gtools.core.growtopia.physics.pathfinding.profile import CapabilityProfile
 from gtools.core.growtopia.physics.pathfinding.snapshot import TileGrid, WorldSnapshot
 from gtools.core.growtopia.physics.pathfinding.types import (
@@ -63,6 +63,4 @@ __all__ = [
     "TileGrid",
     "WorldSnapshot",
     "motion_from_controller",
-    "tile_goal",
-    "tile_heuristic",
 ]

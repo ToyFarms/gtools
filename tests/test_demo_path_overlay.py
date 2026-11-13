@@ -20,7 +20,7 @@ from pyglm.glm import ivec2, vec2
 from gtools.baked.items import DIRT, MAIN_DOOR
 from gtools.core.growtopia.physics.controller import HITBOX, PlayerController
 from gtools.core.growtopia.physics.demo import GPUPhysicsDemo, _input_edges, _segment_frames, _tier_color
-from gtools.core.growtopia.physics.pathfinding import PathAutopilot, SegmentedPathfinder
+from gtools.core.growtopia.physics.pathfinding import PathAutopilot, SegmentKind, SegmentedPathfinder
 from gtools.core.growtopia.world import Tile, World
 from gtools.gui.camera import Camera2D
 
@@ -101,7 +101,11 @@ def test_jump_segment_is_drawn_as_its_arc_not_as_a_chord():
     demo, _controller, pathfinder, _autopilot = make_demo()
     result = pathfinder.plan_to_tile(20, FLOOR_Y - 1)
     assert result.status.name == "FOUND"
-    jump = max(result.path.segments, key=lambda segment: segment.ticks)
+    jump = next(
+        segment
+        for segment in result.path.segments
+        if segment.kind in (SegmentKind.JUMP, SegmentKind.JUMP_UP, SegmentKind.JUMP_OVER)
+    )
     points = demo._segment_polyline(jump)
 
     assert len(points) == len(jump.trace) >= 2
@@ -148,3 +152,52 @@ def test_overlay_survives_an_empty_search_and_a_missing_path(ui):
     demo.render_path_overlay()
     ui.end()
     ui.render()
+
+
+def test_search_trace_records_have_the_key_tier_and_stage_the_overlay_reads(ui):
+    from gtools.core.growtopia.physics.demo import DEMO_TIME_BUDGET_MS
+
+    demo, _controller, pathfinder, _autopilot = make_demo()
+    result = pathfinder.plan_to_tile(20, FLOOR_Y - 1, time_budget_ms=DEMO_TIME_BUDGET_MS)
+    assert result.status.name == "FOUND"
+
+    trace = pathfinder.search_trace
+    assert trace.nodes and trace.passes
+    stances = 5  # the overlay's ("grounded", "climb", "water", "air", "platform")
+    for record in trace.nodes:
+        assert len(record.key) >= 3, "the overlay indexes key[0], key[1], key[2]"
+        assert isinstance(record.key[0], int) and isinstance(record.key[1], int)
+        assert 0 <= record.key[2] < stances
+        assert record.tier in (0, 1)
+        assert record.stage in ("safe", "damage")
+        # the node's stage is the stage of the pass that generated it
+        assert trace.passes[record.pass_index].stage == record.stage
+        assert (record.tier == 1) == trace.passes[record.pass_index].full_actions
+    assert all(p.stage in ("safe", "damage") for p in trace.passes)
+
+
+def test_hovering_a_search_node_draws_its_stage(ui):
+    demo, controller, pathfinder, _autopilot = make_demo()
+    pathfinder.plan_to_tile(20, FLOOR_Y - 1)
+    record = next(r for r in pathfinder.search_trace.nodes if r.expanded)
+    point = demo._overlay_point(record.x + controller.width / 2.0, record.y + controller.height / 2.0)
+
+    ui.new_frame()
+    ui.get_io().mouse_pos = (point[0], point[1]) if isinstance(point, tuple) else (point.x, point.y)
+    ui.begin("host")
+    demo.render_path_overlay()
+    demo.render_menu()
+    ui.end()
+    ui.render()
+    assert demo._hover_search_node is not None
+    assert demo._hover_search_node.stage in ("safe", "damage")
+
+
+def test_demo_budget_is_enough_for_a_full_route_not_a_partial():
+    from gtools.core.growtopia.physics.demo import DEMO_TIME_BUDGET_MS
+
+    assert DEMO_TIME_BUDGET_MS >= 1000.0
+    _demo, controller, _pathfinder, _autopilot = make_demo()
+    pathfinder = SegmentedPathfinder(controller, time_budget_ms=DEMO_TIME_BUDGET_MS)
+    result = pathfinder.plan_to_tile(20, FLOOR_Y - 1)
+    assert result.status.name == "FOUND" and not result.path.partial

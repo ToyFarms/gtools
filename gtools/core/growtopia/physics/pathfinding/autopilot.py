@@ -50,6 +50,7 @@ class PathAutopilot:
         refine: bool = True,
         refine_every: int = 40,
         refine_budget_ms: float = 40.0,
+        refine_budget_expansions: int | None = 600,
     ) -> None:
         self.controller = controller
         self.pathfinder = pathfinder if pathfinder is not None else SegmentedPathfinder(controller)
@@ -63,8 +64,14 @@ class PathAutopilot:
         # good one without ever making the caller wait for a full search.
         self.refine = bool(refine)
         self.refine_every = max(1, int(refine_every))
+        # the budget is counted in *expansions* first (machine-independent: a slow or
+        # loaded machine refines as deeply as a fast one); the wall-clock is only the
+        # safety net.  ``None`` leaves the expansion count to the pathfinder default.
         self.refine_budget_ms = float(refine_budget_ms)
+        self.refine_budget_expansions = None if refine_budget_expansions is None else max(1, int(refine_budget_expansions))
         self.refines = 0
+        self.refines_skipped = 0
+        self.refine_skip_reason = ""
         self._countdown = self.refine_every
 
         self.result: PlanResult | None = None
@@ -154,7 +161,21 @@ class PathAutopilot:
         if follower is None or follower.done or follower.failed:
             return False
 
-        result = self.pathfinder.plan_from_current(time_budget_ms=self.refine_budget_ms)
+        # Never refine mid-air: the replacement is planned from the live state, and an
+        # airborne state is one the follower cannot hand over cleanly -- the avatar is
+        # committed to a trajectory it has no input over, so any route "from here"
+        # is a guess about frames the old plan is still executing.
+        if not self._stable():
+            self.refines_skipped += 1
+            self.refine_skip_reason = "airborne"
+
+            return False
+
+        self.refine_skip_reason = ""
+        result = self.pathfinder.plan_from_current(
+            time_budget_ms=self.refine_budget_ms,
+            max_expansions=self.refine_budget_expansions,
+        )
         if not result.ok or result.path is None or not result.path.segments:
             return False
 
@@ -169,6 +190,12 @@ class PathAutopilot:
 
         return True
 
+    def _stable(self) -> bool:
+        """The avatar rests on something: ground, water or a climb grip."""
+        state = self.pathfinder.motion_state()
+
+        return bool(not state.killed and (state.grounded or state.in_water or state.climbing))
+
     def _is_better(self, candidate: Any, follower: PathFollower) -> bool:
         """Should ``candidate`` (planned from the live state) replace the rest of the route?
 
@@ -177,6 +204,11 @@ class PathAutopilot:
         partial route is *not* compared by cost -- its cost is only the cost of the
         chunk it covers, so it is always "cheaper" than a route that finishes the job.
         """
+        # a replacement must never be *more* hazardous than what is left of the route:
+        # cheaper-but-burning is not an improvement, whatever the tick count says
+        if candidate.damage_hits > follower.remaining_damage_hits:
+            return False
+
         current = follower.path
         candidate_complete = not candidate.partial
         current_complete = not current.partial
@@ -215,7 +247,9 @@ class PathAutopilot:
             if self.refine:
                 self._countdown -= 1
                 if self._countdown <= 0:
-                    self._countdown = self.refine_every
+                    # an airborne tick defers the refine to the next stable one
+                    # instead of burning a whole ``refine_every`` period
+                    self._countdown = 0 if not self._stable() else self.refine_every
                     self.refine_now()
 
         if follower.done:
