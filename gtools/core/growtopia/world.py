@@ -4259,9 +4259,10 @@ class World:
 
     @classmethod
     def from_file(cls, file: Path | str) -> "World":
-        # Saved files don't necessarily carry the stray "anomaly byte" that
-        # `NetPacket.deserialize` compensates for; parse the tank payload verbatim so the
-        # last world byte is not dropped (World.deserialize ignores any trailing byte).
+        # Parse the tank payload verbatim.  `TankPacket.deserialize` detects and drops the
+        # stray "anomaly byte" real Growtopia adds from the advertised extended length
+        # (some files have it, some don't); `World.deserialize` ignores any leftover
+        # trailing bytes.
         s = Buffer(Path(file).read_bytes())
         s.read_u32()  # NetType
         return cls.from_tank(TankPacket.deserialize(s))

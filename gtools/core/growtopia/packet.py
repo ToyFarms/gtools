@@ -246,6 +246,15 @@ class TankPacket(PacketWithMode):
         t.int_y = s.read_i32()
         t.extended_len = s.read_u32()
         extended_data = s.read_bytes(-1)
+
+        # Real Growtopia appends a stray "anomaly byte" after the extended data (an
+        # out-of-bounds/uninitialised read); it is *not* part of the advertised
+        # ``extended_len``.  Private servers send exact-length data and no stray byte.
+        # Detect it per packet instead of trusting a global setting: one byte beyond
+        # the advertised length *is* the anomaly and is dropped automatically.
+        if len(extended_data) == t.extended_len + 1:
+            extended_data = extended_data[:-1]
+
         t._extended_data = extended_data
 
         # sometimes the length advertised is outright wrong
@@ -877,12 +886,15 @@ class NetPacket(BufferSerializable):
         raw_type = s.read_u32()
         type = _NET_TYPES.get(raw_type) or NetType(raw_type)
 
-        if setting.anomaly_byte_compensation:
-            s.truncate(max(s.rpos, len(s) - 1))
-
         if type is NetType.TANK_PACKET:
+            # the tank body detects its own trailing "anomaly byte" from the advertised
+            # extended length (present on real Growtopia traffic, absent on private
+            # servers); truncating the buffer here would hide it from that check and
+            # eat a real byte from packets that don't carry one
             body = TankPacket.deserialize(s, mode)
         else:
+            if setting.anomaly_byte_compensation:
+                s.truncate(max(s.rpos, len(s) - 1))
             body = _BODY_READERS.get(type, UnknownPacket.deserialize)(s)
 
         return cls(type, body)
@@ -897,7 +909,10 @@ class NetPacket(BufferSerializable):
             body.serialize_into(s)
 
         if setting.anomaly_byte_compensation:
-            s.write_u8(0)
+            # a tank packet whose advertised length does not match its payload is already
+            # malformed; appending the padding would grow it on every round-trip
+            if not isinstance(body, TankPacket) or body.extended_len == len(body.extended_data):
+                s.write_u8(0)
 
     def __repr__(self) -> str:
         return f"NetPacket[{self.type.name}]({self.data})"

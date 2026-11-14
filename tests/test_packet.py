@@ -1,5 +1,9 @@
 import binascii
 import time
+from pathlib import Path
+
+from gtools import setting
+from gtools.core.buffer import Buffer
 from gtools.core.growtopia.create import chat, chat_seq, console_message
 from gtools.core.growtopia.packet import EmptyPacket, NetPacket, NetType, TankFlags, TankPacket, TankType
 import pytest
@@ -461,6 +465,89 @@ def test_deserialize_relaxed_mode_extra_data(caplog: pytest.LogCaptureFixture) -
     assert any("extended data size does not match" in r.message for r in caplog.records)
     assert parsed.extended_data == b"abcextra"
     assert parsed.extended_len == 3
+
+
+def test_deserialize_detects_and_drops_the_anomaly_byte(caplog: pytest.LogCaptureFixture) -> None:
+    """Real Growtopia appends one stray byte after the extended data (not counted in ``extended_len``)."""
+    pkt = _make_basic_tank()
+    pkt.flags |= TankFlags.EXTENDED
+    pkt.extended_data = b"abc"
+    caplog.clear()
+    caplog.set_level("WARNING")
+
+    parsed = TankPacket.deserialize(pkt.serialize() + b"\x00", mode="relaxed")
+
+    assert parsed.extended_data == b"abc"
+    assert parsed.extended_len == 3
+    assert not [r for r in caplog.records if "extended data size does not match" in r.message]
+
+
+def test_deserialize_keeps_exact_length_data_from_a_private_server(caplog: pytest.LogCaptureFixture) -> None:
+    pkt = _make_basic_tank()
+    pkt.flags |= TankFlags.EXTENDED
+    pkt.extended_data = b"abc"
+    caplog.clear()
+    caplog.set_level("WARNING")
+
+    parsed = TankPacket.deserialize(pkt.serialize(), mode="relaxed")
+
+    assert parsed.extended_data == b"abc"
+    assert parsed.extended_len == 3
+    assert not [r for r in caplog.records if "extended data size does not match" in r.message]
+
+
+def test_netpacket_tank_parsing_is_independent_of_the_compensation_setting(caplog: pytest.LogCaptureFixture) -> None:
+    """The anomaly byte is detected from ``extended_len``, with the setting on or off."""
+    tank = _make_basic_tank()
+    tank.flags |= TankFlags.EXTENDED
+    tank.extended_data = b"abc"
+    raw = NetPacket(NetType.TANK_PACKET, tank).serialize()  # gtools pads with the anomaly byte
+
+    previous = setting.anomaly_byte_compensation
+    try:
+        for compensation in (True, False):
+            setting.anomaly_byte_compensation = compensation
+            caplog.clear()
+            caplog.set_level("WARNING")
+            parsed = NetPacket.deserialize(raw)
+            assert parsed.tank.extended_data == b"abc"
+            assert parsed.tank.extended_len == 3
+            assert not [r for r in caplog.records if "extended data size does not match" in r.message]
+    finally:
+        setting.anomaly_byte_compensation = previous
+
+
+def test_netpacket_private_server_tank_is_not_truncated_by_the_setting() -> None:
+    """A packet without the stray byte must not lose its last real byte to the compensation."""
+    tank = _make_basic_tank()
+    tank.flags |= TankFlags.EXTENDED
+    tank.extended_data = b"abc"
+    s = Buffer()
+    s.write_u32(NetType.TANK_PACKET.value)
+    tank.serialize_into(s)
+    raw = s.serialize()  # no anomaly byte, like a private server
+
+    previous = setting.anomaly_byte_compensation
+    try:
+        setting.anomaly_byte_compensation = True
+        parsed = NetPacket.deserialize(raw)
+    finally:
+        setting.anomaly_byte_compensation = previous
+
+    assert parsed.tank.extended_data == b"abc"
+    assert parsed.tank.extended_len == 3
+
+
+def test_saved_gt_packet_anomaly_byte_is_dropped_without_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Saved real-GT packets carry the stray byte (advertised == actual - 1)."""
+    raw = (Path(__file__).parent / "res" / "BFG.bin").read_bytes()
+    caplog.clear()
+    caplog.set_level("WARNING")
+
+    parsed = NetPacket.deserialize(raw)
+
+    assert parsed.tank.extended_len == len(parsed.tank.extended_data)
+    assert not [r for r in caplog.records if "extended data size does not match" in r.message]
 
 
 def test_netpacket_more_samples_roundtrip() -> None:

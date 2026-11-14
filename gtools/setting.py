@@ -72,9 +72,10 @@ class Setting(JsonMixin):
     growtopia real traffic always includes the so called "anomaly byte",
     which is a stray bytes at the end of every packet, the value is completely
     random (possibly out of bound memory read, or uninitialized memory)
-    if this setting is on, it will compensate for that (and simulating too while at it)
-    however, most 3rd party server (private server) usually doesnt have this kinda
-    behavior so the packet will actually be parsed wrong.
+    tank packets now detect and drop it automatically from the advertised extended
+    length (one byte beyond ``extended_len`` is the anomaly; a private server
+    without it parses correctly too), so this setting only covers non-tank bodies
+    (strkv text) and whether outgoing packets are padded with the byte.
     """
     anomaly_byte_compensation: bool = field(default=True)
 

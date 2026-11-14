@@ -12,11 +12,14 @@
 
 A saved world file is one `NetPacket` (u32 `NetType.TANK_PACKET = 4`), one
 `TankPacket` header (0x38 bytes) and the world payload in the extended data.
-`NetPacket.deserialize` applies the "anomaly byte" compensation (drops the last
-byte of real traffic), but saved files don't necessarily carry that byte, so
-`World.from_file` parses the tank payload verbatim. `World.deserialize` ignores
-any trailing padding, which the files use freely (e.g. `TRADE` has 24 KB of
-zero padding after the dropped items).
+Real Growtopia appends a stray "anomaly byte" after the extended data; the
+advertised `extended_len` excludes it. `TankPacket.deserialize` detects it per
+packet (one byte beyond `extended_len` *is* the anomaly; exact-length private
+server packets are kept intact) and drops it, without depending on the
+`anomaly_byte_compensation` setting — 599 of the 605 saved files carry the byte.
+`World.from_file` parses the tank payload verbatim; `World.deserialize` ignores
+any remaining trailing padding, which the files use freely (e.g. `TRADE` has
+24 KB of zero padding after the dropped items).
 
 ## 2. Payload layout
 
