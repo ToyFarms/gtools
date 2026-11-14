@@ -517,6 +517,49 @@ def test_netpacket_tank_parsing_is_independent_of_the_compensation_setting(caplo
         setting.anomaly_byte_compensation = previous
 
 
+@pytest.mark.parametrize("compensation", [True, False])
+def test_tank_roundtrip_keeps_the_anomaly_byte_when_present(compensation: bool) -> None:
+    """A packet that arrived with the stray byte re-serializes with it, whatever the setting."""
+    tank = _make_basic_tank()
+    tank.flags |= TankFlags.EXTENDED
+    tank.extended_data = b"abc"
+    s = Buffer()
+    s.write_u32(NetType.TANK_PACKET.value)
+    tank.serialize_into(s)
+    raw = s.serialize() + b"\x2a"  # the stray byte beyond the advertised length (arbitrary value)
+
+    previous = setting.anomaly_byte_compensation
+    try:
+        setting.anomaly_byte_compensation = compensation
+        parsed = NetPacket.deserialize(raw)
+        assert parsed.tank.has_anomaly_byte is True
+        assert parsed.tank.anomaly_byte_value == 0x2A
+        assert parsed.serialize() == raw  # byte-exact, including the stray byte's value
+    finally:
+        setting.anomaly_byte_compensation = previous
+
+
+@pytest.mark.parametrize("compensation", [True, False])
+def test_tank_roundtrip_does_not_add_an_anomaly_byte_when_absent(compensation: bool) -> None:
+    """A packet that arrived without the stray byte does not gain one, whatever the setting."""
+    tank = _make_basic_tank()
+    tank.flags |= TankFlags.EXTENDED
+    tank.extended_data = b"abc"
+    s = Buffer()
+    s.write_u32(NetType.TANK_PACKET.value)
+    tank.serialize_into(s)
+    raw = s.serialize()  # no anomaly byte, like a private server
+
+    previous = setting.anomaly_byte_compensation
+    try:
+        setting.anomaly_byte_compensation = compensation
+        parsed = NetPacket.deserialize(raw)
+        assert parsed.tank.has_anomaly_byte is False
+        assert parsed.serialize() == raw
+    finally:
+        setting.anomaly_byte_compensation = previous
+
+
 def test_netpacket_private_server_tank_is_not_truncated_by_the_setting() -> None:
     """A packet without the stray byte must not lose its last real byte to the compensation."""
     tank = _make_basic_tank()

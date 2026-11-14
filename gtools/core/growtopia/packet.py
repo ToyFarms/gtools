@@ -214,6 +214,13 @@ class TankPacket(PacketWithMode):
         else:
             self.extended_len = extended_len
 
+        # whether the envelope carried the stray "anomaly byte" real Growtopia appends
+        # after the extended data: True/False once parsed, None while unknown (constructed
+        # packets then follow ``setting.anomaly_byte_compensation``).  The byte's value is
+        # kept and re-emitted so a round-trip is byte-exact.
+        self.has_anomaly_byte: bool | None = None
+        self.anomaly_byte_value: int = 0
+
     @property
     def extended_data(self) -> bytes:
         return self._extended_data
@@ -253,7 +260,11 @@ class TankPacket(PacketWithMode):
         # Detect it per packet instead of trusting a global setting: one byte beyond
         # the advertised length *is* the anomaly and is dropped automatically.
         if len(extended_data) == t.extended_len + 1:
+            t.has_anomaly_byte = True
+            t.anomaly_byte_value = extended_data[-1]
             extended_data = extended_data[:-1]
+        elif len(extended_data) == t.extended_len:
+            t.has_anomaly_byte = False
 
         t._extended_data = extended_data
 
@@ -908,11 +919,22 @@ class NetPacket(BufferSerializable):
         else:
             body.serialize_into(s)
 
-        if setting.anomaly_byte_compensation:
-            # a tank packet whose advertised length does not match its payload is already
-            # malformed; appending the padding would grow it on every round-trip
-            if not isinstance(body, TankPacket) or body.extended_len == len(body.extended_data):
-                s.write_u8(0)
+        # mirror the envelope the packet arrived with: keep the stray "anomaly byte" when
+        # it had one (same value, so the round-trip is byte-exact), don't invent one when
+        # it didn't.  Constructed packets (unknown) follow the setting; a tank with a
+        # malformed advertised length gets nothing, because the padding would grow it on
+        # every round-trip.
+        anomaly_byte: int | None = None
+        if isinstance(body, TankPacket):
+            if body.has_anomaly_byte is True:
+                anomaly_byte = body.anomaly_byte_value
+            elif body.has_anomaly_byte is None and setting.anomaly_byte_compensation and body.extended_len == len(body.extended_data):
+                anomaly_byte = 0
+        elif setting.anomaly_byte_compensation:
+            anomaly_byte = 0
+
+        if anomaly_byte is not None:
+            s.write_u8(anomaly_byte)
 
     def __repr__(self) -> str:
         return f"NetPacket[{self.type.name}]({self.data})"
