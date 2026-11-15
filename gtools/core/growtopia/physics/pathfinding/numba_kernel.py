@@ -774,9 +774,9 @@ def _simulate_tick_nb(G, st, fl, pf, pb, cache, cache_len, ov_idx, ov_val, ov_le
 
     direction = (1 if fl[FL_RIGHT] != 0 else 0) - (1 if fl[FL_LEFT] != 0 else 0)
     if direction != 0:
+        # input-only facing (NetControllerLocal::Update); residual velocity must
+        # not flip it, see PlayerController._simulate
         fl[FL_FACING_RIGHT] = 1 if direction > 0 else 0
-    elif st[S_VX] != 0.0:
-        fl[FL_FACING_RIGHT] = 1 if st[S_VX] > 0.0 else 0
 
     if fl[FL_IN_WATER] != 0:
         cap = pf[P_VWATER]

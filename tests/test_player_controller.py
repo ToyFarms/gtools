@@ -12,18 +12,22 @@ from pyglm.glm import ivec2, vec2
 
 from gtools.baked.items import (
     DIRT,
+    DIRT_SEED,
+    FLOWERY_WALLPAPER,
     GEMS,
     HEROIC_TIGHTS_OF_PREVENTION,
     PRESENT_GOBLIN_DISGUISE,
     STEAM_LAUNCHER,
 )
 from gtools.core.growtopia.inventory import Inventory
+from gtools.core.growtopia.items_dat import is_seed
 from gtools.core.growtopia.packet import TankFlags, TankType
 from gtools.core.growtopia.physics.controller import (
     FIST_ID,
     HITBOX,
     PUNCH_REPEAT_MS,
     TOUCH_HOLD_TIMEOUT_MS,
+    TOUCH_REACH_PX,
     PlayerController,
     _STATE_EVENT_FLAGS,
 )
@@ -196,13 +200,145 @@ def test_optimistic_application_can_be_disabled() -> None:
     assert inventory.get(DIRT).amount == 2
 
 
-def test_punch_stamps_facing_left() -> None:
+def test_punch_stamps_facing_from_the_punched_tile() -> None:
+    """The punch reaction targets the tile -- facing follows its side (avatar+0x61).
+
+    ``sub_14012ECC0`` stamps the render target to the tile centre and
+    ``sub_140133A90`` (0x140133B40/0x140133BA4) writes ``avatar+0x61``: left when the
+    avatar's centre x is greater than the tile's, right otherwise. The avatar centre
+    is at x = 112 here, so tile 5 (160..191) faces right and tiles 1..2 face left.
+    """
     session = Session()
-    session.controller.facing_right = False
+    controller = session.controller
+    controller.facing_right = False  # facing the wrong way ...
+
+    controller.touch_press(*FIST_TILE)  # ... punching a tile to the right ...
+    controller.step()
+
+    assert not (int(session.requests[0].flags) & int(TankFlags.FACING_LEFT))
+    assert controller.facing_right
+
+    controller.touch_release()
+    while controller.time_ms < PUNCH_REPEAT_MS:  # wait out the punch animation gate
+        controller.step()
+
+    controller.touch_press(2, FLOOR_Y)  # ... then a tile to the left flips it back
+    controller.step()
+
+    assert int(session.requests[1].flags) & int(TankFlags.FACING_LEFT)
+    assert int(session.frames[-1].flags) & int(TankFlags.FACING_LEFT)
+
+
+def test_reach_uses_the_character_state_range() -> None:
+    """Reach = the collision rect expanded by ``state.<punch|build>_range * 32`` px.
+
+    ``HandleTouch`` (0x14041222C) takes the punch range for the Fist and the build
+    range otherwise (``sub_1403F2760``/``sub_1403F24C0``), sweeps
+    ``collectGridTilesInRect`` over the expanded rect and drops everything else; the
+    150 px radius only sets the highlight latch.
+    """
+    session = Session()
+    controller = session.controller
+    # rect x = 102..122, y = 226..256; a punch (margin 2 * 32) sweeps tiles 1..5 x 5..9
+    assert controller._touch_in_reach(5, FLOOR_Y, FIST_ID)
+    assert not controller._touch_in_reach(6, FLOOR_Y, FIST_ID)
+
+    controller.state.punch_range = 4  # a Punch Range mod widens the sweep, not the radius
+    assert controller._touch_in_reach(6, FLOOR_Y, FIST_ID)
+
+    # blocks use the build range, so the same tile is out of reach for a placement
+    assert not controller._touch_in_reach(6, FLOOR_Y, DIRT)
+    controller.state.build_range = 4
+    assert controller._touch_in_reach(6, FLOOR_Y, DIRT)
+
+
+def test_tile_inside_the_radius_but_out_of_reach_sends_nothing() -> None:
+    """The 150 px radius is not a reach fallback -- it only sets the highlight latch."""
+    session = Session()
+    assert session.controller._touch_in_reach(6, FLOOR_Y, FIST_ID) is False
+    dx = 6 * 32 + 16 - (session.controller.x + session.controller.width / 2)
+    dy = FLOOR_Y * 32 + 16 - (session.controller.y + session.controller.height / 2)
+    assert dx * dx + dy * dy < TOUCH_REACH_PX**2  # well inside the latch radius
+
+    session.controller.touch_press(6, FLOOR_Y)
+    session.controller.step()
+    assert session.requests == []
+
+
+def test_punching_empty_air_sends_nothing() -> None:
+    """An empty tile only punches when another avatar stands on it (HandleTouch tail)."""
+    session = Session()
+    session.world.get_tile(2, FLOOR_Y).fg_id = 0
+    session.controller.touch_press(2, FLOOR_Y)
+    session.controller.step()
+
+    assert session.requests == []
+
+    session.world.get_tile(2, FLOOR_Y).bg_id = DIRT  # a background is a target
+    session.controller.touch_release()
+    session.controller.touch_press(2, FLOOR_Y)
+    session.controller.step()
+    assert len(session.requests) == 1
+
+
+def test_planting_a_seed_needs_solid_ground_below() -> None:
+    """``IsTileBelowPlantable`` -- "(Can't plant a tree in the air!)" sends nothing."""
+    session = Session(hand_item=DIRT_SEED)  # a seed (odd id)
+    assert is_seed(DIRT_SEED)
+
+    session.world.get_tile(2, FLOOR_Y).fg_id = 0  # empty, nothing solid below it
+    session.controller.touch_press(2, FLOOR_Y)
+    session.controller.step()
+    assert session.requests == []
+
+    session.world.get_tile(2, FLOOR_Y).fg_id = DIRT  # the tile above the floor is plantable
+    session.controller.touch_release()
+    session.controller.touch_press(2, FLOOR_Y - 1)
+    session.controller.step()
+    assert len(session.requests) == 1
+    assert session.requests[0].value == DIRT_SEED
+
+
+def test_placing_a_block_on_a_filled_tile_is_not_applied_locally() -> None:
+    """The client sends any item onto a breakable tile and lets the server decide.
+
+    The engine keeps the request (client behaviour) but must not overwrite the
+    existing foreground -- only a server broadcast may change a filled tile.
+    """
+    inventory = Inventory()
+    inventory.add(GEMS, 1)  # a non-background, non-seed item
+    session = Session(inventory, hand_item=GEMS)
+
     session.controller.touch_press(*FIST_TILE)
     session.controller.step()
 
-    assert session.requests[0].flags & TankFlags.FACING_LEFT
+    assert len(session.requests) == 1
+    assert session.world.get_tile(*FIST_TILE).fg_id == DIRT
+
+
+def test_placing_a_background_replaces_only_the_background() -> None:
+    """``isItemPlaceOverForegroundType`` -- types 18 / 22 / 23 / 28 go over a filled fg.
+
+    The client compares ``tile->bg_id`` with the held item and aborts before the send
+    when it already is that background, so a second tap on the same tile is silent.
+    """
+    inventory = Inventory()
+    inventory.add(FLOWERY_WALLPAPER, 2)
+    session = Session(inventory, hand_item=FLOWERY_WALLPAPER)
+    tile = session.world.get_tile(*FIST_TILE)
+    tile.bg_id = 0
+
+    session.controller.touch_press(*FIST_TILE)
+    session.controller.step()
+
+    assert len(session.requests) == 1
+    assert tile.bg_id == FLOWERY_WALLPAPER  # the background is applied locally
+    assert tile.fg_id == DIRT  # the foreground is untouched
+
+    session.controller.touch_release()
+    session.controller.touch_press(*FIST_TILE)
+    session.controller.step()
+    assert len(session.requests) == 1  # that wallpaper is already there
 
 
 def test_jump_flag_is_a_one_shot_event() -> None:

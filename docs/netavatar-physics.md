@@ -662,6 +662,30 @@ The engine (`gtools/core/growtopia/physics/controller.py`) mirrors this in
   cleared like `avatar+0x134`. See `docs/02_packet` (`TANK_FLAGS` → one-shot
   events) and the traffic sample there.
 
+#### 6.6.1 Who writes `facingLeft` (`avatar+0x61`)
+
+`FACING_LEFT` is not movement-only: the byte is written by four different code
+paths, and `fillTankStatePacket` / `sendTileChangeRequest` merely read it.
+
+| Writer | Address | Rule |
+|---|---|---|
+| `NetControllerLocal::Update` | `0x140511B39`/`0x140511B4D` (goblin/clothes branch), `0x140511C29`/`0x140511CB2` (normal) | left/right **input** only (`inputFlags_18C` bit 11 inverts). Residual velocity never flips it — the engine used to mirror `vx`, which is not client behaviour |
+| `NetAvatar::applyTankStateAndEvents` | `0x14050C660` | the wire `FACING_LEFT` bit on the received STATE |
+| render sync `sub_140133A90` | `0x140133B40`/`0x140133BA4` | **action target**: left iff the render avatar's centre x (`+0x1C28`) is greater than the target x (`+0x1DE4`); equality faces right |
+| render sync `sub_140137D20` | `0x1401381B2`/`0x140138268`/`0x1401382DF` | the tile under the avatar: `tile->flags & 0x20` (sitting furniture / house-direction tiles) |
+
+The action target is stamped by the local tile-change reaction
+`sub_14012ECC0` (`0x14012F0FC`/`0x14012F120`) — it writes the **tile centre**
+`(tileX * 32 + 16, tileY * 32 + 16)` into `render+0x1DE4/+0x1DE8` — and the
+auto-punch scanners `NetAvatar::updateTileInteraction` (`0x140500049`, only while
+`IsFrozenOrModFly`) and `sub_1405101C0` (`0x140510331`). So **the facing follows
+the punched/placed tile**: punch the tile to your left and the next STATE and
+`TILE_CHANGE_REQUEST` frames carry `FACING_LEFT`, punch right and it is cleared.
+`PlayerController.request_change` applies that rule immediately (the client's
+render sync lands one frame after the send, from the local `TILE_CHANGE` event
+echo at `0x14050CBCF`), so the steady state matches; the walk-over sends from
+`_walk_item_mods` never stamp a target and pass `facing=False`.
+
 ### 6.7 Recording physics for analysis (F6)
 
 `demo.py` (the GPU physics demo) can record a session to JSON Lines. Press

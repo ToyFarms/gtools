@@ -91,9 +91,9 @@ def spy_requests(controller: PlayerController) -> list[tuple[int, int, int, bool
     calls: list[tuple[int, int, int, bool]] = []
     original = controller.request_change
 
-    def spy(id: int, tx: int, ty: int, *, splice: bool = False, item_on_tree: int = 0) -> None:
-        calls.append((id, tx, ty, splice))
-        original(id, tx, ty, splice=splice, item_on_tree=item_on_tree)
+    def spy(id: int, tx: int, ty: int, **kwargs) -> None:
+        calls.append((id, tx, ty, kwargs.get("splice", False)))
+        original(id, tx, ty, **kwargs)
 
     controller.request_change = spy  # type: ignore[method-assign]
 
@@ -237,7 +237,7 @@ def test_plow_does_not_resplice_a_spliced_tree() -> None:
 
 def test_seed_tap_needs_a_plantable_tile_below() -> None:
     world = make_world(floor=False)  # the column under the target tile is a hole
-    controller = make_controller(world, hand=DIRT_SEED)
+    controller = make_controller(world, hand=DIRT_SEED, tx=TREE_TX)
     record_requests(controller)
 
     controller.touch_press(TREE_TX, TREE_ROW)
@@ -247,7 +247,7 @@ def test_seed_tap_needs_a_plantable_tile_below() -> None:
 
 def test_seed_tap_plants_on_a_plantable_tile() -> None:
     world = make_world()
-    controller = make_controller(world, hand=DIRT_SEED)
+    controller = make_controller(world, hand=DIRT_SEED, tx=TREE_TX)
     record_requests(controller)
 
     controller.touch_press(TREE_TX, TREE_ROW)
@@ -257,7 +257,7 @@ def test_seed_tap_plants_on_a_plantable_tile() -> None:
 
 def test_seed_tap_on_a_seed_tile_splices() -> None:
     world = make_world(extra_tiles=(planted(TREE_TX),))
-    controller = make_controller(world, hand=DIRT_SEED)
+    controller = make_controller(world, hand=DIRT_SEED, tx=TREE_TX)
     calls = spy_requests(controller)
 
     controller.touch_press(TREE_TX, TREE_ROW)
@@ -268,7 +268,7 @@ def test_seed_tap_on_a_seed_tile_splices() -> None:
 def test_seed_tap_on_a_bunny_egg_splices() -> None:
     egg = Tile(fg_id=BUNNY_EGG, pos=ivec2(TREE_TX, TREE_ROW))
     world = make_world(extra_tiles=(egg,))
-    controller = make_controller(world, hand=DIRT_SEED)
+    controller = make_controller(world, hand=DIRT_SEED, tx=TREE_TX)
     calls = spy_requests(controller)
 
     controller.touch_press(TREE_TX, TREE_ROW)

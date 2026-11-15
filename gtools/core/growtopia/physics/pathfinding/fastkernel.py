@@ -410,9 +410,9 @@ class FastEvaluator:
         # horizontal -- validatePhysics
         direction = int(state.right) - int(state.left)
         if direction:
+            # input-only facing (NetControllerLocal::Update); residual velocity
+            # must not flip it, see PlayerController._simulate
             state.facing_right = direction > 0
-        elif state.vx:
-            state.facing_right = state.vx > 0.0
         cap = self.profile.velocity_in_water if state.in_water else self.profile.max_velocity
         if state.mud:
             cap *= self.profile.mud_speed_scale

@@ -113,7 +113,7 @@ Entry: `(TouchInputState *state, float screenX, vec2f *worldPos, bool isBreakTap
 | work stations | item types 37 / 64 / 129 accepted only on GOLDEN_TICKET_BOOTH / DISPLAY_BLOCK / DNA_EXTRACTOR / GIANT_POT_O_GOLD / STUFF_4_TOYS_BOX / FOOD_GRINDER |
 | **per-tile de-dup** | `if (item_type != 0 && state->lastTileIndex == tile->index) return;` then `lastTileIndex = tile->index`. **The Fist's `item_type` is 0 (`ItemInfoType.FIST`) — it is the only item that may re-trigger the same tile.** Each new press resets the guard to `-1`. |
 | reach (special items) | the **mod item's** `flags2` bit 20/21/22 selects a radius (70.4 / 166.4 / 102.4 px; `dword_14094A800/808/804`); `distance(playerCentre, worldPos) > radius` → abort. Gated on the held item being the dead `null_item9638` (`0x25A6`), so it does not fire in the shipped build — `PlayerController` only models the 150 px path. |
-| reach (normal) | the tile is collected from the collision rect expanded by `(levelReach + 2) * 32` (`sub_1403F24C0`; `sub_1403F2760` for item 18) via `WorldView__collectGridTilesInRect`. In-rect + `distance <= 150.0` (`0x1408EE898`) sets `byte_140B51D68 = 1` and **returns** (the per-tick auto-punch in 4.2 handles the actual repeat). Outside the rect the full path below runs and may send immediately. |
+| reach (normal) | the tile must be one of the cells `WorldView__collectGridTilesInRect` sweeps from the collision rect expanded by `(range + 2) * 32` px on all four sides. `range` is the **punch range** (`sub_1403F2760`, `GameState+0x28C`) for item 18 and the **build range** (`sub_1403F24C0`, `GameState+0x290`) otherwise; both are written by `handleSetCharacterState` (`0x14050BB94`/`0x14050BBA6`) as the wire byte `- 128`. War balloons and their seeds (4844–4848) add **96 px** with the Balloon Launcher (4840) worn on the hand and **32 px** without; items 4284 / 3704 / 6326 (rubber band airplane, paper airplane, flying disc) bypass the gate, and `avatar+0x17A != 0` forces in-reach. Out of the rect the client only sets `byte_140B51D68 = 1` when the cursor is within 150 px (`0x1408EE898`) and **returns** — no send. |
 | `isBreakTap` | press: full action (plant validation → "Can't plant a tree in the air!" feedback, door handling, `HandleTileActionResult`, placement preparation, item-type rate gates). Hold: skips the placement preparation (`0x14041254E`, `0x1404128A8`) — **holding never places**. |
 | empty-tile guard | item_type 0 + empty tile + slot5 != 3716 → send only when `findAvatarAtPosition(worldPos)` finds an avatar (the click is on the player) |
 | hand item | `gs->heldItemId` (+0x248). If 0: `isTileBreakable(tile)` → **WRENCH (32)**, else `inventoryHasItem(18)` → **FIST (18)** |
@@ -142,6 +142,39 @@ Entry: `(TouchInputState *state, float screenX, vec2f *worldPos, bool isBreakTap
   ("tile harvest / plant") for the harvest (tractor) and plant (chicken plow) flows
   ported in `PlayerController._walk_item_mods`.
 * **Wrench (type 1)** ends in the "can't place" branch for breakable tiles.
+
+Which placements survive the local gates (`_place_item` in the port):
+
+| Tile | Held item | Client | Port |
+|---|---|---|---|
+| empty fg | any placeable | `beginPlaceTile` → send | send |
+| empty fg | seed | `IsTileBelowPlantable` must pass, else "(Can't plant a tree in the air!)" → no send | same |
+| filled fg | seed | splice when the tile is a seed tile / `BUNNY_EGG`; otherwise the plain request | same (`splice=True`) |
+| filled fg | background / boombox / music note (types 18 / 22 / 23 / 28, `isItemPlaceOverForegroundType`) | replaces the background unless it already is that item | same |
+| filled fg | foreground block | the "can't place" audio branch only aborts when the tile's item is **not** breakable (`isTileBreakable` = `word[item+0x72] & 2`); a breakable tile still gets the request and the server decides | sends, but never applies it locally (gtools' ItemDat does not parse that bit) |
+
+### 3.4b Facing — the punch/place reaction also turns the avatar
+
+`sendTileChangeRequest` only *reads* `player+0x61`; the write for a tile action
+comes from the render sync:
+
+1. `sub_14012ECC0` (the local tile-change reaction, called from `beginPlaceTile`
+   `0x140501DE8` and from `applyTankStateAndEvents`' `TILE_CHANGE` branch
+   `0x14050CBCF`) stamps the render avatar's action target
+   `+0x1DE4/+0x1DE8` with the **tile centre** (`0x14012F0FC`/`0x14012F120`);
+2. `sub_140133A90` (`0x140133B40`/`0x140133BA4`, called from the render update
+   `sub_14012F150`) compares the render centre x (`+0x1C28`) with the target x and
+   writes `avatar+0x61`: **left iff centre x > target x**, right otherwise
+   (equality faces right).
+
+So punching/placing on a tile to the left of the avatar sets `FACING_LEFT` and a
+tile to the right clears it — for the STATE frame that follows and for later
+requests. `PlayerController.request_change` applies the rule at send time (the
+client's render sync lands one frame later, from its own `TILE_CHANGE` event
+echo), so the request itself already carries the punch-side facing;
+`_walk_item_mods` sends pass `facing=False` because they never stamp a target.
+Movement input (`NetControllerLocal::Update`) is the only other routine writer —
+residual velocity does **not** flip the facing.
 
 So the chained STATE frame's flag word matches the action: `PUNCH|TILE_CHANGE` for a
 punch, `PLACE|TILE_CHANGE` for a placement (both include `0x800`, the `sendTankState`
@@ -330,8 +363,11 @@ the "chained STATE".
    5/s mode. The animation table was not located.
 2. The two `TouchInputState` drag modes (`+0xDC`, `+0xDD` → `sub_140412D80`,
    `AppContext+0x27C * 0.05f` scaling) are not classified.
-3. `sub_1403F5AA0` (`var_AF`, item types in `0x10C40000` + type 112) is not classified —
-   it decides the breakable-vs-plant branch for "plant in the air" items.
+3. **Resolved** — `sub_1403F5AA0` is `isItemPlaceOverForegroundType`: true for item
+   types 18 / 22 / 23 / 28 (`BACKGROUND`, `BACKGD_SFX_EXTRA_FRAME`, `BACK_BOOMBOX`,
+   `MUSICNOTE`) and — for type 112 (`ITEM_PLANTER`) — when the item at `GameState+0xDC`
+   is one of those. It picks the "place over a filled foreground" branch and the
+   `bg_id == heldItem` no-op guard (§3.4).
 4. `isTileBreakable` reads `word[item+0x72] & 2` (the item record's flags2 high bytes);
    the exact flag name is not mapped to `ItemInfoFlag2`.
 5. Item `9638` (`0x25A6`) is a null item used by the legacy "long hand" reach branch
@@ -363,6 +399,11 @@ the "chained STATE".
   `DroppedObject::getRect`, `sub_140560990` -> `DroppedWorld::collectInRect`,
   `sub_140543B00` -> `Inventory::canAddItem`, `sub_140544600` ->
   `Inventory::isItemMaxed`, `sub_140555040` -> `isDisplayBoxOrTransmatterField`.
+- Tile-action pass: renamed `sub_14012ECC0` -> `renderHandleTileChangeReaction`,
+  `sub_140133A90` -> `renderUpdateActionFacing`, `sub_1403F2760` -> `getPunchReachPx`,
+  `sub_1403F24C0` -> `getBuildReachPx`, `sub_14053BE60` -> `isItemBreakable`,
+  `sub_1403F5AA0` -> `isItemPlaceOverForegroundType`, with the facing / reach / placement
+  comments at `0x140411CF0`, `0x14012F0FC`, `0x140133B40`.
 - `NetAvatar` corrected at `0x2A4..0x2D8`: added `modClothes[9]` and the nine named
   live clothing slots (`clothingHair`/`Shirt`/`Pants`/`Shoes`/`Face`/`Hand`/`Back`/
   `Hat`/`Neck`) in `handleChangeClotheAndSomePunch` write order. The old

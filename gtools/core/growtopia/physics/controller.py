@@ -32,6 +32,7 @@ from gtools.baked.items import (
     ADVENTURE_ROPE_PITON,
     ADVENTURE_TOMB_GATE,
     ANGEL_OF_MERCY_S_WINGS,
+    BALLOON_LAUNCHER,
     BOB_THE_GROSS_BLOB,
     BUNNY_EGG,
     CARDBOARD_NESSIE,
@@ -54,6 +55,7 @@ from gtools.baked.items import (
     EZIO_S_BOOTS,
     FISHING_DINGHY,
     FLAMING_FLOATIES,
+    FLYING_DISC,
     FLOATING_LEAF,
     GEMS,
     GIANT_FALLING_SHAMROCK,
@@ -74,25 +76,32 @@ from gtools.baked.items import (
     ICE_SKATES_OF_WINTER,
     JET_SKI,
     JET_SKI_CHARIOT,
+    LARGE_WAR_BALLOON,
     LEGENDARY_WINGS,
     LIGHTNING_UMBRELLA,
     LOCKED_ADVENTURE_DOOR,
     MAGIC_CARPET,
     MAGIC_MAGNET,
+    MEDIUM_WAR_BALLOON,
+    MEDIUM_WAR_BALLOON_SEED,
     MOUNTAIN_BOOTS,
     OIL_PAPER_UMBRELLA,
+    PAPER_AIRPLANE,
     PARASOL,
     PINEAPPLE_PLOUGH,
     POSSESSING_SCARF,
     PRESENT_GOBLIN_DISGUISE,
     RAYMAN_S_HAIR,
     RING_OF_WINDS,
+    RUBBER_BAND_AIRPLANE,
     ROYAL_WINTER_SEAL,
     SEA_MONSTER_FLOATIE,
     SILK_SCARF,
     SLEDDING_PENGUIN,
     SLIPPERY_CHEMICAL_COAT,
     SLIPPERY_FLAG_POLE,
+    SMALL_WAR_BALLOON,
+    SMALL_WAR_BALLOON_SEED,
     SNOWSHOES,
     SNOW_BLOCK,
     SODA_JETPACK,
@@ -111,6 +120,7 @@ from gtools.baked.items import (
     TRANSMATTER_FIELD,
     TURKEY_HAT,
     UNICORN_FLOATIE,
+    WATER_BUCKET,
     WATER_WINGS,
     WILL_OF_THE_WILD,
     ZAMGROWNI,
@@ -247,7 +257,19 @@ PLOW_ITEMS = frozenset({CHICKEN_PLOW, DOOM_PLOW})
 
 FIST_ID = 18  # ItemInfoType.FIST -- the hand/punch item (client itemId 0x12)
 WRENCH_ID = 32  # ItemInfoType.WRENCH -- the "no item selected" fallback for solid tiles
-TOUCH_REACH_PX = 150.0  # HandleTouch hold-path radius (0x1408EE898 = 150.0f)
+TOUCH_REACH_PX = 150.0  # HandleTouch's out-of-rect latch radius (0x1408EE898 = 150.0f)
+# HandleTouch's reach gate expands the player collision rect by `(range + 2) * 32` px
+# on all four sides: punch range (`sub_1403F2760`) while the held item is the Fist,
+# build range (`sub_1403F24C0`) otherwise.  CharacterState already stores the
+# client's `raw - 128 + 2`, so the margin is `state.<range> * TILE`.
+WATER_BUCKET_ID = WATER_BUCKET  # places on a filled foreground where other items cannot
+# these skip the reach gate entirely (HandleTouch 0x14041245E)
+REACH_EXEMPT_ITEMS = frozenset({RUBBER_BAND_AIRPLANE, PAPER_AIRPLANE, FLYING_DISC})
+# war balloons and their seeds: build reach + 96 px (launcher) / + 32 px
+WAR_BALLOON_IDS = frozenset(
+    {SMALL_WAR_BALLOON, SMALL_WAR_BALLOON_SEED, MEDIUM_WAR_BALLOON, MEDIUM_WAR_BALLOON_SEED, LARGE_WAR_BALLOON}
+)
+BALLOON_LAUNCHER_ID = BALLOON_LAUNCHER  # hand clothing that grants the + 96 px variant
 TOUCH_HOLD_TIMEOUT_MS = 11000.0  # onTouchHoldTick stops the hold after 0x2AF8 ms
 # the client gates repeated punches on the punch animation (avatar+0x1A4 == 18);
 # 200 ms is the resulting cadence (measured 5/s mode, docs/tile-change-request.md §5)
@@ -676,9 +698,10 @@ class PlayerController:
         # horizontal
         direction = int(self.right) - int(self.left)
         if direction:
+            # NetControllerLocal::Update (0x140511C29/0x140511CB2) writes avatar+0x61
+            # from the left/right input only; residual velocity never flips the
+            # facing -- request_change (the punch/place reaction) is the other writer
             self.facing_right = direction > 0
-        elif self.vx:
-            self.facing_right = self.vx > 0.0
         cap = st.velocity_in_water if self.in_water else st.max_velocity
         if self.mud:
             cap *= MUD_SPEED_SCALE  # +0xDE, validatePhysics's BYTE6 branch
@@ -933,7 +956,7 @@ class PlayerController:
 
         if clothing.shoes in TREE_HARVESTING_ITEMS:
             if self.world.tree_ready(tile):
-                self.request_punch(tile.pos.x, tile.pos.y)
+                self.request_punch(tile.pos.x, tile.pos.y, facing=False)
             return
 
         if clothing.shoes not in PLOW_ITEMS or not self.grounded or self.vx == 0.0:
@@ -944,9 +967,9 @@ class PlayerController:
         tx, ty = tile.pos.x, tile.pos.y
         if tile.fg_id == 0:
             if not isinstance(tile.extra, DoorTile) and self._collision_on(tx, ty + 1):
-                self.request_place(self.hand_item, tx, ty)
+                self.request_place(self.hand_item, tx, ty, facing=False)
         elif isinstance(tile.extra, SeedTile) and not tile.flags & TileFlags.WAS_SPLICED:
-            self.request_place(self.hand_item, tx, ty, splice=True)
+            self.request_place(self.hand_item, tx, ty, splice=True, facing=False)
 
     def _collect_dropped_items(self) -> None:
         """The per-tick dropped-object collect -- ``NetAvatar::collectDroppedItems`` (0x140506720).
@@ -1762,22 +1785,26 @@ class PlayerController:
           tile) return``; the Fist's ``item_type`` is ``ItemInfoType.FIST`` (0), so
           the hand is the only item allowed to re-trigger the same tile (this is
           what lets a held button keep punching);
-        * **reach** -- the tile must overlap the collision rect expanded by
-          ``(levelReach + 2)`` tiles or be within ``0x1408EE898`` = 150 px of the
-          avatar centre (the flags2 radius variant is gated on dead item 9638);
+        * **reach** -- the tile must be one of the cells
+          ``WorldView::collectGridTilesInRect`` sweeps from the collision rect
+          expanded by ``(range + 2) * 32`` px (punch range for the Fist, build range
+          otherwise), see ``_touch_in_reach``;
         * **item** -- the hand item (client ``GameState+0x248``); 0 falls back to
           ``WRENCH`` (32) on solid tiles, otherwise ``FIST`` (18);
+        * **fist** -- a punch needs something to hit: on an empty tile
+          (``fg_id == 0 && bg_id == 0``) the client only sends when
+          ``findAvatarAtPosition`` finds a player standing there, and repeated
+          punches are gated by the punch animation (``avatar+0x1A4 == 18``),
+          modelled here with ``PUNCH_REPEAT_MS``;
         * **hold** ticks never place -- only the tap branch prepares a placement
-          (``beginPlaceTile`` -> ``PLACE|TILE_CHANGE``); repeated punches are gated
-          by the punch animation (``avatar+0x1A4 == 18``), modelled here with
-          ``PUNCH_REPEAT_MS``;
-        * **seeds are validated locally, not sent differently** -- for a seed
-          (``isItemSeed``) on an empty tile the client requires
-          ``IsTileBelowPlantable`` and otherwise aborts with "(Can't plant a tree in
-          the air!)" without sending; the request itself is the same
-          ``TILE_CHANGE_REQUEST`` as a block placement (docs/02_packet -- the
-          ``hasExtraFloat``/splice field is behind the protocol kill switch). A seed
-          placed on an existing seed tile (or ``BUNNY_EGG``) is the *splice* case.
+          (``beginPlaceTile`` -> ``PLACE|TILE_CHANGE``);
+        * **placement** -- see ``_place_item``: a filled foreground only takes a seed
+          splice or a background, and a seed on an empty tile requires
+          ``IsTileBelowPlantable`` ("Can't plant a tree in the air!"). The request
+          itself is the same ``TILE_CHANGE_REQUEST`` as a punch (docs/02_packet --
+          the ``hasExtraFloat``/splice field is behind the protocol kill switch); a
+          seed placed on an existing seed tile (or ``BUNNY_EGG``) is the *splice*
+          case.
         """
         if self.killed:
             return
@@ -1793,7 +1820,7 @@ class PlayerController:
             return  # the client ignores a repeated touch on the same tile for items
         self.touch_last_tile = (tx, ty)
 
-        if not self._touch_in_reach(tx, ty):
+        if not self._touch_in_reach(tx, ty, item_id):
             return
 
         if item.item_type == ItemInfoType.FIST:
@@ -1801,48 +1828,122 @@ class PlayerController:
             # a punch whenever the punch animation is not running (0x1A4 != 18)
             if self.time_ms < self.punch_ready_ms:
                 return
+            if not (tile.fg_id or tile.bg_id):
+                return  # nothing to hit -- the client needs an avatar on an empty tile
 
             self.punch_ready_ms = self.time_ms + PUNCH_REPEAT_MS
+            self.request_change(FIST_ID, tx, ty)
+            return
 
-        elif item.item_type == ItemInfoType.WRENCH:
-            return  # the wrench never places; it only opens the lock/edit paths
+        if item.item_type == ItemInfoType.WRENCH or not is_break_tap:
+            return  # the wrench never places; hold ticks skip the placement branch
 
-        elif not is_break_tap:
-            return  # hold ticks skip the tap branch's placement preparation
+        self._place_item(item, item_id, tile, tx, ty)
+
+    def _place_item(self, item, item_id: int, tile: Tile, tx: int, ty: int) -> None:
+        """``HandleTouch``'s placement gates for a tap with a placeable item.
+
+        * **empty foreground** -- a seed needs a solid tile underneath
+          (``IsTileBelowPlantable``, i.e. ``isTileCollisionOn`` on ``ty + 1``);
+          otherwise the client aborts locally with "(Can't plant a tree in the
+          air!)" and sends nothing. Everything else is placed.
+        * **filled foreground** -- a seed becomes the *splice* on a seed tile /
+          ``BUNNY_EGG`` and a background (``isItemPlaceOverForegroundType``: item
+          types 18 / 22 / 23 / 28, the boombox and music note included) swaps in
+          behind the foreground. Any other item still produces the plain request
+          when the tile's item is breakable (``isTileBreakable`` reads a per-item
+          bit gtools' ItemDat does not parse) and the server rejects it. That send
+          is modelled, but only a server broadcast may change a filled tile, so it
+          is never applied optimistically.
+        """
+        if item.is_background() and tile.bg_id == item_id:
+            return  # that background / note is already behind the tile
+
+        if tile.fg_id == 0 or item_id == WATER_BUCKET_ID:
+            if self._is_seed_item(item_id) and not self._collision_on(tx, ty + 1):
+                return  # "(Can't plant a tree in the air!)" -- the client sends nothing
+
+            self.request_change(item_id, tx, ty)
+            return
 
         if self._is_seed_item(item_id):
-            if tile.fg_id == 0 and not self._collision_on(tx, ty + 1):
-                return  # "(Can't plant a tree in the air!)" -- the client sends nothing
             if isinstance(tile.extra, SeedTile) or tile.fg_id == BUNNY_EGG:
                 self.request_change(item_id, tx, ty, splice=True)  # second seed -> splice
-                return
+            else:
+                self.request_change(item_id, tx, ty, optimistic=False)
+            return
 
-        self.request_change(item_id, tx, ty)
+        if item.is_background():
+            self.request_change(item_id, tx, ty)
+            return
 
-    def _touch_in_reach(self, tx: int, ty: int) -> bool:
-        """HandleTouch reach gate (model of the rect + radius checks)."""
-        margin = 2 * TILE  # client: (levelReach + 2) tiles; levelReach defaults to 0
-        tile_left, tile_top = tx * TILE, ty * TILE
-        if self.x - margin < tile_left + TILE and self.x + self.width + margin > tile_left and self.y - margin < tile_top + TILE and self.y + self.height + margin > tile_top:
+        self.request_change(item_id, tx, ty, optimistic=False)
+
+    def _touch_in_reach(self, tx: int, ty: int, item_id: int | None = None) -> bool:
+        """``HandleTouch``'s reach gate.
+
+        The client expands ``getPlayerCollisionRect`` by ``(range + 2) * 32`` px on
+        all four sides and asks ``WorldView::collectGridTilesInRect`` whether the
+        clicked tile is one of the swept cells. The range is the punch range
+        (``sub_1403F2760``, ``GameState+0x28C``) for the Fist and the build range
+        (``sub_1403F24C0``, ``+0x290``) otherwise; both are written by
+        ``handleSetCharacterState`` from the wire (``raw - 128``), and gtools'
+        ``CharacterState`` already adds the client's ``+2``.
+
+        Three items bypass the gate (rubber band airplane / paper airplane / flying
+        disc). War balloons get ``build reach + 96`` px with the Balloon Launcher
+        worn on the hand and ``build reach + 32`` px otherwise.
+
+        The 150 px radius (``TOUCH_REACH_PX``, ``0x1408EE898``) is *not* a reach
+        fallback: outside the swept rect it only sets the client's
+        ``byte_140B51D68`` highlight latch and the touch returns without sending.
+        """
+        item_id = self.hand_item if item_id is None else item_id
+        if item_id in REACH_EXEMPT_ITEMS:
             return True
 
-        # the client's flags2 radius branch (70.4/166.4/102.4 px) is gated on the dead
-        # null item 9638 + a mod item, so only the 150 px radius is modelled
-        dx = tile_left + TILE / 2 - (self.x + self.width / 2)
-        dy = tile_top + TILE / 2 - (self.y + self.height / 2)
-        return dx * dx + dy * dy <= TOUCH_REACH_PX * TOUCH_REACH_PX
+        margin = self._touch_reach_px(item_id)
+        # collectGridTilesInRect sweeps floor(min / 32) .. floor((max - 1) / 32)
+        x0 = int(math.floor((self.x - margin) / TILE))
+        x1 = int(math.floor((self.x + self.width + margin - 1.0) / TILE))
+        y0 = int(math.floor((self.y - margin) / TILE))
+        y1 = int(math.floor((self.y + self.height + margin - 1.0) / TILE))
+
+        return x0 <= tx <= x1 and y0 <= ty <= y1
+
+    def _touch_reach_px(self, item_id: int) -> float:
+        """The reach margin for ``item_id`` -- ``HandleTouch`` at 0x14041222C..0x1404122C2."""
+        if item_id == FIST_ID:
+            return self.state.punch_range * TILE
+
+        reach = self.state.build_range * TILE
+        if item_id in WAR_BALLOON_IDS:
+            clothing = self._clothing()
+            reach += 96.0 if clothing is not None and clothing.hand == BALLOON_LAUNCHER_ID else 32.0
+
+        return reach
 
     # -- outbound tile changes ---------------------------------------------------
 
-    def request_punch(self, tx: int, ty: int) -> None:
+    def request_punch(self, tx: int, ty: int, *, facing: bool = True) -> None:
         """Punch/break ``(tx, ty)`` -- ``NetAvatar::punchTile`` (0x1404FFC20)."""
-        self.request_change(FIST_ID, tx, ty)
+        self.request_change(FIST_ID, tx, ty, facing=facing)
 
-    def request_place(self, id: int, tx: int, ty: int, *, splice: bool = False, item_on_tree: int = 0) -> None:
+    def request_place(self, id: int, tx: int, ty: int, *, splice: bool = False, item_on_tree: int = 0, facing: bool = True) -> None:
         """Place ``id`` at ``(tx, ty)`` (seed planting uses ``splice``/``item_on_tree``)."""
-        self.request_change(id, tx, ty, splice=splice, item_on_tree=item_on_tree)
+        self.request_change(id, tx, ty, splice=splice, item_on_tree=item_on_tree, facing=facing)
 
-    def request_change(self, id: int, tx: int, ty: int, *, splice: bool = False, item_on_tree: int = 0) -> None:
+    def request_change(
+        self,
+        id: int,
+        tx: int,
+        ty: int,
+        *,
+        splice: bool = False,
+        item_on_tree: int = 0,
+        optimistic: bool | None = None,
+        facing: bool = True,
+    ) -> None:
         """Send ``TILE_CHANGE_REQUEST`` and arm the chained STATE frame.
 
         ``sendTileChangeRequest`` (0x140407570) stamps the player position and
@@ -1850,8 +1951,26 @@ class PlayerController:
         the action bits and forces the next STATE frame out: ``PUNCH|TILE_CHANGE``
         for the FIST (``HandleTileActionResult``) and ``PLACE|TILE_CHANGE`` for a
         placement (``beginPlaceTile``).
+
+        ``facing`` models the client's *facing target*: a punch/placement reaction
+        stamps the render avatar's target to the tile centre (``sub_14012ECC0``'s
+        ``+0x1DE4``/``+0x1DE8`` write) and the render sync (``sub_140133A90``,
+        0x140133B40/0x140133BA4) then writes ``avatar+0x61`` -- **left** when the
+        avatar's centre x is greater than the tile's, **right** otherwise (equality
+        faces right). Doing it here makes both the request and the chained STATE
+        frame carry the new facing; the client applies it one frame after the send
+        (the reaction runs from the local TILE_CHANGE event), so the steady state is
+        identical. ``_walk_item_mods``' walk-over sends pass ``facing=False`` -- they
+        never stamp a target.
+
+        ``optimistic`` overrides the instance default for one request (a request the
+        client sends but the server would reject must not change the local world).
         """
+        if facing:
+            self.facing_right = self.x + self.width / 2 <= tx * TILE + TILE / 2
+
         flags = TankFlags.FACING_LEFT if not self.facing_right else TankFlags.NONE
+        apply_optimistic = self.optimistic if optimistic is None else optimistic
 
         if id == FIST_ID:
             self.bounce_tx, self.bounce_ty = tx, ty  # punchTile stamps +0xD0/+0xD4
@@ -1859,9 +1978,8 @@ class PlayerController:
             self.action_flags |= TankFlags.TILE_CHANGE | TankFlags.PUNCH
         else:
             self.action_flags |= TankFlags.TILE_CHANGE | TankFlags.PLACE
-            if self.optimistic:
+            if apply_optimistic:
                 self._apply_optimistic(id, tx, ty, flags, splice=splice, item_on_tree=item_on_tree)
-
         self.force_send = True
 
         if self.send is None:

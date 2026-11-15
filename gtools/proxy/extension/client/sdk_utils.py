@@ -388,36 +388,43 @@ class ExtensionUtility(ABC):
         self.push(PreparedPacket(particle(id, pos[0], pos[1], alternate), DIRECTION_SERVER_TO_CLIENT, ENetPacketFlag.NONE))
 
     def facing_left(self, *, abs: vec2 | None = None, tile: ivec2 | None = None) -> TankFlags:
+        """``FACING_LEFT`` for a targeted tile/point -- the client's action rule.
+
+        The tile-change reaction stamps the render target with the **tile centre**
+        (``sub_14012ECC0``) and the render sync (``sub_140133A90``) writes
+        ``avatar+0x61``: left iff the avatar's centre x is greater than the target
+        x, right otherwise. No target keeps the current flag.
+        """
         if abs:
             target = abs
         elif tile:
-            target = vec2(tile) * 32
+            target = vec2(tile) * 32 + 16
         else:
             return self.state.me.flags & TankFlags.FACING_LEFT
 
-        if int(self.state.me.pos.x // 32) == int(target.x // 32):
-            return self.state.me.flags & ~TankFlags.FACING_LEFT
+        colrect = self._colrect()
+        centre_x = self.state.me.pos.x + colrect.z / 2
+        return TankFlags.FACING_LEFT if centre_x > target.x else TankFlags.NONE
 
-        return TankFlags.FACING_LEFT if self.state.me.pos.x > target.x else TankFlags.NONE
+    def _colrect(self) -> vec4:
+        """The local avatar's collision rect as ``(x, y, width, height)``."""
+        if self.state.world and (player := self.state.world.get_player(self.state.me.net_id)):
+            if player.colrect.z > 0 and player.colrect.w > 0:
+                return player.colrect
+
+        return vec4(0, 0, 20, 30)  # nothing known yet -- the local avatar's default hitbox
 
     def in_range(self, p2: ivec2, punch: bool) -> bool:
+        """``HandleTouch``'s reach gate: the collision rect expanded by
+        ``(range + 2) * 32`` px (``CharacterState`` already carries the ``+2``) must
+        sweep the tile -- ``WorldView::collectGridTilesInRect`` semantics."""
         reach = self.state.me.state.punch_range if punch else self.state.me.state.build_range
 
-        player_tile = ivec2(self.state.me.pos // 32)
-        rel = self.state.me.pos % 32
+        colrect = self._colrect()
+        left = self.state.me.pos.x - reach * 32
+        right = self.state.me.pos.x + colrect.z + reach * 32
+        top = self.state.me.pos.y - reach * 32
+        bottom = self.state.me.pos.y + colrect.w + reach * 32
 
-        colrect = vec4(0, 0, 20, 20)
-        if self.state.world and (player := self.state.world.get_player(self.state.me.net_id)):
-            colrect = player.colrect
-
-        in_middle = ivec2(rel.x > (32 - colrect.w), rel.y > (32 - colrect.z))
-
-        dx = abs(player_tile.x - p2.x)
-        dy = abs(player_tile.y - p2.y)
-
-        if in_middle.x and p2.x > player_tile.x:
-            dx = max(0, dx - 1)
-        if in_middle.y and p2.y > player_tile.y:
-            dy = max(0, dy - 1)
-
-        return dx <= reach and dy <= reach
+        # collectGridTilesInRect sweeps floor(min / 32) .. floor((max - 1) / 32)
+        return left // 32 <= p2.x <= (right - 1) // 32 and top // 32 <= p2.y <= (bottom - 1) // 32
