@@ -291,6 +291,15 @@ class WorldRenderer:
         return self._dropped_object_renderer.visible_count
 
     @property
+    def cybots(self):
+        """The world's cybot simulation (robots + projectiles), ticked by :meth:`update`.
+
+        Hosts that run a local ``PlayerController`` bind it as
+        ``controller.cybots`` so the avatar's probe pass applies robot damage.
+        """
+        return self._cybot_renderer.sim
+
+    @property
     def mixer(self) -> AudioMixer:
         return self._mixer
 

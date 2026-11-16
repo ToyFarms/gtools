@@ -271,6 +271,11 @@ class GPUPhysicsDemo:
 
         self.world_renderer = WorldRenderer(self.world)
 
+        # robots: the renderer owns and ticks the simulation; the controller's probe
+        # pass consults it (melee damage + deadly projectiles), like the client's
+        # FindNearestInteractableTile -> cybotProbeAll / cybotProjectilesCheckKill.
+        self.controller.cybots = self.world_renderer.cybots
+
         self.player = Player(
             net_id=PLAYER_NET_ID,
             name=b"Player",
