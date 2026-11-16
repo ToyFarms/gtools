@@ -132,6 +132,7 @@ from gtools.core.growtopia.player import CharacterFlags, CharacterState, Clothin
 from gtools.core.growtopia.world import BalloonOMaticTile, DoorTile, DroppedItem, LockTile, SeedTile, StormyCloudTile, Tile, TileFlags, World
 
 if TYPE_CHECKING:
+    from gtools.core.growtopia.cybot import CyBotWorld
     from gtools.core.growtopia.inventory import Inventory
 
 TILE = 32.0
@@ -422,6 +423,11 @@ class PlayerController:
         # While set, validatePhysics scales the input acceleration to 0.15 and skips the
         # idle friction lerp (slippery, barely-controllable air state), see `_simulate`.
         self.damage_slip = False
+
+        # CyBot simulation hook: when set, the probe pass runs the robot melee and
+        # the deadly-projectile check, exactly like the client's
+        # FindNearestInteractableTile (see gtools/core/growtopia/cybot.py).
+        self.cybots: CyBotWorld | None = None
 
         # vertical-axis state (NetAvatar::integrateVerticalAxis 0x140510580)
         self.water_float = False  # avatar+0x1FB9: water vehicles suppress water gravity for 3 s
@@ -1174,6 +1180,14 @@ class PlayerController:
                 self.vy = launch
                 self.grounded = False
                 break
+
+        # Robots and their projectiles run in this same pass in the client
+        # (FindNearestInteractableTile -> cybotProbeAll / cybotProjectilesCheckKill):
+        # melee contacts kill or knock back through the damaging-tile responses, and
+        # a deadly projectile overlapping the collision rect kills.
+        if self.cybots is not None:
+            self.cybots.apply_melee(self)
+            self.cybots.check_kills(self)
 
     def _is_deadly(self, tx: int, ty: int) -> bool:
         """NetAvatar::handleTileInteraction deadly branch (0x140501E5C..0x140501E94)."""

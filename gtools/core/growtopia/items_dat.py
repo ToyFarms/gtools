@@ -2,6 +2,7 @@ import inspect
 import logging
 import os
 import pickle
+import struct
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -800,6 +801,162 @@ def get_icon_texture(texture_file: bytes) -> str | None:
 
 
 @dataclass(slots=True)
+class ItemInfoCyBotCommand:
+    """Decoded ``cybot_related`` of a COMMAND item (type 114).
+
+    The wire field is 60 bytes = 15 little-endian u32; the client reads them at
+    the in-memory item record's ``+0x78`` (right after ``flags2``). Every word
+    below is named after its verified consumer -- see ``docs/cybot.md`` §2.2.
+    Offsets are the client's (``0x78 + 4*i``).
+    """
+
+    mirror_item_id: int = 0  # [0]  0x78  mirror command id (0 = none, shots)
+    shot_speed: int = 0  # [1]  0x7C  px per 100 ms (client divides by 100)
+    shot_lifetime_ms: int = 0  # [2]  0x80  projectile lifetime
+    move_dx: int = 0  # [3]  0x84  tiles, signed (python int is already signed)
+    move_dy: int = 0  # [4]  0x88  tiles, signed
+    muzzle_left: tuple[int, int] = (0, 0)  # [5],[6]   0x8C/0x90  px
+    muzzle_up: tuple[int, int] = (0, 0)  # [7],[8]   0x94/0x98  px
+    muzzle_down: tuple[int, int] = (0, 0)  # [9],[10]  0x9C/0xA0  px
+    unk11: int = 0  # [11] 0xA4  (0 for every stock command; robots use it as the melee cooldown)
+    unk12: int = 0  # [12] 0xA8
+    unk13: int = 0  # [13] 0xAC
+    unk14: int = 0  # [14] 0xB0
+
+    @classmethod
+    def from_words(cls, words: Sequence[int]) -> Self:
+        if len(words) != 15:
+            raise ValueError(f"cybot_related must be 15 u32, got {len(words)}")
+        return cls(
+            mirror_item_id=words[0],
+            shot_speed=words[1],
+            shot_lifetime_ms=words[2],
+            move_dx=_as_i32(words[3]),
+            move_dy=_as_i32(words[4]),
+            muzzle_left=(_as_i32(words[5]), _as_i32(words[6])),
+            muzzle_up=(_as_i32(words[7]), _as_i32(words[8])),
+            muzzle_down=(_as_i32(words[9]), _as_i32(words[10])),
+            unk11=words[11],
+            unk12=words[12],
+            unk13=words[13],
+            unk14=words[14],
+        )
+
+    @property
+    def shot_speed_px_per_ms(self) -> float:
+        """The client's projectile speed (``shot_speed / 100`` px per ms)."""
+        return self.shot_speed / 100.0
+
+    @property
+    def move_offset(self) -> tuple[int, int]:
+        """The command's tile offset in tiles (client accumulates these)."""
+        return (self.move_dx, self.move_dy)
+
+    def muzzle_for_direction(self, direction: int) -> tuple[int, int]:
+        """Muzzle offset (px) for a client direction code (1 left, 2 right,
+        3 up, 4 down) -- ``cybotExecuteCommand`` 0x1403EA820."""
+        if direction == 1:  # left
+            return self.muzzle_left
+        if direction == 2:  # right -- the left offset, x negated
+            return (-self.muzzle_left[0], self.muzzle_left[1])
+        if direction == 3:  # up
+            return self.muzzle_up
+        if direction == 4:  # down
+            return self.muzzle_down
+        return (0, 0)
+
+
+@dataclass(slots=True)
+class ItemInfoCyBotRobot:
+    """Decoded ``cybot_related`` of a ROBOT item (type 113).
+
+    Same wire layout as :class:`ItemInfoCyBotCommand` but a different payload:
+    the sprite block layout inside ``game/npc1.rttex``, the muzzle offsets and
+    the melee hit cooldown -- see ``docs/cybot.md`` §2.2.
+    """
+
+    unk0: int = 0  # [0]  0x78  constant 11 in every stock robot [unknown]
+    sprite_base_frame: int = 0  # [1]  0x7C  first npc1.rttex frame of this level
+    idle_frames: int = 0  # [2]  0x80  idle/walk frames (200 ms each; 3 stock)
+    direction_frames: int = 0  # [3]  0x84  frames per facing direction (400 ms each; 6 stock)
+    projectile_frames: int = 0  # [4]  0x88  projectile frames (200 ms each; 2 stock)
+    muzzle_left: tuple[int, int] = (0, 0)  # [5],[6]   0x8C/0x90  px
+    muzzle_up: tuple[int, int] = (0, 0)  # [7],[8]   0x94/0x98  px
+    muzzle_down: tuple[int, int] = (0, 0)  # [9],[10]  0x9C/0xA0  px
+    melee_cooldown_ms: int = 0  # [11] 0xA4  added to now after a non-lethal hit
+    unk12: int = 0  # [12] 0xA8
+    unk13: int = 0  # [13] 0xAC
+    unk14: int = 0  # [14] 0xB0
+
+    @classmethod
+    def from_words(cls, words: Sequence[int]) -> Self:
+        if len(words) != 15:
+            raise ValueError(f"cybot_related must be 15 u32, got {len(words)}")
+        return cls(
+            unk0=words[0],
+            sprite_base_frame=words[1],
+            idle_frames=words[2],
+            direction_frames=words[3],
+            projectile_frames=words[4],
+            muzzle_left=(_as_i32(words[5]), _as_i32(words[6])),
+            muzzle_up=(_as_i32(words[7]), _as_i32(words[8])),
+            muzzle_down=(_as_i32(words[9]), _as_i32(words[10])),
+            melee_cooldown_ms=words[11],
+            unk12=words[12],
+            unk13=words[13],
+            unk14=words[14],
+        )
+
+    @property
+    def projectile_base_frame(self) -> int:
+        """First projectile frame: ``base + idle + 3*direction_frames``."""
+        return self.sprite_base_frame + self.idle_frames + 3 * self.direction_frames
+
+    @property
+    def sprite_block_frames(self) -> int:
+        """Frames per level block: idle + 3 directional sets + projectiles."""
+        return self.idle_frames + 3 * self.direction_frames + self.projectile_frames
+
+    def muzzle_for_direction(self, direction: int) -> tuple[int, int]:
+        """Muzzle offset (px) for a client direction code (1 left, 2 right,
+        3 up, 4 down) -- ``cybotExecuteCommand`` 0x1403EA820."""
+        if direction == 1:
+            return self.muzzle_left
+        if direction == 2:
+            return (-self.muzzle_left[0], self.muzzle_left[1])
+        if direction == 3:
+            return self.muzzle_up
+        if direction == 4:
+            return self.muzzle_down
+        return (0, 0)
+
+
+def _as_i32(value: int) -> int:
+    """Reinterpret an unsigned u32 word as a signed i32."""
+    return value - (1 << 32) if value & 0x80000000 else value
+
+
+def _deserialize_cybot(raw: bytes, item_type: ItemInfoType) -> ItemInfoCyBotCommand | ItemInfoCyBotRobot | None:
+    """Parse the 60-byte ``cybot_related`` blob (items.dat version >= 9).
+
+    Only ROBOT and COMMAND items use the field (verified over items.dat v27:
+    the 37 items of those types are the only ones with a non-zero blob). Data on
+    any other item type would be a new format detail -- it is not dropped
+    silently.
+    """
+    words = struct.unpack("<15I", raw)
+    if item_type == ItemInfoType.COMMAND:
+        return ItemInfoCyBotCommand.from_words(words)
+    if item_type == ItemInfoType.ROBOT:
+        return ItemInfoCyBotRobot.from_words(words)
+    if any(words):
+        logging.getLogger(__name__).warning(
+            "cybot_related data on a %s item type is not decoded: %r", item_type.name, words
+        )
+    return None
+
+
+@dataclass(slots=True)
 class Item:
     # lpstr (length-prefixed): str with 2 bytes size prefix
     id: int = 0  # u32
@@ -843,7 +1000,7 @@ class Item:
     unk1: int = 0  # u32  unused? all item zero
     unk2: int = 0  # u32  neon nerve, stitchlips, omegalul all 2
     flags2: ItemInfoFlag2 = ItemInfoFlag2.NONE  # u32
-    cybot_related: bytes = b""  # u8 (60)
+    cybot: ItemInfoCyBotCommand | ItemInfoCyBotRobot | None = None  # 60 B, decoded per item type
     tile_range: int = 0  # u32
     vault_capacity: int = 0  # u32
     punch_options: bytes = b""  # lpstr
@@ -957,7 +1114,7 @@ class Item:
             item.unk2 = s.read_u32()
         if version >= 9:
             item.flags2 = ItemInfoFlag2(s.read_u32())
-            item.cybot_related = s.read_bytes(60)
+            item.cybot = _deserialize_cybot(s.read_bytes(60), item.item_type)
         if version >= 10:
             item.tile_range = s.read_u32()
             item.vault_capacity = s.read_u32()
@@ -1052,6 +1209,8 @@ _SCHEMA_CLASSES = [
     ItemInfoTreeLeaves,
     FXFlags,
     ItemInfoFlag2,
+    ItemInfoCyBotCommand,
+    ItemInfoCyBotRobot,
 ]
 
 _ITEMS_DAT_CANDIDATES: list[Path] = [

@@ -277,6 +277,14 @@ no collision), spawns projectiles (`cybotExecuteCommand` 0x1403EA820) and
 applies melee damage (`cybotApplyMeleeDamage` 0x1403EA370). No c→s packets
 exist in the whole call graph. Full reference: **`docs/cybot.md`**.
 
+Implemented in `gtools/core/growtopia/cybot.py` (`CyBot`, `CyBotProjectile`,
+`CyBotWorld`: load/sync_tile/tick/apply_melee/check_kills), wired to the local
+player through `PlayerController.cybots` (the `_touch` probe pass) and drawn by
+`gtools/gui/lib/cybot_renderer.py` (npc1.rttex sprites, `shaders/cybot*.vert`),
+owned by the world renderer. `Item.cybot` carries the decoded item payload
+(`ItemInfoCyBotCommand` / `ItemInfoCyBotRobot`); `CyBotCommandData` matches the
+real tile-extra entry. Tests: `tests/test_cybot_{data,sim,renderer}.py`.
+
 ### Known POIs
 
 | Address | Symbol | Notes |
@@ -337,6 +345,10 @@ exist in the whole call graph. Full reference: **`docs/cybot.md`**.
   `_is_ground`; permission logic: `_lock_passes`, `_lock_check`, the per-type
   `_*_open` helpers and `PlayerController.permissions`
   (`CollisionPermissions`).
+- CyBots: `PlayerController.cybots` (a `CyBotWorld`) is optional; when set, the
+  `_touch` probe pass runs the robot melee + deadly-projectile check, the same
+  place the client's `FindNearestInteractableTile` does. The host owns the
+  simulation clock and calls `CyBotWorld.tick(now_ms)`.
 - Special tiles / clothing: `_apply_wind` (WIND push tiles),
   `_gravity_well_pull` (Gravity Well), `_try_climb` + `climbing` (Wall Climbing
   gear via `Player.clothing`), `_slippery_clothing` / `_wearing_skates`

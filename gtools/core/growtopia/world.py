@@ -245,22 +245,38 @@ class CookingOvenIngredientInfo:
 
 @dataclass(slots=True)
 class CyBotCommandData:
-    command_id: int = 0  # u32
-    is_command_used: int = 0  # u32
-    unk1: bytes = b""  # 7 byte
+    """One command assigned to a CyBot (a tile-extra entry of ``CYBOT_TILE``).
+
+    Wire layout verified against ``TileExtra::Parse`` (0x1405588F0, case
+    ``CY_BOT_TILE``): ``u32 item_id; u8 enabled; u32 unk20; i32 unk24; H string``.
+    The client simulation reads only ``item_id`` (the COMMAND item); the other
+    fields are parsed and written back unchanged. Every string observed in the
+    wild is empty, so the old flat interpretation (``u32; u32; 7 bytes``) only
+    happened to consume the right number of bytes -- see ``docs/cybot.md`` §3.
+    """
+
+    item_id: int = 0  # u32  COMMAND item id
+    enabled: int = 0  # u8   1 in every captured tile [meaning unknown]
+    unk20: int = 0  # u32  always 0 [unknown]
+    unk24: int = 0  # i32  always 0 [unknown]
+    name: bytes = b""  # pascal string "H" -- always empty in captures [unknown]
 
     @classmethod
     def deserialize(cls, s: Buffer) -> "CyBotCommandData":
         t = CyBotCommandData()
-        t.command_id = s.read_u32()
-        t.is_command_used = s.read_u32()
-        t.unk1 = s.read_bytes(7)
+        t.item_id = s.read_u32()
+        t.enabled = s.read_u8()
+        t.unk20 = s.read_u32()
+        t.unk24 = s.read_i32()
+        t.name = s.read_pascal_bytes("H")
         return t
 
     def serialize_into(self, s: Buffer) -> None:
-        s.write_u32(self.command_id)
-        s.write_u32(self.is_command_used)
-        s.write_bytes(self.unk1)
+        s.write_u32(self.item_id)
+        s.write_u8(self.enabled)
+        s.write_u32(self.unk20)
+        s.write_i32(self.unk24)
+        s.write_pascal_bytes("H", self.name)
 
 
 @dataclass(slots=True)
@@ -2054,10 +2070,19 @@ class ItemSuckerTile(TileExtra):
 
 @dataclass(slots=True)
 class CybotTile(TileExtra):
+    """``CY_BOT_TILE`` (0x3F): a ROBOT tile's command program.
+
+    ``anchor_ms`` (extra+0x70) is the server-ms time the command cycle is anchored
+    at -- the client resolves the current command as
+    ``(now - anchor_ms) % sum(durations)`` (docs/cybot.md §5.2). ``activated``
+    (extra+0x7C) is the server "robot is on" flag; the client treats ``> 0`` as
+    armed (melee damage, full alpha, deadly shots).
+    """
+
     type: TileExtraType = TileExtraType.CYBOT_TILE
     commands: list[CyBotCommandData] = field(default_factory=list)
-    sync_timer: int = 0  # u32
-    activated: int = 0  # u32
+    anchor_ms: int = 0  # u32  extra+0x70: command-cycle anchor (server ms)
+    activated: int = 0  # u32  extra+0x7C: armed flag (server-set)
 
     @classmethod
     def int__deserialize(cls, s: Buffer, fg_id: int, bg_id: int, format_version: int) -> "CybotTile":
@@ -2066,7 +2091,7 @@ class CybotTile(TileExtra):
         for _ in range(s.read_u32()):
             t.commands.append(CyBotCommandData.deserialize(s))
 
-        t.sync_timer = s.read_u32()
+        t.anchor_ms = s.read_u32()
         t.activated = s.read_u32()
 
         return t
@@ -2075,7 +2100,7 @@ class CybotTile(TileExtra):
         s.write_u32(len(self.commands))
         for cmd in self.commands:
             cmd.serialize_into(s)
-        s.write_u32(self.sync_timer)
+        s.write_u32(self.anchor_ms)
         s.write_u32(self.activated)
 
 

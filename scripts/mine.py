@@ -67,7 +67,7 @@ FIELD_DESCRIPTIONS: dict[str, str] = {
     "unk1": "Unk1",
     "unk2": "Unk2",
     "flags2": "Flags2",
-    "cybot_related": "Cybot",
+    "cybot": "Cybot",
     "tile_range": "Tile Range",
     "vault_capacity": "Vault Cap",
     "punch_options": "Punch Opts",
@@ -111,6 +111,9 @@ def _fmt(v: Any) -> str:
             return repr(v)
     if isinstance(v, tuple):
         return f"({', '.join(_fmt(x) for x in v)})"
+    if dataclasses.is_dataclass(v) and not isinstance(v, type):
+        inner = ", ".join(f"{f.name}={_fmt(getattr(v, f.name))}" for f in dataclasses.fields(v))
+        return f"{type(v).__name__}({inner})"
     return str(v)
 
 

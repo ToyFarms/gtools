@@ -1,11 +1,10 @@
 # CyBots (ROBOT / COMMAND tiles) — client mechanics reference
 
-> Recon + documentation only — **nothing is implemented in `gtools` yet** (the
-> known `world.py` decoder bugs are listed in §10, not fixed). Client facts are
-> marked **[verified]** when read from the binary (asm or pseudocode, with the
-> address) and **[data]** when they come from `items.dat` / world dumps.
-> Not-yet-decoded points are **[unknown]**; things the client cannot decide are
-> `[server-side]`.
+> Client facts are marked **[verified]** when read from the binary (asm or
+> pseudocode, with the address) and **[data]** when they come from `items.dat` /
+> world dumps. Not-yet-decoded points are **[unknown]**; things the client cannot
+> decide are `[server-side]`. The engine implementation (items, simulation,
+> controller hook, world renderer) is tracked in §10.
 
 Sources:
 
@@ -235,10 +234,10 @@ factory 0x1403E97E0, update 0x1403E9C70, render 0x1403E9B00]**:
 | `0x00` | `SurfaceAnim*` (npc1.rttex) |
 | `0x08` | sprite base frame (`robotBlob[1] + robotBlob[2] + 3*robotBlob[3]`) |
 | `0x0C` | frame count (robot blob[4] = 2) |
-| `0x10` | angle (−90 / 90 / 0) |
+| `0x10` | **angle** (−90 up / +90 down / 0 left-right) — passed to the blit |
 | `0x14/18` | spawn origin (px) |
-| `0x1C` | flip byte |
-| `0x20` | sentinel: −1 armed / −128 unactivated |
+| `0x1C` | **flip byte** (1 = established for left shots, 0 otherwise) — passed to the blit |
+| `0x20` | sentinel: −1 armed / −128 unactivated (also an argument of the blit, meaning unknown) |
 | `0x24` | **lifetime ms** (command blob[2]) |
 | `0x28` | accrued ms |
 | `0x2C` | last update clock |
@@ -388,6 +387,12 @@ Called at the end of every command window; only shot commands do anything:
 Projectile update: `pos += dt * speed * dir`, retire when `accrued >= life`;
 **no tile/wall collision**. Render: `frame = baseFrame + clock/200 % frameCount`.
 
+The draw call (`cybotProjectileRender` 0x1403E9B00) passes `+0x1C` (flip) and
+`+0x10` (angle) as stack arguments to `spriteDraw` — visible in the asm
+(`movzx eax, byte ptr [rsi+1Ch]`, `movss xmm0, dword ptr [rsi+10h]`), the
+decompiler's 6-argument prototype drops them. So the faithful orientation is:
+left shots mirrored, up/down shots **rotated ∓90°**, everything else upright.
+
 Deadly check (`cybotProjectilesCheckKill` 0x1403E9670, called from
 `FindNearestInteractableTile`): for each projectile with `+0x44 == 1` (fired by
 a `ROBOT_SHOOT_DEADLY` robot) overlapping the player's collision rect, call
@@ -479,20 +484,25 @@ Because Σ(dx) and Σ(dy) are 0 for these programs, **no mirror commands** are
 generated for any of these tiles at runtime (the routes are already closed
 loops); a single Move command would become "Move X, mirror(Move X)".
 
-## 10. gtools status
+## 10. gtools status (implemented)
 
-- `world.py` matches the tile-extra **field order** (count, entries, anchor,
-  activated) and names `sync_timer`/`activated` correctly, but
-  `CyBotCommandData` decodes each entry as `u32 command_id; u32
-  is_command_used; 7 raw bytes` — the client's entry is `u32 itemId; u8 enabled;
-  u32 unk20; i32 unk24; u16 len + string`. Byte counts coincide **only because
-  every observed string is empty** (15 B); on a non-empty string the gtools
-  parser would desync. `is_command_used` currently reads the `enabled` byte's
-  value as a u32; `unk1` is byte soup. **Not fixed in this pass** (recon only).
-- `items_dat.py` exposes `cybot_related` as raw bytes (fine); the semantics
-  above are not yet modelled. `flags2` ROBOT_* bits are already named.
-- No engine/controller code models cybots (no robot list, no tile-extra command
-  vector, no robot item data), which is expected — implementation is deferred.
+| layer | module | what it does |
+|---|---|---|
+| items.dat | `items_dat.py` | the 60-byte field is parsed at load into typed `Item.cybot`: `ItemInfoCyBotCommand` (mirror id, shot speed/lifetime, move dx/dy, muzzle offsets, unknowns) or `ItemInfoCyBotRobot` (sprite base + frame counts, muzzle offsets, melee cooldown). Any future non-ROBOT/COMMAND payload is logged, never dropped silently. `ItemInfoCyBotCommand.muzzle_for_direction()`, `shot_speed_px_per_ms`, `ItemInfoCyBotRobot.projectile_base_frame`/`sprite_block_frames` carry the derived client math. |
+| world format | `world.py` | `CyBotCommandData` now matches the real entry (`item_id; enabled; unk20; unk24; H string`) and `CybotTile` exposes `anchor_ms` / `activated`; round-trip is pinned by `tests/test_cybot_data.py` incl. captured WOLFWORLD8 bytes. |
+| simulation | `cybot.py` | `CyBot` (commands/mirrors, scheduling, window-end effects, one-tile-per-window movement, sprite frame/flip/alpha), `CyBotProjectile`, `CyBotWorld` (load/sync_tile/tick/apply_melee/check_kills) — a direct port of the functions in §4–§8. |
+| local player | `physics/controller.py` | `PlayerController.cybots` hook: the probe pass (`_touch`) runs `apply_melee` + `check_kills`, exactly where the client's `FindNearestInteractableTile` runs them. Damage reuses the controller's own `_kill` / `_damaging_x` / `_damaging_y` (the same client functions the robot path calls). |
+| renderer | `gui/lib/cybot_renderer.py` + `shaders/cybot*.vert` | world-renderer sub-renderer: robots + projectiles from `game/npc1.rttex`, frame/flip/alpha/angle as in §8, ticked from `WorldRenderer.update` (which also keeps the view dirty), tile updates forwarded to `CyBotWorld.sync_tile`. |
+
+Renderer-space note: the GUI world space centres tile `(x, y)` at
+`(x*32, y*32)` (`highlight_renderer`, the tile meshes), while the client puts the
+tile centre at `tile*32 + 16` (`tileToWorldCenter`) — the cybot renderer shifts
+sprites by `-16` px (`cybot_renderer.WORLD_OFFSET`) so they line up with the rest
+of the world. The viewer also draws unactivated robots (at alpha 128), which the
+client only does for the tile's lock owner / build overrides.
+
+Tests: `tests/test_cybot_data.py`, `tests/test_cybot_sim.py`,
+`tests/test_cybot_renderer.py` (headless — no GL needed).
 
 ## 11. Open questions
 
@@ -505,6 +515,7 @@ loops); a single Move command would become "Move X, mirror(Move X)".
 | 5 | what exactly the server does — who may edit a robot's program, when `activated` flips, whether illegal command/robot combinations are rejected | not visible in the client `[server-side]` |
 | 6 | why the command effect fires at the window **end** | verified behaviour; rationale unknown |
 | 7 | `CyBot+0x80` cleared to −1 with `hitAxis`, no reader | unknown/dead state |
+| 7b | projectile `+0x20` sentinel (−1 / −128) is passed to the sprite blit (E9B00) | its effect in the blit is undecoded; the engine keeps the field |
 | 8 | walker families' directional frames would read into neighbouring NPC sprites if a shoot command were attached to them | client has no guard; presumably prevented server-side `[server-side]` |
 | 9 | `avatar+0x179/+0x17A` semantics in `cybotIsActive` | same bytes gate punch reach and display-box access (owner/override); exact flag names unverified |
 

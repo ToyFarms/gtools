@@ -52,6 +52,7 @@ from gtools.gui.lib.highlight_renderer import HighlightRenderer
 from gtools.gui.lib.gui_menu_renderer import GuiMenuRenderer
 from gtools.gui.lib.player_renderer import PlayerRenderer
 from gtools.gui.lib.npc_renderer import NpcRenderer
+from gtools.gui.lib.cybot_renderer import CyBotRenderer
 import gtools.gui.lib.perf_stats as perf_stats
 from gtools.gui.panels.panel import Panel
 
@@ -210,6 +211,9 @@ class WorldRenderer:
 
         self._tile_renderer = TileRenderer()
         self._tile_renderer.load(self._world)
+
+        self._cybot_renderer = CyBotRenderer()
+        self._cybot_renderer.load(self._world)
 
         self._dropped_object_renderer = DroppedObjectRenderer()
 
@@ -447,6 +451,12 @@ class WorldRenderer:
         )
 
         self._render_order.add(
+            "CyBots",
+            lambda camera, cull: self._cybot_renderer.draw(camera),
+            lambda camera3d, layer_spread: self._cybot_renderer.draw_3d(camera3d, layer_spread),
+        )
+
+        self._render_order.add(
             "Dropped Objects",
             lambda cam, cull: self._dropped_object_renderer.draw(cam, cull),
             lambda cam3d, s: self._dropped_object_renderer.draw_3d(cam3d, s),
@@ -556,6 +566,7 @@ class WorldRenderer:
         self._gui_menu_renderer.delete()
         self._player_renderer.delete()
         self._npc_renderer.delete()
+        self._cybot_renderer.delete()
         self._tile_overlay_renderer.delete()
         if self._tile_overlay_mesh:
             self._tile_overlay_mesh.delete()
@@ -689,6 +700,12 @@ class WorldRenderer:
         self._dirty = True
 
     def update(self, dt: float) -> None:
+        # robots advance every frame regardless of the music sheet (the client
+        # ticks them from the WorldView update, not from the avatar) and keep the
+        # view dirty while anything is animating
+        if self._cybot_renderer.update():
+            self._dirty = True
+
         if self._playing and self._seek == 0:
             if self._sheet.update(dt):
                 self._dirty = True
@@ -824,6 +841,9 @@ class WorldRenderer:
                 for cx, cy in affected_chunks:
                     self._tile_renderer.delete_chunk((cx, cy))
                     self._tile_renderer.build_chunk(self._world, cx, cy)
+
+                # keep the cybot simulation in step (register / refresh / remove)
+                self._cybot_renderer.sync_tiles(list(self._tile_updates))
 
                 self._tile_updates.clear()
                 self._dirty = True
