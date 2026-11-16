@@ -262,6 +262,21 @@ through `handleSendLock` (0x140561A80) +
 `toggleLockedAndSetParentIndex` (0x140556790). Details and the
 server-authoritative caveats are in `docs/lock-permissions.md`.
 
+### CyBots (ROBOT / COMMAND tiles)
+
+Player-placed `ROBOT` items (item_type 113) run client-side from a `CyBot`
+object in a vector at `WorldView+0x35E8`; `COMMAND` items (114) are assigned to
+the robot through the **tile extra** `CY_BOT_TILE` (0x3F, vector of 48-byte
+entries at `extra+0xD8`) and walked on a timer cycle (duration =
+`item+0x10C` = items.dat `frame_interval_ms`: 500 ms move/pause, 2400 shots).
+The item field `cybot_related` (60 B, client `item+0x78`, 15×u32) is decoded
+for both item types; the per-frame tick (`cybotTickAll` 0x1403EC040 →
+`cybotTick` 0x1403EBF60) runs from the WorldView update, uses the ms clock
+`GameState+0x328`, lerps the robot's visual position (1 tile per command,
+no collision), spawns projectiles (`cybotExecuteCommand` 0x1403EA820) and
+applies melee damage (`cybotApplyMeleeDamage` 0x1403EA370). No c→s packets
+exist in the whole call graph. Full reference: **`docs/cybot.md`**.
+
 ### Known POIs
 
 | Address | Symbol | Notes |
@@ -297,6 +312,14 @@ server-authoritative caveats are in `docs/lock-permissions.md`.
 | `0x140556790` | `toggleLockedAndSetParentIndex` | LOCKED flag + parent_index |
 | `0x140555160` | `isLockTile` | extra type == `LOCK_TILE` |
 | `0x140019D30` | init jump const | `X - Y*0.5 == -450` |
+| `0x1405588F0` | `TileExtra::Parse` | `CY_BOT_TILE` (0x3F) case: command list wire format |
+| `0x1403EB8B0` | `cybotRebuildCommands` | command list + mirror commands + durations |
+| `0x1403EBF60` | `cybotTick` | per-frame command advance (ms clock `GameState+0x328`) |
+| `0x1403EA820` | `cybotExecuteCommand` | shot spawn at command end |
+| `0x1403EA370` | `cybotApplyMeleeDamage` | deadly/lava/pointy box + knockback |
+| `0x1403EA2B0` | `cybotIsActive` | draw/execute gate (lock owner / activated) |
+| `0x1403EB420` | `cybotRender` | npc1.rttex frames, alpha 255/128 |
+| `0x14053C9A0` | `deserializeItemDatabase` | items.dat parser; verified item-record offsets (`flags2+0x74`, `cybot_related+0x78`, `frame_interval_ms+0x10C`) |
 
 ## 5. Controller conventions
 
