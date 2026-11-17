@@ -1,12 +1,20 @@
-# LAYER ORDER: lowest to highest = back to front
+# LAYER ORDER: lowest to highest = back to front.
+#
+# The world scene layers are the GUI-side depth slots for the core command
+# system's RenderLayer (gtools.core.growtopia.render_commands); the mapping
+# lives in gtools.gui.lib.sprite_batch.LAYER_DEPTHS. Depth values are floats:
+# bigger = closer to the camera. The *_START/*_END pairs are bands: the
+# sprite batch spreads a layer's instances across the band in draw order.
 WORLD_BACKGROUND = -90
 WORLD_PRE_FOREGROUND = -89
 OBJECT_PRE_FOREGROUND_START = -88
 OBJECT_PRE_FOREGROUND_END = -87
 WORLD_FOREGROUND = -80
+WORLD_POST_FOREGROUND = -79.5
 OBJECT_POST_FOREGROUND_START = -79
 OBJECT_POST_FOREGROUND_END = -76
-WORLD_POST_FOREGROUND = -75
+OBJECT_TEXT_START = -75.9
+OBJECT_TEXT_END = -75.1
 WORLD_HIGHLIGHT_OVERLAY = -74
 PLAYER = -73
 PLAYER_DIRECTION = -72.5

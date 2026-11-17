@@ -1,163 +1,40 @@
+"""Chunked dropped-object renderer driven by the command system.
+
+This module owns the dynamic chunking + diff-sync machinery for dropped
+objects; the chunk content comes from ``build_dropped_commands`` -- icon,
+pickup overlay, amount text and drop shadow are the command system's
+decisions, not this file's.
+"""
+
 from collections import defaultdict
-from dataclasses import dataclass, field
-from enum import IntFlag, auto
-from typing import Callable, ClassVar, Iterable
+from dataclasses import dataclass
+from typing import Iterable, Sequence
 
-from OpenGL.GL import GL_DYNAMIC_DRAW, GL_FALSE, GL_TRUE, GL_UNSIGNED_INT, glDepthMask
-from pyglm.glm import ivec2, vec2
+from OpenGL.GL import GL_DYNAMIC_DRAW
 
-from gtools import setting
-from gtools.baked.items import ANTIMATTER_DUST, COMET_DUST, GEMS, MUTATED_SEED
-from gtools.core.growtopia.items_dat import ItemFlag, ItemInfoType, ItemInfoVisualEffect, item_database
-from gtools.core.growtopia.world import DroppedItem, Tile
+from gtools.core.growtopia.render_commands import Command, RenderLayer, build_dropped_commands
+from gtools.core.growtopia.world import DroppedItem
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib.chunked_renderer import ChunkBounds, ChunkKey
-from gtools.gui.lib.seed_icon_renderer import SeedIconRenderer
-from gtools.gui.opengl import Mesh, ShaderProgram
-from gtools.gui.texture import GLTexManager, TextureArray
-from gtools.gui.lib.text_renderer import TextRenderer
-import numpy as np
-
-REGION_TILE_SIZE = 3
-MAX_PER_REGION = 8192
-
-SHADOW_SUBLAYER_OVERLAY = 0
-SHADOW_SUBLAYER_ICON = 1
-SHADOW_STRIDE = 2
-MAX_SHADOW_LAYER = MAX_PER_REGION * SHADOW_STRIDE
-
-SUBLAYER_ICON = 0
-SUBLAYER_OVERLAY = 1
-SUBLAYER_TEXT_SHADOW = 2
-SUBLAYER_TEXT = 3
-LAYER_STRIDE = 4
-MAX_LAYER = MAX_PER_REGION * LAYER_STRIDE
-
-GEMS_TO_TEX_OFFSET = {1: 0, 5: 1, 10: 2, 50: 3, 100: 4}
-
-DEFAULT_TINT: int = 0xFFFFFFFF
-
-PICKUP_BOX_BLUE = 0
-PICKUP_BOX_YELLOW = 1
-PICKUP_BOX_RED = 2
-PICKUP_BOX_GREEN = 3
-PICKUP_BOX_GOLD = 4
-PICKUP_BOX_PURPLE = 5
-PICKUP_BOX_ORANGE = 6
-PICKUP_BOX_GRAY = 7
-PICKUP_BOX_WHITE = 8
-
-
-def _pack_rgba_u32(r: int, g: int, b: int, a: int = 255) -> int:
-    return ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | (a & 0xFF)
+from gtools.gui.lib.sprite_batch import SpriteBatch, SpriteMeshes
 
 
 @dataclass(slots=True)
-class ObjectRenderMesh:
-    dropped_meshes: dict[TextureArray, Mesh] = field(default_factory=dict)
-    pickup_overlay: dict[TextureArray, Mesh] = field(default_factory=dict)
-    icon_shadows: dict[TextureArray, Mesh] = field(default_factory=dict)
-    overlay_shadows: dict[TextureArray, Mesh] = field(default_factory=dict)
-    seed_mesh: Mesh | None = None
-    text_renderer: TextRenderer | None = None
-
-    def delete(self) -> None:
-        for meshes in (
-            self.dropped_meshes,
-            self.pickup_overlay,
-            self.icon_shadows,
-            self.overlay_shadows,
-        ):
-            for mesh in meshes.values():
-                mesh.delete()
-            meshes.clear()
-
-        if self.seed_mesh is not None:
-            self.seed_mesh.delete()
-            self.seed_mesh = None
-
-        if self.text_renderer is not None:
-            self.text_renderer.delete()
-            self.text_renderer = None
-
-
-@dataclass(slots=True)
-class IconInfo:
-    texture_path: str
-    world_pos: vec2
-    tex_pos: ivec2
-    z: float
-
-
-TileExtractor = Callable[[Tile], list[DroppedItem]]
+class _Chunk:
+    bounds: ChunkBounds
+    meshes: SpriteMeshes
+    count: int
+    signature: int | None
 
 
 class ObjectRenderer:
-    LAYOUT: ClassVar[list[int]] = [2, 2]
-    INSTANCE_LAYOUT: ClassVar[list] = [2, 2, 2, 1, 1, (1, GL_UNSIGNED_INT)]
     CHUNK_SIZE: int = 8
     TILE_SIZE: int = 32
 
-    class Flags(IntFlag):
-        NONE = 0
-        NO_TEXT = auto()
-        NO_SHADOW = auto()
-        NO_OVERLAY = auto()
-        NO_ICON = auto()
-        # if texture has _icon variant, it will choose that instead
-        # this flag disables that behaviour and uses the original texture
-        USE_ORIGINAL_TEXTURE = auto()
-
-        # will order such that the frontmost object is the highest uid
-        ORDER_BY_UID = auto()
-
-    def __init__(self, z_start: float, z_end: float) -> None:
-        self._tex_mgr = GLTexManager()
-        self._seed_renderer = SeedIconRenderer()
-
-        z_mid = (z_start + z_end) / 2.0
-        self._shadow_z_start = z_start
-        self._shadow_z_end = z_mid
-        self._object_z_start = z_mid
-        self._object_z_end = z_end
-
-        self._shadow_shader = ShaderProgram.get("shaders/object_shadow")
-        self._shadow_mvp = self._shadow_shader.get_uniform("u_mvp")
-        self._shadow_tex = self._shadow_shader.get_uniform("texArray")
-        self._shadow_tile_size = self._shadow_shader.get_uniform("u_tileSize")
-        self._shadow_offset = self._shadow_shader.get_uniform("u_shadowOffset")
-        self._shadow_alpha = self._shadow_shader.get_uniform("u_shadowAlpha")
-        self._shadow_z_offset = self._shadow_shader.get_uniform("u_zOffset")
-
-        self._shadow_shader3d = ShaderProgram.from_files("shaders/object_shadow3d.vert", "shaders/object.frag")
-        self._shadow_vp3d = self._shadow_shader3d.get_uniform("u_view_proj")
-        self._shadow_tex3d = self._shadow_shader3d.get_uniform("texArray")
-        self._shadow_tile_size3d = self._shadow_shader3d.get_uniform("u_tileSize")
-        self._shadow_offset3d = self._shadow_shader3d.get_uniform("u_shadowOffset")
-        self._shadow_alpha3d = self._shadow_shader3d.get_uniform("u_shadowAlpha")
-        self._shadow_spread3d = self._shadow_shader3d.get_uniform("u_layer_spread")
-        self._shadow_z_offset3d = self._shadow_shader3d.get_uniform("u_zOffset")
-
-        self._shader3d = ShaderProgram.get("shaders/object3d")
-        self._vp3d = self._shader3d.get_uniform("u_view_proj")
-        self._tex3d = self._shader3d.get_uniform("texArray")
-        self._tile_size3d = self._shader3d.get_uniform("u_tileSize")
-        self._spread3d = self._shader3d.get_uniform("u_layer_spread")
-        self._rotation3d = self._shader3d.get_uniform("u_rotation")
-        self._pixel_scale3d = self._shader3d.get_uniform("u_pixelScale")
-        self._z_offset3d = self._shader3d.get_uniform("u_zOffset")
-
-        self._shader = ShaderProgram.get("shaders/object")
-        self._mvp = self._shader.get_uniform("u_mvp")
-        self._tex = self._shader.get_uniform("texArray")
-        self._tile_size = self._shader.get_uniform("u_tileSize")
-        self._rotation = self._shader.get_uniform("u_rotation")
-        self._pixel_scale = self._shader.get_uniform("u_pixelScale")
-        self._z_offset = self._shader.get_uniform("u_zOffset")
-
-        # bound, mesh, count, signature
-        self._chunks: dict[ChunkKey, tuple[ChunkBounds, ObjectRenderMesh, int, int | None]] = {}
+    def __init__(self) -> None:
+        self._batch = SpriteBatch()
+        self._chunks: dict[ChunkKey, _Chunk] = {}
         self._item_to_chunk: dict[int, ChunkKey] = {}
         self._chunk_items: dict[ChunkKey, dict[int, DroppedItem]] = {}
 
@@ -167,35 +44,27 @@ class ObjectRenderer:
     def visible_count(self) -> int:
         return self._visible_count
 
+    @property
+    def total_items(self) -> int:
+        return sum(chunk.count for chunk in self._chunks.values())
+
+    def any(self) -> bool:
+        return bool(self._chunks)
+
     @staticmethod
-    def _chunk_bounds(chunk_x: int, chunk_y: int, chunk_size: int = 8, tile_size: int = 32) -> ChunkBounds:
+    def _chunk_bounds(chunk_x: int, chunk_y: int) -> ChunkBounds:
         return (
-            chunk_x * chunk_size * tile_size - 16,
-            chunk_y * chunk_size * tile_size - 16,
-            chunk_size * tile_size,
-            chunk_size * tile_size,
+            chunk_x * ObjectRenderer.CHUNK_SIZE * ObjectRenderer.TILE_SIZE - 16,
+            chunk_y * ObjectRenderer.CHUNK_SIZE * ObjectRenderer.TILE_SIZE - 16,
+            ObjectRenderer.CHUNK_SIZE * ObjectRenderer.TILE_SIZE,
+            ObjectRenderer.CHUNK_SIZE * ObjectRenderer.TILE_SIZE,
         )
 
     def _chunk_key_for_pos(self, x: float, y: float) -> ChunkKey:
         span = self.CHUNK_SIZE * self.TILE_SIZE
         return (int(x // span), int(y // span))
 
-    @property
-    def total_items(self) -> int:
-        return sum(count for _, _, count, _ in self._chunks.values())
-
-    def any(self) -> bool:
-        return bool(self._chunks)
-
-    def set_chunk(self, chunk_key: ChunkKey, items: list[DroppedItem], **build_kwargs) -> None:
-        self._delete_chunk(chunk_key)
-        if not items:
-            return
-
-        mesh = self.build(items, **build_kwargs)
-        self._chunks[chunk_key] = (self._chunk_bounds(*chunk_key), mesh, len(items), None)
-
-    def sync(self, items: Iterable[DroppedItem], **build_kwargs) -> None:
+    def sync(self, items: Iterable[DroppedItem]) -> None:
         self._item_to_chunk.clear()
         self._chunk_items.clear()
 
@@ -210,14 +79,13 @@ class ObjectRenderer:
             self._delete_chunk(key)
 
         for key, chunk_items in buckets.items():
-            self._rebuild_chunk(key, chunk_items, **build_kwargs)
+            self._rebuild_chunk(key, chunk_items)
 
     def sync_diff(
         self,
         added: Iterable[DroppedItem],
         removed: Iterable[DroppedItem],
         modified: Iterable[DroppedItem],
-        **build_kwargs,
     ) -> None:
         dirty_chunks: set[ChunkKey] = set()
 
@@ -274,522 +142,60 @@ class ObjectRenderer:
             if chunk is None:
                 continue
 
-            self._rebuild_chunk(key, list(chunk.values()), **build_kwargs)
+            self._rebuild_chunk(key, chunk.values())
 
-    def _rebuild_chunk(self, key: ChunkKey, items: list[DroppedItem], **build_kwargs) -> None:
-        signature = self._signature(items)
-        signature_hash = hash(signature)
+    def delete(self) -> None:
+        for key in list(self._chunks.keys()):
+            self._delete_chunk(key)
+
+    @staticmethod
+    def _signature(items: Iterable[DroppedItem]) -> tuple:
+        return tuple(sorted((item.uid, item.id, item.amount, round(item.pos.x, 2), round(item.pos.y, 2)) for item in items))
+
+    def _rebuild_chunk(self, key: ChunkKey, items: Iterable[DroppedItem]) -> None:
+        items = list(items)
+        signature_hash = hash(self._signature(items))
         existing = self._chunks.get(key)
-        if existing is not None and existing[3] == signature_hash:
+        if existing is not None and existing.signature == signature_hash:
             return
 
-        existing_mesh = existing[1] if existing is not None else None
-        mesh = self.build(items, existing=existing_mesh, **build_kwargs)
-        self._chunks[key] = (self._chunk_bounds(*key), mesh, len(items), signature_hash)
+        meshes = self._batch.build(self._build_commands(items), existing=existing.meshes if existing is not None else None, usage=GL_DYNAMIC_DRAW)
+        self._chunks[key] = _Chunk(self._chunk_bounds(*key), meshes, len(items), signature_hash)
 
     def _delete_chunk(self, key: ChunkKey) -> None:
         entry = self._chunks.pop(key, None)
         if entry is not None:
-            _, mesh, _, _ = entry
-            mesh.delete()
+            entry.meshes.delete()
 
         chunk = self._chunk_items.pop(key, None)
         if chunk is not None:
             for uid in chunk:
                 self._item_to_chunk.pop(uid, None)
 
-    def delete(self) -> None:
-        for key in list(self._chunks.keys()):
-            self._delete_chunk(key)
-        self._seed_renderer.delete()
+    def _build_commands(self, items: Sequence[DroppedItem]) -> list[Command]:
+        commands: list[Command] = []
+        build_dropped_commands(items, commands)
+        return commands
 
-    @staticmethod
-    def _signature(items: list[DroppedItem]) -> tuple:
-        return tuple(sorted((item.uid, item.id, item.amount, round(item.pos.x, 2), round(item.pos.y, 2)) for item in items))
-
-    def _visible_meshes(self, cull: Camera2D | None) -> Iterable[ObjectRenderMesh]:
-        total = 0
-        for bounds, mesh, count, _ in self._chunks.values():
-            if cull is None or cull.is_visible(*bounds):
-                total += count
-                yield mesh
-
-        self._visible_count = total
-
-    def draw_chunks(
-        self,
-        camera: Camera2D,
-        culling_camera: Camera2D | None = None,
-        rotation: float = 0,
-        pixel_scale: float = 1,
-        z_offset: float = 0,
-    ) -> None:
+    def draw(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
         cull = culling_camera or camera
-        for mesh in self._visible_meshes(cull):
-            self.draw(camera, mesh, rotation=rotation, pixel_scale=pixel_scale, z_offset=z_offset)
+        self._visible_count = 0
+        for chunk in self._chunks.values():
+            if not cull.is_visible(*chunk.bounds):
+                continue
+            self._visible_count += chunk.count
+            self._batch.draw(camera, chunk.meshes, RenderLayer.OBJ_POST)
 
-    def draw_chunks_3d(
-        self,
-        camera3d: Camera3D,
-        layer_spread: float,
-        rotation: float = 0,
-        pixel_scale: float = 1,
-        z_offset: float = 0,
-    ) -> None:
-        for _, mesh, _, _ in self._chunks.values():
-            self.draw_3d(camera3d, mesh, layer_spread, rotation=rotation, pixel_scale=pixel_scale, z_offset=z_offset)
-
-    def draw_chunks_shadow(
-        self,
-        camera: Camera2D,
-        culling_camera: Camera2D | None = None,
-        z_offset: float = 0,
-    ) -> None:
+    def draw_shadow(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
         cull = culling_camera or camera
-        for mesh in self._visible_meshes(cull):
-            self.draw_shadow(camera, mesh, z_offset=z_offset)
-
-    def draw_chunks_shadow_3d(
-        self,
-        camera3d: Camera3D,
-        layer_spread: float,
-        z_offset: float = 0,
-    ) -> None:
-        for _, mesh, _, _ in self._chunks.values():
-            self.draw_shadow_3d(camera3d, mesh, layer_spread, z_offset=z_offset)
-
-    def draw(
-        self,
-        camera: Camera2D,
-        render_mesh: ObjectRenderMesh,
-        rotation: float = 0,
-        pixel_scale: float = 1,
-        tint: tuple[float, float, float] = (1, 1, 1),
-        z_offset: float = 0,
-    ) -> None:
-        if not render_mesh.dropped_meshes:
-            return
-
-        self._shader.use()
-        self._rotation.set_float(rotation)
-        self._pixel_scale.set_float(pixel_scale)
-        self._z_offset.set_float(z_offset)
-        self._mvp.set_mat4x4(camera.proj_as_numpy())
-
-        self._tile_size.set_float(32.0)
-        for arr, mesh in render_mesh.dropped_meshes.items():
-            arr.bind(unit=0)
-            self._tex.set_int(0)
-            mesh.draw_instanced()
-
-        self._tile_size.set_float(20.0)
-        for arr, mesh in render_mesh.pickup_overlay.items():
-            arr.bind(unit=0)
-            self._tex.set_int(0)
-            mesh.draw_instanced()
-
-        if render_mesh.seed_mesh is not None:
-            self._seed_renderer.draw(camera, render_mesh.seed_mesh)
-
-        if render_mesh.text_renderer is not None:
-            render_mesh.text_renderer.draw(camera, offset=(0.3, 0.3), shadow_color=(0, 0, 0))
-
-    def draw_shadow(self, camera: Camera2D, render_mesh: ObjectRenderMesh, z_offset: float = 0) -> None:
-        if not render_mesh.dropped_meshes:
-            return
-
-        glDepthMask(GL_FALSE)
-
-        self._shadow_shader.use()
-        self._shadow_mvp.set_mat4x4(camera.proj_as_numpy())
-        self._shadow_alpha.set_float(0.4)
-        self._shadow_z_offset.set_float(z_offset)
-        offset = 5.0
-        self._shadow_offset.set_vec2(np.array([-offset, offset], dtype=np.float32))
-
-        self._shadow_tile_size.set_float(32.0)
-        for arr, mesh in render_mesh.icon_shadows.items():
-            arr.bind(unit=0)
-            self._shadow_tex.set_int(0)
-            mesh.draw_instanced()
-
-        self._shadow_tile_size.set_float(20.0)
-        for arr, mesh in render_mesh.overlay_shadows.items():
-            arr.bind(unit=0)
-            self._shadow_tex.set_int(0)
-            mesh.draw_instanced()
-
-        glDepthMask(GL_TRUE)
-
-    def draw_3d(
-        self,
-        camera3d: Camera3D,
-        render_mesh: ObjectRenderMesh,
-        layer_spread: float,
-        rotation: float = 0,
-        pixel_scale: float = 1,
-        z_offset: float = 0,
-    ) -> None:
-        if not render_mesh.dropped_meshes:
-            return
-
-        self._shader3d.use()
-        self._vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
-        self._spread3d.set_float(layer_spread)
-        self._rotation3d.set_float(rotation)
-        self._pixel_scale3d.set_float(pixel_scale)
-        self._z_offset3d.set_float(z_offset)
-
-        self._tile_size3d.set_float(32.0)
-        for arr, mesh in render_mesh.dropped_meshes.items():
-            arr.bind(unit=0)
-            self._tex3d.set_int(0)
-            mesh.draw_instanced()
-
-        self._tile_size3d.set_float(20.0)
-        for arr, mesh in render_mesh.pickup_overlay.items():
-            arr.bind(unit=0)
-            self._tex3d.set_int(0)
-            mesh.draw_instanced()
-
-        if render_mesh.seed_mesh is not None:
-            self._seed_renderer.draw_3d(camera3d, render_mesh.seed_mesh, layer_spread)
-
-        if render_mesh.text_renderer is not None:
-            render_mesh.text_renderer.draw_3d(camera3d, layer_spread, offset=(0.3, 0.3), shadow_color=(0, 0, 0))
-
-    def draw_shadow_3d(self, camera3d: Camera3D, render_mesh: ObjectRenderMesh, layer_spread: float, z_offset: float = 0) -> None:
-        if not render_mesh.dropped_meshes:
-            return
-
-        glDepthMask(GL_FALSE)
-
-        self._shadow_shader3d.use()
-        self._shadow_vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
-        self._shadow_alpha3d.set_float(0.4)
-        self._shadow_spread3d.set_float(layer_spread)
-        self._shadow_z_offset3d.set_float(z_offset)
-        offset = 5.0
-        self._shadow_offset3d.set_vec2(np.array([-offset, offset], dtype=np.float32))
-
-        self._shadow_tile_size3d.set_float(32.0)
-        for arr, mesh in render_mesh.icon_shadows.items():
-            arr.bind(unit=0)
-            self._shadow_tex3d.set_int(0)
-            mesh.draw_instanced()
-
-        self._shadow_tile_size3d.set_float(20.0)
-        for arr, mesh in render_mesh.overlay_shadows.items():
-            arr.bind(unit=0)
-            self._shadow_tex3d.set_int(0)
-            mesh.draw_instanced()
-
-        glDepthMask(GL_TRUE)
-
-    @staticmethod
-    def _select_item_tint_u32(item_id: int, default: tuple[int, int, int]) -> int:
-        item = item_database.get(item_id)
-        if item.visual_effect == ItemInfoVisualEffect.DISCOLOR:
-            seed = item_database.get(item_id + 1)
-            return int(seed.seed_overlay_color.to_rgba()) & 0xFFFFFFFF
-
-        return _pack_rgba_u32(default[0], default[1], default[2])
-
-    def build(
-        self,
-        items: list[DroppedItem],
-        tex_offset: ivec2 = ivec2(0, 0),
-        pos_offset: vec2 = vec2(0, 0),
-        overlay_scale: float = 1,
-        icon_scale: float = 1,
-        flags: "ObjectRenderer.Flags" = Flags(0),
-        tint: tuple[float, float, float] = (1, 1, 1),
-        existing: ObjectRenderMesh | None = None,
-    ) -> ObjectRenderMesh:
-        region_counters: dict[tuple[int, int], int] = defaultdict(int)
-        bucketed: defaultdict[int, list[DroppedItem]] = defaultdict(list)
-
-        if flags & ObjectRenderer.Flags.ORDER_BY_UID:
-            items = sorted(items, key=lambda x: x.uid)
-
-        for dropped in items:
-            tile_x = int(dropped.pos.x // 32)
-            tile_y = int(dropped.pos.y // 32)
-            region = (tile_x // REGION_TILE_SIZE, tile_y // REGION_TILE_SIZE)
-            local_index = region_counters[region]
-            region_counters[region] += 1
-            bucketed[local_index].append(dropped)
-
-        no_text = flags & ObjectRenderer.Flags.NO_TEXT
-        no_shadow = flags & ObjectRenderer.Flags.NO_SHADOW
-        no_overlay = flags & ObjectRenderer.Flags.NO_OVERLAY
-        no_icon = flags & ObjectRenderer.Flags.NO_ICON
-
-        text_renderer = None if no_text else TextRenderer("resources/fonts/centurygothic_bold.ttf", size=32)
-
-        icons: dict[TextureArray, list[float]] = defaultdict(list)
-        overlay: dict[TextureArray, list[float]] = defaultdict(list)
-        icon_shadows: dict[TextureArray, list[float]] = defaultdict(list)
-        overlay_shadows: dict[TextureArray, list[float]] = defaultdict(list)
-        seeds: list[tuple[DroppedItem, float]] = []
-
-        for local_index, drops in bucketed.items():
-            for dropped in drops:
-                item = item_database.get(dropped.id)
-                x = dropped.pos.x + pos_offset.x
-                y = dropped.pos.y + pos_offset.y
-
-                NON_SEED_ID = [
-                    MUTATED_SEED,
-                ]
-                if item.is_seed() and item.id not in NON_SEED_ID:
-                    seeds.append((dropped, self._get_object_z(local_index, SUBLAYER_ICON)))
-                    if text_renderer is not None and dropped.amount > 1:
-                        self._build_text(vec2(16), text_renderer, dropped, local_index, x, y)
-                    continue
-
-                if item.id != GEMS and (text_renderer is not None and dropped.amount > 1):
-                    self._build_text(vec2(20 * overlay_scale), text_renderer, dropped, local_index, x, y)
-
-                if not no_icon:
-                    if flags & ObjectRenderer.Flags.USE_ORIGINAL_TEXTURE:
-                        tex_file = item.texture_file.decode()
-                    else:
-                        tex_file = item.get_icon_texture() or item.texture_file.decode()
-
-                    tex = self._tex_mgr.load_texture(setting.gt_path / "game" / tex_file)
-
-                    if item.id == GEMS and dropped.amount in GEMS_TO_TEX_OFFSET:
-                        tex_index = GEMS_TO_TEX_OFFSET[dropped.amount]
-                        stride = 5
-                    else:
-                        tex_index = item.get_default_tex()
-                        stride = item.get_tex_stride()
-
-                    off = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
-                    tex_pos = ivec2(item.tex_coord_x, item.tex_coord_y) + off + tex_offset
-
-                    uv_x = tex_pos.x * 32 / tex.width
-                    uv_y = tex_pos.y * 32 / tex.height
-                    z = self._get_object_z(local_index, SUBLAYER_ICON)
-
-                    tint_u32 = self._select_item_tint_u32(item.id, (int(tint[0] * 255), int(tint[1] * 255), int(tint[2] * 255)))
-                    icons[tex.array].extend([x, y, icon_scale, icon_scale, uv_x, uv_y, tex.layer, z, int(tint_u32) & 0xFFFFFFFF])
-
-                    if not no_shadow:
-                        icon_shadows[tex.array].extend(
-                            [
-                                x,
-                                y,
-                                icon_scale,
-                                icon_scale,
-                                uv_x,
-                                uv_y,
-                                tex.layer,
-                                self._get_shadow_z(local_index, SHADOW_SUBLAYER_ICON),
-                                DEFAULT_TINT,
-                            ]
-                        )
-
-                if not no_overlay and item.id not in (GEMS, COMET_DUST, ANTIMATTER_DUST):
-                    overlay_tex = self._tex_mgr.load_texture(setting.gt_path / "game/pickup_box.rttex")
-                    tex = PICKUP_BOX_BLUE
-                    if item.item_type == ItemInfoType.CONSUMABLE:
-                        tex = PICKUP_BOX_PURPLE
-                    elif item.item_type == ItemInfoType.LOCK:
-                        tex = PICKUP_BOX_ORANGE
-                    elif item.flags & ItemFlag.UNTRADEABLE:
-                        tex = PICKUP_BOX_WHITE
-
-                    uv_x = tex * 20 / overlay_tex.width
-
-                    overlay[overlay_tex.array].extend(
-                        [
-                            x,
-                            y,
-                            overlay_scale,
-                            overlay_scale,
-                            uv_x,
-                            0,
-                            overlay_tex.layer,
-                            self._get_object_z(local_index, SUBLAYER_OVERLAY),
-                            DEFAULT_TINT,
-                        ]
-                    )
-
-                    if not no_shadow:
-                        overlay_shadows[overlay_tex.array].extend(
-                            [
-                                x,
-                                y,
-                                overlay_scale,
-                                overlay_scale,
-                                0,
-                                0,
-                                overlay_tex.layer,
-                                self._get_shadow_z(local_index, SHADOW_SUBLAYER_OVERLAY),
-                                DEFAULT_TINT,
-                            ]
-                        )
-
-        self._tex_mgr.flush()
-
-        if text_renderer:
-            text_renderer.build()
-
-        if existing is not None:
-            if existing.seed_mesh is not None:
-                existing.seed_mesh.delete()
-            if existing.text_renderer is not None:
-                existing.text_renderer.delete()
-
-        return ObjectRenderMesh(
-            dropped_meshes=self._make_or_update_meshes(existing.dropped_meshes if existing else None, icons),
-            pickup_overlay=self._make_or_update_meshes(existing.pickup_overlay if existing else None, overlay),
-            icon_shadows=self._make_or_update_meshes(existing.icon_shadows if existing else None, icon_shadows),
-            overlay_shadows=self._make_or_update_meshes(existing.overlay_shadows if existing else None, overlay_shadows),
-            seed_mesh=self._seed_renderer.build(seeds, pos_offset) if seeds else None,
-            text_renderer=text_renderer,
-        )
-
-    def build_icon(
-        self,
-        icons: list[IconInfo],
-        icon_scale: float = 1,
-        shadow: bool = False,
-    ) -> ObjectRenderMesh:
-        icon_data: dict[TextureArray, list[float]] = defaultdict(list)
-        shadow_data: dict[TextureArray, list[float]] = defaultdict(list)
-
-        for info in icons:
-            tex = self._tex_mgr.load_texture(setting.gt_path / "game" / info.texture_path)
-            uv_x = info.tex_pos.x / tex.width
-            uv_y = info.tex_pos.y / tex.height
-
-            x, y = info.world_pos.x, info.world_pos.y
-            instance = [
-                x,
-                y,
-                icon_scale,
-                icon_scale,
-                uv_x,
-                uv_y,
-                tex.layer,
-                info.z,
-                DEFAULT_TINT,
-            ]
-            icon_data[tex.array].extend(instance)
-
-            if shadow:
-                shadow_instance = [
-                    x,
-                    y,
-                    icon_scale,
-                    icon_scale,
-                    uv_x,
-                    uv_y,
-                    tex.layer,
-                    info.z - 0.0001,
-                    DEFAULT_TINT,
-                ]
-                shadow_data[tex.array].extend(shadow_instance)
-
-        self._tex_mgr.flush()
-
-        return ObjectRenderMesh(
-            dropped_meshes=self._make_meshes(icon_data),
-            icon_shadows=self._make_meshes(shadow_data) if shadow else {},
-        )
-
-    def _get_shadow_z(self, local_index: int, sublayer: int) -> float:
-        slot = local_index * SHADOW_STRIDE + sublayer
-        t = slot / MAX_SHADOW_LAYER
-        return self._shadow_z_start + t * (self._shadow_z_end - self._shadow_z_start)
-
-    def _get_object_z(self, local_index: int, sublayer: int) -> float:
-        slot = local_index * LAYER_STRIDE + sublayer
-        t = slot / MAX_LAYER
-        return self._object_z_start + t * (self._object_z_end - self._object_z_start)
-
-    def _build_text(
-        self,
-        container: vec2,
-        text_renderer: TextRenderer,
-        dropped: DroppedItem,
-        local_index: int,
-        x: float,
-        y: float,
-    ) -> None:
-        text_width = 16
-
-        ref_width, _ = text_renderer.get_text_size("000", scale=1.0)
-        auto_scale = text_width / ref_width if ref_width > 0 else 0.25
-
-        text_str = str(dropped.amount)
-        text_w, text_h = text_renderer.get_text_size(text_str, scale=auto_scale)
-
-        text_x = x + container.x / 2 - text_w - 2
-        text_y = y + text_h
-
-        text_renderer.build_text(
-            text_str,
-            text_x,
-            text_y,
-            self._get_object_z(local_index, SUBLAYER_TEXT),
-            scale=auto_scale,
-            shadow_z=self._get_object_z(local_index, SUBLAYER_TEXT_SHADOW),
-        )
-
-    def _make_meshes(
-        self,
-        src: dict[TextureArray, list[float]],
-    ) -> dict[TextureArray, Mesh]:
-        return self._make_or_update_meshes(None, src)
-
-    def _make_or_update_meshes(
-        self,
-        existing: dict[TextureArray, Mesh] | None,
-        src: dict[TextureArray, list[float]],
-    ) -> dict[TextureArray, Mesh]:
-        dtype = np.dtype([("v", np.float32, 8), ("v2", np.uint32)])
-        result: dict[TextureArray, Mesh] = {}
-
-        for arr, inst in src.items():
-            data = self._to_instance_array(inst, dtype)
-            if existing is not None and arr in existing:
-                mesh = existing[arr]
-                mesh.update_instance_data(data)
-                mesh.set_instance_count(len(data))
-                result[arr] = mesh
-            else:
-                capacity = max(len(data), 16)
-                result[arr] = Mesh(
-                    Mesh.RECT_WITH_UV_VERTS,
-                    self.LAYOUT,
-                    Mesh.RECT_INDICES,
-                    usage=GL_DYNAMIC_DRAW,
-                    instance_data=data,
-                    instance_layout=self.INSTANCE_LAYOUT,
-                    instance_attrib_base=2,
-                    instance_capacity=capacity,
-                )
-
-        if existing is not None:
-            for arr, mesh in existing.items():
-                if arr not in result:
-                    mesh.delete()
-
-        return result
-
-    @staticmethod
-    def _to_instance_array(inst: list[float], dtype: np.dtype) -> np.ndarray:
-        if len(inst) % 9 != 0:
-            raise ValueError(f"instance data length must be multiple of 9, got {len(inst)}")
-
-        records: list[tuple[list[float], int]] = []
-        for i in range(0, len(inst), 9):
-            v = [float(x) for x in inst[i : i + 8]]
-            tint_u32 = int(inst[i + 8]) & 0xFFFFFFFF
-            records.append((v, tint_u32))
-
-        return np.array(records, dtype=dtype)
+        for chunk in self._chunks.values():
+            if cull.is_visible(*chunk.bounds):
+                self._batch.draw_shadows(camera, chunk.meshes)
+
+    def draw_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+        for chunk in self._chunks.values():
+            self._batch.draw_3d(camera3d, layer_spread, chunk.meshes, RenderLayer.OBJ_POST)
+
+    def draw_shadow_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+        for chunk in self._chunks.values():
+            self._batch.draw_shadows_3d(camera3d, layer_spread, chunk.meshes)

@@ -1,399 +1,116 @@
-from collections import defaultdict
-from dataclasses import dataclass, field
+"""World tile chunks built from the render command system.
+
+The chunking/dirty machinery lives in :class:`ChunkedRenderer`; the chunk
+content is the command system's output (``build_tile_commands`` +
+``build_tile_object_commands``) translated into instanced meshes by
+:class:`SpriteBatch`. Trees, tile-extra object icons, seed sprites and the
+elemental overlays all arrive as commands -- there is no per-feature geometry
+code here.
+"""
+
 from enum import IntFlag, auto
-import logging
-from OpenGL.GL import GL_FALSE, GL_TRUE, GL_UNSIGNED_INT, glDepthMask
-import numpy as np
-from pyglm.glm import ivec2
 
-from gtools import setting
-from gtools.baked.items import STEAM_REVOLVER, STEAM_TUBES
-from gtools.core.color import pack_color
-from gtools.core.growtopia.items_dat import ItemInfoTextureType, ItemInfoVisualEffect, get_tex_stride, item_database
-from gtools.core.growtopia.world import DisplayBlockTile, SeedTile, Tile, TileFlags, VendingMachineTile, World
-
+from gtools.core.growtopia.render_commands import Command, RenderLayer, RenderOptions, build_tile_commands, build_tile_object_commands
+from gtools.core.growtopia.world import World
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
-from gtools.gui.lib import layer
-from gtools.gui.lib.chunked_renderer import ChunkedRenderer, ChunkKey
-from gtools.gui.lib.tile_object_renderer import TileObjectRenderer
-from gtools.gui.lib.tree_renderer import TreeRenderer
-from gtools.gui.opengl import Mesh, ShaderProgram, Uniform
-from gtools.gui.texture import GLTexManager, TextureArray
+from gtools.gui.lib.chunked_renderer import ChunkBounds, ChunkedRenderer, ChunkKey
+from gtools.gui.lib.sprite_batch import SpriteBatch, SpriteMeshes
 
-logger = logging.getLogger("gui-world-renderer")
-
-
-@dataclass
-class _RenderLayer:
-    depth: float
-    render_flag: "TileRenderer.Flags"
-    depth_write: bool = True
-    # TextureArray -> list[((x, y, w, h), Mesh)]
-    chunks: dict[TextureArray, list[tuple[tuple[float, float, float, float], Mesh]]] = field(default_factory=dict)
-    opacity: float = 1.0
-
-
-_WHITE_TINT = pack_color(0xFFFFFFFF)
+_RENDER_FG_LAYERS = frozenset({RenderLayer.FG_BEFORE, RenderLayer.FG, RenderLayer.FG_AFTER, RenderLayer.FIRE, RenderLayer.WATER})
+_OBJECT_LAYERS = frozenset({RenderLayer.OBJ_PRE, RenderLayer.OBJ_POST, RenderLayer.OBJ_TEXT})
 
 
 class TileRenderer(ChunkedRenderer):
-    LAYOUT = [2, 2]
-    INSTANCE_LAYOUT = [2, 4, 1, 1, (1, GL_UNSIGNED_INT)]
-
     class Flags(IntFlag):
         NONE = 0
         RENDER_FG = auto()
         RENDER_BG = auto()
 
-    def __init__(self) -> None:
-        self._tex_mgr = GLTexManager()
+    def __init__(self, options: RenderOptions | None = None) -> None:
         self.flags = TileRenderer.Flags.RENDER_FG | TileRenderer.Flags.RENDER_BG
-
-        F = TileRenderer.Flags
-        self._layers: dict[str, _RenderLayer] = {
-            "bg": _RenderLayer(layer.WORLD_BACKGROUND, F.RENDER_BG),
-            "fg_before": _RenderLayer(layer.WORLD_PRE_FOREGROUND, F.RENDER_FG),
-            "fg": _RenderLayer(layer.WORLD_FOREGROUND, F.RENDER_FG),
-            "fg_after": _RenderLayer(layer.WORLD_POST_FOREGROUND, F.RENDER_FG, depth_write=False),
-            "fire": _RenderLayer(layer.WORLD_FIRE, F.RENDER_FG, opacity=0.6),
-            "water": _RenderLayer(layer.WORLD_WATER, F.RENDER_FG, opacity=0.6),
-        }
-
-        self._shader = ShaderProgram.get("shaders/world")
-        self._mvp = self._shader.get_uniform("u_mvp")
-        self._tex = self._shader.get_uniform("texArray")
-        self._layer = self._shader.get_uniform("u_layer")
-        self._opacity = self._shader.get_uniform("u_opacity")
-
-        self._shader3d = ShaderProgram.from_files("shaders/world3d.vert", "shaders/world.frag")
-        self._vp3d = self._shader3d.get_uniform("u_view_proj")
-        self._tex3d = self._shader3d.get_uniform("texArray")
-        self._layer3d = self._shader3d.get_uniform("u_layer")
-        self._spread3d = self._shader3d.get_uniform("u_layer_spread")
-        self._opacity3d = self._shader3d.get_uniform("u_opacity")
-
-        self._tree_renderer = TreeRenderer()
-        self._tile_objects = TileObjectRenderer()
-        self._chunk_meshes: dict[ChunkKey, list[tuple[str, TextureArray, Mesh]]] = {}
-
-    def load(self, world: World) -> None:
-        super().load(world)
-        self._tex_mgr.flush()
+        # the interactive view renders the whole world (the map export stops at
+        # the garbage section instead)
+        self._options = options or RenderOptions(stop_at_garbage_start=False)
+        self._batch = SpriteBatch()
+        # chunk key -> (bounds, meshes, tile-object instance count)
+        self._chunks: dict[ChunkKey, tuple[ChunkBounds, SpriteMeshes, int]] = {}
+        self._visible_objects = 0
 
     def any(self) -> bool:
-        return any(rl.chunks for rl in self._layers.values()) or self._tree_renderer.any() or self._tile_objects.total_items > 0
+        return any(meshes.layers for _, meshes, _ in self._chunks.values())
 
     @property
     def texture_count(self) -> int:
-        return self._tex_mgr.texture_count
-
-    def draw(self, camera: Camera2D, layer: str | None = None, culling_camera: Camera2D | None = None) -> None:
-        if not self.any():
-            return
-
-        self._shader.use()
-        self._mvp.set_mat4x4(camera.proj_as_numpy())
-        if layer:
-            self.draw_layer(layer, camera, self._tex, self._layer, self._opacity, culling_camera=culling_camera)
-            if layer == "fg":
-                self._tree_renderer.draw(camera, culling_camera=culling_camera)
-        else:
-            self._draw_layers(camera, self._tex, self._layer, self._opacity, culling_camera=culling_camera)
-            self._tree_renderer.draw(camera, culling_camera=culling_camera)
-
-    def draw_3d(self, camera3d: Camera3D, layer_spread: float, layer: str | None = None) -> None:
-        if not self.any():
-            return
-
-        self._shader3d.use()
-        self._vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
-        self._spread3d.set_float(layer_spread)
-        if layer:
-            self.draw_layer(layer, None, self._tex3d, self._layer3d, self._opacity3d)
-            if layer == "fg":
-                self._tree_renderer.draw_3d(camera3d, layer_spread)
-        else:
-            self._draw_layers(None, self._tex3d, self._layer3d, self._opacity3d)
-            self._tree_renderer.draw_3d(camera3d, layer_spread)
+        return self._batch.texture_count
 
     @property
     def tile_object_count(self) -> int:
-        return self._tile_objects.total_items
+        return sum(count for _, _, count in self._chunks.values())
 
     @property
     def visible_count(self) -> int:
-        return self._tile_objects.visible_count
+        return self._visible_objects
 
-    def draw_objects_pre_foreground(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
-        self._tile_objects.draw_pre_foreground(camera, culling_camera)
-
-    def draw_objects_post_foreground(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
-        self._tile_objects.draw_post_foreground(camera, culling_camera)
-
-    def draw_objects_pre_foreground_shadow(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
-        self._tile_objects.draw_pre_foreground_shadow(camera, culling_camera)
-
-    def draw_objects_post_foreground_shadow(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
-        self._tile_objects.draw_post_foreground_shadow(camera, culling_camera)
-
-    def draw_objects_pre_foreground_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
-        self._tile_objects.draw_pre_foreground_3d(camera3d, layer_spread)
-
-    def draw_objects_post_foreground_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
-        self._tile_objects.draw_post_foreground_3d(camera3d, layer_spread)
-
-    def draw_objects_pre_foreground_shadow_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
-        self._tile_objects.draw_pre_foreground_shadow_3d(camera3d, layer_spread)
-
-    def draw_objects_post_foreground_shadow_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
-        self._tile_objects.draw_post_foreground_shadow_3d(camera3d, layer_spread)
-
-    def delete(self) -> None:
-        self._tree_renderer.delete()
-        self._tile_objects.delete()
-
-        for chunk_list in self._chunk_meshes.values():
-            for _, _, mesh in chunk_list:
-                mesh.delete()
-        self._chunk_meshes.clear()
-
-        for rl in self._layers.values():
-            rl.chunks.clear()
-
-    def _draw_layers(self, camera: Camera2D | None, tex_uniform: Uniform, layer_uniform: Uniform, opacity: Uniform, culling_camera: Camera2D | None = None) -> None:
-        for rl in self._layers.values():
-            if not (self.flags & rl.render_flag) or not rl.chunks:
-                continue
-
-            if not rl.depth_write:
-                glDepthMask(GL_FALSE)
-
-            opacity.set_float(rl.opacity)
-            layer_uniform.set_float(rl.depth)
-
-            cull = culling_camera or camera
-            for tex_array, chunk_list in rl.chunks.items():
-                tex_array.bind(unit=0)
-                tex_uniform.set_int(0)
-                for bounds, mesh in chunk_list:
-                    if cull is None or cull.is_visible(*bounds):
-                        mesh.draw_instanced()
-
-            if not rl.depth_write:
-                glDepthMask(GL_TRUE)
-
-    def draw_layer(self, layer: str, camera: Camera2D | None, tex_uniform: Uniform, layer_uniform: Uniform, opacity: Uniform, culling_camera: Camera2D | None = None) -> None:
-        rl = self._layers[layer]
-        if not (self.flags & rl.render_flag) or not rl.chunks:
+    def draw(self, camera: Camera2D, layer_name: RenderLayer, culling_camera: Camera2D | None = None) -> None:
+        if not self._layer_allowed(layer_name):
             return
-
-        if not rl.depth_write:
-            glDepthMask(GL_FALSE)
-
-        opacity.set_float(rl.opacity)
-        layer_uniform.set_float(rl.depth)
 
         cull = culling_camera or camera
-        for tex_array, chunk_list in rl.chunks.items():
-            tex_array.bind(unit=0)
-            tex_uniform.set_int(0)
-            for bounds, mesh in chunk_list:
-                if cull is None or cull.is_visible(*bounds):
-                    mesh.draw_instanced()
+        self._visible_objects = 0
+        for bounds, meshes, object_count in self._chunks.values():
+            if not cull.is_visible(*bounds):
+                continue
+            self._visible_objects += object_count
+            self._batch.draw(camera, meshes, layer_name)
 
-        if not rl.depth_write:
-            glDepthMask(GL_TRUE)
-
-    def delete_chunk(self, chunk_key: ChunkKey) -> None:
-        self._tree_renderer.delete_chunk(chunk_key)
-        self._tile_objects.delete_chunk(chunk_key)
-
-        if chunk_key not in self._chunk_meshes:
+    def draw_3d(self, camera3d: Camera3D, layer_spread: float, layer_name: RenderLayer) -> None:
+        if not self._layer_allowed(layer_name):
             return
 
-        for layer_name, tex_array, mesh in self._chunk_meshes[chunk_key]:
-            rl = self._layers[layer_name]
-            if tex_array in rl.chunks:
-                rl.chunks[tex_array] = [x for x in rl.chunks[tex_array] if x[1] != mesh]
-            mesh.delete()
+        self._visible_objects = 0
+        for _, meshes, object_count in self._chunks.values():
+            self._visible_objects += object_count
+            self._batch.draw_3d(camera3d, layer_spread, meshes, layer_name)
 
-        del self._chunk_meshes[chunk_key]
+    def draw_shadows(self, camera: Camera2D, culling_camera: Camera2D | None = None) -> None:
+        cull = culling_camera or camera
+        for bounds, meshes, _ in self._chunks.values():
+            if cull.is_visible(*bounds):
+                self._batch.draw_shadows(camera, meshes)
+
+    def draw_shadows_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
+        for _, meshes, _ in self._chunks.values():
+            self._batch.draw_shadows_3d(camera3d, layer_spread, meshes)
+
+    def delete(self) -> None:
+        for _, meshes, _ in self._chunks.values():
+            meshes.delete()
+        self._chunks.clear()
+
+    def delete_chunk(self, chunk_key: ChunkKey) -> None:
+        entry = self._chunks.pop(chunk_key, None)
+        if entry is not None:
+            entry[1].delete()
 
     def build_chunk(self, world: World, chunk_x: int, chunk_y: int) -> None:
-        # layer -> tex_array -> list[float]
-        instances: dict[str, dict[TextureArray, list[float]]] = {key: defaultdict(list) for key in self._layers}
-        object_tiles: list[Tile] = []
-
+        commands: list[Command] = []
         start_x, start_y, end_x, end_y = self.chunk_tile_range(world, chunk_x, chunk_y)
-
         for y in range(start_y, end_y):
             for x in range(start_x, end_x):
                 tile = world.get_tile(x, y)
                 if not tile:
                     continue
 
-                if tile.extra:
-                    object_tiles.append(tile)
+                build_tile_commands(tile, options=self._options, commands=commands)
+                build_tile_object_commands(tile, commands=commands)
 
-                item = item_database.get(tile.fg_id)
+        meshes = self._batch.build(commands)
+        self._chunks[(chunk_x, chunk_y)] = (self.chunk_bounds(chunk_x, chunk_y), meshes, meshes.instance_count(_OBJECT_LAYERS))
 
-                if tile.bg_id:
-                    tex_array, data = self._tile_instance_data(tile, tile.bg_id, tile.bg_tex_index)
-                    instances["bg"][tex_array].extend(data)
-
-                if tile.fg_id:
-                    handled = False
-
-                    if tile.extra:
-                        if isinstance(tile.extra, DisplayBlockTile):
-                            tex_array, data = self._tile_instance_data_raw(
-                                tile,
-                                item.texture_file.decode(),
-                                ivec2(item.tex_coord_x, item.tex_coord_y + 1),
-                            )
-                            instances["fg_before"][tex_array].extend(data)
-
-                        elif isinstance(tile.extra, VendingMachineTile):
-                            tex = 0
-                            if tile.extra.price == 0:
-                                tex = 1
-
-                            tex_array, data = self._tile_instance_data_raw(
-                                tile,
-                                item.texture_file.decode(),
-                                ivec2(item.tex_coord_x + tex, item.tex_coord_y),
-                            )
-                            instances["fg"][tex_array].extend(data)
-
-                            if tile.flags & TileFlags.FG_ALT_MODE:
-                                # has wl inside
-                                tex_array, data = self._tile_instance_data_raw(
-                                    tile,
-                                    item.texture_file.decode(),
-                                    ivec2(item.tex_coord_x + 3, item.tex_coord_y),
-                                )
-                                instances["fg_after"][tex_array].extend(data)
-
-                            if tile.extra.price == 0 or tile.extra.item_id == 0:
-                                # warning sign
-                                tex_array, data = self._tile_instance_data_raw(
-                                    tile,
-                                    item.texture_file.decode(),
-                                    ivec2(item.tex_coord_x + 2, item.tex_coord_y),
-                                )
-                                instances["fg_after"][tex_array].extend(data)
-
-                            handled = True
-                        elif isinstance(tile.extra, SeedTile):
-                            handled = True
-
-                    if item.is_steam():
-                        anchor = item_database.get(STEAM_TUBES)
-                        tex_pos = ivec2(anchor.tex_coord_x + 1, anchor.tex_coord_y)
-                        stride = get_tex_stride(ItemInfoTextureType.SMART_EDGE)
-                        off = ivec2(tile.fg_tex_index % max(stride, 1), tile.fg_tex_index // stride if stride else 0)
-
-                        tex_array, data = self._tile_instance_data_raw(tile, anchor.texture_file.decode(), tex_pos + off)
-                        instances["fg_after"][tex_array].extend(data)
-                    elif tile.fg_id == STEAM_REVOLVER:
-                        tex_array, data = self._tile_instance_data_raw(
-                            tile,
-                            item.texture_file.decode(),
-                            ivec2(item.tex_coord_x, item.tex_coord_y + 1),
-                        )
-                        instances["fg_after"][tex_array].extend(data)
-
-                    if not handled:
-                        tex_array, data = self._tile_instance_data(tile, tile.fg_id, tile.fg_tex_index)
-                        instances["fg"][tex_array].extend(data)
-
-                if tile.flags & TileFlags.ON_FIRE:
-                    stride = get_tex_stride(ItemInfoTextureType.SMART_EDGE)
-                    tex_index = tile.overlay_tex_index
-                    tex_pos = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
-
-                    tex_array, data = self._tile_instance_data_raw(tile, "fire.rttex", tex_pos)
-                    instances["fire"][tex_array].extend(data)
-                elif tile.flags & TileFlags.IS_WET:
-                    stride = get_tex_stride(ItemInfoTextureType.SMART_EDGE)
-                    tex_index = tile.overlay_tex_index
-                    tex_pos = ivec2(tex_index % max(stride, 1), tex_index // stride if stride else 0)
-
-                    tex_array, data = self._tile_instance_data_raw(tile, "water.rttex", tex_pos)
-                    instances["water"][tex_array].extend(data)
-
-        bounds = self.chunk_bounds(chunk_x, chunk_y)
-
-        chunk_key = (chunk_x, chunk_y)
-        self._chunk_meshes[chunk_key] = []
-
-        for layer_key, per_tex in instances.items():
-            rl = self._layers[layer_key]
-            for tex_array, inst_list in per_tex.items():
-                if not inst_list:
-                    continue
-                mesh = Mesh(
-                    Mesh.RECT_WITH_UV_VERTS,
-                    TileRenderer.LAYOUT,
-                    Mesh.RECT_INDICES,
-                    instance_data=np.array(inst_list, dtype=np.float32),
-                    instance_layout=TileRenderer.INSTANCE_LAYOUT,
-                    instance_attrib_base=3,
-                )
-                if tex_array not in rl.chunks:
-                    rl.chunks[tex_array] = []
-                rl.chunks[tex_array].append((bounds, mesh))
-                self._chunk_meshes[chunk_key].append((layer_key, tex_array, mesh))
-
-        self._tree_renderer.build_chunk(world, chunk_x, chunk_y)
-        self._tile_objects.sync_chunk_tiles((chunk_x, chunk_y), object_tiles)
-
-    def _tile_instance_data(self, tile: Tile, item_id: int, tex_index: int) -> tuple[TextureArray, list[float]]:
-        item = item_database.get(item_id)
-        tex = self._tex_mgr.load_texture(setting.gt_path / "game" / item.texture_file.decode())
-        tex_pos, is_flipped = tile.tex_pos(item_id, tex_index)
-
-        u0 = (tex_pos.x * self.TILE_SIZE) / tex.width
-        v0 = (tex_pos.y * self.TILE_SIZE) / tex.height
-        u1 = ((tex_pos.x + 1) * self.TILE_SIZE) / tex.width
-        v1 = ((tex_pos.y + 1) * self.TILE_SIZE) / tex.height
-        if is_flipped:
-            u0, u1 = u1, u0
-
-        tint = _WHITE_TINT
-
-        if item.visual_effect == ItemInfoVisualEffect.DISCOLOR:
-            seed = item_database.get(item_id + 1)
-            tint = pack_color(seed.seed_overlay_color.to_rgba())
-
-        return tex.array, [
-            tile.pos.x * self.TILE_SIZE,
-            tile.pos.y * self.TILE_SIZE,
-            u0,
-            v0,
-            u1,
-            v1,
-            float(tex.layer),
-            float(tile.get_paint_index()),
-            tint,
-        ]
-
-    def _tile_instance_data_raw(self, tile: Tile, texture_file: str, tex_pos: ivec2) -> tuple[TextureArray, list[float]]:
-        tex = self._tex_mgr.load_texture(setting.gt_path / "game" / texture_file)
-        u0 = (tex_pos.x * self.TILE_SIZE) / tex.width
-        v0 = (tex_pos.y * self.TILE_SIZE) / tex.height
-        u1 = ((tex_pos.x + 1) * self.TILE_SIZE) / tex.width
-        v1 = ((tex_pos.y + 1) * self.TILE_SIZE) / tex.height
-
-        return tex.array, [
-            tile.pos.x * self.TILE_SIZE,
-            tile.pos.y * self.TILE_SIZE,
-            u0,
-            v0,
-            u1,
-            v1,
-            float(tex.layer),
-            float(tile.get_paint_index()),
-            _WHITE_TINT,
-        ]
+    def _layer_allowed(self, layer_name: RenderLayer) -> bool:
+        if layer_name == RenderLayer.BG:
+            return bool(self.flags & TileRenderer.Flags.RENDER_BG)
+        if layer_name in _RENDER_FG_LAYERS:
+            return bool(self.flags & TileRenderer.Flags.RENDER_FG)
+        return True

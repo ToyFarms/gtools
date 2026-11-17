@@ -64,7 +64,7 @@ PLAYER_NET_ID = 1
 
 # Half a tile, and the renderer's half-tile convention: the GUI world renderer draws
 # tile (tx, ty) *centred* on world pixel (tx*32, ty*32) -- its picture spans
-# [tx*32 - 16, tx*32 + 16] (shaders/world.vert, WorldRenderer._update_hover,
+# [tx*32 - 16, tx*32 + 16] (shaders/sprite.vert, WorldRenderer._update_hover,
 # chunked_renderer.chunk_bounds) -- while physics positions use the collision-rect
 # space where tile (tx, ty) spans [tx*32, (tx+1)*32].  Convert renderer -> physics
 # with +_TILE_HALF (screen picks) and physics -> renderer with -_TILE_HALF (overlay).

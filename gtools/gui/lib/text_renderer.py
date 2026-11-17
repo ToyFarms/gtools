@@ -40,7 +40,7 @@ _DEFAULT_COLOR: tuple[float, float, float] = (1.0, 1.0, 1.0)
 _WHITE = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
 
-def _parse_colored_text(text: str) -> list[tuple[str, tuple[float, float, float]]]:
+def parse_colored_text(text: str) -> list[tuple[str, tuple[float, float, float]]]:
     result: list[tuple[str, tuple[float, float, float]]] = []
     color = _DEFAULT_COLOR
     i = 0
@@ -64,7 +64,7 @@ def _parse_colored_text(text: str) -> list[tuple[str, tuple[float, float, float]
 
 
 class TextRenderer(Renderer):
-    INSTANCE_LAYOUT = [2, 2, 2, 2, 1, 3]
+    INSTANCE_LAYOUT = [2, 2, 2, 2, 1, 4]
 
     def __init__(
         self,
@@ -125,7 +125,7 @@ class TextRenderer(Renderer):
 
     @lru_cache(maxsize=512)
     def get_text_size(self, text: str, scale: float = 1.0) -> tuple[float, float]:
-        parsed = _parse_colored_text(text)
+        parsed = parse_colored_text(text)
         width = 0.0
         max_height = 0.0
         for i, (char, _) in enumerate(parsed):
@@ -145,14 +145,20 @@ class TextRenderer(Renderer):
         y: float,
         z: float,
         scale: float = 1.0,
+        color: tuple[float, float, float, float] | None = None,
         shadow_z: float | None = None,
     ) -> None:
         current_x = x
-        for char, color in _parse_colored_text(text):
+        for char, char_color in parse_colored_text(text):
             glyph = self.font.get_char(char)
             if glyph.size[0] == 0:
                 current_x += glyph.advance * scale
                 continue
+
+            if color is not None:
+                rgb, alpha = (color[0], color[1], color[2]), color[3]
+            else:
+                rgb, alpha = char_color, 1.0
 
             w = glyph.size[0] * scale
             h = glyph.size[1] * scale
@@ -164,7 +170,7 @@ class TextRenderer(Renderer):
                 glyph.tex_offset[0], glyph.tex_offset[1],
                 glyph.tex_size[0], glyph.tex_size[1],
                 z,
-                color[0], color[1], color[2],
+                rgb[0], rgb[1], rgb[2], alpha,
             ])
 
             if shadow_z is not None:
@@ -173,7 +179,7 @@ class TextRenderer(Renderer):
                     glyph.tex_offset[0], glyph.tex_offset[1],
                     glyph.tex_size[0], glyph.tex_size[1],
                     shadow_z,
-                    1.0, 1.0, 1.0,
+                    1.0, 1.0, 1.0, 1.0,
                 ])
 
             current_x += glyph.advance * scale

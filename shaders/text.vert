@@ -6,13 +6,13 @@ layout (location = 3) in vec2 in_size;
 layout (location = 4) in vec2 in_texOffset;
 layout (location = 5) in vec2 in_texSize;
 layout (location = 6) in float in_z;
-layout (location = 7) in vec3 in_color;
+layout (location = 7) in vec4 in_color;
 
 uniform mat4 u_mvp;
 uniform vec2 u_offset;
 
 out vec2 v_tex;
-out vec3 v_color;
+out vec4 v_color;
 
 void main() {
     v_tex = in_texOffset + in_tex * in_texSize;

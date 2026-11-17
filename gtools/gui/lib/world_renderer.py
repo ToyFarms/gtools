@@ -39,6 +39,7 @@ from gtools.core.growtopia.world import (
     World,
     WorldEvent,
 )
+from gtools.core.growtopia.render_commands import RenderLayer
 from gtools.core.mixer import AudioMixer
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
@@ -428,36 +429,36 @@ class WorldRenderer:
 
         self._render_order.add(
             "Tile BG",
-            lambda camera, cull: self._tile_renderer.draw(camera, "bg", culling_camera=cull),
-            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "bg"),
+            lambda camera, cull: self._tile_renderer.draw(camera, RenderLayer.BG, culling_camera=cull),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, RenderLayer.BG),
         )
         self._render_order.add(
             "Tile pre-FG",
-            lambda camera, cull: self._tile_renderer.draw(camera, "fg_before", culling_camera=cull),
-            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_before"),
+            lambda camera, cull: self._tile_renderer.draw(camera, RenderLayer.FG_BEFORE, culling_camera=cull),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, RenderLayer.FG_BEFORE),
         )
 
         self._render_order.add(
             "Obj pre-FG",
-            lambda cam, cull: self._tile_renderer.draw_objects_pre_foreground(cam, cull),
-            lambda cam3d, s: self._tile_renderer.draw_objects_pre_foreground_3d(cam3d, s),
+            lambda cam, cull: self._tile_renderer.draw(cam, RenderLayer.OBJ_PRE, culling_camera=cull),
+            lambda cam3d, s: self._tile_renderer.draw_3d(cam3d, s, RenderLayer.OBJ_PRE),
         )
 
         self._render_order.add(
             "Tile FG",
-            lambda camera, cull: self._tile_renderer.draw(camera, "fg", culling_camera=cull),
-            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg"),
+            lambda camera, cull: self._tile_renderer.draw(camera, RenderLayer.FG, culling_camera=cull),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, RenderLayer.FG),
         )
         self._render_order.add(
             "Tile post-FG",
-            lambda camera, cull: self._tile_renderer.draw(camera, "fg_after", culling_camera=cull),
-            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fg_after"),
+            lambda camera, cull: self._tile_renderer.draw(camera, RenderLayer.FG_AFTER, culling_camera=cull),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, RenderLayer.FG_AFTER),
         )
 
         self._render_order.add(
             "Obj Post-FG",
-            lambda cam, cull: self._tile_renderer.draw_objects_post_foreground(cam, cull),
-            lambda cam3d, s: self._tile_renderer.draw_objects_post_foreground_3d(cam3d, s),
+            lambda cam, cull: self._tile_renderer.draw(cam, RenderLayer.OBJ_POST, culling_camera=cull),
+            lambda cam3d, s: self._tile_renderer.draw_3d(cam3d, s, RenderLayer.OBJ_POST),
         )
 
         self._render_order.add(
@@ -492,13 +493,13 @@ class WorldRenderer:
 
         self._render_order.add(
             "Fire",
-            lambda camera, cull: self._tile_renderer.draw(camera, "fire", culling_camera=cull),
-            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "fire"),
+            lambda camera, cull: self._tile_renderer.draw(camera, RenderLayer.FIRE, culling_camera=cull),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, RenderLayer.FIRE),
         )
         self._render_order.add(
             "Water",
-            lambda camera, cull: self._tile_renderer.draw(camera, "water", culling_camera=cull),
-            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, "water"),
+            lambda camera, cull: self._tile_renderer.draw(camera, RenderLayer.WATER, culling_camera=cull),
+            lambda camera3d, layer_spread: self._tile_renderer.draw_3d(camera3d, layer_spread, RenderLayer.WATER),
         )
 
         self._render_order.add(
@@ -523,15 +524,13 @@ class WorldRenderer:
 
     def _draw_obj_shadows_2d(self, camera: Camera2D, culling_camera: Camera2D | None) -> None:
         glDepthMask(GL_FALSE)
-        self._tile_renderer.draw_objects_pre_foreground_shadow(camera, culling_camera)
-        self._tile_renderer.draw_objects_post_foreground_shadow(camera, culling_camera)
+        self._tile_renderer.draw_shadows(camera, culling_camera)
         self._dropped_object_renderer.draw_shadow(camera, culling_camera)
         glDepthMask(GL_TRUE)
 
     def _draw_obj_shadows_3d(self, camera3d: Camera3D, layer_spread: float) -> None:
         glDepthMask(GL_FALSE)
-        self._tile_renderer.draw_objects_pre_foreground_shadow_3d(camera3d, layer_spread)
-        self._tile_renderer.draw_objects_post_foreground_shadow_3d(camera3d, layer_spread)
+        self._tile_renderer.draw_shadows_3d(camera3d, layer_spread)
         self._dropped_object_renderer.draw_shadow_3d(camera3d, layer_spread)
         glDepthMask(GL_TRUE)
 

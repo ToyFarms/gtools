@@ -2,12 +2,12 @@
 
 out vec4 out_fragColor;
 in vec2 texCoord;
-flat in float layer;
+flat in float texLayer;
 flat in float paintIndex;
-flat in uint tileTint;
+flat in uint tint;
+flat in float opacity;
 
 uniform sampler2DArray texArray;
-uniform float u_opacity;
 
 const vec3 COLOR_TABLE[8] = vec3[8](
     vec3(1.0,   1.0,   1.0  ),  // 0b000 none
@@ -31,8 +31,11 @@ vec4 unpackColor(uint c) {
 }
 
 void main() {
-    vec4 base = texture(texArray, vec3(texCoord, layer));
-    base.a *= u_opacity;
-    base.rgb *= unpackColor(tileTint).rgb * COLOR_TABLE[int(paintIndex)] * base.a;
+    vec4 base = texture(texArray, vec3(texCoord, texLayer));
+    base.a *= opacity;
+    // premultiplied output; a black tint (a == 0) renders the alpha silhouette
+    // as the drop shadow
+    base.rgb *= unpackColor(tint).rgb * COLOR_TABLE[int(paintIndex)] * base.a;
+    if (base.a < 0.001) discard;
     out_fragColor = base;
 }

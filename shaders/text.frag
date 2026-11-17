@@ -1,6 +1,6 @@
 #version 450 core
 in vec2 v_tex;
-in vec3 v_color;
+in vec4 v_color;
 
 out vec4 f_color;
 
@@ -16,8 +16,8 @@ void main() {
     vec2 unitRange = vec2(u_sdfPxRange) / vec2(textureSize(u_texture, 0));
     vec2 screenTexSize = vec2(1.0) / max(fwidth(v_tex), vec2(1e-6));
     float screenPxRange = max(0.5 * dot(unitRange, screenTexSize), 1.0);
-    float alpha = smoothstep(-u_edgeSoftness, u_edgeSoftness, signedDistance * screenPxRange);
+    float alpha = smoothstep(-u_edgeSoftness, u_edgeSoftness, signedDistance * screenPxRange) * v_color.a;
     if (alpha < 0.01) discard;
-    vec3 rgb = u_textColor * v_color;
+    vec3 rgb = u_textColor * v_color.rgb;
     f_color = vec4(rgb * alpha, alpha);
 }

@@ -15,6 +15,10 @@ player, and **tests are the contract**.
 |---|---|
 | `gtools/core/growtopia/physics/controller.py` | `PlayerController` — the local player: physics port + outbound tile-change flow (the port target) |
 | `gtools/core/growtopia/physics/demo.py` | interactive demo, not required by tests |
+| `gtools/core/growtopia/render_commands.py` | the renderer-agnostic scene: `RenderCommand`/`TextCommand`, `RenderLayer`, builders (`build_tile_commands`, `build_tile_object_commands`, `build_dropped_commands`, ...) — the single source of truth for *what* to draw |
+| `gtools/core/growtopia/world_renderer_cpu.py` | CPU backend: rasterizes the commands into a numpy image (map export) |
+| `gtools/gui/lib/sprite_batch.py` | GPU adapter: `LAYER_DEPTHS` (RenderLayer -> depth bands), pure `command_instances` (space/anchor conversion, UV, tint, shadows), `SpriteBatch`/`TextBatch` |
+| `gtools/gui/lib/tile_renderer.py`, `object_renderer.py` | GPU chunk drivers: chunking/diff-sync machinery only — chunk content is command output |
 | `gtools/core/growtopia/world.py` | `World`, `Tile`, `TileFlags`, `TileExtra` subclasses (`LockTile`, `VipEntranceTile`, `FriendsEntranceTile`, `StormyCloudTile`, ...) |
 | `gtools/core/growtopia/items_dat.py` | `ItemInfoType`, `ItemInfoCollisionType`, `item_database` |
 | `gtools/core/growtopia/packet.py`, `player.py` | tank packets, `CharacterState`/`CharacterFlags`, `Clothing` |
