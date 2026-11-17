@@ -285,6 +285,36 @@ owned by the world renderer. `Item.cybot` carries the decoded item payload
 (`ItemInfoCyBotCommand` / `ItemInfoCyBotRobot`); `CyBotCommandData` matches the
 real tile-extra entry. Tests: `tests/test_cybot_{data,sim,renderer}.py`.
 
+### Blasters (Howler / Trickster)
+
+`BLASTER` items (item_type 93: Howler 4344, Trickster 8020) never fire on the
+client -- the server spawns the projectile as an **NPC** and the client only
+simulates it. Tank `TANK_NPC` event 2 goes `handleNPC` 0x1403F3DF0 →
+`createNpcAndPushBack` 0x1402B56F0: `type = object_type` (**8 = `NpcType.BLAST`**
+Howler, **15 = `NpcType.TRICKSTER`**), `uid = jump_count`, `param2 = int_y` (the
+speed), `param3 = particle_rotation` (the heading in degrees), `timer = 0`; the
+spawn tile is looked up and, when it is a BLASTER, its 1000 ms `nextUpdateMs`
+timer is armed and `audio/flame_go.wav` plays. `updateNPC` 0x1402B7530 (cases
+8/15) adds `timer += dt`, emits one trail particle (212 / 276) **before** moving
+while `timer >= 0.1`, then `pos += (cos, sin)(param3°) * (int)param2 * dt` -- with
+**no tile collision, no lifetime and no despawn**; only the server's DIE
+(`npcHandleAction` 0x1402B5A40: 4×212 or effects 178+223) or DELETE
+(`npcResetAction` 0x1402B59E0) ends a blast. The kill test lives inside that same
+update (point in the player rect, avatar not dying, hitbox-centre tile exists and
+is not item type `DOOR`), so it is independent of the NOCLIP-gated probe pass.
+The tile extra `BLASTER_TILE` (0x34) is **wire-empty** (one type byte; all 57
+corpus tiles round-trip byte-exact). `renderNpc` draws nothing for 8/15: the
+projectile is only its particles (`game/particles.rttex` cell (0,2),
+`game/particles2.rttex` cell (8,14), 16 px cells). Full reference:
+**`docs/blaster.md`**.
+
+Implemented in `gtools/core/growtopia/blaster.py` (`Blast`, `BlastParticle`,
+`BlastWorld`: add/delete/despawn/tick/check_kills), driven through the optional
+`PlayerController.blasts` (end of `_simulate`, matching `updateNPC`'s own timing)
+and drawn by `gtools/gui/lib/blaster_renderer.py` (`shaders/blaster*.vert`), owned
+by the world renderer; the demo's *Blaster* menu fakes the server ADD. Tests:
+`tests/test_blaster_{data,sim,renderer}.py`.
+
 ### Known POIs
 
 | Address | Symbol | Notes |
@@ -328,6 +358,15 @@ real tile-extra entry. Tests: `tests/test_cybot_{data,sim,renderer}.py`.
 | `0x1403EA2B0` | `cybotIsActive` | draw/execute gate (lock owner / activated) |
 | `0x1403EB420` | `cybotRender` | npc1.rttex frames, alpha 255/128 |
 | `0x14053C9A0` | `deserializeItemDatabase` | items.dat parser; verified item-record offsets (`flags2+0x74`, `cybot_related+0x78`, `frame_interval_ms+0x10C`) |
+| `0x1403F3DF0` | `handleNPC` | tank `TANK_NPC` event switch (0..9) |
+| `0x1402B6260` | `npc` | per-event NPC vector mutation |
+| `0x1402B56F0` | `createNpcAndPushBack` | NPC ADD fields, uid reuse, 106 cap, blaster spawn gate |
+| `0x1402B73D0` | `npcDeserialize` | 30-byte NPC entry (full-state list) |
+| `0x1402B7530` | `updateNPC` | cases 8/15: trail + motion + the blast kill test |
+| `0x1402B5A40` | `npcHandleAction` | DIE burst (4x212 / effects 178+223) |
+| `0x1402B59E0` | `npcResetAction` | DELETE (silent) |
+| `0x1402B6950` | `renderNpc` | no sprite for NPC types 8/15 |
+| `0x140556710` | `setTileNextUpdate` | `Tile+0x4C = now + delay` |
 
 ## 5. Controller conventions
 
@@ -349,6 +388,11 @@ real tile-extra entry. Tests: `tests/test_cybot_{data,sim,renderer}.py`.
   `_touch` probe pass runs the robot melee + deadly-projectile check, the same
   place the client's `FindNearestInteractableTile` does. The host owns the
   simulation clock and calls `CyBotWorld.tick(now_ms)`.
+- Blaster blasts: `PlayerController.blasts` (a `BlastWorld`) is optional; when
+  set, the end of `_simulate` runs `check_kills` (the client runs that test in
+  `updateNPC`, *not* in the probe pass, so NOCLIP does not exempt you). The host
+  owns the clock and calls `BlastWorld.tick()`; `add`/`delete`/`despawn` are the
+  server's NPC events. A blast hit does not remove the blast.
 - Special tiles / clothing: `_apply_wind` (WIND push tiles),
   `_gravity_well_pull` (Gravity Well), `_try_climb` + `climbing` (Wall Climbing
   gear via `Player.clothing`), `_slippery_clothing` / `_wearing_skates`

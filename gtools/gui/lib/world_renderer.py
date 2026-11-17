@@ -53,6 +53,7 @@ from gtools.gui.lib.gui_menu_renderer import GuiMenuRenderer
 from gtools.gui.lib.player_renderer import PlayerRenderer
 from gtools.gui.lib.npc_renderer import NpcRenderer
 from gtools.gui.lib.cybot_renderer import CyBotRenderer
+from gtools.gui.lib.blaster_renderer import BlasterRenderer
 import gtools.gui.lib.perf_stats as perf_stats
 from gtools.gui.panels.panel import Panel
 
@@ -215,6 +216,9 @@ class WorldRenderer:
         self._cybot_renderer = CyBotRenderer()
         self._cybot_renderer.load(self._world)
 
+        self._blaster_renderer = BlasterRenderer()
+        self._blaster_renderer.load()
+
         self._dropped_object_renderer = DroppedObjectRenderer()
 
         self._history_2d: deque[tuple[glm.vec2, float]] = deque(maxlen=10)
@@ -298,6 +302,15 @@ class WorldRenderer:
         ``controller.cybots`` so the avatar's probe pass applies robot damage.
         """
         return self._cybot_renderer.sim
+
+    @property
+    def blasts(self):
+        """The world's blast simulation (Howler / Trickster NPCs + particles).
+
+        Ticked by :meth:`update`. Hosts that run a local ``PlayerController`` bind
+        it as ``controller.blasts`` so the kill test runs during the avatar update.
+        """
+        return self._blaster_renderer.sim
 
     @property
     def mixer(self) -> AudioMixer:
@@ -460,6 +473,12 @@ class WorldRenderer:
         )
 
         self._render_order.add(
+            "Blasters",
+            lambda camera, cull: self._blaster_renderer.draw(camera),
+            lambda camera3d, layer_spread: self._blaster_renderer.draw_3d(camera3d, layer_spread),
+        )
+
+        self._render_order.add(
             "CyBots",
             lambda camera, cull: self._cybot_renderer.draw(camera),
             lambda camera3d, layer_spread: self._cybot_renderer.draw_3d(camera3d, layer_spread),
@@ -576,6 +595,7 @@ class WorldRenderer:
         self._player_renderer.delete()
         self._npc_renderer.delete()
         self._cybot_renderer.delete()
+        self._blaster_renderer.delete()
         self._tile_overlay_renderer.delete()
         if self._tile_overlay_mesh:
             self._tile_overlay_mesh.delete()
@@ -713,6 +733,11 @@ class WorldRenderer:
         # ticks them from the WorldView update, not from the avatar) and keep the
         # view dirty while anything is animating
         if self._cybot_renderer.update():
+            self._dirty = True
+
+        # blasts move and their trail particles age every frame, independent of
+        # the avatar (client: the WorldView NPC update)
+        if self._blaster_renderer.update():
             self._dirty = True
 
         if self._playing and self._seek == 0:

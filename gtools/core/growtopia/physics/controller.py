@@ -132,6 +132,7 @@ from gtools.core.growtopia.player import CharacterFlags, CharacterState, Clothin
 from gtools.core.growtopia.world import BalloonOMaticTile, DoorTile, DroppedItem, LockTile, SeedTile, StormyCloudTile, Tile, TileFlags, World
 
 if TYPE_CHECKING:
+    from gtools.core.growtopia.blaster import BlastWorld
     from gtools.core.growtopia.cybot import CyBotWorld
     from gtools.core.growtopia.inventory import Inventory
 
@@ -428,6 +429,11 @@ class PlayerController:
         # the deadly-projectile check, exactly like the client's
         # FindNearestInteractableTile (see gtools/core/growtopia/cybot.py).
         self.cybots: CyBotWorld | None = None
+
+        # the world's blast NPCs (Howler / Trickster). The client evaluates their
+        # kill test inside updateNPC, so it is checked from _simulate rather than
+        # from the probe pass -- see the hook below.
+        self.blasts: BlastWorld | None = None
 
         # vertical-axis state (NetAvatar::integrateVerticalAxis 0x140510580)
         self.water_float = False  # avatar+0x1FB9: water vehicles suppress water gravity for 3 s
@@ -739,6 +745,12 @@ class PlayerController:
         self._move((self.vx + pull_x) * dt, 0)
         self._move((self.vy + pull_y) * dt, 1)
         self._settle()
+
+        # Blasts kill from inside the client's NPC update (updateNPC, cases 8/15),
+        # not from the avatar's probe pass -- so this runs for every avatar,
+        # including a NOCLIP one whose _touch pass returns early.
+        if self.blasts is not None:
+            self.blasts.check_kills(self)
 
         self.x = max(0.0, min(self.world.width * TILE - self.width, self.x))
         self.y = max(0.0, min(self.world.height * TILE - self.height, self.y))

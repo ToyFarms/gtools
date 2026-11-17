@@ -484,67 +484,62 @@ Design decisions:
 
 ---
 
-# M17: BLASTER (Howler/Trickster) mechanics — data → sim → renderer | status: in_progress
+# M17: BLASTER (Howler/Trickster) mechanics — data → sim → renderer | status: completed
 
-Requested after M16 (Cybot): same pattern — data → sim → renderer. BLASTER is an
-item_type 93 (Howler 4344 / Trickster 8020). The client's blast is a **server-
-spawned NPC** (types 8=NORMAL_FEATHER_ATTACK / 15=ULT_FEATHER_ATTACK) that
-moves straight, emits particles (212 / 276), and kills the player on overlap.
-The tile extra has **no wire fields** — only a 1-byte type `0x34`. The server
-decides when to fire (rate-of-fire wrench, 10-blast cap); the client simulates
-the blast and kill.
+Requested after M16 (Cybot): same pattern — data → sim → renderer. BLASTER is
+item_type 93 (Howler 4344 / Trickster 8020). Verified model: a blast is **not a
+tile entity** — the server spawns it as an **NPC** (type 8 = `NpcType.BLAST`, 15 =
+`NpcType.TRICKSTER`) and the client only simulates motion, the 0.1 s trail
+(particles 212 / 276) and the kill test inside `updateNPC`. There is no client
+firing path, so fire cadence / speed / lifetime are `[server-side]`; the earlier
+"10-blast cap" note was unsupported and has been removed. The tile extra
+`BLASTER_TILE` (0x34) is wire-empty (one byte, 57/57 corpus tiles).
 
-Client evidence (recon from `export/ida_pseudocode/` + items.dat + world scan):
-- `TileExtra::Parse` case `0x34` (HOWLER_TILE / TRICKSTER_TILE): reads **nothing** —
-  only the type byte. The client path never sees the `state/tile_type/interval`
-  fields because `someFlag=1` (SEND_MAP_DATA and tile updates). Wire = just `0x34`.
-- Items: Howler 4344 / Trickster 8020, `item_type=BLASTER(93)`, `frame_interval_ms=400`.
-- Tank → NPC: `animation_type=2` (ADD) → `npc` → `createNpcAndPushBack` with
-  `object_type`=8 or 15 (NORMAL/ULT FEATHER_ATTACK), `param1/2/3` ← `int_x`/
-  `int_y`/`particle_rotation` = speed / max-time / angle (deg).
-- `updateNPC` types 8 / 15: straight-line motion (`pos += dir(param3°) * speed * dt`),
-  particle every 0.1 s (212 / 276), collision with player rect → `killPlayer`
-  (gates: avatar+0x179/+0x17A + NOCLIP, avatar state 0x2088==6, not on Main Door).
-- Tile fires: `createNpcAndPushBack` checks `fg_type == IIT_BLASTER(93)` on the
-  tile under the spawn → `setTileNextUpdate(tile, 1000)` + `playAudio("audio/flame_go.wav")`.
-- Particles: 8 → id 212 (`particles.rttex`, 16px cyan ring at (0,2)), 15 → id 276
-  (`particles2.rttex`, 32px blue cannonball at (8,14)). Drawn by `spriteDraw`.
-- No client firing path — server decides (wrench sets rate, 10-blast cap).
-- Rendering: `renderNpc` has no case for types 8/15 (fall-through to ghast
-  sheet, but `typeInGlobalVector2` list = {1,12,4,6,7,11}; blasters not in it)
-  → drawn as particles only.
+### T17.1: data layer | status: completed
+- [x] S17.1.1: `BlasterTile` empty extra confirmed (57/57 corpus tiles = 1 byte, byte-exact world round-trip; the 6-byte layout sits behind `someFlag=1`)
+- [x] S17.1.2: items.dat — only 2 BLASTER items, no payload (`flags2 0`, `cybot None`, `frame_interval_ms 400` = sprite rate)
+- [x] S17.1.3: world scan — 21 files / 57 tiles (41 Trickster / 16 Howler); report `/tmp/opencode/blaster-recon/data.md`
+- [x] S17.1.4: `tests/test_blaster_data.py` (5) — item fields, 1-byte extra, FIND byte run, 30-byte NPC entry
 
-Ground truth: same sources as M15/16 (`items.dat`, `export/ida_pseudocode/`,
-world files under `/mnt/c/Users/andra/.gtools/worlds` for WOLFWORLD8 etc.).
+### T17.2: simulation core | status: completed
+- [x] S17.2.1: `blaster.py` — `Blast` (from_npc/update: emit-then-move), `BlastParticle`; motion `(cos,sin)(param3°)*(int)param2*dt`; no collision/lifetime
+- [x] S17.2.2: `BlastWorld` — add (uid reuse, 106 cap, spawn-tile 1000 ms timer + `audio/flame_go.wav`), delete (silent), despawn (4x212 / effects 178+223), tick (trail + ageing), check_kills
+- [x] S17.2.3: kill gates — point-in-rect (either ordering), dying gate (`state_2088 == 6`), hitbox-centre tile exists and `item_type != DOOR` (13); a hit does not consume the blast
+- [x] S17.2.4: `PlayerController.blasts` hook at the **end of `_simulate`** (client: inside `updateNPC`, not the probe pass, so NOCLIP is not exempt)
 
-### T17.1: data layer | status: in_progress
-- [ ] S17.1.1: wire decode — confirm `BlasterTile` empty (state/tile_type/interval never read)
-- [ ] S17.1.2: items.dat BLASTER payload (only 2 items: 4344/8020; seeds are separate)
-- [ ] S17.1.3: world scan — 21 files, 57 tiles (41 Trickster / 16 Howler); empty extras
+### T17.3: renderer | status: completed
+- [x] S17.3.1: `shaders/blaster{.vert,3d.vert,.frag}` + `BlasterRenderer` (particles only — `renderNpc` draws no sprite for 8/15)
+- [x] S17.3.2: 212 -> `game/particles.rttex` (0,2); 276 -> `game/particles2.rttex` (8,14); 16 px cells, scale 1.0, rotated to the heading
+- [x] S17.3.3: `world_renderer.py` integration (render order "Blasters", `layer.BLAST = -71.45`, per-frame tick, delete)
+- [x] S17.3.4: headless `particle_instances()` math (no GL)
 
-### T17.2: simulation core | status: pending
-- [ ] S17.2.1: `gtools/core/growtopia/blaster.py` — typed specs (speed, angle, lifetime),
-  `Blaster` (spawn params, straight motion, 0.1 s particles, kill on overlap)
-- [ ] S17.2.2: `BlasterWorld` (load/sync_tile/tick, melee+projectile kills from
-  `FindNearestInteractableTile` path)
-- [ ] S17.2.3: `PlayerController.blasters` hook in `_touch` (same probe pass)
+### T17.4: tests | status: completed
+- [x] S17.4.1: `tests/test_blaster_sim.py` (29) — spawn/motion/trail/cap/bursts/kill gates/controller hook
+- [x] S17.4.2: `tests/test_blaster_renderer.py` (3) — sheet/cell/offset/angle
+- [x] S17.4.3: 62 tests green across the blaster + cybot suites
 
-### T17.3: renderer | status: pending
-- [ ] S17.3.1: `shaders/blaster.vert/frag` + `BlasterRenderer` (particles only,
-  type 8 cyan ring 16px @ (0,2) from `particles.rttex`; type 15 blue ball 32px
-  from `particles2.rttex`)
-- [ ] S17.3.2: `world_renderer.py` integration (render order, per-frame tick,
-  dirty flag, TILE_UPDATE sync)
-- [ ] S17.3.3: headless frame-math tests (no GL)
-
-### T17.4: tests | status: pending
-- [ ] S17.4.1: `tests/test_blaster_data.py` (items + empty tile-extra round-trip)
-- [ ] S17.4.2: `tests/test_blaster_sim.py` (spawn params, motion, particles,
-  melee/projectile kills, controller hook)
-- [ ] S17.4.3: `tests/test_blaster_renderer.py` (instance math, particle frames)
-
-### T17.5: docs + commit | status: pending
-- [ ] S17.5.1: `docs/blaster.md` (wire, NPC types, specs, 10-blast cap, no client fire)
-- [ ] S17.5.2: AGENTS.md pointer + mission files; commit on `feat/blaster`
+### T17.5: docs + commit | status: completed
+- [x] S17.5.1: `docs/blaster.md` (11 sections, verified vs inferred marks, §10 deviations: build-override bytes, `MAX_PARTICLES`)
+- [x] S17.5.2: AGENTS.md blaster section + 9 POI rows + controller bullet
+- [x] S17.5.3: demo carries a *Blaster* menu that fakes the server ADD (`BLAST_DEMO_SPEED` viewer default), shows counts, clears
 
 Evidence folder: `/tmp/opencode/blaster-recon/`.
+
+---
+
+# M18: CyBot melee re-confirmation + BLASTER runtime proof | status: completed
+
+Requested: "confirm again the damaging behaviour of cybot (sometimes damaged and
+clipped into the cybot, back and forth inside the collision box)" and "test that
+the BLASTER item works".
+
+### T18.1: cybot melee | status: completed
+- [x] S18.1.1: re-read `cybotApplyMeleeDamage` 0x1403EA370, `handleDamagingTileCollision` 0x1404FBFF0, `sub_1404FC0B0`; gtools `_damaging_x/_damaging_y`, the gate order and the axis fold all match
+- [x] S18.1.2: every stock ROBOT has `cybot_related[11] = 0` (20/20 items) so the world hit gate never blocks a contact
+- [x] S18.1.3: probe (`step()` at 60 Hz, ShockBot + FlameBot): hit -> `vx = -vx` clamped to +-300 -> walk back in -> hit, period ~31 frames while the direction key is held = the client's own `*a2 = -*a2` loop, not a port bug
+- [x] S18.1.4: `tests/test_cybot_sim.py::test_stock_robot_rehits_on_the_next_frame` pins it (X axis, +-300 flip, `next_hit_ms == now`)
+
+### T18.2: blaster runtime | status: completed
+- [x] S18.2.1: demo *Blaster* menu spawns Howler/Trickster blasts (4 directions + facing) so the trail and the kill can be exercised by hand
+- [x] S18.2.2: headless GL harness: 3 blasts + a DIE burst, 6 rendered frames, both sheets, `glGetError() == 0`, no traceback
+- [x] S18.2.3: full demo loop runs 20 s with only this environment's PortAudio error (no audio device)

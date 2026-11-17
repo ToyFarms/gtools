@@ -1846,6 +1846,22 @@ class DnaExtractorTile(TileExtra):
 
 @dataclass(slots=True)
 class BlasterTile(TileExtra):
+    """BLASTER_TILE (0x34) -- Howler (4344) / Trickster (8020).
+
+    Wire format: **empty** -- only the u8 type byte ``0x34``.
+
+    ``TileExtra::Parse`` (0x1405588F0) has one case for this type (the IDB calls
+    it ``HOWLER_TILE``) and it is split by ``someFlag``: only when
+    ``someFlag == 0`` does it read a payload (one state byte, one ``tileType``
+    byte and a u32 ``placedTimestamp``). Every client path that parses a world or
+    a tile update passes ``someFlag = 1``, so that payload never appears on the
+    wire -- a scan of 57 blaster tiles across 21 world files confirms the extra
+    is exactly one byte, with the next tile's data immediately after it.
+
+    The blast itself is not stored here at all: the server spawns it as an NPC
+    (see ``gtools/core/growtopia/blaster.py`` and ``docs/blaster.md``).
+    """
+
     type: TileExtraType = TileExtraType.BLASTER_TILE
 
     @classmethod
@@ -2754,6 +2770,10 @@ class Tile:
     bg_tex_index: int = 0
     overlay_tex_index: int = 0  # ON_FIRE, IS_WET
     json_data: dict = field(default_factory=dict)
+
+    # client runtime timer (Tile+0x4C, setTileNextUpdate 0x140556710: now + delay).
+    # Client-side only -- never serialized; the blast spawn writes 1000 ms here.
+    next_update_ms: int = 0
 
     logger = logging.getLogger("tile")
 

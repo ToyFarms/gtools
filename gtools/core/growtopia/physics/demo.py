@@ -17,7 +17,7 @@ from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 from gtools import setting
 from gtools.baked.items import MAIN_DOOR, SNOWSHOES
 from gtools.core.growtopia.items_dat import ItemInfoClothingType, item_database
-from gtools.core.growtopia.world import World
+from gtools.core.growtopia.world import Npc, NpcType, World
 from gtools.core.growtopia.player import Player
 from gtools.gui.event import EventRouter, KeyEvent, MouseButtonEvent, ResizeEvent
 from gtools.gui.lib.world_renderer import WorldRenderer
@@ -71,6 +71,11 @@ PLAYER_NET_ID = 1
 _TILE_HALF = TILE / 2.0
 
 RECORDING_DIR = Path(__file__).resolve().parent / "recordings"
+
+# Blaster blasts are server-spawned (`docs/blaster.md`): the client receives the NPC
+# and only simulates it, so there is no item field that carries the speed. The demo
+# therefore invents one for its spawn buttons -- 400 px/s = 12.5 tiles/s.
+BLAST_DEMO_SPEED = 400
 
 # -- modifier menu ---------------------------------------------------------------------
 # The Player menu lists the engine's clothing *modifiers* (one collapsing header per
@@ -276,6 +281,11 @@ class GPUPhysicsDemo:
         # FindNearestInteractableTile -> cybotProbeAll / cybotProjectilesCheckKill.
         self.controller.cybots = self.world_renderer.cybots
 
+        # blasts: the renderer owns and ticks the simulation; the controller's
+        # update-time check applies the client's kill test (updateNPC 8/15).
+        self.controller.blasts = self.world_renderer.blasts
+        self._next_blast_uid = 1
+
         self.player = Player(
             net_id=PLAYER_NET_ID,
             name=b"Player",
@@ -361,6 +371,35 @@ class GPUPhysicsDemo:
         self.controller.double_jumped = False
         self._camera_snapped = False
         self._sync_player_entity()
+
+    def _spawn_blast(self, npc_type, angle: float, distance: float = TILE) -> None:
+        """Stand in for the server's NPC ADD packet (the client never fires a blaster).
+
+        ``docs/blaster.md`` §1: the server spawns the blast NPC and the client only
+        simulates it, so with no server the demo emits exactly the ADD the tank
+        packet would -- ``object_type`` (8 Howler / 15 Trickster), the uid, the
+        position, ``int_x`` (unused), ``int_y`` (speed, px/s) and
+        ``particle_rotation`` (heading, degrees, +y down).
+
+        The spawn point sits ``distance`` px from the avatar centre along the
+        heading (one tile by default), so a blast does not start inside the
+        hitbox; ``distance=0`` spawns it on the avatar, which exercises the kill.
+        """
+        cx = self.controller.x + self.controller.width / 2
+        cy = self.controller.y + self.controller.height / 2
+        radians = math.radians(angle)
+        pos = vec2(cx + math.cos(radians) * distance, cy + math.sin(radians) * distance)
+        blast = Npc(
+            type=npc_type,
+            id=self._next_blast_uid,
+            pos=pos,
+            target_pos=pos,
+            param1=0,
+            param2=BLAST_DEMO_SPEED,
+            param3=angle,
+        )
+        self._next_blast_uid = self._next_blast_uid % 255 + 1
+        self.world_renderer.blasts.add(blast, self.world)
 
     def _sync_player_entity(self) -> None:
         self.player.pos = vec2(*self._render_pos())
@@ -1078,6 +1117,27 @@ class GPUPhysicsDemo:
 
             if imgui.button("Reset position"):
                 self._reset_avatar()
+
+            if imgui.collapsing_header("Blaster"):
+                imgui.text_disabled("Server-spawned blasts (Howler / Trickster)")
+                imgui.text_disabled("The client never fires; these fake the server's ADD.")
+                blasts = self.world_renderer.blasts
+                imgui.text(f"Blasts: {len(blasts.blasts)}   particles: {len(blasts.particles)}")
+
+                imgui.text_disabled("Howler, one tile ahead, flying that way:")
+                for index, (label, angle) in enumerate((("W", -90.0), ("A", 180.0), ("S", 90.0), ("D", 0.0))):
+                    if index:
+                        imgui.same_line()
+                    if imgui.button(f"Blast {label}"):
+                        self._spawn_blast(NpcType.BLAST, angle)
+                if imgui.button("Trickster ahead"):
+                    self._spawn_blast(NpcType.TRICKSTER, 0.0 if self.controller.facing_right else 180.0)
+                imgui.same_line()
+                if imgui.button("Howler on me"):
+                    self._spawn_blast(NpcType.BLAST, 90.0, distance=0.0)
+                imgui.same_line()
+                if imgui.button("Clear"):
+                    blasts.clear()
 
             if imgui.collapsing_header("Pathfinding"):
                 imgui.text_disabled("Ctrl+Click a tile to pathfind")

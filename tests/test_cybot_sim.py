@@ -352,6 +352,32 @@ def test_pointy_robot_knocks_back_and_arms_the_damage_event() -> None:
         assert player.vx >= 300.0
 
 
+def test_stock_robot_rehits_on_the_next_frame() -> None:
+    """Every stock ROBOT has ``cybot_related[11] == 0``, so the world hit gate
+    (``WorldView+0x3600 > now``) never blocks a second contact: standing inside the
+    20x20 melee box is damaged again on the very next tick, and the X response is
+    ``vx = -vx`` clamped to 300 px/s away -- i.e. the client's back-and-forth while
+    a direction key is held into the robot. Pinned here because it looks like a
+    bug and is not one.
+    """
+    world, _ = make_world(SHOCKBOT_LEVEL_1, [])  # ROBOT_POINTY, cooldown 0
+    sim, robot = make_sim(world, Clock(0))
+    world.set_local_player(1)
+    player = PlayerController(world, auto_respawn=False)
+    # left of the robot, rect centre level with the box -> the X response axis
+    player.spawn(ROBOT_CENTER[0] - 28.0, ROBOT_CENTER[1] - 15.0)
+
+    player.vx = -50.0
+    assert [hit.kind for hit in sim.apply_melee(player)] == ["damage"]
+    assert robot.hit_axis == 0
+    assert player.vx == 300.0  # inverted and clamped away from the box
+    assert sim.next_hit_ms == 0  # now + 0: the gate stays open
+
+    player.vx = 50.0
+    assert [hit.kind for hit in sim.apply_melee(player)] == ["damage"]
+    assert player.vx == -300.0  # and back again
+
+
 def test_lava_robot_uses_the_fire_damage_event() -> None:
     world, _ = make_world(FLAMEBOT_LEVEL_1, [])  # ROBOT_LAVA
     sim, _ = make_sim(world, Clock(0))
