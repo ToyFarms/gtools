@@ -432,6 +432,37 @@ On overlap:
   same responses as lava/spike tiles → the player is pushed and optionally
   burned.
 
+### 7.1 The knockback is velocity-relative, not robot-relative
+
+The X response (`handleDamagingTileCollision` 0x1404FBFF0) is `*vx = -*vx`,
+clamped to ≥300 px/s in the new direction while `damageSlip` is clear; the Y
+response (`sub_1404FC0B0`) launches `vy` to -800 / flips a rising `vy` / -50
+without a vertical axis, sets `damageSlip` and clamps `vx`. Both write the
+avatar's velocity components that `NetAvatar::tickAux` (0x140503160) unpacks
+before `FindNearestInteractableTile` and re-packs afterwards — the knockback is
+plainly a velocity flip, with **no notion of where the robot is**.
+
+Consequences (all measured in the engine port, `tests/test_cybot_sim.py`):
+
+- Touching the box while standing still (or moving away from it) flips `-0.0`
+  to **+300 px/s — into the box** when the bot is on that side. This is the
+  "clipped into the cybot" feel: the response itself shoves the player in.
+- The corner test passes for the player's whole 40 px engagement band
+  (`box.left - 20 … box.right` at floor level), and stock cooldown is 0, so
+  once inside, **every frame hits**: measured 240/240 and 600/600 frames of
+  contact, the player jittering ±5 px around the touch point (one 5 px step per
+  flip at 300 px/s / 60 Hz).
+- **No input escapes a running juggle**: walking away, walking into the bot and
+  jump spam are all re-flipped on the next frame (the flip always reverses the
+  step). It ends only when the box moves away with the robot's command cycle,
+  the robot is disarmed, `IGNORE_SPIKES` is set, or the player dies.
+- The normal knockback feel (bounce out) happens only when the *first* contact
+  catches the player moving toward the box near the band's edge: the flip then
+  points out and the 5 px step clears the band before the next hit.
+- The angle fold is `acos(dot(v, +X̂) / (|v|·1))` in degrees
+  (`sub_14002F9F0` + `sub_14002EA70`): X axis iff `< 45° or > 135°`, i.e.
+  `|dx| > |dy|` — equivalent to the port's `atan2(|dy|, |dx|) < 45°`.
+
 ## 8. Rendering and the "active" gate
 
 - `cybotIsActive` (0x1403EA2B0) gates **both drawing and shots**: a robot is

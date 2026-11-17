@@ -17,6 +17,7 @@ from pyglm.glm import ivec2
 
 from gtools.baked.items import (
     COMMAND_BASIC_SHOT_DOWN,
+    DIRT,
     COMMAND_BASIC_SHOT_LEFT,
     COMMAND_BASIC_SHOT_RIGHT,
     COMMAND_BASIC_SHOT_UP,
@@ -376,6 +377,87 @@ def test_stock_robot_rehits_on_the_next_frame() -> None:
     player.vx = 50.0
     assert [hit.kind for hit in sim.apply_melee(player)] == ["damage"]
     assert player.vx == -300.0  # and back again
+
+
+def test_standstill_touch_shoves_you_into_the_box() -> None:
+    """The X response is ``vx = -vx`` clamped to 300 px/s -- relative to the
+    player's *velocity*, not away from the robot. Touching the box's left side
+    while standing still therefore flips -0.0 to +300: INTO the bot. With the
+    stock zero cooldown the corner test then re-hits on every frame, so the
+    player is shoved in and juggles +-5 px inside the box (the measured client
+    loop behind "clipped into the cybot, back and forth in the box").
+    """
+    floor = [Tile(fg_id=DIRT, pos=ivec2(x, ROBOT_TY + 1)) for x in range(12)]
+    world, _ = make_world(SHOCKBOT_LEVEL_1, [], extra_tiles=floor)
+    sim, _ = make_sim(world, Clock(0))
+    world.set_local_player(1)
+    player = PlayerController(world, auto_respawn=False)
+    player.cybots = sim
+    player.spawn(ROBOT_CENTER[0] - 26.0, (ROBOT_TY + 1) * TILE - HITBOX[1])  # x=150, grounded
+
+    player.step()  # touch pass: vx=0 -> -0.0 flips to +300, toward the box
+    assert player.vx == 300.0
+    assert 146.0 <= player.x <= 186.0  # inside the corner band
+    assert player.damaged is True
+
+    player.step()  # 5 px deeper: flipped back -- the +-5 px juggle
+    assert player.vx == -300.0
+
+
+def test_the_locked_juggle_has_no_input_escape() -> None:
+    """Measured escape map of the zero-cooldown juggle: once the +-300 px/s flip
+    dance is running, *no* input leaves the 40 px corner band -- walking away,
+    walking into the bot and jumping all get re-flipped on the next frame (the
+    flip is velocity-relative, so it always reverses the 5 px step). The juggle
+    ends only when the box moves away with the robot's command cycle, the robot
+    is disarmed, IGNORE_SPIKES is set, or the player dies. A fresh touch at the
+    band's edge while already walking toward the box does bounce out -- that is
+    the normal knockback feel.
+    """
+    floor = [Tile(fg_id=DIRT, pos=ivec2(x, ROBOT_TY + 1)) for x in range(12)]
+    world, _ = make_world(SHOCKBOT_LEVEL_1, [], extra_tiles=floor)
+    sim, _ = make_sim(world, Clock(0))
+    world.set_local_player(1)
+    player = PlayerController(world, auto_respawn=False)
+    player.cybots = sim
+    player.spawn(ROBOT_CENTER[0] - 26.0, (ROBOT_TY + 1) * TILE - HITBOX[1])
+
+    hits = 0
+    original = sim.apply_melee
+
+    def counting(target, now_ms=None):
+        nonlocal hits
+        hits += len(original(target, now_ms))
+        return []
+
+    sim.apply_melee = counting
+    try:
+        for _ in range(30):  # holding left = away from the bot: trapped
+            player.set_input(left=True)
+            player.step()
+        assert hits == 30  # damaged every single frame
+        assert 146.0 <= player.x <= 186.0
+
+        for _ in range(10):  # walking into the bot: still re-flipped every frame
+            player.set_input(right=True)
+            player.step()
+        assert hits == 40
+        assert 146.0 <= player.x <= 186.0
+    finally:
+        del sim.apply_melee  # restore the bound method
+
+    # a fresh touch at the band's edge while already moving toward the box
+    # bounces out: the flip points away and the 5 px step clears the band
+    world2, _ = make_world(SHOCKBOT_LEVEL_1, [], extra_tiles=floor)
+    sim2, _ = make_sim(world2, Clock(0))
+    world2.set_local_player(1)
+    player2 = PlayerController(world2, auto_respawn=False)
+    player2.cybots = sim2
+    player2.spawn(ROBOT_CENTER[0] - 30.0, (ROBOT_TY + 1) * TILE - HITBOX[1])
+    player2.set_input(right=True)
+    player2.step()  # contact at x=146..148, flip points out of the band
+    assert player2.x < 146.0
+    assert player2.damaged is True
 
 
 def test_lava_robot_uses_the_fire_damage_event() -> None:

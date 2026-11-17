@@ -538,6 +538,9 @@ the BLASTER item works".
 - [x] S18.1.2: every stock ROBOT has `cybot_related[11] = 0` (20/20 items) so the world hit gate never blocks a contact
 - [x] S18.1.3: probe (`step()` at 60 Hz, ShockBot + FlameBot): hit -> `vx = -vx` clamped to +-300 -> walk back in -> hit, period ~31 frames while the direction key is held = the client's own `*a2 = -*a2` loop, not a port bug
 - [x] S18.1.4: `tests/test_cybot_sim.py::test_stock_robot_rehits_on_the_next_frame` pins it (X axis, +-300 flip, `next_hit_ms == now`)
+- [x] S18.1.5 (follow-up "still clipped in at the bottom left"): full chain re-verified in the binary -- corner test (4x box corner vs player rect, `sub_1403EA370`), axis fold (`sub_14002F9F0` = acos vs +X unit vector + `sub_14002EA70` rad->deg => X iff |dx| > |dy|), armed gate (`sub_1403EA240` = activated>0, no IGNORE_SPIKES 0x400), response plumbing (`tickAux` 0x140503160 unpacks vx/vy -> probe -> re-pack; knockback writes those copies), frame order (probe before `moveByPixels`), clock (server-ms estimate `GameState+0x328`, gate moot at cooldown 0)
+- [x] S18.1.6: root cause of "clipped into": the X response is velocity-relative (`vx = -vx`), so a stand-still/away touch flips -0.0 to +300 INTO the box; stock cooldown 0 => corner test hits EVERY frame inside the 40 px band -> measured 240/240 + 600/600 frame juggles, +-5 px; NO input escapes a running juggle (away/into/jump all re-flipped); only a fresh edge touch while walking in bounces out
+- [x] S18.1.7: pinned by `test_standstill_touch_shoves_you_into_the_box` + `test_the_locked_juggle_has_no_input_escape`; docs/cybot.md §7.1 written (velocity-relative knockback + escape map)
 
 ### T18.2: blaster runtime | status: completed
 - [x] S18.2.1: demo *Blaster* menu spawns Howler/Trickster blasts (4 directions + facing) so the trail and the kill can be exercised by hand
