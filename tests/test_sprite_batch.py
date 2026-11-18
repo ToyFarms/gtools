@@ -192,3 +192,60 @@ def test_dropped_commands_build_the_full_command_set() -> None:
     assert [d.uid for d in sorted([Drop(3), Drop(1), Drop(2)], key=lambda d: d.uid)] == [1, 2, 3]
     # 12 f32 (pos2 + size2 + uv4 + layer + depth + paint + opacity) + 1 u32 (tint)
     assert SPRITE_INSTANCE_DTYPE.itemsize == 52
+
+
+def test_instances_are_not_lost_when_textures_share_one_array() -> None:
+    """The GLTexManager packs same-size rttex pages as layers of ONE array.
+
+    Meshes used to be keyed by the array alone, so every texture's mesh
+    overwrote the previous one and most of the chunk vanished. The instance
+    records themselves must keep one group per source texture.
+    """
+
+    @dataclass(eq=False)
+    class SharedTex:
+        width: int = TEX_SIZE[0]
+        height: int = TEX_SIZE[1]
+        layer: int = 0
+        array: str = "shared"  # every file lands in the same array
+
+    shared = {f"p{i}.rttex": SharedTex(layer=i, array="shared") for i in range(5)}
+
+    commands = [sprite(texture_file=f"p{i}.rttex", pixel_pos=(i * 4, 0)) for i in range(5)]
+    result = command_instances(commands, shared.get)
+
+    groups = result.layers[RenderLayer.FG]
+    assert len(groups) == 5  # one instance group per source texture
+    assert sum(len(v) for v in groups.values()) == 5  # none lost
+
+
+def test_dropped_renderer_draws_on_the_dedicated_dropped_band() -> None:
+    """Dropped objects sit on the OBJECT_DROPPED band above the entities (tuned)."""
+    from gtools.gui.lib.layer import OBJECT_DROPPED_END, OBJECT_DROPPED_START
+    from gtools.gui.lib.object_renderer import DEPTH_BANDS
+
+    assert DEPTH_BANDS[RenderLayer.OBJ_POST] == (OBJECT_DROPPED_START, OBJECT_DROPPED_END)
+    # the tile-scene bands stay untouched
+    from gtools.gui.lib.sprite_batch import LAYER_DEPTHS
+
+    assert LAYER_DEPTHS[RenderLayer.OBJ_POST][0] == OBJECT_POST_FOREGROUND_START
+
+
+def test_shadow_records_sit_in_the_lower_half_of_the_band() -> None:
+    cmd = sprite(layer=RenderLayer.OBJ_POST, pixel_pos=(0, 0), shadow=True)
+    filler = [sprite(layer=RenderLayer.OBJ_POST, pixel_pos=(100 + i, 0)) for i in range(7)]
+
+    result = command_instances([cmd, *filler], resolver)
+
+    band_start, band_end = LAYER_DEPTHS[RenderLayer.OBJ_POST]
+    icons = result.layers[RenderLayer.OBJ_POST][TEX_A]["depth"]
+    shadow = result.shadows[TEX_A]["depth"]
+    assert shadow[0] < icons[0]  # behind its own icon
+    assert band_start <= shadow[0] < band_start + 0.5 * (band_end - band_start)  # lower half
+
+
+def test_text_instance_layout_matches_the_pushed_floats() -> None:
+    """13 floats per glyph: offset(2) size(2) texOffset(2) texSize(2) z(1) color(4)."""
+    from gtools.gui.lib.text_renderer import TextRenderer
+
+    assert sum(TextRenderer.INSTANCE_LAYOUT) == 13

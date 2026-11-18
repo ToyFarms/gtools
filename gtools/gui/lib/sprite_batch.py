@@ -56,7 +56,7 @@ LAYER_DEPTHS: dict[RenderLayer, tuple[float, float]] = {
     RenderLayer.FG: (layer.WORLD_FOREGROUND, layer.WORLD_FOREGROUND),
     RenderLayer.FG_AFTER: (layer.WORLD_POST_FOREGROUND, layer.WORLD_POST_FOREGROUND),
     RenderLayer.OBJ_POST: (layer.OBJECT_POST_FOREGROUND_START, layer.OBJECT_POST_FOREGROUND_END),
-    RenderLayer.OBJ_TEXT: (layer.OBJECT_TEXT_START, layer.OBJECT_TEXT_END),
+    RenderLayer.OBJ_TEXT: (layer.WORLD_POST_FOREGROUND, layer.WORLD_POST_FOREGROUND),
     RenderLayer.FIRE: (layer.WORLD_FIRE, layer.WORLD_FIRE),
     RenderLayer.WATER: (layer.WORLD_WATER, layer.WORLD_WATER),
 }
@@ -111,8 +111,8 @@ def _tint_u32(cmd: RenderCommand) -> int:
     return _pack_rgba_u32(int(tint[0]), int(tint[1]), int(tint[2]), int(tint[3]))
 
 
-def _layer_depth(layer_name: RenderLayer, index: int, count: int) -> float:
-    start, end = LAYER_DEPTHS[layer_name]
+def _layer_depth(bands: dict[RenderLayer, tuple[float, float]], layer_name: RenderLayer, index: int, count: int) -> float:
+    start, end = bands[layer_name]
     if start == end:
         return start
     return start + (index + 0.5) / max(count, 1) * (end - start)
@@ -134,16 +134,20 @@ def _sprite_record(cmd: RenderCommand, tex: GLTex, depth: float) -> tuple:
     )
 
 
-def _shadow_record(cmd: RenderCommand, tex: GLTex, depth: float) -> tuple:
+def _shadow_record(cmd: RenderCommand, tex: GLTex, depth: float, band: tuple[float, float]) -> tuple:
     left, top = _world_top_left(cmd)
     size = float(cmd.sprite_size)
     centre = (left + size / 2 - WORLD_OFFSET + SHADOW_OFFSET[0], top + size / 2 - WORLD_OFFSET + SHADOW_OFFSET[1])
+    # the tuned shadow pass keeps the silhouette copies in the lower half of
+    # their object band (drawn first with the depth mask off)
+    start, end = band
+    shadow_depth = start + (depth - start) * 0.5 if end != start else start
     return (
         centre,
         (size, size),
         _sprite_uv(cmd, tex),
         float(tex.layer),
-        depth,
+        shadow_depth,
         0.0,
         SHADOW_TINT,
         SHADOW_OPACITY,
@@ -160,12 +164,15 @@ class CommandInstances:
     counts: dict[RenderLayer, int]
 
 
-def command_instances(commands: Sequence[Command], textures: TextureResolver) -> CommandInstances:
+def command_instances(commands: Sequence[Command], textures: TextureResolver, *, depth_bands: dict[RenderLayer, tuple[float, float]] | None = None) -> CommandInstances:
     """Convert commands (builder order) into per-layer instance records.
 
     Instances within a band keep the command order (the stable layer sort of
-    :func:`sort_commands`), so both backends draw the same scene.
+    :func:`sort_commands`), so both backends draw the same scene. ``depth_bands``
+    overrides :data:`LAYER_DEPTHS` per layer (the dropped-object renderer draws
+    its OBJ_POST commands on the dedicated dropped band above the entities).
     """
+    bands = depth_bands or LAYER_DEPTHS
     ordered = sort_commands(commands)
     counts = Counter(cmd.layer for cmd in ordered)
     index_in_layer: defaultdict[RenderLayer, int] = defaultdict(int)
@@ -177,13 +184,13 @@ def command_instances(commands: Sequence[Command], textures: TextureResolver) ->
     for cmd in ordered:
         layer_index = index_in_layer[cmd.layer]
         index_in_layer[cmd.layer] += 1
-        depth = _layer_depth(cmd.layer, layer_index, counts[cmd.layer])
+        depth = _layer_depth(bands, cmd.layer, layer_index, counts[cmd.layer])
 
         if isinstance(cmd, RenderCommand):
             tex = textures(cmd.texture_file)
             layers[cmd.layer][tex].append(_sprite_record(cmd, tex, depth))
             if cmd.shadow:
-                shadows[tex].append(_shadow_record(cmd, tex, depth))
+                shadows[tex].append(_shadow_record(cmd, tex, depth, bands[cmd.layer]))
         elif isinstance(cmd, TextCommand):
             texts.append((cmd, depth))
 
@@ -196,19 +203,26 @@ def command_instances(commands: Sequence[Command], textures: TextureResolver) ->
 
 
 def _place_top_left(renderer: TextRenderer, cmd: TextCommand) -> tuple[float, float]:
-    """Convert the command's ink-box top-left anchor into the text pipeline's baseline."""
-    first_bearing: float | None = None
-    max_bearing = 0.0
+    """Convert the command's client-space ink-box top-left anchor into the text pipeline's baseline (GUI space).
+
+    The SDF glyph bitmaps carry ``sdf_pixel_range`` px of padding per edge,
+    which the bearing values already include: the ink starts at
+    ``bearing + pad`` right of the pen and ``bearing - pad`` below the baseline.
+    """
+    first_ink_offset: float | None = None
+    max_ink_top = 0.0
+    pad = renderer.font.sdf_pixel_range
     for char, _ in parse_colored_text(cmd.text):
         glyph = renderer.font.get_char(char)
         if glyph.size[0] == 0:
             continue
-        if first_bearing is None:
-            first_bearing = glyph.bearing[0]
-        max_bearing = max(max_bearing, glyph.bearing[1])
+        if first_ink_offset is None:
+            first_ink_offset = glyph.bearing[0] + pad  # ink left, from the pen
+        max_ink_top = max(max_ink_top, glyph.bearing[1] - pad)  # ink top, below the baseline
 
-    x = cmd.pixel_pos[0] + cmd.offset[0] - (first_bearing or 0.0)
-    y = cmd.pixel_pos[1] + cmd.offset[1] + max_bearing
+    # client space -> GUI space (the -16 shift every sprite goes through)
+    x = cmd.pixel_pos[0] + cmd.offset[0] - (first_ink_offset or 0.0) - WORLD_OFFSET
+    y = cmd.pixel_pos[1] + cmd.offset[1] + max_ink_top - WORLD_OFFSET
     return x, y
 
 
@@ -244,13 +258,18 @@ class TextBatch:
             renderer.delete()
         self._renderers.clear()
 
-
 @dataclass(slots=True)
 class SpriteMeshes:
-    """The GL meshes built from one command batch (typically one chunk)."""
+    """The GL meshes built from one command batch (typically one chunk).
 
-    layers: dict[RenderLayer, dict[TextureArray, Mesh]] = field(default_factory=dict)
-    shadows: dict[TextureArray, Mesh] = field(default_factory=dict)
+    The GLTexManager packs same-size textures (every rttex page) as *layers*
+    of one shared TextureArray, so meshes are stored per array as a list --
+    one mesh per source texture -- and drawing binds the array once and draws
+    the list, like the tuned world pipeline did.
+    """
+
+    layers: dict[RenderLayer, dict[TextureArray, list[tuple[str, Mesh]]]] = field(default_factory=dict)
+    shadows: dict[TextureArray, list[tuple[str, Mesh]]] = field(default_factory=dict)
     texts: TextBatch | None = None
     counts: dict[RenderLayer, int] = field(default_factory=dict)
 
@@ -259,12 +278,14 @@ class SpriteMeshes:
 
     def delete(self) -> None:
         for meshes in self.layers.values():
-            for mesh in meshes.values():
-                mesh.delete()
+            for entries in meshes.values():
+                for _, mesh in entries:
+                    mesh.delete()
         self.layers.clear()
 
-        for mesh in self.shadows.values():
-            mesh.delete()
+        for entries in self.shadows.values():
+            for _, mesh in entries:
+                mesh.delete()
         self.shadows.clear()
 
         if self.texts is not None:
@@ -296,24 +317,30 @@ class SpriteBatch:
     def _texture(self, texture_file: str) -> GLTex:
         return self._tex_mgr.load_texture(setting.gt_path / "game" / texture_file)
 
-    def build(self, commands: Sequence[Command], *, existing: SpriteMeshes | None = None, usage: int = GL_STATIC_DRAW) -> SpriteMeshes:
+    def build(self, commands: Sequence[Command], *, existing: SpriteMeshes | None = None, usage: int = GL_STATIC_DRAW, depth_bands: dict[RenderLayer, tuple[float, float]] | None = None) -> SpriteMeshes:
         """Translate commands into meshes; with ``existing`` meshes are updated in place."""
-        instances = command_instances(commands, self._texture)
+        instances = command_instances(commands, self._texture, depth_bands=depth_bands)
         self._tex_mgr.flush()
 
-        layers: dict[RenderLayer, dict[TextureArray, Mesh]] = {}
+        existing_layers = existing.layers if existing is not None else {}
+        layers: dict[RenderLayer, dict[TextureArray, list[tuple[str, Mesh]]]] = {}
         for layer_name, per_tex in instances.layers.items():
-            layers[layer_name] = self._make_meshes(per_tex, existing.layers.get(layer_name) if existing else None, usage)
-        if existing is not None:
-            for layer_name, per_tex in existing.layers.items():
-                for arr, mesh in per_tex.items():
-                    if arr not in layers.get(layer_name, {}):
+            layers[layer_name] = self._make_meshes(per_tex, existing_layers.get(layer_name, {}), usage)
+        # drop meshes whose texture vanished from the rebuilt batch
+        for layer_name, per_array in existing_layers.items():
+            new_per_array = layers.get(layer_name, {})
+            for arr, entries in per_array.items():
+                kept = {key for key, _ in new_per_array.get(arr, [])}
+                for key, mesh in entries:
+                    if key not in kept:
                         mesh.delete()
 
-        shadows = self._make_meshes(instances.shadows, existing.shadows if existing else None, usage)
-        if existing is not None:
-            for arr, mesh in existing.shadows.items():
-                if arr not in shadows:
+        existing_shadows = existing.shadows if existing is not None else {}
+        shadows = self._make_meshes(instances.shadows, existing_shadows, usage)
+        for arr, entries in existing_shadows.items():
+            kept = {key for key, _ in shadows.get(arr, [])}
+            for key, mesh in entries:
+                if key not in kept:
                     mesh.delete()
 
         texts = TextBatch(instances.texts) if instances.texts else None
@@ -322,16 +349,19 @@ class SpriteBatch:
 
         return SpriteMeshes(layers=layers, shadows=shadows, texts=texts, counts=instances.counts)
 
-    def _make_meshes(self, src: dict[GLTex, np.ndarray], existing: dict[TextureArray, Mesh] | None, usage: int) -> dict[TextureArray, Mesh]:
-        result: dict[TextureArray, Mesh] = {}
+    def _make_meshes(self, src: dict[GLTex, np.ndarray], existing: dict[TextureArray, list[tuple[str, Mesh]]], usage: int) -> dict[TextureArray, list[tuple[str, Mesh]]]:
+        result: dict[TextureArray, list[tuple[str, Mesh]]] = {}
+        reused: set[str] = set()
+
         for tex, data in src.items():
-            if existing is not None and tex.array in existing:
-                mesh = existing[tex.array]
+            match = next((entry for entries in existing.values() for entry in entries if entry[0] == tex.key), None)
+            if match is not None:
+                key, mesh = match
                 mesh.update_instance_data(data)
                 mesh.set_instance_count(len(data))
-                result[tex.array] = mesh
+                reused.add(key)
             else:
-                result[tex.array] = Mesh(
+                key, mesh = tex.key, Mesh(
                     Mesh.RECT_WITH_UV_VERTS,
                     [2, 2],
                     Mesh.RECT_INDICES,
@@ -341,11 +371,13 @@ class SpriteBatch:
                     instance_attrib_base=2,
                     instance_capacity=max(len(data), 16),
                 )
+            result.setdefault(tex.array, []).append((key, mesh))
+
         return result
 
     def draw(self, camera: Camera2D, meshes: SpriteMeshes, layer_name: RenderLayer) -> None:
-        per_tex = meshes.layers.get(layer_name)
-        if not per_tex:
+        per_array = meshes.layers.get(layer_name)
+        if not per_array:
             return
 
         self._shader.use()
@@ -355,10 +387,11 @@ class SpriteBatch:
         if not depth_write:
             glDepthMask(GL_FALSE)
 
-        for arr, mesh in per_tex.items():
+        for arr, entries in per_array.items():
             arr.bind(unit=0)
             self._tex.set_int(0)
-            mesh.draw_instanced()
+            for _, mesh in entries:
+                mesh.draw_instanced()
 
         if not depth_write:
             glDepthMask(GL_TRUE)
@@ -374,16 +407,17 @@ class SpriteBatch:
         self._shader.use()
         self._mvp.set_mat4x4(camera.proj_as_numpy())
 
-        for arr, mesh in meshes.shadows.items():
+        for arr, entries in meshes.shadows.items():
             arr.bind(unit=0)
             self._tex.set_int(0)
-            mesh.draw_instanced()
+            for _, mesh in entries:
+                mesh.draw_instanced()
 
         glDepthMask(GL_TRUE)
 
     def draw_3d(self, camera3d: Camera3D, layer_spread: float, meshes: SpriteMeshes, layer_name: RenderLayer) -> None:
-        per_tex = meshes.layers.get(layer_name)
-        if not per_tex:
+        per_array = meshes.layers.get(layer_name)
+        if not per_array:
             return
 
         self._shader3d.use()
@@ -394,10 +428,11 @@ class SpriteBatch:
         if not depth_write:
             glDepthMask(GL_FALSE)
 
-        for arr, mesh in per_tex.items():
+        for arr, entries in per_array.items():
             arr.bind(unit=0)
             self._tex3d.set_int(0)
-            mesh.draw_instanced()
+            for _, mesh in entries:
+                mesh.draw_instanced()
 
         if not depth_write:
             glDepthMask(GL_TRUE)
@@ -414,9 +449,10 @@ class SpriteBatch:
         self._vp3d.set_mat4x4(camera3d.view_proj_as_numpy())
         self._spread3d.set_float(layer_spread)
 
-        for arr, mesh in meshes.shadows.items():
+        for arr, entries in meshes.shadows.items():
             arr.bind(unit=0)
             self._tex3d.set_int(0)
-            mesh.draw_instanced()
+            for _, mesh in entries:
+                mesh.draw_instanced()
 
         glDepthMask(GL_TRUE)

@@ -64,6 +64,7 @@ def parse_colored_text(text: str) -> list[tuple[str, tuple[float, float, float]]
 
 
 class TextRenderer(Renderer):
+    # instance components: offset(2), size(2), texOffset(2), texSize(2), z(1), color(4)
     INSTANCE_LAYOUT = [2, 2, 2, 2, 1, 4]
 
     def __init__(

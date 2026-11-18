@@ -17,7 +17,12 @@ from gtools.core.growtopia.world import DroppedItem
 from gtools.gui.camera import Camera2D
 from gtools.gui.camera3d import Camera3D
 from gtools.gui.lib.chunked_renderer import ChunkBounds, ChunkKey
-from gtools.gui.lib.sprite_batch import SpriteBatch, SpriteMeshes
+from gtools.gui.lib.layer import OBJECT_DROPPED_END, OBJECT_DROPPED_START
+from gtools.gui.lib.sprite_batch import LAYER_DEPTHS, SpriteBatch, SpriteMeshes
+
+# dropped objects draw on their dedicated band above the entities (the depth
+# values and the stage order in world_renderer are tuned around it)
+DEPTH_BANDS: dict[RenderLayer, tuple[float, float]] = {**LAYER_DEPTHS, RenderLayer.OBJ_POST: (OBJECT_DROPPED_START, OBJECT_DROPPED_END)}
 
 
 @dataclass(slots=True)
@@ -159,7 +164,7 @@ class ObjectRenderer:
         if existing is not None and existing.signature == signature_hash:
             return
 
-        meshes = self._batch.build(self._build_commands(items), existing=existing.meshes if existing is not None else None, usage=GL_DYNAMIC_DRAW)
+        meshes = self._batch.build(self._build_commands(items), existing=existing.meshes if existing is not None else None, usage=GL_DYNAMIC_DRAW, depth_bands=DEPTH_BANDS)
         self._chunks[key] = _Chunk(self._chunk_bounds(*key), meshes, len(items), signature_hash)
 
     def _delete_chunk(self, key: ChunkKey) -> None:
