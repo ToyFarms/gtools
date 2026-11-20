@@ -65,6 +65,13 @@ LAYER_DEPTHS: dict[RenderLayer, tuple[float, float]] = {
 LAYER_DEPTH_WRITE: dict[RenderLayer, bool] = {layer_name: True for layer_name in LAYER_DEPTHS}
 LAYER_DEPTH_WRITE[RenderLayer.FG_AFTER] = False
 
+# single-value layers spread their instances across this much depth in command
+# order: overlapping same-layer sprites (the seed base/overlay pair, ...) must
+# compose like the CPU does (later command wins), which the strict GL_LESS
+# depth test only gives them through distinct depth values. Far below the
+# smallest gap between two layer slots (1.0), so the tuned layer order holds.
+LAYER_EPSILON = 0.001
+
 TextureResolver = Callable[[str], GLTex]
 
 SPRITE_INSTANCE_DTYPE = np.dtype(
@@ -113,9 +120,8 @@ def _tint_u32(cmd: RenderCommand) -> int:
 
 def _layer_depth(bands: dict[RenderLayer, tuple[float, float]], layer_name: RenderLayer, index: int, count: int) -> float:
     start, end = bands[layer_name]
-    if start == end:
-        return start
-    return start + (index + 0.5) / max(count, 1) * (end - start)
+    span = end - start if end != start else LAYER_EPSILON
+    return start + (index + 0.5) / max(count, 1) * span
 
 
 def _sprite_record(cmd: RenderCommand, tex: GLTex, depth: float) -> tuple:

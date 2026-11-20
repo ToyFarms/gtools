@@ -204,6 +204,35 @@ def test_shelf_icons_in_the_four_corners() -> None:
     assert all(cmd.sprite_size == 9 for cmd in sprites(commands))  # icon_scale 0.3
 
 
+def test_seed_inside_display_block_stays_the_16px_pair() -> None:
+    """A displayed seed renders as its base/overlay pair centred in the cell,
+    never as the item icon scaled up to 32px (the pair would cover the block's
+    bottom strip where its shine shows)."""
+    tile = Tile(fg_id=VENDING_MACHINE, pos=ivec2(4, 5))
+    tile.extra = DisplayBlockTile(item_id=DIRT_SEED)
+
+    commands: list = []
+    build_tile_object_commands(tile, commands=commands)
+
+    pair = sprites(commands)
+    assert len(pair) == 2
+    assert all(cmd.texture_file == "seed.rttex" for cmd in pair)
+    assert all(cmd.sprite_size == 16 for cmd in pair)
+    # centred on the tile: client top-left = tile*32 + (8, 8)
+    assert pair[0].pixel_pos == (4 * 32 + 8, 5 * 32 + 8)
+    assert all(cmd.layer == RenderLayer.OBJ_PRE for cmd in pair)
+
+
+def test_object_icon_command_keeps_seeds_at_16px_for_every_group() -> None:
+    from gtools.core.growtopia.render_commands import build_dropped_item_commands
+
+    tile_cmds: list = []
+    build_tile_object_commands(Tile(fg_id=VENDING_MACHINE, pos=ivec2(0, 0), extra=None), commands=[])  # smoke: no extra
+    dropped = DroppedItem(pos=glm.vec2(0, 0), id=DIRT_SEED, amount=1)
+    build_dropped_item_commands(dropped, tile_cmds)
+    assert all(cmd.sprite_size == 16 for cmd in sprites(tile_cmds))
+
+
 def test_dropped_item_icon_overlay_and_amount_text() -> None:
     dropped = DroppedItem(pos=glm.vec2(3 * 32, 4 * 32), id=DIRT, amount=3)
 

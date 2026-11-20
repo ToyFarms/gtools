@@ -206,6 +206,15 @@ def _object_icon_command(
         return None
 
     item = item_database.get(dropped.id)
+
+    # seeds always render as their 16px base/overlay pair (the dedicated seed
+    # sprite), never as the item icon scaled by the group. The pair anchors at
+    # its top-left corner, so shift by half a cell to stay centred in the
+    # 32px cell the group positions.
+    if item.is_seed() and item.id != MUTATED_SEED:
+        _seed_icon_commands(dropped, layer, commands, pos_offset=(pos_offset[0] + 8, pos_offset[1] + 8))
+        return
+
     texture_file = item.texture_file.decode() if use_original_texture else (item.get_icon_texture() or item.texture_file.decode())
     if item.id == GEMS:
         tex_index = GEMS_TO_TEX_OFFSET.get(dropped.amount, 0)

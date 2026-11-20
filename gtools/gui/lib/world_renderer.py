@@ -1316,6 +1316,10 @@ class WorldRenderer:
                 self._keys_held.add(event.key)
                 if event.key == glfw.KEY_Z:
                     self._mode_3d = not self._mode_3d
+                    # an in-flight drag began under the other mode's handlers;
+                    # its gesture state would not match this mode's on_move
+                    for gesture in self._drag_gestures.values():
+                        gesture.active = False
                     self._dirty = True
                     return True
                 if event.key == glfw.KEY_F:
