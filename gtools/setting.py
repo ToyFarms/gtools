@@ -44,10 +44,8 @@ class ServerSetting(JsonMixin):
 
 @dataclass
 class HookSetting(JsonMixin):
-    start_delay_ms: int = field(default=2500)
     log_level: int = field(default=1)
     allow_any_module: bool = field(default=False)
-    stream_game_logs: bool = field(default=False)
     low_power: bool = field(default=False)
     low_power_fps: int = field(default=0)
     low_power_skip_draws: bool = field(default=False)

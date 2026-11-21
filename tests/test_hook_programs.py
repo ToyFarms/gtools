@@ -322,7 +322,7 @@ def test_registry_payload_contains_builtins():
     blob = registry.build_payload().pack()
     parsed = payload.unpack_payload(blob)
     keys = [d.key for d in parsed.descriptors]
-    assert {"log/printf", "log/raw", "net/response", "net/post", "render/frame", "render/submit"} <= set(keys)
+    assert {"net/response", "net/post", "render/frame", "render/submit"} <= set(keys)
     response = next(d for d in parsed.descriptors if d.key == "net/response")
     assert response.program == programs.response_rewrite_program().assemble()
     assert response.data == programs.response_data()

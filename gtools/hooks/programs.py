@@ -73,14 +73,6 @@ SCRATCH_OUT = 0x800
 SCRATCH_OUT_CAP = 2048
 
 # client signatures (5.6x+); the prologue decoder overrides the stolen length
-PAT_LOG_PRINTF = (
-    "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 88 10 00 00 "
-    "E8 ?? ?? ?? ?? 48 2B E0 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 70 10 00 00 48 8B D9 33 D2 48 8D 4C 24 70 41"
-)
-PAT_LOG_RAW = (
-    "48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 68 28 00 00 "
-    "E8 ?? ?? ?? ?? 48 2B E0 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 50 28 00 00 48 8B D9 33 D2 48 8D 4C 24 40 41"
-)
 PAT_RESPONSE = (
     "40 55 56 48 83 EC 28 81 BA ?? ?? ?? ?? C8 00 00 00 48 8B EA 48 8B 41 08 48 8B F1 75 1D "
     "C7 80 ?? ?? ?? ?? 00 00 00 00"
@@ -473,22 +465,6 @@ def register_builtin_hooks() -> None:
     if "log/printf" in registry.REGISTRY:
         return
 
-    register(
-        "log/printf",
-        patterns=[PAT_LOG_PRINTF],
-        stolen=27,
-        varargs_variant=0,
-        event_kind=EVENT_TEXT,
-        note="GameLog_Printf",
-    )
-    register(
-        "log/raw",
-        patterns=[PAT_LOG_RAW],
-        stolen=27,
-        varargs_variant=1,
-        event_kind=EVENT_TEXT,
-        note="GameLog_Raw",
-    )
     register(
         "net/response",
         patterns=[PAT_RESPONSE],

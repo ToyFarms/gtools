@@ -34,7 +34,7 @@ def fake_setting(monkeypatch):
     setting = Setting()
     setting.proxy_server = "10.0.0.5"
     setting.proxy_port = 17000
-    setting.hook = HookSetting(low_power=True, low_power_fps=42, low_power_skip_draws=True, stream_game_logs=True)
+    setting.hook = HookSetting(low_power=True, low_power_fps=42, low_power_skip_draws=True)
     monkeypatch.setattr(hook, "setting", setting)
     return setting
 
@@ -61,10 +61,6 @@ def test_settings_map_onto_runtime_writes(monkeypatch):
     assert calls[("STATE", "render/submit")][3] == 1
     assert calls[("ENABLE", "render/submit")] == ("ENABLE", "render/submit", True)
 
-    # game log streaming enables the two log hooks
-    assert calls[("ENABLE", "log/printf")] == ("ENABLE", "log/printf", True)
-    assert calls[("ENABLE", "log/raw")] == ("ENABLE", "log/raw", True)
-
 
 def programs_port_offset() -> int:
     from gtools.hooks import programs
@@ -82,9 +78,29 @@ def test_binds_the_control_for_later_runtime_calls(monkeypatch):
     assert ("ENABLE", "render/frame", False) in ctl.calls
 
 
-def test_rejected_writes_do_not_raise(monkeypatch):
+def test_rejected_writes_are_reported_not_raised(monkeypatch):
     fake_setting(monkeypatch)
     ctl = FakeControl()
-    ctl.fail_keys.add("log/raw")
+    ctl.fail_keys.add("render/frame")
     hook.apply_hook_settings(ctl)  # must not raise
-    assert ("ENABLE", "log/raw", True) in ctl.calls  # attempted, reported via log
+    assert ("ENABLE", "render/frame", True) in ctl.calls  # attempted, reported via log
+
+
+def test_transient_rejections_are_retried(monkeypatch):
+    fake_setting(monkeypatch)
+    ctl = FakeControl()
+    # the first two passes fail entirely (agent mid-swap), then succeed
+    attempts = {"n": 0}
+
+    def flaky_enable(key, on):
+        attempts["n"] += 1
+        if attempts["n"] <= 4:  # 2 pushes per pass x 2 passes
+            ctl.calls.append(("ENABLE", key, on))
+            return False
+        ctl.calls.append(("ENABLE", key, on))
+        return True
+
+    ctl.enable = flaky_enable
+    hook.apply_hook_settings(ctl)
+    assert ("ENABLE", "render/frame", True) in ctl.calls
+    assert attempts["n"] > 4  # it retried

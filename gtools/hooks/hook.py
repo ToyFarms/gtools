@@ -65,7 +65,7 @@ def build_payload_file(source: Setting | None = None) -> Payload:
     if not target.lower().endswith(".exe"):
         target += ".exe"  # gt_path may point at the install directory
     payload = registry.build_payload(
-        start_delay_ms=current.hook.start_delay_ms,
+        start_delay_ms=0,  # the scan retry window handles unpacking; no boot delay
         allow_any_module=current.hook.allow_any_module,
         target_process=target,
     )
@@ -466,7 +466,11 @@ def ensure_hook(wait_forever: bool = True) -> HookControl | None:
         # the hook runtime is windows-only; the wsl proxy uses the hosts redirect
         return None
     while True:
-        hook_ctl = _ensure_hook_once()
+        try:
+            hook_ctl = _ensure_hook_once()
+        except UacDeclined:
+            logger.warning("elevation declined, continuing without the hook")
+            raise
         if hook_ctl is not None:
             return hook_ctl
 
@@ -480,16 +484,24 @@ def ensure_hook(wait_forever: bool = True) -> HookControl | None:
         time.sleep(1.0)
 
 
+class UacDeclined(Exception):
+    """The user declined the elevation prompt; the hook setup cannot continue."""
+
+
 def _run_elevated_injector() -> bool:
     project_root = str(HOOKS_DIR.parent.parent)
     previous = os.environ.get("PYTHONPATH")
     os.environ["PYTHONPATH"] = project_root + (os.pathsep + previous if previous else "")
     try:
-        return elevate(
+        result = elevate_ex(
             wait_for_child=True,
             timeout=150,
             argv=[sys.executable, "-m", "gtools.hooks.hook", str(HOOK_STATUS)],
+            windowless=True,  # pythonw: no console window for the elevated helper
         )
+        if result.cancelled:
+            raise UacDeclined()
+        return result.success
     finally:
         if previous is None:
             os.environ.pop("PYTHONPATH", None)
@@ -506,8 +518,12 @@ def inject_hook() -> bool:
     if is_elevated():
         status = run_injector()
     else:
-        if not _run_elevated_injector():
-            logger.error("failed to start elevated injector (UAC cancelled or timed out)")
+        try:
+            started = _run_elevated_injector()
+        except UacDeclined:
+            raise
+        if not started:
+            logger.error("failed to start elevated injector (timed out)")
             return False
         status = read_inject_status()
 
@@ -551,38 +567,51 @@ def apply_hook_settings(ctl: HookControl, source: Setting | None = None) -> None
     """
     registry.set_control(ctl)
     current = source if source is not None else setting
-    hook_settings = current.hook
 
-    def push(action, description: str) -> None:
+    def apply_once() -> list[str]:
+        """Push every setting; returns the descriptions that were rejected."""
+        rejected: list[str] = []
+        hook_settings = current.hook
+
+        def push(action, description: str) -> None:
+            try:
+                ok = action()
+            except (PipeError, OSError):
+                raise  # the caller handles a dropped pipe
+            if not ok:
+                detail = f": {ctl.last_reply}" if ctl.last_reply else ""
+                logger.warning("the hook rejected %s%s", description, detail)
+                rejected.append(description)
+
+        response = registry.get("net/response")
+        push(lambda: response.set_data(programs.response_data(current.proxy_server, current.proxy_port)),
+             "net/response proxy data")
+
+        frame = registry.get("render/frame")
+        push(lambda: frame.set_state(0, int(hook_settings.low_power_fps)), "render/frame fps")
+        push(lambda: frame.set_enabled(bool(hook_settings.low_power)), "render/frame enable")
+
+        submit = registry.get("render/submit")
+        push(lambda: submit.set_state(0, 1 if hook_settings.low_power_skip_draws else 0), "render/submit skip")
+        push(lambda: submit.set_enabled(bool(hook_settings.low_power and hook_settings.low_power_skip_draws)),
+             "render/submit enable")
+
         try:
-            ok = action()
-        except (PipeError, OSError):
-            raise  # the caller handles a dropped pipe
-        if not ok:
-            detail = f": {ctl.last_reply}" if ctl.last_reply else ""
-            logger.warning("the hook rejected %s%s", description, detail)
+            ctl.log_level(int(hook_settings.log_level))
+        except PipeError:
+            logger.debug("could not push the agent log level", exc_info=True)
+        return rejected
 
-    response = registry.get("net/response")
-    push(lambda: response.set_data(programs.response_data(current.proxy_server, current.proxy_port)),
-         "net/response proxy data")
-
-    frame = registry.get("render/frame")
-    push(lambda: frame.set_state(0, int(hook_settings.low_power_fps)), "render/frame fps")
-    push(lambda: frame.set_enabled(bool(hook_settings.low_power)), "render/frame enable")
-
-    submit = registry.get("render/submit")
-    push(lambda: submit.set_state(0, 1 if hook_settings.low_power_skip_draws else 0), "render/submit skip")
-    push(lambda: submit.set_enabled(bool(hook_settings.low_power and hook_settings.low_power_skip_draws)),
-         "render/submit enable")
-
-    for key in ("log/printf", "log/raw"):
-        push(lambda key=key: registry.get(key).set_enabled(bool(hook_settings.stream_game_logs)),
-             f"{key} enable")
-
-    try:
-        ctl.log_level(int(hook_settings.log_level))
-    except PipeError:
-        logger.debug("could not push the agent log level", exc_info=True)
+    # the agent may still be swapping between hooked game instances at startup:
+    # an "unknown key" rejection is transient, retry the whole push
+    for attempt in range(10):
+        rejected = apply_once()
+        if not rejected:
+            if attempt:
+                logger.info("hook settings applied after %d retry(s)", attempt)
+            return
+        time.sleep(0.3)
+    logger.warning("hook settings still rejected after %d retries", 9)
 
 
 def forward_hook_state(fields: dict[str, str]) -> None:
@@ -634,7 +663,11 @@ def _push_pending_settings(ctl: HookControl) -> None:
 
 def _reattach_hook(stop: threading.Event) -> HookControl | None:
     while not stop.is_set():
-        fresh = ensure_hook(wait_forever=False)
+        try:
+            fresh = ensure_hook(wait_forever=False)
+        except UacDeclined:
+            logger.warning("elevation declined during reconnect, the hook stays detached")
+            return None
         if fresh is not None:
             return fresh
 
@@ -642,7 +675,11 @@ def _reattach_hook(stop: threading.Event) -> HookControl | None:
             stop.wait(0.5)
             continue
 
-        inject_hook()
+        try:
+            inject_hook()
+        except UacDeclined:
+            logger.warning("elevation declined during reconnect, the hook stays detached")
+            return None
         stop.wait(1.0)
 
     return
@@ -651,10 +688,7 @@ def _reattach_hook(stop: threading.Event) -> HookControl | None:
 def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
     current = ctl
     unsubscribe = subscribe(SettingChanged, _on_setting_changed)
-    sink = HookEventSink(
-        on_state=forward_hook_state,
-        stream_game_logs=bool(setting.hook.stream_game_logs),
-    )
+    sink = HookEventSink(on_state=forward_hook_state)
     registry.set_control(current)
 
     try:

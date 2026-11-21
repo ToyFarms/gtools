@@ -14,6 +14,7 @@ ELEVATE_FLAG = "--__elevate_token="
 class ElevationResult:
     success: bool
     proc_handle: Any | None = None
+    cancelled: bool = False  # the user declined the UAC prompt
 
 
 def is_elevated() -> bool:
@@ -32,9 +33,12 @@ def is_elevated() -> bool:
         return False
 
 
-def elevate(wait_for_child: bool = False, timeout: float | None = None, argv: list[str] | None = None) -> bool:
+def elevate_ex(wait_for_child: bool = False, timeout: float | None = None, argv: list[str] | None = None,
+               windowless: bool = False) -> ElevationResult:
+    """Elevate and return the full result, including whether the user
+    declined the UAC prompt."""
     if is_elevated():
-        return True
+        return ElevationResult(True)
 
     system = platform.system()
     token = uuid.uuid4().hex
@@ -42,23 +46,23 @@ def elevate(wait_for_child: bool = False, timeout: float | None = None, argv: li
 
     try:
         if system == "Windows":
-            result = _launch_elevated_windows(token, target_argv)
+            result = _launch_elevated_windows(token, target_argv, windowless=windowless)
         elif system == "Darwin":
             result = _launch_elevated_macos(token, target_argv)
         elif system == "Linux":
             result = _launch_elevated_linux(token, target_argv)
         else:
-            return False
+            return ElevationResult(False)
 
         if not result.success:
-            return False
+            return result
 
         child_handle = result.proc_handle
 
         if wait_for_child:
             if child_handle is None:
-                return False
-            return _wait_for_process_handle(child_handle, timeout)
+                return ElevationResult(False)
+            return ElevationResult(_wait_for_process_handle(child_handle, timeout))
 
         if child_handle is not None and platform.system() == "Windows":
             import ctypes
@@ -68,13 +72,24 @@ def elevate(wait_for_child: bool = False, timeout: float | None = None, argv: li
             kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
             kernel32.CloseHandle.restype = wintypes.BOOL
             kernel32.CloseHandle(child_handle)
-        return True
+        return ElevationResult(True)
 
     except Exception:
-        return False
+        return ElevationResult(False)
 
 
-def _launch_elevated_windows(token: str, target_argv: list[str]) -> ElevationResult:
+def elevate(wait_for_child: bool = False, timeout: float | None = None, argv: list[str] | None = None) -> bool:
+    return elevate_ex(wait_for_child, timeout, argv).success
+
+
+def _windowless_executable() -> str:
+    """pythonw.exe beside the current interpreter, when present: the elevated
+    helper produces no console window."""
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    return pythonw if os.path.exists(pythonw) else sys.executable
+
+
+def _launch_elevated_windows(token: str, target_argv: list[str], windowless: bool = False) -> ElevationResult:
     try:
         import ctypes
         from ctypes import wintypes
@@ -112,7 +127,7 @@ def _launch_elevated_windows(token: str, target_argv: list[str]) -> ElevationRes
         ei.fMask = SEE_MASK_NOCLOSEPROCESS
         ei.hwnd = None
         ei.lpVerb = "runas"
-        ei.lpFile = sys.executable
+        ei.lpFile = _windowless_executable() if windowless else sys.executable
         ei.lpParameters = params
         ei.lpDirectory = None
         ei.nShow = SW_SHOWNORMAL
@@ -122,7 +137,9 @@ def _launch_elevated_windows(token: str, target_argv: list[str]) -> ElevationRes
         ShellExecuteEx = ctypes.windll.shell32.ShellExecuteExW
         ret = ShellExecuteEx(ctypes.byref(ei))
         if not ret:
-            return ElevationResult(False)
+            kernel32 = ctypes.WinDLL("kernel32")
+            cancelled = kernel32.GetLastError() == 1223  # ERROR_CANCELLED
+            return ElevationResult(False, cancelled=cancelled)
 
         hproc = ei.hProcess
         return ElevationResult(True, proc_handle=hproc)

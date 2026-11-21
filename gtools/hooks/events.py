@@ -58,14 +58,14 @@ class HookEventSink:
     """
 
     on_state: StateCallback | None = None
-    stream_game_logs: bool = False
     capture: CaptureState = field(default_factory=CaptureState)
 
     def process(self, event: PipeEvent | None) -> None:
         if event is None:
             return
         if event.name == "log":
-            logger.info("[hook] %s", event.payload)
+            # the agent's own lines already carry the [hook] tag
+            logger.info("%s", event.payload.removeprefix("[hook] "))
             return
         if event.name != "hook":
             return
@@ -82,10 +82,6 @@ class HookEventSink:
             logger.debug("malformed hook event payload: %r", event.payload)
             return
 
-        if kind == EVENT_TEXT:
-            if self.stream_game_logs:
-                logger.info("[game] %s", data.decode("utf-8", "replace"))
-            return
         if key == "net/response" and kind == EVENT_RESPONSE_SERVER:
             self._capture_line(data)
         elif key == "net/response" and kind == EVENT_RESPONSE_PORT:
