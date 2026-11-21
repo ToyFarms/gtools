@@ -30,11 +30,19 @@ SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_NOZORDER = 0x0004
 SWP_FRAMECHANGED = 0x0020
-GWL_WNDPROC = -4
 
-WS_OVERLAPPEDWINDOW = 0x00CF0000
+WS_CAPTION = 0x00C00000
+WS_THICKFRAME = 0x00040000
+WS_MINIMIZEBOX = 0x00020000
+WS_MAXIMIZEBOX = 0x00010000
 WS_POPUP = 0x80000000
 WS_VISIBLE = 0x10000000
+WS_EX_LAYERED = 0x00080000
+LWA_ALPHA = 0x00000002
+
+# docked look: translucent, dimmer while the game has the focus
+FOCUSED_ALPHA = 235
+UNFOCUSED_ALPHA = 170
 
 ERROR_WINDOW_UNIQUE = 1400
 
@@ -63,65 +71,15 @@ class Rect:
     h: int
 
 
-def anchor_rects(area: Rect) -> dict[str, Rect]:
-    """The snap targets inside the game's client area: the four edge strips
-    and the four corners."""
-    half_w, half_h = area.w // 2, area.h // 2
-    return {
-        "left": Rect(area.x, area.y, half_w, area.h),
-        "right": Rect(area.x + half_w, area.y, area.w - half_w, area.h),
-        "top": Rect(area.x, area.y, area.w, half_h),
-        "bottom": Rect(area.x, area.y + half_h, area.w, area.h - half_h),
-        "top_left": Rect(area.x, area.y, half_w, half_h),
-        "top_right": Rect(area.x + half_w, area.y, area.w - half_w, half_h),
-        "bottom_left": Rect(area.x, area.y + half_h, half_w, area.h - half_h),
-        "bottom_right": Rect(area.x + half_w, area.y + half_h, area.w - half_w, area.h - half_h),
-    }
-
-
-def snap_anchor(window: Rect, area: Rect, margin: int = 24) -> tuple[str, Rect]:
-    """Magnet-snap a dragged window to an anchor of the game's client area.
-
-    Edge strips trigger when the window's edge is within ``margin`` of the
-    area's edge (the snapped rect fills that edge); corners trigger when both
-    axes are within margin (the snapped rect keeps the window's size). Corners
-    win over strips. Returns ``(name, snapped_rect)``; a window near no anchor
-    keeps its rect (free-floating, ``""`` name)."""
-    window_right = window.x + window.w
-    window_bottom = window.y + window.h
-    area_right = area.x + area.w
-    area_bottom = area.y + area.h
-
-    near_left = abs(window.x - area.x) <= margin
-    near_right = abs(window_right - area_right) <= margin
-    near_top = abs(window.y - area.y) <= margin
-    near_bottom = abs(window_bottom - area_bottom) <= margin
-
-    anchors = anchor_rects(area)
-    half_w, half_h = area.w // 2, area.h // 2
-
-    if near_left and near_top:
-        return "top_left", Rect(area.x, area.y, window.w, window.h)
-    if near_right and near_top:
-        return "top_right", Rect(area_right - window.w, area.y, window.w, window.h)
-    if near_left and near_bottom:
-        return "bottom_left", Rect(area.x, area_bottom - window.h, window.w, window.h)
-    if near_right and near_bottom:
-        return "bottom_right", Rect(area_right - window.w, area_bottom - window.h, window.w, window.h)
-    if near_left:
-        return "left", Rect(area.x, area.y, half_w, area.h)
-    if near_right:
-        return "right", Rect(area.x + half_w, area.y, area_right - area.x - half_w, area.h)
-    if near_top:
-        return "top", Rect(area.x, area.y, area.w, half_h)
-    if near_bottom:
-        return "bottom", Rect(area.x, area.y + half_h, area.w, area_bottom - area.y - half_h)
-    return "", window
-
-
-def apply_snap(window: Rect, area: Rect, margin: int = 24) -> Rect:
-    _, snapped = snap_anchor(window, area, margin)
-    return snapped
+def docked_rect(area: Rect, window: Rect, margin: int = 8) -> Rect:
+    """The docked placement: pinned to the top-left of the game's client
+    area, clamped so the window fits inside it."""
+    return Rect(
+        area.x + margin,
+        area.y + margin,
+        min(window.w, area.w - margin * 2),
+        min(window.h, area.h - margin * 2),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -247,8 +205,10 @@ class OverlayState:
     hidden: bool = False
     game_hwnd: int = 0
     gui_hwnd: int = 0
-    anchor: str = ""
+    alpha: int = FOCUSED_ALPHA
     saved_placement: tuple[int, int, int, int] | None = None
+    saved_style: int | None = None
+    saved_exstyle: int | None = None
 
 
 class OverlayController:
@@ -260,8 +220,6 @@ class OverlayController:
         self.state = OverlayState()
         self._glfw_window = None
         self._last_game_rect: Rect | None = None
-        self._last_drag_rect: Rect | None = None
-        self._drag_still_ms = 0
 
     @property
     def docked(self) -> bool:
@@ -299,32 +257,48 @@ class OverlayController:
         if gui_rect is None:
             return False
         self.state.saved_placement = (gui_rect.x, gui_rect.y, gui_rect.w, gui_rect.h)
+        self.state.saved_style = u32.GetWindowLongW(wintypes.HWND(gui), GWL_STYLE)
+        self.state.saved_exstyle = u32.GetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE)
 
         # own the window: above the game, minimized with it, no taskbar entry
         set_owner(gui, game)
 
-        # default anchor: the top-left corner, shrunk to fit
-        rect = Rect(game_area.x + 8, game_area.y + 8,
-                    min(gui_rect.w, game_area.w - 16), min(gui_rect.h, game_area.h - 16))
-        move_window(gui, rect, activate=False)
-        set_above(gui, game)
+        # borderless: the frame is gone, the toolbar's Undock button restores
+        style = self.state.saved_style & ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+        style = WS_POPUP | WS_VISIBLE | (style & 0)
+        u32.SetWindowLongW(wintypes.HWND(gui), GWL_STYLE, style)
 
+        # layered: the docked window is translucent (more so when unfocused)
+        exstyle = u32.GetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE) | WS_EX_LAYERED
+        u32.SetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE, exstyle)
+        u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, FOCUSED_ALPHA, LWA_ALPHA)
+
+        rect = docked_rect(game_area, gui_rect)
+        u32.SetWindowPos(wintypes.HWND(gui), wintypes.HWND(game), rect.x, rect.y, rect.w, rect.h, SWP_FRAMECHANGED)
         self.state.docked = True
         self.state.hidden = False
         self._last_game_rect = game_area
-        logger.info("docked to the growtopia window (anchor %s)", "top_left")
+        logger.info("docked to the growtopia window (top-left)")
         return True
 
     def undock(self) -> None:
         if not self.state.docked:
             return
+        u32 = _user32()
         gui = self.gui_hwnd()
-        if gui and self.state.saved_placement:
-            x, y, w, h = self.state.saved_placement
-            set_owner(gui, 0)
-            move_window(gui, Rect(x, y, w, h), activate=True)
+        if gui:
+            if self.state.saved_style is not None:
+                u32.SetWindowLongW(wintypes.HWND(gui), GWL_STYLE, self.state.saved_style)
+            exstyle = u32.GetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE) & ~WS_EX_LAYERED
+            u32.SetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE, exstyle)
+            u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, 255, LWA_ALPHA)
+            if self.state.saved_placement:
+                x, y, w, h = self.state.saved_placement
+                set_owner(gui, 0)
+                move_window(gui, Rect(x, y, w, h), activate=True)
+            else:
+                set_owner(gui, 0)
         self.state.docked = False
-        self.state.anchor = ""
         self._last_game_rect = None
         logger.info("undocked from the growtopia window")
 
@@ -380,24 +354,12 @@ class OverlayController:
                     move_window(gui, clamped)
             set_above(gui, game)
 
-        # snap: the OS move loop is modal (our frame loop pauses during a
-        # drag), so detect a drag that just ended -- the rect froze after
-        # moving -- and magnet it to the nearest anchor
-        gui_rect = window_rect(gui)
-        if gui_rect is None:
-            return
-        if self._last_drag_rect != gui_rect:
-            self._last_drag_rect = gui_rect
-            self._drag_still_ms = 0
-        else:
-            self._drag_still_ms += 16  # one frame at ~60 fps
-            if self._drag_still_ms >= 150 and self._last_drag_rect is not None:
-                name, snapped = snap_anchor(gui_rect, game_area)
-                if name and snapped != gui_rect:
-                    move_window(gui, snapped)
-                    self.state.anchor = name
-                    self._last_drag_rect = snapped
-                self._drag_still_ms = -10**9  # once per drag
+        # translucency: dimmer while the game has the focus
+        focused = u32.GetForegroundWindow() == gui
+        target_alpha = FOCUSED_ALPHA if focused else UNFOCUSED_ALPHA
+        if self.state.alpha != target_alpha:
+            u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, target_alpha, LWA_ALPHA)
+            self.state.alpha = target_alpha
 
 
 def _raise_no_window():
