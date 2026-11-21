@@ -739,6 +739,7 @@ static int HookPublishEntry(int index, uint8_t *target, size_t stolenBytes)
     rt->target = (uint64_t)(uintptr_t)target;
     rt->trampoline = (uint64_t)(uintptr_t)trampoline;
     rt->detour = HookDetourFor(index);
+    rt->stolenBytes = (int32_t)stolenBytes;
     rt->status = HOOK_STATUS_READY;
     HookLog(HOOK_LOG_INFO, "[hook] %s: resolved at %p (stolen %zu bytes)", g_descs[index].key,
             (void *)(uintptr_t)target, stolenBytes);
@@ -857,7 +858,7 @@ static DWORD WINAPI ShimWorker(LPVOID unused)
         CopyText(rt->key, sizeof(rt->key), desc->key);
         rt->selfIndex = i;
         rt->status = HOOK_STATUS_MISSING;
-        rt->enabled = 0;
+        rt->enabled = (desc->flags & HOOK_FLAG_START_ENABLED) ? 1 : 0;
         rt->hits = 0;
         rt->faults = 0;
         rt->target = 0;

@@ -62,6 +62,9 @@ enum HookFastOp
     HOOK_FAST_RETURN = 3, /* state[fastSlot] != 0 -> skip with state as return */
 };
 
+/* descriptor flags */
+#define HOOK_FLAG_START_ENABLED 1u
+
 enum HookSource
 {
     HOOK_SRC_PATTERN = 0, /* scan the image for pattern variants */
@@ -127,7 +130,7 @@ struct HookRuntime
     volatile int32_t enabled;
     volatile int32_t status;
     int32_t selfIndex;
-    int32_t reserved;
+    int32_t stolenBytes; /* the decoded prologue length the trampoline copied */
     volatile uint64_t hits;
     volatile uint64_t faults;
     uint64_t target;

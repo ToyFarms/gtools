@@ -515,17 +515,23 @@ static int PatchEntry(HANDLE process, const struct HookRuntime *entry, int index
         return 0;
     }
 
-    unsigned char original[HOOK_ENTRY_PATCH_BYTES];
+    /* verify the whole stolen prefix (the shim's decoded length), not just the patch */
+    unsigned stolen = (unsigned)(entry->stolenBytes > 0 ? entry->stolenBytes : HOOK_ENTRY_PATCH_BYTES);
+    if (stolen < HOOK_ENTRY_PATCH_BYTES || stolen > 256)
+    {
+        set_error("%s: implausible stolen length %u", entry->key, stolen);
+        return 0;
+    }
+    unsigned char original[256];
     SIZE_T got = 0;
-    if (!ReadProcessMemory(process, target, original, HOOK_ENTRY_PATCH_BYTES, &got) || got != HOOK_ENTRY_PATCH_BYTES)
+    if (!ReadProcessMemory(process, target, original, stolen, &got) || got != stolen)
     {
         set_error("cannot read the original bytes of %s", entry->key);
         return 0;
     }
-    if (hook_prologue_length(original, HOOK_ENTRY_PATCH_BYTES, HOOK_ENTRY_PATCH_BYTES) == 0)
+    if (hook_prologue_length(original, stolen, stolen) == 0)
     {
-        set_error("%s: the %d bytes at %p are not a safe patch site", entry->key, HOOK_ENTRY_PATCH_BYTES,
-                  (void *)(uintptr_t)target);
+        set_error("%s: the %u bytes at %p are not a safe patch site", entry->key, stolen, (void *)(uintptr_t)target);
         return 0;
     }
     memcpy(g_originalBytes[index], original, HOOK_ENTRY_PATCH_BYTES);
@@ -658,7 +664,13 @@ EXPORT int inject(const char *target, const char *dll_path)
         return INJECT_ERR_CREATE_REMOTE_THREAD;
     }
 
-    HMODULE remoteModule = find_remote_module(pid, file_base_name(fullPath));
+    HMODULE remoteModule = NULL;
+    for (int attempt = 0; attempt < 20 && !remoteModule; attempt++)
+    {
+        remoteModule = find_remote_module(pid, file_base_name(fullPath));
+        if (!remoteModule)
+            Sleep(50); /* the loader may not have published the module yet */
+    }
     if (!remoteModule)
     {
         CloseHandle(process);

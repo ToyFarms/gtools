@@ -1266,6 +1266,21 @@ static HANDLE g_targetHandle = NULL;
 static ULONGLONG g_lastFailLog = 0;
 static int g_patchedAnnounced = 0;
 
+static int PidIsHooked(DWORD pid)
+{
+    char name[64];
+    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)pid);
+    HANDLE existing = OpenMutexA(SYNCHRONIZE, FALSE, name);
+    if (!existing)
+        return 0;
+    CloseHandle(existing);
+    return 1;
+}
+
+/*
+ * First matching process the injector can actually work on: an elevated copy
+ * of the game (or any pid we cannot open) must not block a hookable instance.
+ */
 static DWORD FindTargetPid(const char *target)
 {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -1280,27 +1295,26 @@ static DWORD FindTargetPid(const char *target)
     {
         do
         {
-            if (_stricmp(entry.szExeFile, target) == 0)
+            if (_stricmp(entry.szExeFile, target) != 0)
+                continue;
+            if (PidIsHooked(entry.th32ProcessID))
             {
-                pid = entry.th32ProcessID;
+                pid = entry.th32ProcessID; /* already hooked: adopt this one */
                 break;
             }
+            HANDLE probe = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
+                                           PROCESS_VM_WRITE | PROCESS_VM_READ,
+                                       FALSE, entry.th32ProcessID);
+            if (!probe)
+                continue; /* cannot inject this instance (elevated?), try the next */
+            CloseHandle(probe);
+            pid = entry.th32ProcessID;
+            break;
         } while (Process32Next(snapshot, &entry));
     }
     CloseHandle(snapshot);
 
     return pid;
-}
-
-static int PidIsHooked(DWORD pid)
-{
-    char name[64];
-    snprintf(name, sizeof(name), "%s%lu", HOOK_PID_MUTEX_PREFIX, (unsigned long)pid);
-    HANDLE existing = OpenMutexA(SYNCHRONIZE, FALSE, name);
-    if (!existing)
-        return 0;
-    CloseHandle(existing);
-    return 1;
 }
 
 static void AdoptPid(DWORD pid)

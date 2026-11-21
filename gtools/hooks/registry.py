@@ -98,6 +98,7 @@ class Hook:
             module=module,
             symbol=symbol,
             rva=self.rva or 0,
+            flags=payload.HOOK_FLAG_START_ENABLED if self.initial_enabled else 0,
         )
 
     # -- live control -------------------------------------------------------

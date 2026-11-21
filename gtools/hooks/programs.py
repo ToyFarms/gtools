@@ -481,6 +481,7 @@ def register_builtin_hooks() -> None:
         stolen=17,
         program=response_rewrite_program(),
         data=response_data(),
+        initial_enabled=True,  # the login POST fires before Python can toggle
         note="OnServerDataResponse rewrite",
     )
     register(
@@ -489,6 +490,7 @@ def register_builtin_hooks() -> None:
         stolen=21,
         program=post_capture_program(),
         data=post_data(),
+        initial_enabled=True,
         note="HttpClient_Post capture",
     )
     register(
