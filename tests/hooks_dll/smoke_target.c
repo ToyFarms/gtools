@@ -15,6 +15,7 @@
 #include <windows.h>
 
 volatile LONG g_ticks = 0;
+volatile LONG g_badArgs = 0;
 
 static LONG WINAPI SmokeCrashFilter(EXCEPTION_POINTERS *info)
 {
@@ -56,6 +57,8 @@ static LONG WINAPI SmokeCrashFilter(EXCEPTION_POINTERS *info)
 __declspec(dllexport) int SmokeTick(int value)
 {
     int local = value * 2;
+    if (value != 1)
+        InterlockedIncrement((volatile LONG *)&g_badArgs); /* the stub must not clobber rcx */
     InterlockedIncrement((volatile LONG *)&g_ticks);
     return local + 1;
 }

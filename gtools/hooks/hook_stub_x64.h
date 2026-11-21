@@ -22,7 +22,9 @@
  * Calling contract for HookDispatch (returns a u64 -- a 16-byte struct return
  * would take the hidden-pointer slot in rcx and break the ctx argument):
  *   rcx = &HookCtx
- *   return rax = 0 -> pass: tail-jump to runtime->trampoline
+ *   return rax = 0 -> pass: restore the argument registers from ctx (the C
+ *                          call clobbers rcx/rdx/r8-r11 and xmm0-5), then
+ *                          tail-jump to runtime->trampoline
  *                 1 -> skip: return ctx->retValue to the caller
  *   the dispatch writes ctx->retValue before returning 1
  *
@@ -96,6 +98,19 @@ __asm__(
     "  lea rcx, [rsp + 32]\n"                 /* &ctx */
     "  movabs rax, " HOOK_STR(HOOK_STUB_CALL_MARKER) "\n"
     "  call rax\n"                            /* -> HookDispatch, patched once */
+    /* the C dispatcher clobbered the volatile registers: restore everything
+     * the trampoline's function needs -- the argument registers (rcx, rdx,
+     * r8, r9) and the xmm arguments -- before tail-jumping to it */
+    "  mov rcx, [rsp + 40]\n"                 /* ctx.gpr[1] */
+    "  mov rdx, [rsp + 48]\n"                 /* ctx.gpr[2] */
+    "  mov r8,  [rsp + 96]\n"                 /* ctx.gpr[8] */
+    "  mov r9,  [rsp + 104]\n"                /* ctx.gpr[9] */
+    "  movaps xmm0, [rsp + 160]\n"
+    "  movaps xmm1, [rsp + 176]\n"
+    "  movaps xmm2, [rsp + 192]\n"
+    "  movaps xmm3, [rsp + 208]\n"
+    "  movaps xmm4, [rsp + 224]\n"
+    "  movaps xmm5, [rsp + 240]\n"
     "  add rsp, " HOOK_STR(HOOK_STUB_FRAME) "\n"
     "  mov r10d, eax\n"                       /* 0 = pass, 1 = skip */
     "  pop rax\n"

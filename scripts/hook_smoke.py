@@ -15,6 +15,7 @@ loaded through a stub package so only the standard library is required.
 import argparse
 import ctypes
 import os
+import struct
 import subprocess
 import sys
 import time
@@ -289,6 +290,7 @@ def main() -> int:
         try:
             wait_for(lambda: counter_value() > frozen, args.timeout, "the counter to resume")
             record(True, "counter resumed after re-enable")
+            record(check_argument_integrity(ctl, target_exe), "the hooked function received its argument intact")
         except AssertionError:
             backlog = []
             drain_events(ctl, backlog, 0.5)
@@ -306,6 +308,66 @@ def main() -> int:
         failures.append(f"exception: {exc!r}")
     finally:
         return finish(target_process, agent_process, ctl, failures, args.keep)
+
+
+def symbol_rva(exe_path: Path, name: str) -> int | None:
+    """RVA of a symbol from the target's COFF symbol table (mingw -O0 keeps them)."""
+    data = exe_path.read_bytes()
+    e = struct.unpack_from("<I", data, 0x3C)[0]
+    file_header = e + 4
+    nsec = struct.unpack_from("<H", data, file_header + 2)[0]
+    sym_ptr = struct.unpack_from("<I", data, file_header + 8)[0]  # PointerToSymbolTable
+    sym_count = struct.unpack_from("<I", data, file_header + 12)[0]
+    opt_size = struct.unpack_from("<H", data, file_header + 16)[0]  # SizeOfOptionalHeader
+    sec_off = e + 24 + opt_size
+    section_vma = []
+    for i in range(nsec):
+        section_vma.append(struct.unpack_from("<I", data, sec_off + i * 40 + 12)[0])
+    str_off = sym_ptr + sym_count * 18
+    for i in range(sym_count):
+        off = sym_ptr + i * 18
+        zeroes, offset = struct.unpack_from("<II", data, off)
+        if zeroes:
+            name_str = data[off:off + 8].rstrip(b"\0")
+        else:
+            end = data.find(b"\0", str_off + offset)
+            name_str = data[str_off + offset:end]
+        section, = struct.unpack_from("<h", data, off + 12)
+        value, = struct.unpack_from("<I", data, off + 8)
+        if name_str == name.encode() and 0 < section <= len(section_vma):
+            # the section header's VirtualAddress is already an RVA
+            return section_vma[section - 1] + value
+    return None
+
+
+def check_argument_integrity(ctl: HookControl, target_exe: Path) -> bool:
+    """g_badArgs counts SmokeTick calls whose argument the stub corrupted."""
+    handshake = ctl.handshake()
+    if not handshake:
+        return False
+    entry = next((e for e in handshake.entries if e.key == "test/export"), None)
+    if entry is None:
+        return False
+    rva = symbol_rva(target_exe, "g_badArgs")
+    if rva is None:
+        print("    [warn] g_badArgs symbol not found in the target")
+        return True
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.ReadProcessMemory.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t),
+    ]
+    process = kernel32.OpenProcess(0x0010, False, handshake.process_id)
+    buf = (ctypes.c_ubyte * 4)()
+    got = ctypes.c_size_t()
+    if not kernel32.ReadProcessMemory(process, ctypes.c_uint64(handshake.image_base + rva), buf, 4, ctypes.byref(got)):
+        print(f"    [warn] cannot read g_badArgs (err={ctypes.get_last_error()})")
+        return True
+    bad = struct.unpack("<i", bytes(buf))[0]
+    if bad:
+        print(f"    [debug] g_badArgs = {bad}: the stub corrupted the argument registers")
+    return bad == 0
 
 
 def drain_events(ctl: HookControl, into: list, seconds: float) -> None:
