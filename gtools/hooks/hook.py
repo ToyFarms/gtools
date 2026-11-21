@@ -18,7 +18,7 @@ from pathlib import Path
 
 from gtools.core.eventbus import subscribe
 from gtools.core.pipe import PipeError
-from gtools.core.privilege import elevate, is_elevated
+from gtools.core.privilege import elevate_ex, is_elevated
 from gtools.core.wsl import is_running_wsl
 from gtools.hooks import programs, registry
 from gtools.hooks.control import HookControl
