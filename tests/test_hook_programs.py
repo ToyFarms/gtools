@@ -201,6 +201,19 @@ def test_response_rewrite_inline_sso_fits(host):
     assert host.peek(RESPONSE + programs.RESPONSE_BODY_OFFSET, 9) == b"server|p\n"
 
 
+def test_response_preserves_missing_trailing_newline(host):
+    # "pid|123" has no trailing \n: the rewrite must not add one either
+    build_response(host, "type|1\nserver|real.example.com\nport|8281\npid|123")
+    write_runtime_data(host, programs.response_data("127.0.0.1", 16999))
+    write_gpr(host, 2, RESPONSE)
+
+    assert host.run(programs.response_rewrite_program()) == PASS
+    expected = b"type|1\nserver|127.0.0.1\nport|16999\npid|123"
+    size = struct.unpack("<Q", host.peek(RESPONSE + programs.RESPONSE_BODY_OFFSET + programs.SSO_SIZE_OFFSET, 8))[0]
+    assert size == len(expected)
+    assert host.peek(BODY, size) == expected
+
+
 def test_response_ignores_non_200(host):
     build_response(host, "server|real\n", status=404)
     write_runtime_data(host, programs.response_data("127.0.0.1", 16999))

@@ -68,6 +68,7 @@ POST_KEY = {key: 0x140 + i * 0x10 for i, key in enumerate(("version", "protocol"
 
 SCRATCH_POS = 0x700
 SCRATCH_LINELEN = 0x708
+SCRATCH_HASNL = 0x710
 SCRATCH_OUT = 0x800
 SCRATCH_OUT_CAP = 2048
 
@@ -162,6 +163,13 @@ def response_rewrite_program() -> Program:
     p.mov(T2, T1)
     p.sub(T2, start)  # lineLen
     p.str_(SCR, SCRATCH_LINELEN, T2, width=64)
+    # hasNewline = pos < size (the last line may lack the trailing \n)
+    p.movi(T4, 1)
+    p.cmp(T1, size)
+    p.jlt("have_nl")
+    p.movi(T4, 0)
+    p.label("have_nl")
+    p.str_(SCR, SCRATCH_HASNL, T4, width=64)
 
     # server| line?
     p.mov(T1, data)
@@ -194,7 +202,8 @@ def response_rewrite_program() -> Program:
 
     p.label("next_line")
     p.ldr(T1, SCR, SCRATCH_POS, width=64)
-    p.addi(T1, 1)
+    p.ldr(T4, SCR, SCRATCH_HASNL, width=64)
+    p.add(T1, T4)
     p.mov(start, T1)
     p.jmp("line_loop")
 
@@ -286,7 +295,8 @@ def _append_replacement(p: Program, const_offset: int, const_len: int, field_len
 
 
 def _append_line(p: Program) -> None:
-    """append data[lineStart..lineEnd) + '\\n' verbatim."""
+    """append data[lineStart..lineEnd) verbatim, plus '\\n' only when the
+    original line had one (byte-for-byte parity with the previous C rewrite)."""
     out, outlen = isa.R10, isa.R11
     p.ldr(T1, SCR, SCRATCH_LINELEN, width=64)
     p.mov(T2, outlen)
@@ -300,10 +310,14 @@ def _append_line(p: Program) -> None:
     p.callh(isa.Helper.MEMCPY, a1=out, a2=T1, a3=T3)
     p.add(out, isa.R0)
     p.add(outlen, isa.R0)
+    p.ldr(T4, SCR, SCRATCH_HASNL, width=64)
+    p.cmpz(T4, T1)
+    p.jz("no_nl")
     p.movi(T1, 10)
     p.str_(out, 0, T1, width=8)
     p.addi(out, 1)
     p.addi(outlen, 1)
+    p.label("no_nl")
 
 
 def post_capture_program() -> Program:

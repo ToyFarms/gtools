@@ -597,10 +597,16 @@ static int AgentWriteRuntimeField(int index, size_t fieldOffset, const void *dat
 {
     HANDLE process = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, FALSE, g_gamePid);
     if (!process)
+    {
+        AgentLog("[hook] cannot open %lu for a runtime write (err=%lu) -- is the game elevated above the agent?",
+                 (unsigned long)g_gamePid, GetLastError());
         return 0;
+    }
     uint64_t address = g_selfRemote + offsetof(struct ShimShared, runtime) +
                        sizeof(struct HookRuntime) * (size_t)index + fieldOffset;
     int ok = RemoteWrite(process, address, data, size);
+    if (!ok)
+        AgentLog("[hook] the runtime write at %llX failed (err=%lu)", (unsigned long long)address, GetLastError());
     CloseHandle(process);
     return ok;
 }

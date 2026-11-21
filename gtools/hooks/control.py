@@ -52,6 +52,12 @@ class HookControl:
     def __init__(self, timeout: float = 2.0) -> None:
         self.timeout = timeout
         self._client = PipeClient(PIPE_NAME, connect_timeout=timeout, io_timeout=timeout)
+        self.last_reply: str = ""
+
+    def _request(self, command: str, timeout: float | None = None):
+        response = self._client.request(command, timeout)
+        self.last_reply = response.text if response.failed else ""
+        return response
 
     def connect(self, timeout: float | None = None) -> bool:
         try:
@@ -136,14 +142,12 @@ class HookControl:
         )
 
     def enable(self, key: str, on: bool, timeout: float | None = None) -> bool:
-        response = self._client.request(f"ENABLE {key} {1 if on else 0}", timeout)
-        return response.ok
+        return self._request(f"ENABLE {key} {1 if on else 0}", timeout).ok
 
     def state(self, key: str, slot: int, value: int, timeout: float | None = None) -> bool:
         if not 0 <= slot < STATE_SLOTS:
             raise ValueError(f"state slot {slot} out of range")
-        response = self._client.request(f"STATE {key} {slot} {int(value) & 0xFFFFFFFFFFFFFFFF}", timeout)
-        return response.ok
+        return self._request(f"STATE {key} {slot} {int(value) & 0xFFFFFFFFFFFFFFFF}", timeout).ok
 
     def data(self, key: str, offset: int, blob: bytes, timeout: float | None = None) -> bool:
         """Write bytes into a hook's runtime data blob (chunked)."""
@@ -154,14 +158,12 @@ class HookControl:
             if not chunk:
                 break
             hex_data = binascii.hexlify(chunk).decode()
-            response = self._client.request(f"DATA {key} {offset + chunk_start} {hex_data}", timeout)
-            if not response.ok:
+            if not self._request(f"DATA {key} {offset + chunk_start} {hex_data}", timeout).ok:
                 return False
         return True
 
     def log_level(self, level: int, timeout: float | None = None) -> bool:
-        response = self._client.request(f"LOGLEVEL {int(level)}", timeout)
-        return response.ok
+        return self._request(f"LOGLEVEL {int(level)}", timeout).ok
 
     def wait_event(self, timeout: float | None = None) -> PipeEvent | None:
         return self._client.wait_event(timeout)

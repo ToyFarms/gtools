@@ -201,6 +201,77 @@ def write_status(status: dict[str, str], path: Path = HOOK_STATUS) -> None:
     path.write_text("\n".join(f"{key}={value}" for key, value in status.items()) + "\n", encoding="utf-8")
 
 
+def kill_stale_agents() -> int:
+    """Terminate rundll32 processes hosting agent.dll.
+
+    A leftover agent from an earlier session keeps serving the pipe; if it
+    cannot write to the (elevated) game, every runtime push would be rejected.
+    The elevated injector helper runs this before spawning its own agent.
+    """
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.POINTER(wintypes.ULONG)),
+            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    class MODULEENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("th32ModuleID", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD), ("GlblcntUsage", wintypes.DWORD),
+            ("ProccntUsage", wintypes.DWORD), ("modBaseAddr", ctypes.POINTER(ctypes.c_ubyte)),
+            ("modBaseSize", wintypes.DWORD), ("hModule", ctypes.c_void_p),
+            ("szModule", ctypes.c_wchar * 256), ("szExePath", ctypes.c_wchar * 260),
+        ]
+
+    killed = 0
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot in (0, wintypes.HANDLE(-1).value):
+        return 0
+    entry = PROCESSENTRY32W()
+    entry.dwSize = ctypes.sizeof(entry)
+    pids = []
+    if kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+        while True:
+            if entry.szExeFile.lower() == "rundll32.exe":
+                pids.append(entry.th32ProcessID)
+            if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                break
+    kernel32.CloseHandle(snapshot)
+
+    for pid in pids:
+        modules = kernel32.CreateToolhelp32Snapshot(0x8 | 0x10, pid)  # SNAPMODULE
+        if modules in (0, wintypes.HANDLE(-1).value):
+            continue
+        module = MODULEENTRY32W()
+        module.dwSize = ctypes.sizeof(module)
+        hosts_agent = False
+        if kernel32.Module32FirstW(modules, ctypes.byref(module)):
+            while True:
+                if module.szModule.lower() == "agent.dll":
+                    hosts_agent = True
+                    break
+                if not kernel32.Module32NextW(modules, ctypes.byref(module)):
+                    break
+        kernel32.CloseHandle(modules)
+        if not hosts_agent:
+            continue
+        process = kernel32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+        if process and kernel32.TerminateProcess(process, 0):
+            killed += 1
+            logger.info("terminated the stale hook agent (pid %d)", pid)
+        if process:
+            kernel32.CloseHandle(process)
+    return killed
+
+
 def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
     status = {
         "elevated": str(int(is_elevated())),
@@ -231,6 +302,7 @@ def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
             status["debug_privilege"] = str(int(enabled))
             status["debug_error"] = str(debug_error)
 
+            kill_stale_agents()
             status["agent"] = str(int(spawn_agent()))
             if not agent_running():
                 status["error"] = "the rundll32 agent is not running"
@@ -487,7 +559,8 @@ def apply_hook_settings(ctl: HookControl, source: Setting | None = None) -> None
         except (PipeError, OSError):
             raise  # the caller handles a dropped pipe
         if not ok:
-            logger.warning("the hook rejected %s", description)
+            detail = f": {ctl.last_reply}" if ctl.last_reply else ""
+            logger.warning("the hook rejected %s%s", description, detail)
 
     response = registry.get("net/response")
     push(lambda: response.set_data(programs.response_data(current.proxy_server, current.proxy_port)),
