@@ -27,6 +27,7 @@ DEFAULT_TARGET = REPO / "tests" / "hooks_dll" / "smoke.exe"
 AGENT_MUTEX = r"Global\gtools_hook_agent"
 
 TICK_EVENT_KIND = 42
+LOG_EVENT_KIND = 1
 
 
 def _stub_import() -> None:
@@ -105,7 +106,17 @@ def build_payload(dll_dir: Path, target_name: str) -> bytes:
                 stolen_bytes=16,
                 event_kind=TICK_EVENT_KIND,
                 program=counter_program().assemble(),
-            )
+            ),
+            Descriptor(
+                key="test/log",
+                kind=payload.KIND_VARARGS,
+                source=payload.SRC_EXPORT,
+                module=target_name,
+                symbol="SmokeLog",
+                stolen_bytes=16,
+                varargs_variant=0,
+                event_kind=LOG_EVENT_KIND,
+            ),
         ],
         start_delay_ms=0,
         target_process=target_name,
@@ -224,6 +235,12 @@ def main() -> int:
 
         events = []
         record(ctl.enable("test/export", True), "ENABLE test/export 1")
+        print(f"    [debug] hooks: {ctl.hooks()}")
+        backlog = []
+        drain_events(ctl, backlog, 0.3)
+        for name, text in backlog:
+            print(f"    [agent] {text}")
+        record(ctl.enable("test/log", True), "ENABLE test/log 1")
 
         def counter_value() -> int:
             fresh = ctl.status()
@@ -249,6 +266,18 @@ def main() -> int:
         drain_events(ctl, events, 0.5)
         ticks = [e for e in events if e[0] == "hook" and e[1].split(" ")[1:3] == ["test/export", str(TICK_EVENT_KIND)]]
         record(len(ticks) > 0, f"received {len(ticks)} tick events through the ring")
+
+        # the varargs detour: SmokeLog fires 5 times on its own; the text must
+        # arrive formatted through the compiled log detour without enabling
+        def log_events() -> list:
+            fresh = []
+            drain_events(ctl, fresh, 0.5)
+            events.extend(fresh)
+            return [e for e in fresh if e[0] == "hook" and e[1].split(" ")[1:3] == ["test/log", str(LOG_EVENT_KIND)]]
+
+        found = wait_for(lambda: log_events() or None, args.timeout, "varargs log events")
+        text = bytes.fromhex(found[0][1].split(" ", 3)[3])
+        record(text.startswith(b"tick "), f"varargs log text decoded: {text!r}")
 
         record(ctl.enable("test/export", False), "ENABLE test/export 0")
         time.sleep(0.5)  # let an in-flight hit (already past the enabled check) drain

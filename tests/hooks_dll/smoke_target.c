@@ -10,6 +10,7 @@
  * build: x86_64-w64-mingw32-gcc -O0 -o smoke.exe tests/hooks_dll/smoke_target.c
  */
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <windows.h>
 
@@ -59,13 +60,29 @@ __declspec(dllexport) int SmokeTick(int value)
     return local + 1;
 }
 
+volatile LONG g_logs = 0;
+
+/* printf-style export: exercises the compiled varargs detour */
+__declspec(dllexport) void SmokeLog(const char *format, ...)
+{
+    char text[256];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(text, sizeof(text), format, args);
+    va_end(args);
+    InterlockedIncrement((volatile LONG *)&g_logs);
+    OutputDebugStringA(text);
+}
+
 int main(void)
 {
     SetUnhandledExceptionFilter(SmokeCrashFilter);
     for (;;)
     {
+        static int logged = 0;
         SmokeTick(1);
-        Sleep(10);
+        SmokeLog("tick %d g_ticks=%ld", logged++, g_ticks);  // the varargs hook is toggled at runtime
+        Sleep(200);
     }
     return 0;
 }
