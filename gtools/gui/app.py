@@ -82,7 +82,6 @@ class App:
 
         self.overlay = OverlayController(gui_title="gtools gui (ctrl+p command palette)")
         self.overlay.set_glfw_window(self.window)
-        self._overlay_scale_applied = False
         self.hotkeys = HotkeyThread(show_hide_vk=0x78, dock_vk=0x79)  # F9 / F10
         self.hotkeys.start()
 
@@ -253,30 +252,6 @@ class App:
                 self.overlay.toggle_hidden()
         imgui.end()
 
-    _DOCKED_SCALE = 0.8
-
-    def _apply_overlay_scale(self, docked: bool) -> None:
-        """Docked mode: compact fonts and spacing so everything stays legible
-        in the smaller window; restored on undock. ImGui 1.92: the font scale
-        chain is ``style.font_scale_main``, and the style metrics scale
-        alongside it."""
-        style = imgui.get_style()
-        if not hasattr(self, "_base_font_scale_main"):
-            self._base_font_scale_main = style.font_scale_main
-            self._base_style_sizes = {
-                "window_padding": (style.window_padding.x, style.window_padding.y),
-                "frame_padding": (style.frame_padding.x, style.frame_padding.y),
-                "item_spacing": (style.item_spacing.x, style.item_spacing.y),
-            }
-        factor = self._DOCKED_SCALE if docked else 1.0
-        style.font_scale_main = self._base_font_scale_main * factor
-        style.window_padding = ImVec2(self._base_style_sizes["window_padding"][0] * factor,
-                                      self._base_style_sizes["window_padding"][1] * factor)
-        style.frame_padding = ImVec2(self._base_style_sizes["frame_padding"][0] * factor,
-                                     self._base_style_sizes["frame_padding"][1] * factor)
-        style.item_spacing = ImVec2(self._base_style_sizes["item_spacing"][0] * factor,
-                                    self._base_style_sizes["item_spacing"][1] * factor)
-
     def _toggle_dock(self) -> None:
         if self.overlay.docked:
             self.overlay.undock()
@@ -322,9 +297,6 @@ class App:
                 self.hotkeys.dock_requested.clear()
                 self._toggle_dock()
             self.overlay.follow()
-            if self.overlay.docked != self._overlay_scale_applied:
-                self._apply_overlay_scale(self.overlay.docked)
-                self._overlay_scale_applied = self.overlay.docked
 
             if any_dirty:
                 self.last_dirty_time = time.perf_counter()

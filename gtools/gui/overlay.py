@@ -346,13 +346,11 @@ class OverlayController:
             self._last_game_rect = game_area
             gui_rect = window_rect(gui)
             if gui_rect is not None:
-                clamped = Rect(
-                    max(game_area.x, min(gui_rect.x, game_area.x + game_area.w - min(120, gui_rect.w))),
-                    max(game_area.y, min(gui_rect.y, game_area.y + game_area.h - min(80, gui_rect.h))),
-                    gui_rect.w, gui_rect.h,
-                )
-                if clamped != gui_rect:
-                    move_window(gui, clamped)
+                # docked = pinned to the game's top-left: re-derive the
+                # placement for the new rect, whatever direction it moved
+                target = docked_rect(game_area, gui_rect)
+                if target != gui_rect:
+                    move_window(gui, target)
             set_above(gui, game)
 
         # translucency: dimmer while the game has the focus
