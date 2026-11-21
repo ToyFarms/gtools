@@ -1,3 +1,22 @@
+/*
+ * injector.c - remote patcher for the v4 hook payload.
+ *
+ * The payload (descriptors + programs, authored in Python) is written into the
+ * shim's exported g_self block, which releases the shim worker; once the shim
+ * has resolved and published its entries this patches the 14-byte absolute
+ * jumps from outside the target and marks the entries PATCHED.
+ *
+ * Exports: inject(target, dll_path), cleanup(), last_error().
+ *
+ * BUILD_FLAGS[gcc(mingw)]: -O2 -shared -fPIC
+ * BUILD_FLAGS[gcc, clang]: -O2 -shared -fPIC
+ */
+
+#ifndef _WIN32
+/* injector.dll is Windows-only; keep compile_cmod.py's Linux job green */
+int g_injector_windows_only;
+#else
+
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -13,6 +32,7 @@
 #include <tlhelp32.h>
 
 #include "hook_protocol.h"
+#include "hook_prologue.h"
 
 #if defined(_MSC_VER)
 #  pragma comment(lib, "advapi32.lib")
@@ -23,6 +43,7 @@
 
 #define SHIM_WAIT_GRACE_MS   30000
 #define SHIM_WAIT_STEP_MS    100
+#define PAYLOAD_FILE         "hook_payload.bin"
 
 enum InjectResult
 {
@@ -37,12 +58,11 @@ enum InjectResult
     INJECT_ERR_CREATE_REMOTE_THREAD = -8,
     INJECT_ERR_MODULE_NOT_FOUND = -9,
     INJECT_ERR_HANDSHAKE_MISSING = -10,
-    INJECT_ERR_OPEN_PROCESS_PATCH = -11,
     INJECT_ERR_HANDSHAKE_INVALID = -12,
-    INJECT_ERR_NO_HOOKS = -13,
     INJECT_ERR_EXPORT_MISSING = -14,
-    INJECT_ERR_SETTINGS_SYNC = -15,
-    INJECT_ERR_LOCK_TIMEOUT = -16,
+    INJECT_ERR_PAYLOAD_MISSING = -15,
+    INJECT_ERR_PAYLOAD_INVALID = -16,
+    INJECT_ERR_LOCK_TIMEOUT = -17,
 };
 
 static char g_lastError[1024] = {0};
@@ -128,7 +148,6 @@ static const char *file_base_name(const char *path)
     const char *separator = strrchr(path, '\\');
     if (!separator)
         separator = strrchr(path, '/');
-
     return separator ? separator + 1 : path;
 }
 
@@ -137,8 +156,8 @@ static uint32_t RvaToFileOffset(const uint8_t *image, size_t imageSize, uint32_t
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)image;
     if (dos->e_magic != IMAGE_DOS_SIGNATURE)
         return 0;
-    const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(image + dos->e_lfanew);
-    if ((uint8_t *)nt + sizeof(*nt) > image + imageSize || nt->Signature != IMAGE_NT_SIGNATURE)
+    const IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(image + dos->e_lfanew);
+    if ((const uint8_t *)nt + sizeof(*nt) > image + imageSize || nt->Signature != IMAGE_NT_SIGNATURE)
         return 0;
 
     const IMAGE_SECTION_HEADER *section =
@@ -154,11 +173,9 @@ static uint32_t RvaToFileOffset(const uint8_t *image, size_t imageSize, uint32_t
             uint32_t delta = rva - start;
             if (delta >= section[i].SizeOfRawData)
                 return 0;
-
             return section[i].PointerToRawData + delta;
         }
     }
-
     return 0;
 }
 
@@ -179,36 +196,32 @@ static bool ExportRvaFromFile(const char *path, const char *name, uint32_t *outR
     fseek(file, 0, SEEK_END);
     long size = ftell(file);
     fseek(file, 0, SEEK_SET);
-    if (size > 0 && size < 16 * 1024 * 1024 &&
-        (image = (uint8_t *)malloc((size_t)size)))
+    if (size > 0 && size < 64 * 1024 * 1024 && (image = (uint8_t *)malloc((size_t)size)))
     {
         imageSize = fread(image, 1, (size_t)size, file);
         const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)image;
         if (imageSize > sizeof(IMAGE_DOS_HEADER) && dos->e_magic == IMAGE_DOS_SIGNATURE)
         {
-            const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(image + dos->e_lfanew);
+            const IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(image + dos->e_lfanew);
             if ((const uint8_t *)nt + sizeof(*nt) <= image + imageSize && nt->Signature == IMAGE_NT_SIGNATURE &&
                 nt->FileHeader.SizeOfOptionalHeader >= sizeof(IMAGE_OPTIONAL_HEADER64))
             {
                 const IMAGE_OPTIONAL_HEADER64 *optional = &nt->OptionalHeader;
-                const IMAGE_DATA_DIRECTORY *imported = (optional->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_EXPORT)
-                                                           ? &optional->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
-                                                           : NULL;
-                if (imported && imported->VirtualAddress)
+                const IMAGE_DATA_DIRECTORY *exported =
+                    (optional->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_EXPORT)
+                        ? &optional->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
+                        : NULL;
+                if (exported && exported->VirtualAddress)
                 {
-                    uint32_t offset = RvaToFileOffset(image, imageSize, imported->VirtualAddress);
+                    uint32_t offset = RvaToFileOffset(image, imageSize, exported->VirtualAddress);
                     if (offset && offset + sizeof(IMAGE_EXPORT_DIRECTORY) <= imageSize)
                     {
-                        const IMAGE_EXPORT_DIRECTORY *exports = (const IMAGE_EXPORT_DIRECTORY *)(image + offset);
-                        uint32_t namesRva = exports->AddressOfNames;
-                        uint32_t ordinalsRva = exports->AddressOfNameOrdinals;
-                        uint32_t functionsRva = exports->AddressOfFunctions;
-
-                        uint32_t namesOffset = RvaToFileOffset(image, imageSize, namesRva);
-                        uint32_t ordinalsOffset = RvaToFileOffset(image, imageSize, ordinalsRva);
-                        uint32_t functionsOffset = RvaToFileOffset(image, imageSize, functionsRva);
-                        if (namesOffset && ordinalsOffset && functionsOffset &&
-                            exports->NumberOfNames > 0 && exports->NumberOfNames < 4096)
+                        const IMAGE_EXPORT_DIRECTORY *exports = (IMAGE_EXPORT_DIRECTORY *)(image + offset);
+                        uint32_t namesOffset = RvaToFileOffset(image, imageSize, exports->AddressOfNames);
+                        uint32_t ordinalsOffset = RvaToFileOffset(image, imageSize, exports->AddressOfNameOrdinals);
+                        uint32_t functionsOffset = RvaToFileOffset(image, imageSize, exports->AddressOfFunctions);
+                        if (namesOffset && ordinalsOffset && functionsOffset && exports->NumberOfNames > 0 &&
+                            exports->NumberOfNames < 4096)
                         {
                             const uint32_t *names = (const uint32_t *)(image + namesOffset);
                             const uint16_t *ordinals = (const uint16_t *)(image + ordinalsOffset);
@@ -220,8 +233,7 @@ static bool ExportRvaFromFile(const char *path, const char *name, uint32_t *outR
                                 uint32_t nameOffset = RvaToFileOffset(image, imageSize, names[i]);
                                 if (!nameOffset)
                                     continue;
-                                const char *candidate = (const char *)(image + nameOffset);
-                                if (strcmp(candidate, name) == 0)
+                                if (strcmp((const char *)(image + nameOffset), name) == 0)
                                 {
                                     uint16_t ordinal = ordinals[i];
                                     if (ordinal < exports->NumberOfFunctions)
@@ -277,104 +289,64 @@ static void ReleaseHookLock(HANDLE mutex)
 {
     if (!mutex)
         return;
-
     ReleaseMutex(mutex);
     CloseHandle(mutex);
 }
 
-static uint32_t g_selfRva = 0;
-static int g_selfRvaValid = 0;
-static char g_payloadPath[MAX_PATH] = {0};
+/* ------------------------------------------------------------------ */
 
-static void RememberPayload(const char *dll_path)
+static uint32_t crc32_of(const uint8_t *data, size_t length)
 {
-    CopyText(g_payloadPath, sizeof(g_payloadPath), dll_path);
-    g_selfRvaValid = ExportRvaFromFile(dll_path, HOOK_EXPORT_NAME, &g_selfRva) && g_selfRva != 0;
-    if (!g_selfRvaValid)
-        set_error("the payload has no %s export", HOOK_EXPORT_NAME);
-}
-
-static uint64_t ResolveSelfRemote(uint64_t moduleBase)
-{
-    if (!g_selfRvaValid)
-        return 0;
-    return moduleBase + g_selfRva;
-}
-
-static int WriteShimSettings(HANDLE process, uint64_t selfRemote, const struct HookSettings *settings)
-{
-    if (!selfRemote)
-        return 0;
-
-    void *revisionAddress = (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, settingsRevision));
-    void *settingsAddress = (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, settings));
-
-    LONG zero = 0;
-    LONG revision = (LONG)(GetTickCount64() % 0x7FFFFFFF) + 1;
-    if (!revision)
-        revision = 1;
-
-    if (!WriteProcessMemory(process, revisionAddress, (void *)&zero, sizeof(zero), NULL) ||
-        !WriteProcessMemory(process, settingsAddress, (void *)settings, sizeof(*settings), NULL) ||
-        !WriteProcessMemory(process, revisionAddress, (void *)&revision, sizeof(revision), NULL))
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0; i < length; i++)
     {
-        set_error("cannot mirror the settings (%lu)", GetLastError());
-        return 0;
+        crc ^= data[i];
+        for (int bit = 0; bit < 8; bit++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1)));
     }
-
-    return 1;
+    return crc ^ 0xFFFFFFFFu;
 }
 
-static int ReadShimEntries(HANDLE process, uint64_t selfRemote, struct HookEntry *entries)
+static int PayloadHasPattern(const struct HookDescriptor *desc)
 {
-    SIZE_T readBytes = 0;
-    void *address = (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, entries));
-    if (!ReadProcessMemory(process, address, entries, sizeof(struct HookEntry) * HOOK_MAX_ENTRIES, &readBytes) ||
-        readBytes != sizeof(struct HookEntry) * HOOK_MAX_ENTRIES)
-        return 0;
-    return 1;
+    return desc->source == HOOK_SRC_PATTERN && desc->patternCount > 0;
 }
 
-static int WriteShimEntryStatus(HANDLE process, uint64_t selfRemote, int index, LONG status)
+static int TargetMatchesPattern(HANDLE process, uint8_t *target, const struct HookDescriptor *desc)
 {
-    void *address =
-        (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, entries) + sizeof(struct HookEntry) * index +
-                            offsetof(struct HookEntry, status));
-    return WriteProcessMemory(process, address, &status, sizeof(status), NULL) ? 1 : 0;
-}
-
-static int WaitShimReady(HANDLE process, uint64_t selfRemote, int configuredDelayMs)
-{
-    ULONGLONG deadline = GetTickCount64() + SHIM_WAIT_GRACE_MS;
-    if (configuredDelayMs > 0)
-        deadline += (ULONGLONG)configuredDelayMs;
-
-    for (;;)
+    for (uint32_t v = 0; v < desc->patternCount && v < HOOK_PATTERN_MAX; v++)
     {
-        volatile LONG readyValue = 0;
-        SIZE_T readBytes = 0;
-        if (ReadProcessMemory(process, (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, ready)),
-                              (void *)&readyValue, sizeof(readyValue), &readBytes) &&
-            readBytes == sizeof(readyValue) && readyValue == 1)
-            return 1;
-
-        if (GetTickCount64() >= deadline)
+        uint32_t length = desc->patterns[v].length;
+        if (length == 0 || length > HOOK_PATTERN_BYTES)
+            continue;
+        uint8_t remote[HOOK_PATTERN_BYTES];
+        SIZE_T got = 0;
+        if (!ReadProcessMemory(process, target, remote, length, &got) || got != length)
             return 0;
-        Sleep(SHIM_WAIT_STEP_MS);
+        int ok = 1;
+        for (uint32_t i = 0; i < length; i++)
+        {
+            if (desc->patterns[v].mask[i] && remote[i] != desc->patterns[v].bytes[i])
+            {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok)
+            return 1;
     }
+    return 0;
 }
+
+/* ------------------------------------------------------------------ */
 
 static HANDLE g_process = NULL;
 static DWORD g_processId = 0;
 static HMODULE g_remoteModule = NULL;
 static uint64_t g_selfRemote = 0;
-static unsigned char g_originalBytes[HOOK_MAX_ENTRIES][HOOK_ENTRY_PATCH_BYTES];
-static uint64_t g_trampolineList[HOOK_MAX_ENTRIES];
+static unsigned char g_originalBytes[HOOK_MAX][HOOK_ENTRY_PATCH_BYTES];
 static int g_patchedCount = 0;
 static bool g_injected = false;
-
-static struct HookSettings g_pendingSettings;
-static int g_pendingValid = 0;
 
 static void ResetState(void)
 {
@@ -387,7 +359,6 @@ static void ResetState(void)
     g_remoteModule = NULL;
     g_selfRemote = 0;
     memset(g_originalBytes, 0, sizeof(g_originalBytes));
-    memset(g_trampolineList, 0, sizeof(g_trampolineList));
     g_patchedCount = 0;
     g_injected = false;
 }
@@ -401,54 +372,6 @@ static void write_abs_jump(unsigned char *buffer, uint64_t destination)
     buffer[4] = 0;
     buffer[5] = 0;
     memcpy(buffer + 6, &destination, sizeof(destination));
-}
-
-static int PatchEntry(HANDLE process, const struct HookEntry *entry, int index)
-{
-    uint8_t *target = (uint8_t *)(uintptr_t)entry->target;
-
-    unsigned char original[HOOK_ENTRY_PATCH_BYTES];
-    SIZE_T readBytes = 0;
-    if (!ReadProcessMemory(process, target, original, HOOK_ENTRY_PATCH_BYTES, &readBytes) ||
-        readBytes != HOOK_ENTRY_PATCH_BYTES)
-    {
-        set_error("cannot read the original bytes of %s", entry->name);
-        return 0;
-    }
-    memcpy(g_originalBytes[index], original, HOOK_ENTRY_PATCH_BYTES);
-
-    unsigned char patch[HOOK_ENTRY_PATCH_BYTES];
-    write_abs_jump(patch, entry->detour);
-
-    DWORD oldProtection = 0;
-    if (!VirtualProtectEx(process, target, HOOK_ENTRY_PATCH_BYTES, PAGE_EXECUTE_READWRITE, &oldProtection))
-    {
-        set_error("VirtualProtectEx failed for %s (%lu)", entry->name, GetLastError());
-        return 0;
-    }
-
-    SIZE_T written = 0;
-    bool patched = WriteProcessMemory(process, target, patch, HOOK_ENTRY_PATCH_BYTES, &written) &&
-                   written == HOOK_ENTRY_PATCH_BYTES;
-    DWORD ignored = 0;
-    VirtualProtectEx(process, target, HOOK_ENTRY_PATCH_BYTES, oldProtection, &ignored);
-    if (!patched)
-    {
-        set_error("cannot patch %s", entry->name);
-        return 0;
-    }
-
-    unsigned char verify[HOOK_ENTRY_PATCH_BYTES];
-    readBytes = 0;
-    if (!ReadProcessMemory(process, target, verify, HOOK_ENTRY_PATCH_BYTES, &readBytes) ||
-        readBytes != HOOK_ENTRY_PATCH_BYTES || verify[0] != 0xFF || verify[1] != 0x25 ||
-        memcmp(verify + 6, &entry->detour, sizeof(entry->detour)) != 0)
-    {
-        set_error("%s: the patch did not verify", entry->name);
-        return 0;
-    }
-
-    return 1;
 }
 
 static int LoadRemoteLibrary(HANDLE process, const char *fullPath)
@@ -481,21 +404,170 @@ static int LoadRemoteLibrary(HANDLE process, const char *fullPath)
     return 1;
 }
 
-EXPORT int configure(const void *settings, uint32_t size)
+static int ReadPayload(const char *dllPath, struct HookPayload *out)
 {
-    if (size != sizeof(struct HookSettings))
+    char directory[MAX_PATH];
+    CopyText(directory, sizeof(directory), dllPath);
+    char *separator = strrchr(directory, '\\');
+    if (separator)
+        *separator = 0;
+    else
+        CopyText(directory, sizeof(directory), ".");
+
+    char path[MAX_PATH];
+    snprintf(path, sizeof(path), "%s\\%s", directory, PAYLOAD_FILE);
+
+    FILE *file = fopen(path, "rb");
+    if (!file)
     {
-        set_error("configure expects %zu bytes, got %u", sizeof(struct HookSettings), size);
-        return -1;
+        set_error("the payload %s is missing (write it before injecting)", path);
+        return 0;
     }
-    memcpy(&g_pendingSettings, settings, sizeof(g_pendingSettings));
-    g_pendingValid = 1;
-    set_error("ok");
-    return 0;
+    size_t read = fread(out, 1, sizeof(*out), file);
+    fclose(file);
+    if (read != sizeof(*out))
+    {
+        set_error("%s is %zu bytes, expected %zu", path, read, sizeof(*out));
+        return 0;
+    }
+    if (out->magic != HOOK_PAYLOAD_MAGIC || out->version != HOOK_PROTOCOL_VERSION ||
+        out->payloadBytes != sizeof(*out) || out->descriptorCount > HOOK_MAX)
+    {
+        set_error("%s has an incompatible header (version %u)", path, out->version);
+        return 0;
+    }
+    return 1;
+}
+
+static int WriteShimPayload(HANDLE process, uint64_t selfRemote, const struct HookPayload *payload)
+{
+    void *payloadAddress = (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, payload));
+    void *crcAddress = (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, payloadCrc));
+    void *countAddress = (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, descriptorCount));
+    void *revisionAddress = (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, payloadRevision));
+
+    LONG zero = 0;
+    LONG revision = (LONG)(GetTickCount64() % 0x7FFFFFFF) + 1;
+    if (!revision)
+        revision = 1;
+
+    uint32_t crc = crc32_of((const uint8_t *)payload, sizeof(*payload));
+    uint32_t count = payload->descriptorCount;
+
+    if (!WriteProcessMemory(process, payloadAddress, (LPCVOID)payload, sizeof(*payload), NULL) ||
+        !WriteProcessMemory(process, crcAddress, &crc, sizeof(crc), NULL) ||
+        !WriteProcessMemory(process, countAddress, &count, sizeof(count), NULL) ||
+        !WriteProcessMemory(process, revisionAddress, &zero, sizeof(zero), NULL) ||
+        !WriteProcessMemory(process, revisionAddress, &revision, sizeof(revision), NULL))
+    {
+        set_error("cannot mirror the payload (%lu)", GetLastError());
+        return 0;
+    }
+    return 1;
+}
+
+static int WaitShimReady(HANDLE process, uint64_t selfRemote, uint32_t startDelayMs)
+{
+    ULONGLONG deadline = GetTickCount64() + SHIM_WAIT_GRACE_MS;
+    if (startDelayMs > 0)
+        deadline += startDelayMs;
+
+    for (;;)
+    {
+        int32_t ready = 0;
+        SIZE_T got = 0;
+        if (ReadProcessMemory(process, (LPCVOID)(uintptr_t)(selfRemote + offsetof(struct ShimShared, ready)),
+                              &ready, sizeof(ready), &got) &&
+            got == sizeof(ready) && ready == 1)
+            return 1;
+        if (GetTickCount64() >= deadline)
+            return 0;
+        Sleep(SHIM_WAIT_STEP_MS);
+    }
+}
+
+static int ReadShimEntries(HANDLE process, uint64_t selfRemote, struct HookRuntime *runtime)
+{
+    SIZE_T got = 0;
+    void *address = (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, runtime));
+    if (!ReadProcessMemory(process, address, runtime, sizeof(struct HookRuntime) * HOOK_MAX, &got) ||
+        got != sizeof(struct HookRuntime) * HOOK_MAX)
+        return 0;
+    return 1;
+}
+
+static int WriteShimEntryStatus(HANDLE process, uint64_t selfRemote, int index, LONG status)
+{
+    void *address = (void *)(uintptr_t)(selfRemote + offsetof(struct ShimShared, runtime) +
+                                        sizeof(struct HookRuntime) * (size_t)index +
+                                        offsetof(struct HookRuntime, status));
+    return WriteProcessMemory(process, address, &status, sizeof(status), NULL) ? 1 : 0;
+}
+
+static int PatchEntry(HANDLE process, const struct HookRuntime *entry, int index, const struct HookDescriptor *desc)
+{
+    uint8_t *target = (uint8_t *)(uintptr_t)entry->target;
+
+    if (PayloadHasPattern(desc) && !TargetMatchesPattern(process, target, desc))
+    {
+        set_error("%s: the bytes at %p no longer match the payload signature", entry->key,
+                  (void *)(uintptr_t)target);
+        return 0;
+    }
+
+    unsigned char original[HOOK_ENTRY_PATCH_BYTES];
+    SIZE_T got = 0;
+    if (!ReadProcessMemory(process, target, original, HOOK_ENTRY_PATCH_BYTES, &got) || got != HOOK_ENTRY_PATCH_BYTES)
+    {
+        set_error("cannot read the original bytes of %s", entry->key);
+        return 0;
+    }
+    if (hook_prologue_length(original, HOOK_ENTRY_PATCH_BYTES, HOOK_ENTRY_PATCH_BYTES) == 0)
+    {
+        set_error("%s: the %d bytes at %p are not a safe patch site", entry->key, HOOK_ENTRY_PATCH_BYTES,
+                  (void *)(uintptr_t)target);
+        return 0;
+    }
+    memcpy(g_originalBytes[index], original, HOOK_ENTRY_PATCH_BYTES);
+
+    unsigned char patch[HOOK_ENTRY_PATCH_BYTES];
+    write_abs_jump(patch, entry->detour);
+
+    DWORD oldProtection = 0;
+    if (!VirtualProtectEx(process, target, HOOK_ENTRY_PATCH_BYTES, PAGE_EXECUTE_READWRITE, &oldProtection))
+    {
+        set_error("VirtualProtectEx failed for %s (%lu)", entry->key, GetLastError());
+        return 0;
+    }
+
+    SIZE_T written = 0;
+    bool patched = WriteProcessMemory(process, target, patch, HOOK_ENTRY_PATCH_BYTES, &written) &&
+                   written == HOOK_ENTRY_PATCH_BYTES;
+    DWORD ignored = 0;
+    VirtualProtectEx(process, target, HOOK_ENTRY_PATCH_BYTES, oldProtection, &ignored);
+    if (!patched)
+    {
+        set_error("cannot patch %s", entry->key);
+        return 0;
+    }
+
+    unsigned char verify[HOOK_ENTRY_PATCH_BYTES];
+    got = 0;
+    if (!ReadProcessMemory(process, target, verify, HOOK_ENTRY_PATCH_BYTES, &got) ||
+        got != HOOK_ENTRY_PATCH_BYTES || verify[0] != 0xFF || verify[1] != 0x25 ||
+        memcmp(verify + 6, &entry->detour, sizeof(entry->detour)) != 0)
+    {
+        set_error("%s: the patch did not verify", entry->key);
+        return 0;
+    }
+    return 1;
 }
 
 EXPORT int inject(const char *target, const char *dll_path)
 {
+    /* 317 KB: static, never on the injector's stack */
+    static struct HookPayload payload;
+
     if (g_injected)
     {
         if (g_process && WaitForSingleObject(g_process, 0) == WAIT_OBJECT_0)
@@ -555,10 +627,17 @@ EXPORT int inject(const char *target, const char *dll_path)
         return INJECT_ERR_BAD_DLL_PATH;
     }
 
-    RememberPayload(fullPath);
-    if (!g_selfRvaValid)
+    if (!ReadPayload(fullPath, &payload))
     {
         ReleaseHookLock(lock);
+        return INJECT_ERR_PAYLOAD_MISSING;
+    }
+
+    uint32_t selfRva = 0;
+    if (!ExportRvaFromFile(fullPath, HOOK_EXPORT_NAME, &selfRva) || !selfRva)
+    {
+        ReleaseHookLock(lock);
+        set_error("the shim module has no %s export", HOOK_EXPORT_NAME);
         return INJECT_ERR_EXPORT_MISSING;
     }
 
@@ -588,49 +667,25 @@ EXPORT int inject(const char *target, const char *dll_path)
         return INJECT_ERR_MODULE_NOT_FOUND;
     }
 
-    uint64_t selfRemote = ResolveSelfRemote((uint64_t)(uintptr_t)remoteModule);
-    if (!selfRemote)
+    uint64_t selfRemote = (uint64_t)(uintptr_t)remoteModule + selfRva;
+
+    if (!WriteShimPayload(process, selfRemote, &payload))
     {
         CloseHandle(process);
         ReleaseHookLock(lock);
-        set_error("the shim module has no export table entry");
-        return INJECT_ERR_EXPORT_MISSING;
+        return INJECT_ERR_WRITE_REMOTE;
     }
 
-    struct HookSettings settings;
-    if (g_pendingValid)
-    {
-        memcpy(&settings, &g_pendingSettings, sizeof(settings));
-    }
-    else
-    {
-        CopyText(settings.proxyHost, sizeof(settings.proxyHost), "127.0.0.1");
-        settings.proxyPort = 16999;
-        settings.startDelayMs = 2500;
-        settings.logLevel = HOOK_LOG_INFO;
-        settings.allowAnyModule = 0;
-        settings.streamGameLogs = 0;
-        settings.lowPower = 0;
-        settings.lowPowerFps = 0;
-        settings.lowPowerSkipDraws = 0;
-    }
-    if (!WriteShimSettings(process, selfRemote, &settings))
+    if (!WaitShimReady(process, selfRemote, payload.startDelayMs))
     {
         CloseHandle(process);
         ReleaseHookLock(lock);
-        return INJECT_ERR_SETTINGS_SYNC;
-    }
-
-    if (!WaitShimReady(process, selfRemote, settings.startDelayMs))
-    {
-        CloseHandle(process);
-        ReleaseHookLock(lock);
-        set_error("the shim never published its handshake");
+        set_error("the shim never published its entries");
         return INJECT_ERR_HANDSHAKE_MISSING;
     }
 
-    struct HookEntry entries[HOOK_MAX_ENTRIES];
-    if (!ReadShimEntries(process, selfRemote, entries))
+    struct HookRuntime runtime[HOOK_MAX];
+    if (!ReadShimEntries(process, selfRemote, runtime))
     {
         CloseHandle(process);
         ReleaseHookLock(lock);
@@ -639,22 +694,14 @@ EXPORT int inject(const char *target, const char *dll_path)
     }
 
     g_patchedCount = 0;
-    for (int i = 0; i < HOOK_MAX_ENTRIES; i++)
+    for (int i = 0; i < (int)HOOK_MAX && i < (int)payload.descriptorCount; i++)
     {
-        const struct HookEntry *entry = &entries[i];
+        const struct HookRuntime *entry = &runtime[i];
         if (entry->status != HOOK_STATUS_READY || !entry->target || !entry->detour || !entry->trampoline)
             continue;
-        if (entry->entryPatchBytes != HOOK_ENTRY_PATCH_BYTES || entry->stolenBytes < HOOK_ENTRY_PATCH_BYTES)
-        {
-            set_error("%s expects at least %d stolen bytes", entry->name, HOOK_ENTRY_PATCH_BYTES);
-            continue;
-        }
-
-        if (!PatchEntry(process, entry, i))
-            continue;
-
+        if (!PatchEntry(process, entry, i, &payload.descriptors[i]))
+            continue; /* the detailed error is already in g_lastError */
         WriteShimEntryStatus(process, selfRemote, i, HOOK_STATUS_PATCHED);
-        g_trampolineList[g_patchedCount] = entry->trampoline;
         g_patchedCount++;
     }
 
@@ -670,7 +717,7 @@ EXPORT int inject(const char *target, const char *dll_path)
     {
         ResetState();
         set_error("no hook could be patched");
-        return INJECT_ERR_NO_HOOKS;
+        return INJECT_ERR_HANDSHAKE_INVALID;
     }
 
     set_error("ok");
@@ -681,66 +728,6 @@ EXPORT void reset(void)
 {
     ResetState();
     set_error("ok");
-}
-
-EXPORT int apply_settings(const char *target, const char *dll_path, const void *settings, uint32_t size)
-{
-    if (!target || !dll_path || !settings)
-    {
-        set_error("bad args");
-        return INJECT_ERR_BAD_ARGS;
-    }
-    if (size != sizeof(struct HookSettings))
-    {
-        set_error("apply_settings expects %zu bytes, got %u", sizeof(struct HookSettings), size);
-        return INJECT_ERR_BAD_ARGS;
-    }
-
-    RememberPayload(dll_path);
-    if (!g_selfRvaValid)
-    {
-        return INJECT_ERR_EXPORT_MISSING;
-    }
-
-    DWORD pid = 0;
-    char *end = NULL;
-    errno = 0;
-    long parsed = strtol(target, &end, 10);
-    if (end && *end == '\0' && parsed > 0 && errno == 0)
-        pid = (DWORD)parsed;
-    else
-        pid = find_process_id(target);
-    if (!pid)
-    {
-        set_error("process not found: %s", target);
-        return INJECT_ERR_TARGET_NOT_FOUND;
-    }
-
-    HMODULE module = find_remote_module(pid, file_base_name(dll_path));
-    if (!module)
-    {
-        set_error("the shim is not loaded in the target");
-        return INJECT_ERR_MODULE_NOT_FOUND;
-    }
-
-    uint64_t selfRemote = ResolveSelfRemote((uint64_t)(uintptr_t)module);
-    if (!selfRemote)
-    {
-        set_error("the shim module has no export table entry");
-        return INJECT_ERR_EXPORT_MISSING;
-    }
-
-    HANDLE process = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, FALSE, pid);
-    if (!process)
-    {
-        set_error("OpenProcess failed %lu", GetLastError());
-        return INJECT_ERR_OPEN_PROCESS;
-    }
-    int ok = WriteShimSettings(process, selfRemote, (const struct HookSettings *)settings);
-    CloseHandle(process);
-
-    set_error("ok");
-    return ok ? INJECT_OK : INJECT_ERR_SETTINGS_SYNC;
 }
 
 EXPORT int cleanup(void)
@@ -757,17 +744,17 @@ EXPORT int cleanup(void)
         return INJECT_ERR_ALREADY_INJECTED;
     }
 
-    struct HookEntry entries[HOOK_MAX_ENTRIES];
-    if (!ReadShimEntries(g_process, g_selfRemote, entries))
+    struct HookRuntime runtime[HOOK_MAX];
+    if (!ReadShimEntries(g_process, g_selfRemote, runtime))
     {
         set_error("cannot read the shim entries");
         ResetState();
         return INJECT_ERR_HANDSHAKE_INVALID;
     }
 
-    for (int i = 0; i < HOOK_MAX_ENTRIES; i++)
+    for (int i = 0; i < (int)HOOK_MAX; i++)
     {
-        const struct HookEntry *entry = &entries[i];
+        const struct HookRuntime *entry = &runtime[i];
         if (entry->status != HOOK_STATUS_PATCHED)
             continue;
 
@@ -809,3 +796,5 @@ EXPORT const char *last_error(void)
 {
     return g_lastError;
 }
+
+#endif /* _WIN32 */

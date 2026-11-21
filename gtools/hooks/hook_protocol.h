@@ -168,7 +168,8 @@ struct HookCtx
     uint8_t scratch[4096]; /* 0x190 */
 }; /* 4496 bytes, 16-aligned */
 
-#define HOOK_CTX_FRAME_SIZE 4496u
+#define HOOK_CTX_FRAME_SIZE 4496
+#define HOOK_CTX_SCRATCH_OFF 400u /* offsetof(struct HookCtx, scratch) */
 
 struct HookPayload
 {

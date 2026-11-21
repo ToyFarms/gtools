@@ -1,6 +1,20 @@
-// BUILD_FLAGS[gcc, clang]: -O2 -shared -fPIC -mwindows
-// BUILD_FLAGS[msvc]: /O2 /LD /TC /Gy
-// BUILD_FLAGS[gcc(mingw)]: -O2 -shared -fPIC -mwindows
+/*
+ * agent.c - the out-of-process watcher (rundll32 AgentMain).
+ *
+ * Feature-blind v4: watches for the target process, injects hook.dll with the
+ * install payload (authored by Python), serves the control pipe with generic
+ * commands (STATUS/HOOKS/ENABLE/STATE/DATA), drains the shim's event ring and
+ * forwards everything to connected clients.
+ *
+ * BUILD_FLAGS[gcc, clang]: -O2 -shared -fPIC -mwindows
+ * BUILD_FLAGS[msvc]: /O2 /LD /TC /Gy
+ * BUILD_FLAGS[gcc(mingw)]: -O2 -shared -fPIC -mwindows
+ */
+
+#ifndef _WIN32
+/* agent.dll is Windows-only; keep compile_cmod.py's Linux job green */
+int g_agent_windows_only;
+#else
 
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
@@ -17,10 +31,15 @@
 
 #include "hook_protocol.h"
 
-#pragma comment(lib, "advapi32.lib")
+#if defined(_MSC_VER)
+#  pragma comment(lib, "advapi32.lib")
+#  define EXPORT __declspec(dllexport)
+#else
+#  define EXPORT __attribute__((visibility("default")))
+#endif
 
 #define MAX_LOG_MESSAGE       1024
-#define MAX_EVENT_TEXT        512
+#define MAX_EVENT_TEXT        2048
 #define MAX_PIPE_LINE         4096
 #define PIPE_POLL_INTERVAL_MS 20
 #define MAX_PIPE_CLIENTS      4
@@ -33,6 +52,7 @@
 #define TARGET_FAIL_LOG_MS      30000
 #define PID_MUTEX_WAIT_TRIES    200
 #define PID_MUTEX_WAIT_STEP_MS  100
+#define RING_DRAIN_PASSES       5
 
 #ifndef AGENT_IDLE_GRACE_MS
 #  define AGENT_IDLE_GRACE_MS 5000
@@ -41,27 +61,20 @@
 #  define AGENT_BOOTSTRAP_EXIT_MS 180000
 #endif
 
-#define RING_DRAIN_PASSES 5
-
-#if defined(_MSC_VER)
-#  define EXPORT __declspec(dllexport)
-#else
-#  define EXPORT __attribute__((visibility("default")))
-#endif
+#define HOOK_AGENT_DLL "agent.dll"
+#define HOOK_MODULE_NAME "hook.dll"
+#define PAYLOAD_FILE "hook_payload.bin"
 
 typedef int (*FnRemoteInject)(const char *target, const char *dll_path);
 typedef const char *(*FnRemoteLastError)(void);
-typedef int (*FnRemoteConfigure)(const void *settings, uint32_t size);
-typedef int (*FnRemoteApplySettings)(const char *target, const char *dll_path, const void *settings, uint32_t size);
 
 static FnRemoteInject g_inject = NULL;
 static FnRemoteLastError g_lastErrorFn = NULL;
-static FnRemoteConfigure g_configureFn = NULL;
-static FnRemoteApplySettings g_applySettingsFn = NULL;
 static char g_payloadPath[MAX_PATH] = {0};
+static char g_targetProcess[HOOK_KEY_MAX] = "Growtopia.exe";
 
-static const char *const HOOK_AGENT_TARGET = "Growtopia.exe";
-static const char *const HOOK_MODULE_NAME = "hook.dll";
+/* ------------------------------------------------------------------ */
+/* text + queue plumbing (generic)                                     */
 
 static void CopyText(char *destination, size_t destinationSize, const char *source)
 {
@@ -79,32 +92,13 @@ static void CopyText(char *destination, size_t destinationSize, const char *sour
     destination[length] = 0;
 }
 
-static void ReplaceSpacesImpl(char *text)
+static void ReplaceSpaces(char *text)
 {
     for (char *cursor = text; *cursor; cursor++)
     {
         if (*cursor == ' ')
             *cursor = '_';
     }
-}
-
-static struct HookSettings g_settings;
-static struct HookCapture g_capture;
-static CRITICAL_SECTION g_stateLock;
-static volatile LONG g_stateLockReady = 0;
-
-static void SetDefaultSettings(void)
-{
-    CopyText(g_settings.proxyHost, sizeof(g_settings.proxyHost), "127.0.0.1");
-    g_settings.proxyPort = 16999;
-    g_settings.startDelayMs = 2500;
-    g_settings.logLevel = HOOK_LOG_INFO;
-    g_settings.allowAnyModule = 0;
-    g_settings.streamGameLogs = 0;
-    g_settings.lowPower = 0;
-    g_settings.lowPowerFps = 0;
-    g_settings.lowPowerSkipDraws = 0;
-    ZeroMemory(&g_capture, sizeof(g_capture));
 }
 
 struct TextBuffer
@@ -145,6 +139,20 @@ static void BufferAppendText(struct TextBuffer *buffer, const char *text)
     if (!text)
         return;
     BufferAppend(buffer, text, strlen(text));
+}
+
+static void BufferAppendFormat(struct TextBuffer *buffer, const char *format, ...)
+{
+    char scratch[256];
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(scratch, sizeof(scratch), format, args);
+    va_end(args);
+    if (written < 0)
+        return;
+    if ((size_t)written >= sizeof(scratch))
+        written = (int)sizeof(scratch) - 1;
+    BufferAppend(buffer, scratch, (size_t)written);
 }
 
 static void BufferFree(struct TextBuffer *buffer)
@@ -354,6 +362,9 @@ static void AppendSingleLine(struct TextBuffer *buffer, const char *text)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* remote state                                                        */
+
 static DWORD g_gamePid = 0;
 static HANDLE g_memoryProcess = NULL;
 static uint64_t g_selfRemote = 0;
@@ -362,21 +373,19 @@ static int g_selfRvaValid = 0;
 static volatile LONG g_everHadClient = 0;
 static ULONGLONG g_agentStartedAt = 0;
 
-static struct ShimShared g_shimHead;
-static int g_shimValid = 0;
-static LONG g_consumedTicket = 0;
-static struct HookSettings g_syncedSettings;
-static int g_patchedAnnounced = 0;
+static struct HookRuntime g_runtime[HOOK_MAX];
+static int g_runtimeValid = 0;
+static CRITICAL_SECTION g_stateLock;
+static volatile LONG g_stateLockReady = 0;
+static uint32_t g_logLevel = HOOK_LOG_INFO;
 
 static void InvalidateShimCaches(void)
 {
     if (g_stateLockReady)
         EnterCriticalSection(&g_stateLock);
     g_selfRemote = 0;
-    g_shimValid = 0;
-    g_consumedTicket = 0;
-    g_patchedAnnounced = 0;
-    ZeroMemory(&g_syncedSettings, sizeof(g_syncedSettings));
+    g_runtimeValid = 0;
+    memset(g_runtime, 0, sizeof(g_runtime));
     if (g_stateLockReady)
         LeaveCriticalSection(&g_stateLock);
 }
@@ -412,7 +421,7 @@ static uint32_t RvaToFileOffset(const uint8_t *image, size_t imageSize, uint32_t
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)image;
     if (dos->e_magic != IMAGE_DOS_SIGNATURE)
         return 0;
-    const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(image + dos->e_lfanew);
+    const IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(image + dos->e_lfanew);
     if ((const uint8_t *)nt + sizeof(*nt) > image + imageSize || nt->Signature != IMAGE_NT_SIGNATURE)
         return 0;
 
@@ -432,7 +441,6 @@ static uint32_t RvaToFileOffset(const uint8_t *image, size_t imageSize, uint32_t
             return section[i].PointerToRawData + delta;
         }
     }
-
     return 0;
 }
 
@@ -453,26 +461,27 @@ static int ExportRvaFromFile(const char *path, const char *name, uint32_t *outRv
     fseek(file, 0, SEEK_END);
     long size = ftell(file);
     fseek(file, 0, SEEK_SET);
-    if (size > 0 && size < 16 * 1024 * 1024 && (image = (uint8_t *)malloc((size_t)size)))
+    if (size > 0 && size < 64 * 1024 * 1024 && (image = (uint8_t *)malloc((size_t)size)))
     {
         imageSize = fread(image, 1, (size_t)size, file);
         const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)image;
         if (imageSize > sizeof(IMAGE_DOS_HEADER) && dos->e_magic == IMAGE_DOS_SIGNATURE)
         {
-            const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(image + dos->e_lfanew);
+            const IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(image + dos->e_lfanew);
             if ((const uint8_t *)nt + sizeof(*nt) <= image + imageSize && nt->Signature == IMAGE_NT_SIGNATURE &&
                 nt->FileHeader.SizeOfOptionalHeader >= sizeof(IMAGE_OPTIONAL_HEADER64))
             {
                 const IMAGE_OPTIONAL_HEADER64 *optional = &nt->OptionalHeader;
-                const IMAGE_DATA_DIRECTORY *exported = (optional->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_EXPORT)
-                                                           ? &optional->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
-                                                           : NULL;
+                const IMAGE_DATA_DIRECTORY *exported =
+                    (optional->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_EXPORT)
+                        ? &optional->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
+                        : NULL;
                 if (exported && exported->VirtualAddress)
                 {
                     uint32_t offset = RvaToFileOffset(image, imageSize, exported->VirtualAddress);
                     if (offset && offset + sizeof(IMAGE_EXPORT_DIRECTORY) <= imageSize)
                     {
-                        const IMAGE_EXPORT_DIRECTORY *exports = (const IMAGE_EXPORT_DIRECTORY *)(image + offset);
+                        const IMAGE_EXPORT_DIRECTORY *exports = (IMAGE_EXPORT_DIRECTORY *)(image + offset);
                         uint32_t namesOffset = RvaToFileOffset(image, imageSize, exports->AddressOfNames);
                         uint32_t ordinalsOffset = RvaToFileOffset(image, imageSize, exports->AddressOfNameOrdinals);
                         uint32_t functionsOffset = RvaToFileOffset(image, imageSize, exports->AddressOfFunctions);
@@ -538,289 +547,146 @@ static void ForgetTarget(void)
     InvalidateShimCaches();
 }
 
-static void RefreshSnapshot(void)
+static int RefreshRuntime(void)
 {
     if (!g_selfRvaValid)
     {
         if (g_payloadPath[0])
             g_selfRvaValid = ExportRvaFromFile(g_payloadPath, HOOK_EXPORT_NAME, &g_selfRva) && g_selfRva;
         if (!g_selfRvaValid)
-            return;
+            return 0;
     }
     if (!g_gamePid || !g_memoryProcess)
-        return;
+        return 0;
 
     if (!g_selfRemote)
     {
         HMODULE base = find_remote_module(g_gamePid, HOOK_MODULE_NAME);
         if (!base)
-            return;
+            return 0;
         g_selfRemote = (uint64_t)(uintptr_t)base + g_selfRva;
     }
 
-    struct ShimShared head;
+    struct HookRuntime remote[HOOK_MAX];
     SIZE_T readBytes = 0;
-    void *address = (void *)(uintptr_t)g_selfRemote;
-    if (!ReadProcessMemory(g_memoryProcess, address, &head, offsetof(struct ShimShared, log), &readBytes) ||
-        readBytes != offsetof(struct ShimShared, log))
-        return;
+    void *address = (void *)(uintptr_t)(g_selfRemote + offsetof(struct ShimShared, runtime));
+    if (!ReadProcessMemory(g_memoryProcess, address, remote, sizeof(remote), &readBytes) ||
+        readBytes != sizeof(remote))
+        return 0;
 
-    if (head.magic != HOOK_PROTOCOL_MAGIC || head.version != HOOK_PROTOCOL_VERSION)
-        return;
+    int32_t magic = 0;
+    ReadProcessMemory(g_memoryProcess, (LPCVOID)(uintptr_t)(g_selfRemote + offsetof(struct ShimShared, magic)),
+                      &magic, sizeof(magic), &readBytes);
+    if (magic != (int32_t)HOOK_PROTOCOL_MAGIC)
+        return 0;
 
     EnterCriticalSection(&g_stateLock);
-    g_shimHead = head;
-    g_shimValid = 1;
+    memcpy(g_runtime, remote, sizeof(remote));
+    g_runtimeValid = 1;
     LeaveCriticalSection(&g_stateLock);
-}
-
-struct SettingDescriptor
-{
-    const char *name;
-    int kind;
-    int base;
-    size_t offset;
-    size_t capacity;
-    long minimum;
-    long maximum;
-    int writable;
-};
-
-#define SETTING_TEXT   0
-#define SETTING_NUMBER 1
-#define BASE_SETTINGS  0
-#define BASE_CAPTURE   1
-
-static const struct SettingDescriptor g_descriptors[] = {
-    {"proxy_host",           SETTING_TEXT,   BASE_SETTINGS, offsetof(struct HookSettings, proxyHost),
-     sizeof(((struct HookSettings *)0)->proxyHost),                                                              0, 0,      1},
-    {"proxy_port",           SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, proxyPort),         0, 1, 65535,  1},
-    {"start_delay_ms",       SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, startDelayMs),      0, 0, 600000, 1},
-    {"log_level",            SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, logLevel),          0, 0, 2,      1},
-    {"allow_any_module",     SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, allowAnyModule),    0, 0, 1,      1},
-    {"stream_game_logs",     SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, streamGameLogs),    0, 0, 1,      1},
-    {"low_power",            SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, lowPower),          0, 0, 1,      1},
-    {"low_power_fps",        SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, lowPowerFps),       0, 0, 240,    1},
-    {"low_power_skip_draws", SETTING_NUMBER, BASE_SETTINGS, offsetof(struct HookSettings, lowPowerSkipDraws), 0, 0, 1,
-     1                                                                                                                       },
-    {"client_version",       SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientVersion),
-     sizeof(((struct HookCapture *)0)->clientVersion),                                                           0, 0,      0},
-    {"client_protocol",      SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientProtocol),
-     sizeof(((struct HookCapture *)0)->clientProtocol),                                                          0, 0,      0},
-    {"client_platform",      SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  clientPlatform),
-     sizeof(((struct HookCapture *)0)->clientPlatform),                                                          0, 0,      0},
-    {"real_server",          SETTING_TEXT,   BASE_CAPTURE,  offsetof(struct HookCapture,  realServer),
-     sizeof(((struct HookCapture *)0)->realServer),                                                              0, 0,      0},
-    {"real_port",            SETTING_NUMBER, BASE_CAPTURE,  offsetof(struct HookCapture,  realPort),          0, 0, 65535,  0},
-};
-
-#define SETTING_COUNT ((int)(sizeof(g_descriptors) / sizeof(g_descriptors[0])))
-
-static const struct SettingDescriptor *FindSetting(const char *name)
-{
-    if (!name)
-        return NULL;
-
-    for (int i = 0; i < SETTING_COUNT; i++)
-    {
-        if (_stricmp(g_descriptors[i].name, name) == 0)
-            return &g_descriptors[i];
-    }
-
-    return NULL;
-}
-
-static void *SettingPointer(const struct SettingDescriptor *descriptor)
-{
-    char *base = descriptor->base == BASE_CAPTURE ? (char *)&g_capture : (char *)&g_settings;
-    return base + descriptor->offset;
-}
-
-static void FormatSetting(const struct SettingDescriptor *descriptor, char *out, size_t outSize)
-{
-    if (!descriptor || !out || outSize == 0)
-        return;
-    const void *pointer = SettingPointer(descriptor);
-    if (descriptor->kind == SETTING_NUMBER)
-        snprintf(out, outSize, "%d", *(const int *)pointer);
-    else
-        CopyText(out, outSize, (const char *)pointer);
-}
-
-static int ApplySetting(const struct SettingDescriptor *descriptor, const char *value, char *error, size_t errorSize)
-{
-    if (!descriptor)
-        return 0;
-
-    if (!descriptor->writable)
-    {
-        snprintf(error, errorSize, "%s is read only", descriptor->name);
-        return 0;
-    }
-    if (!value)
-    {
-        snprintf(error, errorSize, "missing value");
-        return 0;
-    }
-
-    void *pointer = SettingPointer(descriptor);
-    if (descriptor->kind == SETTING_NUMBER)
-    {
-        char *end = NULL;
-        long parsed = strtol(value, &end, 10);
-        if (!end || *end != 0 || parsed < descriptor->minimum || parsed > descriptor->maximum)
-        {
-            snprintf(error, errorSize, "%s expects a number between %ld and %ld", descriptor->name, descriptor->minimum,
-                     descriptor->maximum);
-            return 0;
-        }
-        *(int *)pointer = (int)parsed;
-        return 1;
-    }
-
-    if (strlen(value) >= descriptor->capacity)
-    {
-        snprintf(error, errorSize, "%s is too long", descriptor->name);
-        return 0;
-    }
-    memcpy(pointer, value, strlen(value) + 1);
-
     return 1;
 }
 
-static void SyncShimSettings(void)
+static int RemoteWrite(HANDLE process, uint64_t address, const void *data, size_t size)
 {
-    if (!g_applySettingsFn || !g_gamePid || !g_shimValid)
-        return;
-    if (memcmp(&g_settings, &g_syncedSettings, sizeof(g_settings)) == 0)
-        return;
+    SIZE_T written = 0;
+    return WriteProcessMemory(process, (LPVOID)(uintptr_t)address, data, size, &written) && written == size;
+}
 
-    char pidText[16];
-    snprintf(pidText, sizeof(pidText), "%lu", (unsigned long)g_gamePid);
+static int AgentWriteRuntimeField(int index, size_t fieldOffset, const void *data, size_t size)
+{
+    HANDLE process = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, FALSE, g_gamePid);
+    if (!process)
+        return 0;
+    uint64_t address = g_selfRemote + offsetof(struct ShimShared, runtime) +
+                       sizeof(struct HookRuntime) * (size_t)index + fieldOffset;
+    int ok = RemoteWrite(process, address, data, size);
+    CloseHandle(process);
+    return ok;
+}
 
-    struct HookSettings outbound;
-    EnterCriticalSection(&g_stateLock);
-    outbound = g_settings;
-    LeaveCriticalSection(&g_stateLock);
+static int FindRuntimeIndex(const char *key)
+{
+    for (int i = 0; i < (int)HOOK_MAX; i++)
+    {
+        if (g_runtime[i].key[0] && _stricmp(g_runtime[i].key, key) == 0)
+            return i;
+    }
+    return -1;
+}
 
-    int rc = g_applySettingsFn(pidText, g_payloadPath, &outbound, (uint32_t)sizeof(outbound));
-    if (rc == 0)
-        g_syncedSettings = outbound;
-    else
-        AgentLog("[hook] agent: the settings sync failed (rc=%d: %s)", rc, g_lastErrorFn ? g_lastErrorFn() : "unknown");
+/* ------------------------------------------------------------------ */
+/* status + handshake                                                  */
+
+static const char *StatusText(int32_t status)
+{
+    switch (status)
+    {
+    case HOOK_STATUS_PATCHED:
+        return "patched";
+    case HOOK_STATUS_READY:
+        return "ready";
+    default:
+        return "missing";
+    }
 }
 
 static void BuildStatusLine(struct TextBuffer *buffer)
 {
     BufferAppendText(buffer, "DATA");
 
-    struct HookSettings settingsLocal;
-    struct HookCapture captureLocal;
-    struct ShimShared shimLocal;
-    int shimValidLocal;
+    uint64_t processId = 0;
+    uint64_t imageBase = 0;
+    uint64_t imageSize = 0;
+    uint64_t dllBase = 0;
+    uint64_t bootTick = 0;
+
+    EnterCriticalSection(&g_stateLock);
+    int valid = g_runtimeValid;
+    struct HookRuntime local[HOOK_MAX];
+    if (valid)
+        memcpy(local, g_runtime, sizeof(local));
+    LeaveCriticalSection(&g_stateLock);
+
+    if (valid && g_memoryProcess)
+    {
+        uint8_t head[64];
+        SIZE_T got = 0;
+        if (ReadProcessMemory(g_memoryProcess, (LPCVOID)(uintptr_t)g_selfRemote, head, sizeof(head), &got) &&
+            got == sizeof(head))
+        {
+            memcpy(&processId, head + offsetof(struct ShimShared, processId), 8);
+            memcpy(&imageBase, head + offsetof(struct ShimShared, imageBase), 8);
+            memcpy(&imageSize, head + offsetof(struct ShimShared, imageSize), 8);
+            memcpy(&dllBase, head + offsetof(struct ShimShared, dllBase), 8);
+            memcpy(&bootTick, head + offsetof(struct ShimShared, bootTick), 8);
+        }
+    }
+
+    BufferAppendFormat(buffer, " pid=%lu", (unsigned long)processId);
+    BufferAppendFormat(buffer, " image_base=0x%llX", (unsigned long long)imageBase);
+    BufferAppendFormat(buffer, " image_size=0x%llX", (unsigned long long)imageSize);
+    BufferAppendFormat(buffer, " dll_base=0x%llX", (unsigned long long)dllBase);
     ULONGLONG now = GetTickCount64();
+    uint64_t uptime = (valid && bootTick && now >= bootTick) ? (uint64_t)(now - bootTick) : 0;
+    BufferAppendFormat(buffer, " uptime_ms=%llu", (unsigned long long)uptime);
+    BufferAppendFormat(buffer, " level=%u", (unsigned)g_logLevel);
+    BufferAppendFormat(buffer, " target=%s", g_targetProcess);
 
-    EnterCriticalSection(&g_stateLock);
-    settingsLocal = g_settings;
-    captureLocal = g_capture;
-    shimValidLocal = g_shimValid;
-    if (g_shimValid)
-        shimLocal = g_shimHead;
-    LeaveCriticalSection(&g_stateLock);
+    if (!valid)
+        return;
 
-    for (int i = 0; i < SETTING_COUNT; i++)
+    for (int i = 0; i < (int)HOOK_MAX; i++)
     {
-        char value[MAX_LOG_MESSAGE];
-        if (g_descriptors[i].base == BASE_CAPTURE)
-        {
-            const void *pointer = (const char *)&captureLocal + g_descriptors[i].offset;
-            if (g_descriptors[i].kind == SETTING_NUMBER)
-                snprintf(value, sizeof(value), "%d", *(const int *)pointer);
-            else
-                CopyText(value, sizeof(value), (const char *)pointer);
-        }
-        else
-        {
-            const void *pointer = (const char *)&settingsLocal + g_descriptors[i].offset;
-            if (g_descriptors[i].kind == SETTING_NUMBER)
-                snprintf(value, sizeof(value), "%d", *(const int *)pointer);
-            else
-                CopyText(value, sizeof(value), (const char *)pointer);
-        }
-        BufferAppendText(buffer, " ");
-        BufferAppendText(buffer, g_descriptors[i].name);
-        BufferAppendText(buffer, "=");
-        AppendSanitized(buffer, value);
+        if (!local[i].key[0])
+            continue;
+        BufferAppendFormat(buffer, " hook_%s=%s", local[i].key, StatusText(local[i].status));
+        BufferAppendFormat(buffer, " target_%s=0x%llX", local[i].key, (unsigned long long)local[i].target);
+        BufferAppendFormat(buffer, " hits_%s=%llu", local[i].key, (unsigned long long)local[i].hits);
+        BufferAppendFormat(buffer, " faults_%s=%llu", local[i].key, (unsigned long long)local[i].faults);
+        BufferAppendFormat(buffer, " enabled_%s=%d", local[i].key, (int)local[i].enabled);
+        BufferAppendFormat(buffer, " state_%s_0=%llu", local[i].key, (unsigned long long)local[i].state[0]);
     }
-
-    uint64_t processId = shimValidLocal ? shimLocal.processId : 0;
-    char scratch[160];
-    snprintf(scratch, sizeof(scratch), " pid=%lu", (unsigned long)(uintptr_t)processId);
-    BufferAppendText(buffer, scratch);
-
-    snprintf(scratch, sizeof(scratch), " image_base=0x%llX",
-             (unsigned long long)(shimValidLocal ? shimLocal.imageBase : 0));
-    BufferAppendText(buffer, scratch);
-
-    snprintf(scratch, sizeof(scratch), " image_size=0x%llX",
-             (unsigned long long)(shimValidLocal ? shimLocal.imageSize : 0));
-    BufferAppendText(buffer, scratch);
-
-    snprintf(scratch, sizeof(scratch), " dll_base=0x%llX",
-             (unsigned long long)(shimValidLocal ? shimLocal.dllBase : 0));
-    BufferAppendText(buffer, scratch);
-
-    uint64_t uptime = 0;
-    if (shimValidLocal && shimLocal.bootTick && now >= shimLocal.bootTick)
-        uptime = now - shimLocal.bootTick;
-    snprintf(scratch, sizeof(scratch), " uptime_ms=%llu", (unsigned long long)uptime);
-    BufferAppendText(buffer, scratch);
-
-    for (int i = 0; i < HOOK_INDEX_COUNT && i < HOOK_MAX_ENTRIES; i++)
-    {
-        LONG value =
-            (shimValidLocal && i < (int)shimLocal.entryCount) ? shimLocal.entries[i].status : (LONG)HOOK_STATUS_MISSING;
-        const char *status = "missing";
-        if (value == HOOK_STATUS_PATCHED)
-            status = "patched";
-        else if (value == HOOK_STATUS_READY)
-            status = "ready";
-
-        snprintf(scratch, sizeof(scratch), " hook_%s=%s", HOOK_IDENTITIES[i].key, status);
-        BufferAppendText(buffer, scratch);
-
-        snprintf(
-            scratch, sizeof(scratch), " target_%s=0x%llX", HOOK_IDENTITIES[i].key,
-            (unsigned long long)((shimValidLocal && i < (int)shimLocal.entryCount) ? shimLocal.entries[i].target : 0));
-        BufferAppendText(buffer, scratch);
-    }
-}
-
-static void PublishStateEvent(void)
-{
-    char version[HOOK_FIELD_MAX];
-    char protocol[HOOK_FIELD_MAX];
-    char platform[HOOK_FIELD_MAX];
-    char server[HOOK_FIELD_MAX];
-    int port = 0;
-
-    EnterCriticalSection(&g_stateLock);
-    CopyText(version, sizeof(version), g_capture.clientVersion);
-    CopyText(protocol, sizeof(protocol), g_capture.clientProtocol);
-    CopyText(platform, sizeof(platform), g_capture.clientPlatform);
-    CopyText(server, sizeof(server), g_capture.realServer);
-    port = g_capture.realPort;
-    LeaveCriticalSection(&g_stateLock);
-
-    ReplaceSpacesImpl(version);
-    ReplaceSpacesImpl(protocol);
-    ReplaceSpacesImpl(platform);
-    ReplaceSpacesImpl(server);
-
-    char text[MAX_EVENT_TEXT];
-    snprintf(text, sizeof(text), "client_version=%s client_protocol=%s client_platform=%s real_server=%s real_port=%d",
-             version, protocol, platform, server, port);
-    QueueEvent("state", text);
 }
 
 static void HexEncode(const uint8_t *data, size_t length, char *out, size_t outSize)
@@ -836,35 +702,241 @@ static void HexEncode(const uint8_t *data, size_t length, char *out, size_t outS
         out[position] = 0;
 }
 
+static int HexValue(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+static int HexDecode(const char *text, uint8_t *out, size_t outSize)
+{
+    size_t count = 0;
+    while (text[0] && text[1])
+    {
+        int high = HexValue(text[0]);
+        int low = HexValue(text[1]);
+        if (high < 0 || low < 0)
+            return -1;
+        if (count >= outSize)
+            return -1;
+        out[count++] = (uint8_t)((high << 4) | low);
+        text += 2;
+    }
+    if (text[0])
+        return -1;
+    return (int)count;
+}
+
 static void BuildHandshake(struct HookHandshake *out)
 {
     memset(out, 0, sizeof(*out));
-
-    struct ShimShared shimLocal;
-    int shimValidLocal;
+    int valid;
+    struct HookRuntime local[HOOK_MAX];
     EnterCriticalSection(&g_stateLock);
-    shimValidLocal = g_shimValid;
-    if (g_shimValid)
-        shimLocal = g_shimHead;
+    valid = g_runtimeValid;
+    if (valid)
+        memcpy(local, g_runtime, sizeof(local));
     LeaveCriticalSection(&g_stateLock);
-    if (!shimValidLocal)
+    if (!valid)
         return;
 
+    SIZE_T got = 0;
+    uint8_t head[64];
+    if (g_memoryProcess && ReadProcessMemory(g_memoryProcess, (LPCVOID)(uintptr_t)g_selfRemote, head, sizeof(head), &got) &&
+        got == sizeof(head))
+    {
+        memcpy(&out->processId, head + offsetof(struct ShimShared, processId), 8);
+        memcpy(&out->imageBase, head + offsetof(struct ShimShared, imageBase), 8);
+        memcpy(&out->imageSize, head + offsetof(struct ShimShared, imageSize), 8);
+        memcpy(&out->dllBase, head + offsetof(struct ShimShared, dllBase), 8);
+    }
     out->magic = HOOK_PROTOCOL_MAGIC;
     out->version = HOOK_PROTOCOL_VERSION;
-    out->processId = shimLocal.processId;
-    out->imageBase = shimLocal.imageBase;
-    out->imageSize = shimLocal.imageSize;
-    out->dllBase = shimLocal.dllBase;
 
     uint32_t count = 0;
-    for (int i = 0; i < HOOK_INDEX_COUNT && i < HOOK_MAX_ENTRIES; i++)
+    for (int i = 0; i < (int)HOOK_MAX; i++)
     {
-        if (shimLocal.entries[i].status == HOOK_STATUS_MISSING)
+        if (!local[i].key[0] || local[i].status == HOOK_STATUS_MISSING)
             continue;
-        out->entries[count++] = shimLocal.entries[i];
+        struct HookHandshakeEntry *entry = &out->entries[count++];
+        CopyText(entry->key, sizeof(entry->key), local[i].key);
+        entry->status = local[i].status;
+        entry->index = (uint32_t)i;
+        entry->target = local[i].target;
+        entry->trampoline = local[i].trampoline;
     }
-    out->entryCount = count;
+    out->descriptorCount = count;
+}
+
+/* ------------------------------------------------------------------ */
+/* pipe commands                                                       */
+
+static void HandlePing(HANDLE pipe)
+{
+    WritePipeLine(pipe, "OK pong");
+}
+
+static void HandleStatus(HANDLE pipe)
+{
+    struct TextBuffer status;
+    memset(&status, 0, sizeof(status));
+    BuildStatusLine(&status);
+    WritePipeLine(pipe, status.data ? status.data : "DATA");
+    BufferFree(&status);
+}
+
+static void HandleHooks(HANDLE pipe)
+{
+    struct TextBuffer text;
+    memset(&text, 0, sizeof(text));
+    BufferAppendText(&text, "DATA");
+
+    EnterCriticalSection(&g_stateLock);
+    int valid = g_runtimeValid;
+    struct HookRuntime local[HOOK_MAX];
+    if (valid)
+        memcpy(local, g_runtime, sizeof(local));
+    LeaveCriticalSection(&g_stateLock);
+
+    if (valid)
+    {
+        for (int i = 0; i < (int)HOOK_MAX; i++)
+        {
+            if (!local[i].key[0])
+                continue;
+            BufferAppendFormat(&text, " %s:%d:%d:%d:%llu", local[i].key, (int)local[i].status, (int)local[i].enabled,
+                               (int)local[i].hits, (unsigned long long)local[i].state[0]);
+        }
+    }
+    WritePipeLine(pipe, text.data ? text.data : "DATA");
+    BufferFree(&text);
+}
+
+static void HandleHandshake(HANDLE pipe)
+{
+    int valid;
+    EnterCriticalSection(&g_stateLock);
+    valid = g_runtimeValid;
+    LeaveCriticalSection(&g_stateLock);
+    if (!valid)
+    {
+        WritePipeLine(pipe, "ERR the hooks are not installed yet");
+        return;
+    }
+    struct HookHandshake handshake;
+    BuildHandshake(&handshake);
+    char hex[sizeof(handshake) * 2 + 2];
+    HexEncode((const uint8_t *)&handshake, sizeof(handshake), hex, sizeof(hex));
+    struct TextBuffer reply;
+    memset(&reply, 0, sizeof(reply));
+    BufferAppendText(&reply, "HANDSHAKE ");
+    BufferAppendText(&reply, hex);
+    WritePipeLine(pipe, reply.data ? reply.data : "HANDSHAKE");
+    BufferFree(&reply);
+}
+
+static void HandleEnable(HANDLE pipe, const char *argument)
+{
+    char key[HOOK_KEY_MAX];
+    int value = -1;
+    if (sscanf(argument, "%31s %d", key, &value) != 2 || (value != 0 && value != 1))
+    {
+        WritePipeLine(pipe, "ERR usage: ENABLE <key> <0|1>");
+        return;
+    }
+    EnterCriticalSection(&g_stateLock);
+    int index = g_runtimeValid ? FindRuntimeIndex(key) : -1;
+    LeaveCriticalSection(&g_stateLock);
+    if (index < 0)
+    {
+        WritePipeLine(pipe, "ERR unknown key");
+        return;
+    }
+    int32_t enabled = (int32_t)value;
+    if (!AgentWriteRuntimeField(index, offsetof(struct HookRuntime, enabled), &enabled, sizeof(enabled)))
+    {
+        WritePipeLine(pipe, "ERR write failed");
+        return;
+    }
+    WritePipeLine(pipe, "OK");
+}
+
+static void HandleState(HANDLE pipe, const char *argument)
+{
+    char key[HOOK_KEY_MAX];
+    int slot = -1;
+    unsigned long long value = 0;
+    if (sscanf(argument, "%31s %d %llu", key, &slot, &value) != 3 || slot < 0 || slot >= (int)HOOK_STATE_SLOTS)
+    {
+        WritePipeLine(pipe, "ERR usage: STATE <key> <slot 0..7> <u64>");
+        return;
+    }
+    EnterCriticalSection(&g_stateLock);
+    int index = g_runtimeValid ? FindRuntimeIndex(key) : -1;
+    LeaveCriticalSection(&g_stateLock);
+    if (index < 0)
+    {
+        WritePipeLine(pipe, "ERR unknown key");
+        return;
+    }
+    uint64_t number = (uint64_t)value;
+    if (!AgentWriteRuntimeField(index, offsetof(struct HookRuntime, state) + sizeof(uint64_t) * (size_t)slot,
+                                &number, sizeof(number)))
+    {
+        WritePipeLine(pipe, "ERR write failed");
+        return;
+    }
+    WritePipeLine(pipe, "OK");
+}
+
+static void HandleData(HANDLE pipe, const char *argument)
+{
+    char key[HOOK_KEY_MAX];
+    long offset = -1;
+    char hexText[MAX_PIPE_LINE];
+    if (sscanf(argument, "%31s %ld %4095s", key, &offset, hexText) != 3 || offset < 0 || offset >= (int)HOOK_DATA_MAX)
+    {
+        WritePipeLine(pipe, "ERR usage: DATA <key> <offset> <hex>");
+        return;
+    }
+    uint8_t bytes[HOOK_DATA_MAX];
+    int length = HexDecode(hexText, bytes, HOOK_DATA_MAX);
+    if (length < 0 || offset + length > (int)HOOK_DATA_MAX)
+    {
+        WritePipeLine(pipe, "ERR bad hex or out of range");
+        return;
+    }
+    EnterCriticalSection(&g_stateLock);
+    int index = g_runtimeValid ? FindRuntimeIndex(key) : -1;
+    LeaveCriticalSection(&g_stateLock);
+    if (index < 0)
+    {
+        WritePipeLine(pipe, "ERR unknown key");
+        return;
+    }
+    if (!AgentWriteRuntimeField(index, offsetof(struct HookRuntime, data) + (size_t)offset, bytes, (size_t)length))
+    {
+        WritePipeLine(pipe, "ERR write failed");
+        return;
+    }
+    WritePipeLine(pipe, "OK");
+}
+
+static void HandleLogLevel(HANDLE pipe, const char *argument)
+{
+    int level = atoi(argument);
+    if (level < 0 || level > 2)
+    {
+        WritePipeLine(pipe, "ERR usage: LOGLEVEL <0|1|2>");
+        return;
+    }
+    g_logLevel = (uint32_t)level;
+    WritePipeLine(pipe, "OK");
 }
 
 static int HandlePipeCommand(HANDLE pipe, const char *line)
@@ -891,7 +963,7 @@ static int HandlePipeCommand(HANDLE pipe, const char *line)
 
     if (_stricmp(command, "PING") == 0)
     {
-        WritePipeLine(pipe, "OK pong");
+        HandlePing(pipe);
         return 0;
     }
     if (_stricmp(command, "QUIT") == 0)
@@ -901,89 +973,37 @@ static int HandlePipeCommand(HANDLE pipe, const char *line)
     }
     if (_stricmp(command, "STATUS") == 0)
     {
-        struct TextBuffer status;
-        memset(&status, 0, sizeof(status));
-        BuildStatusLine(&status);
-        WritePipeLine(pipe, status.data ? status.data : "DATA");
-        BufferFree(&status);
+        HandleStatus(pipe);
+        return 0;
+    }
+    if (_stricmp(command, "HOOKS") == 0)
+    {
+        HandleHooks(pipe);
         return 0;
     }
     if (_stricmp(command, "HANDSHAKE") == 0)
     {
-        int shimValidLocal;
-        EnterCriticalSection(&g_stateLock);
-        shimValidLocal = g_shimValid;
-        LeaveCriticalSection(&g_stateLock);
-        if (!shimValidLocal)
-        {
-            WritePipeLine(pipe, "ERR the hooks are not installed yet");
-            return 0;
-        }
-        struct HookHandshake handshake;
-        BuildHandshake(&handshake);
-        char hex[MAX_PIPE_LINE];
-        HexEncode((const uint8_t *)&handshake, sizeof(handshake), hex, sizeof(hex));
-        struct TextBuffer reply;
-        memset(&reply, 0, sizeof(reply));
-        BufferAppendText(&reply, "HANDSHAKE ");
-        BufferAppendText(&reply, hex);
-        WritePipeLine(pipe, reply.data ? reply.data : "HANDSHAKE");
-        BufferFree(&reply);
+        HandleHandshake(pipe);
         return 0;
     }
-    if (_stricmp(command, "GET") == 0)
+    if (_stricmp(command, "ENABLE") == 0)
     {
-        const struct SettingDescriptor *descriptor = FindSetting(argument);
-        if (!descriptor)
-        {
-            WritePipeLine(pipe, "ERR unknown key");
-            return 0;
-        }
-        char value[MAX_LOG_MESSAGE];
-        EnterCriticalSection(&g_stateLock);
-        FormatSetting(descriptor, value, sizeof(value));
-        LeaveCriticalSection(&g_stateLock);
-        struct TextBuffer reply;
-        memset(&reply, 0, sizeof(reply));
-        BufferAppendText(&reply, "VALUE ");
-        BufferAppendText(&reply, descriptor->name);
-        BufferAppendText(&reply, " ");
-        BufferAppendText(&reply, value);
-        WritePipeLine(pipe, reply.data ? reply.data : "VALUE");
-        BufferFree(&reply);
+        HandleEnable(pipe, argument);
         return 0;
     }
-    if (_stricmp(command, "SET") == 0)
+    if (_stricmp(command, "STATE") == 0)
     {
-        char *separator = strchr(argument, ' ');
-        if (!separator)
-        {
-            WritePipeLine(pipe, "ERR missing value");
-            return 0;
-        }
-        *separator = 0;
-        char *value = separator + 1;
-        while (*value == ' ' || *value == '\t')
-            value++;
-
-        const struct SettingDescriptor *descriptor = FindSetting(argument);
-        if (!descriptor)
-        {
-            WritePipeLine(pipe, "ERR unknown key");
-            return 0;
-        }
-        char error[128];
-        int applied;
-        EnterCriticalSection(&g_stateLock);
-        applied = ApplySetting(descriptor, value, error, sizeof(error));
-        LeaveCriticalSection(&g_stateLock);
-        if (!applied)
-        {
-            WritePipeLine(pipe, error[0] ? error : "ERR invalid value");
-            return 0;
-        }
-        WritePipeLine(pipe, "OK");
-        SyncShimSettings();
+        HandleState(pipe, argument);
+        return 0;
+    }
+    if (_stricmp(command, "DATA") == 0)
+    {
+        HandleData(pipe, argument);
+        return 0;
+    }
+    if (_stricmp(command, "LOGLEVEL") == 0)
+    {
+        HandleLogLevel(pipe, argument);
         return 0;
     }
 
@@ -1027,7 +1047,6 @@ static DWORD WINAPI PipeClientThread(LPVOID raw)
     HANDLE pipe = client->pipe;
 
     SendLogBacklog(pipe);
-    PublishStateEvent();
 
     char line[MAX_PIPE_LINE];
     for (;;)
@@ -1159,101 +1178,85 @@ static DWORD WINAPI PipeServerThread(LPVOID unused)
     }
 }
 
-static int g_streamGate = 0;
-static int g_levelGate = HOOK_LOG_INFO;
+/* ------------------------------------------------------------------ */
+/* event ring drain                                                    */
 
-static void DrainLogRing(void)
+static LONG g_consumedTicket = 0;
+
+static void PublishHookEvent(const struct HookEventSlot *slot)
 {
-    if (!g_memoryProcess || !g_selfRemote || !g_shimValid)
+    if (slot->hookIndex == HOOK_HOOK_INDEX_SYSTEM)
+    {
+        char text[HOOK_EVENT_MAX + 8];
+        CopyText(text, sizeof(text), (const char *)slot->data);
+        text[HOOK_EVENT_MAX] = 0;
+        /* system diagnostics: honor the log level (slot->kind carries it) */
+        if (slot->kind <= g_logLevel)
+            QueueEvent("log", text);
+        return;
+    }
+
+    const char *key = "?";
+    char keyBuffer[HOOK_KEY_MAX];
+    EnterCriticalSection(&g_stateLock);
+    if (slot->hookIndex < HOOK_MAX && g_runtime[slot->hookIndex].key[0])
+        CopyText(keyBuffer, sizeof(keyBuffer), g_runtime[slot->hookIndex].key);
+    else
+        CopyText(keyBuffer, sizeof(keyBuffer), "?");
+    LeaveCriticalSection(&g_stateLock);
+    key = keyBuffer;
+
+    char hex[HOOK_EVENT_MAX * 2 + 4];
+    HexEncode(slot->data, slot->size, hex, sizeof(hex));
+
+    char text[MAX_EVENT_TEXT];
+    int written = snprintf(text, sizeof(text), "hook %s %u %s", key, slot->kind, hex);
+    if (written <= 0)
+        return;
+    QueueEvent("hook", text);
+}
+
+static void DrainEventRing(void)
+{
+    if (!g_memoryProcess || !g_selfRemote || !g_runtimeValid)
         return;
 
-    EnterCriticalSection(&g_stateLock);
-    g_streamGate = g_settings.streamGameLogs;
-    g_levelGate = g_settings.logLevel;
-    LeaveCriticalSection(&g_stateLock);
-
-    LONG ticket = g_shimHead.logTicket;
-    LONG oldest = ticket - HOOK_LOG_SLOTS;
+    uint64_t ticket = 0;
+    SIZE_T got = 0;
+    if (!ReadProcessMemory(g_memoryProcess, (LPCVOID)(uintptr_t)(g_selfRemote + offsetof(struct ShimShared, eventTicket)),
+                           &ticket, sizeof(ticket), &got) || got != sizeof(ticket))
+        return;
+    LONG remoteTicket = (LONG)ticket;
+    LONG oldest = remoteTicket - HOOK_EVENT_SLOTS;
     if (g_consumedTicket < oldest)
         g_consumedTicket = oldest;
-    if (g_consumedTicket >= ticket)
+    if (g_consumedTicket >= remoteTicket)
         return;
 
-    struct HookSlot slots[HOOK_LOG_SLOTS];
-    SIZE_T readBytes = 0;
-    void *address = (void *)(uintptr_t)(g_selfRemote + offsetof(struct ShimShared, log));
-    if (!ReadProcessMemory(g_memoryProcess, address, slots, sizeof(slots), &readBytes) || readBytes != sizeof(slots))
+    struct HookEventSlot slots[HOOK_EVENT_SLOTS];
+    if (!ReadProcessMemory(g_memoryProcess, (LPCVOID)(uintptr_t)(g_selfRemote + offsetof(struct ShimShared, events)),
+                           slots, sizeof(slots), &got) || got != sizeof(slots))
         return;
 
-    for (LONG sequence = g_consumedTicket; sequence < ticket; sequence++)
+    for (LONG sequence = g_consumedTicket; sequence < remoteTicket; sequence++)
     {
-        const struct HookSlot *slot = &slots[(size_t)((ULONG)sequence % HOOK_LOG_SLOTS)];
-        if (slot->sequence != sequence)
-            continue;
+        const struct HookEventSlot *slot = &slots[(size_t)((ULONG)sequence % HOOK_EVENT_SLOTS)];
         if (slot->state != HOOK_SLOT_READY)
             continue;
-
-        if (slot->level == HOOK_LOG_GAME)
-        {
-            if (g_streamGate)
-                QueueEvent("log", slot->text);
-        }
-        else if (slot->level <= g_levelGate)
-        {
-            QueueEvent("log", slot->text);
-        }
+        if (slot->sequence != sequence)
+            continue;
+        PublishHookEvent(slot);
     }
 
-    g_consumedTicket = ticket;
+    g_consumedTicket = remoteTicket;
 }
 
-static int g_lastStateValid = 0;
-static struct HookCapture g_lastCapture;
+/* ------------------------------------------------------------------ */
+/* target monitor + lifecycle                                          */
 
-static void DiffState(void)
-{
-    struct HookCapture captureLocal;
-    EnterCriticalSection(&g_stateLock);
-    captureLocal = g_capture;
-    LeaveCriticalSection(&g_stateLock);
-
-    if (!g_lastStateValid)
-    {
-        g_lastCapture = captureLocal;
-        g_lastStateValid = 1;
-        return;
-    }
-
-    if (strcmp(g_lastCapture.clientVersion, captureLocal.clientVersion) != 0 ||
-        strcmp(g_lastCapture.clientProtocol, captureLocal.clientProtocol) != 0 ||
-        strcmp(g_lastCapture.clientPlatform, captureLocal.clientPlatform) != 0 ||
-        strcmp(g_lastCapture.realServer, captureLocal.realServer) != 0 ||
-        g_lastCapture.realPort != captureLocal.realPort)
-    {
-        g_lastCapture = captureLocal;
-        PublishStateEvent();
-    }
-}
-
-static void WatchStatuses(void)
-{
-    if (!g_shimValid || g_patchedAnnounced)
-        return;
-
-    for (int i = 0; i < HOOK_INDEX_COUNT && i < HOOK_MAX_ENTRIES; i++)
-    {
-        if (g_shimHead.entries[i].status == HOOK_STATUS_PATCHED)
-        {
-            g_patchedAnnounced = 1;
-            AgentLog("[hook] the entry points are patched, the hook is live");
-            AgentLog("[gtools] hook injected successfully");
-            return;
-        }
-    }
-}
-
-static HANDLE g_targetProcess = NULL;
+static HANDLE g_targetHandle = NULL;
 static ULONGLONG g_lastFailLog = 0;
+static int g_patchedAnnounced = 0;
 
 static DWORD FindTargetPid(const char *target)
 {
@@ -1299,19 +1302,36 @@ static void AdoptPid(DWORD pid)
     EnsureMemoryProcess(pid);
 }
 
+static void WatchStatuses(void)
+{
+    if (!g_runtimeValid || g_patchedAnnounced)
+        return;
+
+    for (int i = 0; i < (int)HOOK_MAX; i++)
+    {
+        if (g_runtime[i].status == HOOK_STATUS_PATCHED)
+        {
+            g_patchedAnnounced = 1;
+            AgentLog("[hook] the entry points are patched, the hook is live");
+            return;
+        }
+    }
+}
+
 static void MonitorTarget(void)
 {
-    if (g_targetProcess)
+    if (g_targetHandle)
     {
-        if (WaitForSingleObject(g_targetProcess, 0) == WAIT_OBJECT_0)
+        if (WaitForSingleObject(g_targetHandle, 0) == WAIT_OBJECT_0)
         {
             DWORD code = 0;
-            GetExitCodeProcess(g_targetProcess, &code);
-            CloseHandle(g_targetProcess);
-            g_targetProcess = NULL;
+            GetExitCodeProcess(g_targetHandle, &code);
+            CloseHandle(g_targetHandle);
+            g_targetHandle = NULL;
             ForgetTarget();
+            g_patchedAnnounced = 0;
             if (code & 0x80000000)
-                AgentLog("[hook] %s exited with status 0x%08lX", HOOK_AGENT_TARGET, (unsigned long)code);
+                AgentLog("[hook] %s exited with status 0x%08lX", g_targetProcess, (unsigned long)code);
         }
         return;
     }
@@ -1321,6 +1341,7 @@ static void MonitorTarget(void)
         if (PidIsHooked(g_gamePid))
             return;
         ForgetTarget();
+        g_patchedAnnounced = 0;
     }
 
     static ULONGLONG lastHunt = 0;
@@ -1329,14 +1350,14 @@ static void MonitorTarget(void)
         return;
     lastHunt = now;
 
-    DWORD pid = FindTargetPid(HOOK_AGENT_TARGET);
+    DWORD pid = FindTargetPid(g_targetProcess);
     if (!pid)
         return;
 
     if (PidIsHooked(pid))
     {
         AdoptPid(pid);
-        g_targetProcess = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        g_targetHandle = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
         return;
     }
 
@@ -1345,26 +1366,19 @@ static void MonitorTarget(void)
         if (now - g_lastFailLog > TARGET_FAIL_LOG_MS || !g_lastFailLog)
         {
             g_lastFailLog = now;
-            AgentLog("[hook] the injector is unavailable, cannot hook %s", HOOK_AGENT_TARGET);
+            AgentLog("[hook] the injector is unavailable, cannot hook %s", g_targetProcess);
         }
         return;
     }
 
-    struct HookSettings outbound;
-    EnterCriticalSection(&g_stateLock);
-    outbound = g_settings;
-    LeaveCriticalSection(&g_stateLock);
-    if (g_configureFn)
-        g_configureFn(&outbound, (uint32_t)sizeof(outbound));
-
-    int rc = g_inject(HOOK_AGENT_TARGET, g_payloadPath);
+    int rc = g_inject(g_targetProcess, g_payloadPath);
     if (rc == 0 || rc == -1)
     {
         for (int i = 0; i < PID_MUTEX_WAIT_TRIES && !PidIsHooked(pid); i++)
             Sleep(PID_MUTEX_WAIT_STEP_MS);
         AdoptPid(pid);
-        g_targetProcess = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-        AgentLog("[hook] %s is hooked (pid %lu)", HOOK_AGENT_TARGET, (unsigned long)pid);
+        g_targetHandle = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        AgentLog("[hook] %s is hooked (pid %lu)", g_targetProcess, (unsigned long)pid);
     }
     else
     {
@@ -1372,7 +1386,7 @@ static void MonitorTarget(void)
         {
             g_lastFailLog = now;
             const char *failure = g_lastErrorFn ? g_lastErrorFn() : NULL;
-            AgentLog("[hook] agent: %s (rc=%d: %s)", HOOK_AGENT_TARGET, rc, failure ? failure : "unknown");
+            AgentLog("[hook] agent: %s (rc=%d: %s)", g_targetProcess, rc, failure ? failure : "unknown");
         }
     }
 }
@@ -1410,13 +1424,13 @@ static void MaybeShutdown(void)
 
     if (g_gamePid)
         return;
-    if (FindTargetPid(HOOK_AGENT_TARGET))
+    if (FindTargetPid(g_targetProcess))
         return;
 
     if (!InterlockedCompareExchange(&g_everHadClient, 0, 0) && now - g_agentStartedAt < AGENT_BOOTSTRAP_EXIT_MS)
         return;
 
-    AgentLog("[agent] the proxy and %s are both gone, terminating", HOOK_AGENT_TARGET);
+    AgentLog("[agent] the client and %s are both gone, terminating", g_targetProcess);
     ExitProcess(0);
 }
 
@@ -1434,6 +1448,7 @@ static HANDLE AgentAcquireSingleton(void)
 }
 
 static void RunAgent(void);
+
 EXPORT void CALLBACK AgentMain(HWND window, HINSTANCE instance, LPSTR commandLine, int showCommand);
 
 static void LoadInjector(void)
@@ -1460,6 +1475,39 @@ static void LoadInjector(void)
     snprintf(injectorPath, sizeof(injectorPath), "%s\\injector.dll", agentDirectory);
     snprintf(g_payloadPath, sizeof(g_payloadPath), "%s\\hook.dll", agentDirectory);
 
+    /* the payload names the target process; without it there is nothing to do */
+    char payloadFile[MAX_PATH];
+    snprintf(payloadFile, sizeof(payloadFile), "%s\\%s", agentDirectory, PAYLOAD_FILE);
+    FILE *file = fopen(payloadFile, "rb");
+    if (file)
+    {
+        uint8_t head[64];
+        size_t got = fread(head, 1, sizeof(head), file);
+        fclose(file);
+        if (got >= 64)
+        {
+            uint32_t magic, version, count, reserved0, allowAny, reserved1, payloadBytes;
+            char target[HOOK_KEY_MAX];
+            memcpy(&magic, head + 0, 4);
+            memcpy(&version, head + 4, 4);
+            memcpy(&count, head + 8, 4);
+            memcpy(&reserved0, head + 12, 4);
+            memcpy(&allowAny, head + 16, 4);
+            memcpy(&reserved1, head + 20, 4);
+            memcpy(&payloadBytes, head + 24, 4);
+            memcpy(target, head + 32, HOOK_KEY_MAX);
+            (void)reserved0;
+            (void)reserved1;
+            (void)allowAny;
+            if (magic == HOOK_PAYLOAD_MAGIC && version == HOOK_PROTOCOL_VERSION && payloadBytes >= 64)
+            {
+                target[HOOK_KEY_MAX - 1] = 0;
+                if (target[0])
+                    CopyText(g_targetProcess, sizeof(g_targetProcess), target);
+            }
+        }
+    }
+
     HMODULE injector = LoadLibraryA(injectorPath);
     if (!injector)
     {
@@ -1469,8 +1517,6 @@ static void LoadInjector(void)
 
     g_inject = (FnRemoteInject)(void *)GetProcAddress(injector, "inject");
     g_lastErrorFn = (FnRemoteLastError)(void *)GetProcAddress(injector, "last_error");
-    g_configureFn = (FnRemoteConfigure)(void *)GetProcAddress(injector, "configure");
-    g_applySettingsFn = (FnRemoteApplySettings)(void *)GetProcAddress(injector, "apply_settings");
     if (!g_inject || !g_lastErrorFn)
     {
         AgentLog("[hook] agent: injector exports are missing");
@@ -1479,7 +1525,7 @@ static void LoadInjector(void)
         return;
     }
 
-    AgentLog("[hook] agent: watching %s", HOOK_AGENT_TARGET);
+    AgentLog("[hook] agent: watching %s", g_targetProcess);
 }
 
 static void RunAgent(void)
@@ -1497,8 +1543,6 @@ static void RunAgent(void)
     InitializeCriticalSection(&g_stateLock);
     g_stateLockReady = 1;
 
-    SetDefaultSettings();
-
     LoadInjector();
 
     HANDLE pipeThread = CreateThread(NULL, 0, PipeServerThread, NULL, 0, NULL);
@@ -1511,21 +1555,10 @@ static void RunAgent(void)
     for (;;)
     {
         MonitorTarget();
-        RefreshSnapshot();
-
-        EnterCriticalSection(&g_stateLock);
-        if (g_shimValid)
-        {
-            g_capture = g_shimHead.capture;
-        }
-        LeaveCriticalSection(&g_stateLock);
-
-        SyncShimSettings();
-        DiffState();
+        RefreshRuntime();
         WatchStatuses();
+        DrainEventRing();
         MaybeShutdown();
-        if (pass % RING_DRAIN_PASSES == 0)
-            DrainLogRing();
         pass++;
         Sleep(PIPE_POLL_INTERVAL_MS);
     }
@@ -1550,3 +1583,5 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
 
     return TRUE;
 }
+
+#endif /* _WIN32 */

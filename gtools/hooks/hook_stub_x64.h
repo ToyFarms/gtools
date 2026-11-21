@@ -47,7 +47,7 @@
 #ifndef __ASSEMBLER__
 
 __asm__(
-    ".pushsection .text\n"
+    ".text\n"
     ".balign 16\n"
     ".globl hook_stub_template\n"
     "hook_stub_template:\n"
@@ -100,7 +100,6 @@ __asm__(
     ".globl hook_stub_template_end\n"
     "hook_stub_template_end:\n"
     "  .att_syntax prefix\n"
-    ".popsection\n"
 );
 
 extern const unsigned char hook_stub_template[];
