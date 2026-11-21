@@ -18,7 +18,7 @@ from pathlib import Path
 
 from gtools.core.eventbus import subscribe
 from gtools.core.pipe import PipeError
-from gtools.core.privilege import elevate_ex, is_elevated
+from gtools.core.privilege import elevate_ex, is_elevated, windowless_executable
 from gtools.core.wsl import is_running_wsl
 from gtools.hooks import programs, registry
 from gtools.hooks.control import HookControl
@@ -496,8 +496,8 @@ def _run_elevated_injector() -> bool:
         result = elevate_ex(
             wait_for_child=True,
             timeout=150,
-            argv=[sys.executable, "-m", "gtools.hooks.hook", str(HOOK_STATUS)],
-            windowless=True,  # pythonw: no console window for the elevated helper
+            argv=[windowless_executable(), "-m", "gtools.hooks.hook", str(HOOK_STATUS)],
+            windowless=True,  # pythonw all the way down: no console windows
         )
         if result.cancelled:
             raise UacDeclined()
@@ -735,10 +735,11 @@ def inject_main(argv: list[str] | None = None) -> int:
     status_path = Path(argv[0]) if argv else HOOK_STATUS
     build_payload_file()
     status = run_injector(status_path)
-    print(
-        f"[hook injector] elevated={status['elevated']} debug={status['debug_privilege']} rc={status['rc']}: {status['error']}",
-        flush=True,
-    )
+    if sys.stdout is not None:  # pythonw has no stdout
+        print(
+            f"[hook injector] elevated={status['elevated']} debug={status['debug_privilege']} rc={status['rc']}: {status['error']}",
+            flush=True,
+        )
     return 0 if status["rc"] == "0" else 1
 
 

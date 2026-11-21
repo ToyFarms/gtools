@@ -843,6 +843,68 @@ __attribute__((noinline)) uint64_t HookDispatchShim(struct HookCtx *ctx)
 /* ------------------------------------------------------------------ */
 /* target resolution + publish                                         */
 
+/*
+ * The client is packed: its code is written into the image by the packer at
+ * startup, so a signature that matches too early is a match against bytes the
+ * packer is about to replace (patching those corrupts the game). A match is
+ * therefore only trusted once it is *stable* -- the same bytes at the same
+ * address across consecutive scans -- and the code pages are no longer
+ * writable. "Missing" is only declared once the image has settled.
+ */
+struct ScanCandidate
+{
+    uint8_t *address;
+    uint8_t bytes[64];
+    uint32_t length;
+    int stablePasses;
+};
+
+static struct ScanCandidate g_scan[HOOK_MAX];
+
+static int HookProtectionWritable(uint8_t *address)
+{
+    MEMORY_BASIC_INFORMATION info;
+    if (!VirtualQuery(address, &info, sizeof(info)))
+        return 1; /* unknown: assume the image is still moving */
+    switch (info.Protect & 0xFF)
+    {
+    case PAGE_READWRITE:
+    case PAGE_WRITECOPY:
+    case PAGE_EXECUTE_READWRITE:
+    case PAGE_EXECUTE_WRITECOPY:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int HookCandidateStable(const struct HookDescriptor *desc, int index, uint8_t *target, size_t stolen,
+                               int *outStable)
+{
+    struct ScanCandidate *candidate = &g_scan[index];
+    uint8_t snapshot[64];
+    uint32_t compare = (uint32_t)(stolen > 64 ? 64 : stolen);
+
+    memcpy(snapshot, target, compare);
+
+    if (candidate->address == target && candidate->length == compare &&
+        memcmp(candidate->bytes, snapshot, compare) == 0)
+    {
+        candidate->stablePasses++;
+    }
+    else
+    {
+        memcpy(candidate->bytes, snapshot, compare);
+        candidate->length = compare;
+        candidate->address = target;
+        candidate->stablePasses = 1;
+    }
+
+    *outStable = candidate->stablePasses;
+    (void)desc;
+    return candidate->stablePasses >= 2;
+}
+
 static int HookResolvePattern(const struct HookDescriptor *desc, int index, uint8_t *image, size_t imageSize,
                               uint8_t **outTarget, size_t *outStolen)
 {
@@ -1073,14 +1135,60 @@ static DWORD WINAPI ShimWorker(LPVOID unused)
         return 0;
 
     ULONGLONG deadline = GetTickCount64() + HOOK_PATTERN_SCAN_TIMEOUT_MS;
+    int gaveUp[HOOK_MAX] = {0};
+    memset(g_scan, 0, sizeof(g_scan));
     for (;;)
     {
         int pending = 0;
         for (int i = 0; i < g_descCount; i++)
         {
-            if (g_self.runtime[i].status != HOOK_STATUS_MISSING)
+            if (g_self.runtime[i].status != HOOK_STATUS_MISSING || gaveUp[i])
                 continue;
-            if (HookResolveOne(&g_descs[i], i, image, imageSize))
+            const struct HookDescriptor *desc = &g_descs[i];
+
+            if (desc->source == HOOK_SRC_PATTERN)
+            {
+                uint8_t *target = NULL;
+                size_t stolen = 0;
+                if (!HookResolvePattern(desc, i, image, imageSize, &target, &stolen))
+                {
+                    /* nothing matched: only give up once the code pages have
+                     * settled -- before that the packer simply has not
+                     * written the function yet */
+                    if (!HookProtectionWritable(image + 0x1000))
+                    {
+                        HookLog(HOOK_LOG_ERROR, "[hook] %s: signature not found (image settled)", desc->key);
+                        HookFileLog("missing key=%s (image settled)", desc->key);
+                        gaveUp[i] = 1;
+                    }
+                    else
+                    {
+                        pending++;
+                    }
+                    continue;
+                }
+
+                int stable = 0;
+                if (!HookCandidateStable(desc, i, target, stolen, &stable))
+                {
+                    pending++; /* the packer is still writing: wait */
+                    continue;
+                }
+                /* stable across scans: publish when the pages lost their
+                 * write access, or after several repeated confirmations when
+                 * a packer keeps them writable forever */
+                if (!HookProtectionWritable(target) || stable >= 4)
+                {
+                    if (HookPublishEntry(i, target, stolen))
+                        continue;
+                    gaveUp[i] = 1;
+                    continue;
+                }
+                pending++;
+                continue;
+            }
+
+            if (HookResolveOne(desc, i, image, imageSize))
                 continue;
             pending++;
         }

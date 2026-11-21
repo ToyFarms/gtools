@@ -82,7 +82,7 @@ def elevate(wait_for_child: bool = False, timeout: float | None = None, argv: li
     return elevate_ex(wait_for_child, timeout, argv).success
 
 
-def _windowless_executable() -> str:
+def windowless_executable() -> str:
     """pythonw.exe beside the current interpreter, when present: the elevated
     helper produces no console window."""
     pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
@@ -127,7 +127,7 @@ def _launch_elevated_windows(token: str, target_argv: list[str], windowless: boo
         ei.fMask = SEE_MASK_NOCLOSEPROCESS
         ei.hwnd = None
         ei.lpVerb = "runas"
-        ei.lpFile = _windowless_executable() if windowless else sys.executable
+        ei.lpFile = windowless_executable() if windowless else sys.executable
         ei.lpParameters = params
         ei.lpDirectory = None
         ei.nShow = SW_SHOWNORMAL
