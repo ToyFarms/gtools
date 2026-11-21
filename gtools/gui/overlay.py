@@ -25,6 +25,8 @@ logger = logging.getLogger("gui-overlay")
 GWL_STYLE = -16
 GWL_EXSTYLE = -20
 GWLP_HWNDPARENT = -8
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_NOZORDER = 0x0004
 SWP_FRAMECHANGED = 0x0020
@@ -408,9 +410,8 @@ class HotkeyThread:
 
     HOTKEY_SHOW_HIDE = 1
     HOTKEY_DOCK_UNDOCK = 2
-    MOD_CONTROL = 0x0002
 
-    def __init__(self, show_hide_vk: int, dock_vk: int, mods: int = MOD_CONTROL) -> None:
+    def __init__(self, show_hide_vk: int, dock_vk: int, mods: int = 0) -> None:
         self.show_hide_vk = show_hide_vk
         self.dock_vk = dock_vk
         self.mods = mods
@@ -431,11 +432,16 @@ class HotkeyThread:
         u32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
         u32.GetMessageW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.UINT]
 
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         ok1 = u32.RegisterHotKey(None, self.HOTKEY_SHOW_HIDE, self.mods, self.show_hide_vk)
+        err1 = kernel32.GetLastError()
         ok2 = u32.RegisterHotKey(None, self.HOTKEY_DOCK_UNDOCK, self.mods, self.dock_vk)
+        err2 = kernel32.GetLastError()
         if not (ok1 and ok2):
-            logger.warning("global hotkeys unavailable (show=%s dock=%s, err=%ld)", ok1, ok2,
-                           u32.GetLastError() if hasattr(u32, "GetLastError") else -1)
+            logger.warning(
+                "global hotkeys unavailable: show=%s (err=%ld) dock=%s (err=%ld)",
+                ok1, err1, ok2, err2,
+            )
 
         class MSG(ctypes.Structure):
             _fields_ = [("hwnd", wintypes.HWND), ("message", wintypes.UINT),

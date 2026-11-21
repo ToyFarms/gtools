@@ -210,22 +210,9 @@ class App:
 
             imgui.end_menu()
 
-        # right-aligned overlay controls at the END of the bar (placing them
-        # before the menus pushed the View menu off-screen)
-        bar_width = imgui.get_window_width()
-        dock_label = "Undock" if self.overlay.docked else "Dock"
-        dock_width = imgui.calc_text_size(dock_label).x + 24
-        hide_width = imgui.calc_text_size("Hide").x + 24
-        imgui.same_line()
-        imgui.set_cursor_pos_x(bar_width - dock_width - hide_width - 16)
-        if imgui.small_button(dock_label):
-            self._toggle_dock()
-        imgui.same_line()
-        imgui.set_cursor_pos_x(bar_width - hide_width - 8)
-        if imgui.small_button("Hide"):
-            self.overlay.toggle_hidden()
-
         imgui.end_main_menu_bar()
+
+        self._render_overlay_toolbar()
 
     def _add_debug_world(self) -> None:
         size = math.ceil(math.sqrt(item_database.item_count))
@@ -245,6 +232,25 @@ class App:
 
         w.fix()
         self.add_panel(WorldPanel(w, self.dockspace.node_id))
+
+    def _render_overlay_toolbar(self) -> None:
+        """The dock/hide controls as a tiny frameless toolbar pinned to the
+        top-right corner -- inside the menu bar they collided with the menus."""
+        menu_h = imgui.get_frame_height()
+        width = 190.0
+        imgui.set_next_window_pos((imgui.get_io().display_size.x - width - 8, menu_h + 4))
+        imgui.set_next_window_size((width, 0))
+        flags = (imgui.WindowFlags_.no_decoration | imgui.WindowFlags_.no_docking
+                 | imgui.WindowFlags_.no_move | imgui.WindowFlags_.no_saved_settings
+                 | imgui.WindowFlags_.always_auto_resize)
+        if imgui.begin("##overlay_toolbar", None, flags):
+            dock_label = "Undock (F10)" if self.overlay.docked else "Dock (F10)"
+            if imgui.small_button(dock_label):
+                self._toggle_dock()
+            imgui.same_line()
+            if imgui.small_button("Hide (F9)"):
+                self.overlay.toggle_hidden()
+        imgui.end()
 
     def _toggle_dock(self) -> None:
         if self.overlay.docked:
