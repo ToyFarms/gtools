@@ -546,3 +546,142 @@ the BLASTER item works".
 - [x] S18.2.1: demo *Blaster* menu spawns Howler/Trickster blasts (4 directions + facing) so the trail and the kill can be exercised by hand
 - [x] S18.2.2: headless GL harness: 3 blasts + a DIE burst, 6 rendered frames, both sheets, `glGetError() == 0`, no traceback
 - [x] S18.2.3: full demo loop runs 20 s with only this environment's PortAudio error (no audio device)
+
+---
+
+# M19: unify rendering on the command system — branch `refactor/render-pipeline` | status: completed
+
+Goal: one scene description. The core command system (extracted from
+`world_renderer_cpu.py` into `gtools/core/growtopia/render_commands.py`) becomes the
+single source of truth for *what* to draw; the CPU rasterizer and the GUI GPU
+pipeline both consume it. GPU renderers keep their chunking/diff machinery but the
+chunk content is derived from the same builders — no hand-built instance rows.
+
+Decisions (user, 2026-11-18):
+- One anchor convention: CPU/client space (top-left, tile top-left = x*32); the GPU
+  translator converts (centre = top-left + size/2 - 16) exactly once. Existing CPU
+  offsets are canonical (client-faithful).
+- Entity renderers (player/npc/cybot/blaster) OUT of scope.
+- Replaced shaders + TreeRenderer/SeedIconRenderer/TileObjectRenderer/build_icon DELETED.
+- Branch `refactor/render-pipeline` off `dev`; command module
+  `gtools/core/growtopia/render_commands.py`.
+
+### T19.1: command system extraction | status: completed
+- [x] S19.1.1: `render_commands.py` — commands, options, layers, constants, granular builders
+- [x] S19.1.2: `world_renderer_cpu.py` slims to the CPU backend + re-exports
+- [x] S19.1.3: `tests/test_render_commands.py` pins the scene contract (16 tests)
+- [x] S19.1.4: CPU parity — pixel-exact vs dev on WOLFWORLD8 + PARKOUR3; synth scene
+      (seeds/drops/vending/display/shelf) same command multiset; the only pixel delta is
+      the fixed text-shadow offset bug (offset now applies on the first render too)
+
+### T19.2: GPU translator + unified shader | status: completed
+- [x] S19.2.1: `gtools/gui/lib/sprite_batch.py` — LAYER_DEPTHS + pure `command_instances` + SpriteBatch + TextBatch
+- [x] S19.2.2: `shaders/sprite{,3d}.vert` + `sprite.frag`; text.vert/text3d.vert/text.frag carry RGBA instance color
+- [x] S19.2.3: `tests/test_sprite_batch.py` (11 tests, headless instance math)
+
+### T19.3: GPU renderers rewired | status: completed
+- [x] S19.3.1: TileRenderer on builders+SpriteBatch (absorbs trees + tile objects)
+- [x] S19.3.2: ObjectRenderer build() on `build_dropped_commands` (uid order, diff-sync kept)
+- [x] S19.3.3: deleted tree_renderer/tile_object_renderer/seed_icon_renderer + world/object/seed/object_shadow shaders
+- [x] S19.3.4: world_renderer/dropped_object_renderer wiring + counts; layer.py gains
+      OBJECT_TEXT band, WORLD_POST_FOREGROUND moved to -79.5 (FG_AFTER below objects, matching LAYER_ORDER)
+
+### T19.4: verification + commit | status: completed
+- [x] S19.4.1: targeted pytest suites green (287: render commands/sprite batch, demo, cybot, blaster, world, physics, controller, packet)
+- [x] S19.4.2: headless GL harness — every layer 2D+3D + shadows + diff-sync with
+      `glGetError() == 0` (104 chunks, WOLFWORLD8); GUI app 20 s + physics demo 25 s smoke runs clean
+- [x] S19.4.3: commit `4bd4cf3` on `refactor/render-pipeline` (+1985/−2628)
+
+### T19.5: user-reported GPU regressions | status: completed
+Reported after the first playtest: tile order broken, parts missing, dropped
+below player (unverified claim by me — reverted), amount text scattered.
+Root causes found and fixed:
+- [x] S19.5.1: meshes keyed by TextureArray — the GLTexManager packs same-size
+      rttex pages as layers of ONE array, so each file's mesh overwrote the
+      previous one (WOLFWORLD8: 583/925 BG instances). Meshes are now per-array
+      LISTS (one mesh per source texture), drawn bind-once-per-array like the
+      old pipeline.
+- [x] S19.5.2: text INSTANCE_LAYOUT had two extra components (17 floats vs the
+      13 pushed) — the stream desynced and glyphs landed anywhere. Restored to
+      [2,2,2,2,1,4] (offset/size/texOffset/texSize/z/RGBA).
+- [x] S19.5.3: text placement — the client->GUI -16 space shift was missing and
+      the SDF bitmap padding (sdf_pixel_range per edge, folded into the glyph
+      bearings) was not compensated. Ink now anchors within 1px of the CPU
+      rasterizer (verified by ink-mask correlation).
+- [x] S19.5.4: depth values restored to the tuned ones: FG_AFTER back to -75,
+      dropped objects back on OBJECT_DROPPED (-70..-1, above PLAYER) via a
+      depth_bands override in ObjectRenderer, shadow z compressed into the
+      lower half of the band like the old shadow pass. OBJECT_TEXT band
+      invention removed.
+- [x] S19.5.5: GPU vs CPU pixel diff (WOLFWORLD8, drop scene isolated): 1.9% of
+      pixels differ by <=2/255 (blend rounding only); amount text ink anchored
+      on the item; new headless tests pin the per-texture grouping, the dropped
+      band, the shadow half-band and the 13-float text layout (291 tests).
+- [ ] S19.5.6: on-GPU re-verification pending the WSLg display (glfw window
+      creation hangs after the server restart); the demo/GUI smoke needs a
+      human look when the display is back.
+
+### T19.6: merge | status: completed
+- [x] S19.6.1: `dev` fast-forwarded to `7dc89a5` (both commits kept, no squash);
+      `refactor/render-pipeline` branch retained. Tests green on the merged tree.
+
+### T19.7: second playtest round (display seed / tree order / drag crash) | status: completed
+User report: display block shine missing (behind the item), tree trunk in front
+of the tree, Bountiful roots missing, `KeyError: 'start_cam'` in left_pan_move.
+- [x] S19.7.1: **seed icons inside tile-object groups rendered 32px** — the old
+      pipeline routed seeds through the 16px SeedIconRenderer in EVERY group;
+      the port only special-cased the dropped path. `_object_icon_command` now
+      routes seeds to the 16px pair (top-left shifted +8 so the pair stays
+      centred in the 32px cell). This is what hid the display block's shine:
+      the oversized seed covered the block sprite's transparent bottom strip.
+- [x] S19.7.2: **tree trunk in front of the leaves** — the seed pair is two
+      commands on ONE layer at the same depth; strict GL_LESS let the first
+      (trunk) win everywhere it was opaque. The old pipeline composited
+      base/overlay inside the seed shader. Fix: single-value layers spread
+      their instances across LAYER_EPSILON (0.001) of depth in command order —
+      later command wins like the CPU compositing; the tuned layer slots are
+      preserved (layers are >=1.0 apart). Also restores the Bountiful roots.
+- [x] S19.7.3: `KeyError: 'start_cam'` — switching 2D/3D (Z) mid-drag left the
+      gesture active under the other mode's handlers; mode switches now cancel
+      active drags. (Pre-existing path, not from the refactor.)
+- [x] S19.7.4: verified by pixel harnesses — display matrix (7 variants incl.
+      seed/gems/roots inside): old-vs-new = 0; scene with trees: 0 beyond ±2
+      rounding; QITUR (user's world, 21 seed trees): OLD GPU vs NEW GPU = 0
+      diff. The remaining QITUR CPU-vs-GPU strip (1650 px at canopy edges) is
+      the pre-existing PIL-crop vs GL-UV sampling difference, present in the
+      old build identically.
+- [x] S19.7.5: new headless tests: displayed seed stays the 16px pair; 293
+      targeted tests green.
+
+## M20: Hook framework refactor (C runtime, Python-authored handlers) | status: in_progress
+Branch `refactor/hooks-framework`. Plan: `/root/.opencode/plan/hooks-framework-refactor.md`.
+C becomes feature-blind (inject/lifecycle/scan/patch/stub/ISA interpreter/events);
+patterns, programs, enable/state/data all move to Python. DLLs rebuilt with mingw.
+
+### T20.1: ISA core (portable) | status: in_progress
+- [ ] S20.1.1: `gtools/hooks/isa_core.h` — portable interpreter + verifier + host callbacks
+- [ ] S20.1.2: `gtools/hooks/isa.py` — opcodes, Program builder, assemble/disassemble/validate
+- [ ] S20.1.3: `tests/hook_isa_host.c` + `tests/test_hook_isa.py` — ctypes tests green on Linux
+
+### T20.2: ABI v4 + payload | status: pending
+- [ ] S20.2.1: `hook_protocol.h` v4 (self-contained, no windows.h) + static asserts
+- [ ] S20.2.2: `gtools/hooks/payload.py` serializer + `tests/test_hook_abi.py` (C offsets vs Python)
+- [ ] S20.2.3: `tests/test_hook_payload.py` round-trip + caps
+
+### T20.3: C runtime rewrite | status: pending
+- [ ] S20.3.1: `hook_stub_x64.h` (GNU asm stub + thunk emitter) + prologue length decoder
+- [ ] S20.3.2: `hook.c` rewrite — registry load, scan(+retry), trampoline, dispatch (fast+ISA), event ring
+- [ ] S20.3.3: `injector.c` — payload read/write, entry verify, patch
+- [ ] S20.3.4: `agent.c` — generic pipe (STATUS/HOOKS/ENABLE/STATE/DATA), event drain, auto-inject w/ payload
+- [ ] S20.3.5: build all three DLLs with mingw, commit
+
+### T20.4: Python surface | status: pending
+- [ ] S20.4.1: `registry.py` (Hook/@hook), `programs.py` (built-ins as programs), `events.py`, `control.py`, `hook.py` lifecycle
+- [ ] S20.4.2: `main.py` + `setting.py` wiring; legacy settings map to hook state/data
+- [ ] S20.4.3: `tests/test_hook_programs.py` — response/post programs run on the fake host
+
+### T20.5: verification on Windows | status: pending
+- [ ] S20.5.1: `scripts/pattern_probe.py` — in-memory pattern scan report for the live game
+- [ ] S20.5.2: `scripts/hook_smoke.py` + smoke target exe (kernel32 export hook, no game dependency)
+- [ ] S20.5.3: game run: log events, server_data rewrite, http capture, low-power toggles
+- [ ] S20.5.4: `docs/hooks-framework.md` + AGENTS.md update; no feature names in C (grep guard)
