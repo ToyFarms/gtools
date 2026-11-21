@@ -325,9 +325,10 @@ class OverlayController:
 
     def follow(self, game_pid: int | None = None) -> None:
         """Per-frame: keep the docked window inside the game's client area,
-        detect drag-end for snapping, and hold the z order above the game."""
+        hold the z order above the game, and drive the focus translucency."""
         if not self.state.docked:
             return
+        u32 = _user32()
         gui = self.gui_hwnd()
         if not gui:
             return

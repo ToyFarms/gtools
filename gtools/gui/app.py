@@ -257,35 +257,25 @@ class App:
 
     def _apply_overlay_scale(self, docked: bool) -> None:
         """Docked mode: compact fonts and spacing so everything stays legible
-        in the smaller window; restored on undock."""
-        io = imgui.get_io()
+        in the smaller window; restored on undock. ImGui 1.92: the font scale
+        chain is ``style.font_scale_main``, and the style metrics scale
+        alongside it."""
         style = imgui.get_style()
-        if not hasattr(self, "_base_font_scale"):
-            self._base_font_scale = io.font_global_scale
+        if not hasattr(self, "_base_font_scale_main"):
+            self._base_font_scale_main = style.font_scale_main
             self._base_style_sizes = {
                 "window_padding": (style.window_padding.x, style.window_padding.y),
                 "frame_padding": (style.frame_padding.x, style.frame_padding.y),
                 "item_spacing": (style.item_spacing.x, style.item_spacing.y),
-                "indent_spacing": style.indent_spacing,
-                "scrollbar_size": style.scrollbar_size,
             }
-        if docked:
-            io.font_global_scale = self._base_font_scale * self._DOCKED_SCALE
-            style.window_padding = ImVec2(self._base_style_sizes["window_padding"][0] * self._DOCKED_SCALE,
-                                          self._base_style_sizes["window_padding"][1] * self._DOCKED_SCALE)
-            style.frame_padding = ImVec2(self._base_style_sizes["frame_padding"][0] * self._DOCKED_SCALE,
-                                         self._base_style_sizes["frame_padding"][1] * self._DOCKED_SCALE)
-            style.item_spacing = ImVec2(self._base_style_sizes["item_spacing"][0] * self._DOCKED_SCALE,
-                                        self._base_style_sizes["item_spacing"][1] * self._DOCKED_SCALE)
-            style.indent_spacing = self._base_style_sizes["indent_spacing"] * self._DOCKED_SCALE
-            style.scrollbar_size = self._base_style_sizes["scrollbar_size"] * self._DOCKED_SCALE
-        else:
-            io.font_global_scale = self._base_font_scale
-            style.window_padding = ImVec2(*self._base_style_sizes["window_padding"])
-            style.frame_padding = ImVec2(*self._base_style_sizes["frame_padding"])
-            style.item_spacing = ImVec2(*self._base_style_sizes["item_spacing"])
-            style.indent_spacing = self._base_style_sizes["indent_spacing"]
-            style.scrollbar_size = self._base_style_sizes["scrollbar_size"]
+        factor = self._DOCKED_SCALE if docked else 1.0
+        style.font_scale_main = self._base_font_scale_main * factor
+        style.window_padding = ImVec2(self._base_style_sizes["window_padding"][0] * factor,
+                                      self._base_style_sizes["window_padding"][1] * factor)
+        style.frame_padding = ImVec2(self._base_style_sizes["frame_padding"][0] * factor,
+                                     self._base_style_sizes["frame_padding"][1] * factor)
+        style.item_spacing = ImVec2(self._base_style_sizes["item_spacing"][0] * factor,
+                                    self._base_style_sizes["item_spacing"][1] * factor)
 
     def _toggle_dock(self) -> None:
         if self.overlay.docked:
