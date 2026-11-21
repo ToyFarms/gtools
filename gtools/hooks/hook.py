@@ -1,3 +1,10 @@
+"""Hook lifecycle: build the payload, inject, attach, stream events.
+
+The hook descriptors and programs are authored in ``gtools/hooks/programs.py``
+(via ``registry``); this module only moves them into place and keeps the
+runtime (enable/state/data) in sync with the settings file.
+"""
+
 import ctypes
 import logging
 import os
@@ -9,25 +16,70 @@ import traceback
 from ctypes import wintypes
 from pathlib import Path
 
-from gtools.core.privilege import elevate, is_elevated
 from gtools.core.eventbus import subscribe
-from gtools.hooks.control import HookControl
 from gtools.core.pipe import PipeError
+from gtools.core.privilege import elevate, is_elevated
+from gtools.core.wsl import is_running_wsl
+from gtools.hooks import programs, registry
+from gtools.hooks.control import HookControl
+from gtools.hooks.events import HookEventSink
+from gtools.hooks.payload import Payload
 from gtools.proxy.event import UpdateClientVersion, UpdateServerData
 from gtools.setting import Setting, SettingChanged, setting
 
 logger = logging.getLogger("hook")
 
-
 HOOKS_DIR = Path(__file__).resolve().parent
 HOOK_INJECTOR_DLL = HOOKS_DIR / "injector.dll"
-HOOK_PAYLOAD = HOOKS_DIR / "hook.dll"
+HOOK_PAYLOAD_DLL = HOOKS_DIR / "hook.dll"
 HOOK_AGENT_DLL = HOOKS_DIR / "agent.dll"
+HOOK_PAYLOAD_FILE = HOOKS_DIR / "hook_payload.bin"
 HOOK_STATUS = setting.appdir / "inject.status"
 
 TARGET = b"Growtopia.exe"
 
 AGENT_MUTEX = r"Global\gtools_hook_agent"
+
+_SETTING_FIELDS_FORWARDED = frozenset({"hook", "proxy_server", "proxy_port"})
+_pending_settings_push = threading.Event()
+
+
+def payload_available() -> bool:
+    return HOOK_PAYLOAD_FILE.exists()
+
+
+def payload_target() -> bytes:
+    """The target process named by the payload header (defaults to Growtopia)."""
+    try:
+        head = HOOK_PAYLOAD_FILE.read_bytes()[:64]
+        name = head[32:64].split(b"\0")[0]
+        return name if name else TARGET
+    except OSError:
+        return TARGET
+
+
+def build_payload_file(source: Setting | None = None) -> Payload:
+    """Serialize the registry (programs.py) into the install payload file."""
+    current = source if source is not None else setting
+    target = Path(current.gt_path).name or "Growtopia.exe"
+    if not target.lower().endswith(".exe"):
+        target += ".exe"  # gt_path may point at the install directory
+    payload = registry.build_payload(
+        start_delay_ms=current.hook.start_delay_ms,
+        allow_any_module=current.hook.allow_any_module,
+        target_process=target,
+    )
+    blob = payload.pack()
+    temporary = HOOK_PAYLOAD_FILE.with_suffix(".tmp")
+    temporary.write_bytes(blob)
+    os.replace(temporary, HOOK_PAYLOAD_FILE)
+    logger.info(
+        "hook payload written: %d hooks, %d bytes (crc 0x%08X)",
+        len(payload.descriptors),
+        len(blob),
+        Payload.crc(blob),
+    )
+    return payload
 
 
 def agent_running() -> bool:
@@ -123,7 +175,9 @@ def enable_debug_privilege() -> tuple[bool, int]:
     advapi32.AdjustTokenPrivileges.restype = wintypes.BOOL
 
     token = wintypes.HANDLE()
-    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, ctypes.byref(token)):
+    if not advapi32.OpenProcessToken(
+        kernel32.GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, ctypes.byref(token)
+    ):
         return False, ctypes.get_last_error()
 
     try:
@@ -153,6 +207,7 @@ def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
         "debug_privilege": "0",
         "debug_error": "0",
         "agent": "0",
+        "payload": "0",
         "rc": "-1",
         "error": "injector did not run",
     }
@@ -162,13 +217,16 @@ def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
             status["error"] = "injector must run under 64-bit Python"
         elif not HOOK_INJECTOR_DLL.exists():
             status["error"] = f"missing {HOOK_INJECTOR_DLL}"
-        elif not HOOK_PAYLOAD.exists():
-            status["error"] = f"missing {HOOK_PAYLOAD}"
+        elif not HOOK_PAYLOAD_DLL.exists():
+            status["error"] = f"missing {HOOK_PAYLOAD_DLL}"
         elif not HOOK_AGENT_DLL.exists():
             status["error"] = f"missing {HOOK_AGENT_DLL}"
+        elif not payload_available():
+            status["error"] = f"missing {HOOK_PAYLOAD_FILE} (call build_payload_file first)"
         elif not is_elevated():
             status["error"] = "injector is not elevated"
         else:
+            status["payload"] = "1"
             enabled, debug_error = enable_debug_privilege()
             status["debug_privilege"] = str(int(enabled))
             status["debug_error"] = str(debug_error)
@@ -192,7 +250,7 @@ def run_injector(status_path: Path = HOOK_STATUS) -> dict[str, str]:
             injector.last_error.argtypes = []
             injector.last_error.restype = ctypes.c_char_p
 
-            rc = injector.inject(TARGET, os.fsencode(str(HOOK_PAYLOAD)))
+            rc = injector.inject(payload_target(), os.fsencode(str(HOOK_PAYLOAD_DLL)))
             status["rc"] = str(rc)
             status["error"] = (injector.last_error() or b"unknown error").decode("utf-8", "replace")
     except Exception:
@@ -222,11 +280,17 @@ def read_inject_status() -> dict[str, str]:
 
 
 def hook_available() -> bool:
-    return HOOK_INJECTOR_DLL.exists() and HOOK_PAYLOAD.exists() and HOOK_AGENT_DLL.exists()
+    return (
+        HOOK_INJECTOR_DLL.exists()
+        and HOOK_PAYLOAD_DLL.exists()
+        and HOOK_AGENT_DLL.exists()
+        and payload_available()
+    )
 
 
 def target_running() -> bool:
-    if sys.platform != "win32":
+    if is_running_wsl():
+        # growtopia runs on the windows side; the wsl proxy just attaches later
         return False
 
     class PROCESSENTRY32W(ctypes.Structure):
@@ -326,6 +390,9 @@ def _ensure_hook_once() -> HookControl | None:
 
 
 def ensure_hook(wait_forever: bool = True) -> HookControl | None:
+    if sys.platform != "win32":
+        # the hook runtime is windows-only; the wsl proxy uses the hosts redirect
+        return None
     while True:
         hook_ctl = _ensure_hook_once()
         if hook_ctl is not None:
@@ -398,58 +465,38 @@ def inject_hook() -> bool:
     return True
 
 
-_SETTING_FIELDS_FORWARDED = frozenset({"hook", "proxy_server", "proxy_port"})
-_pending_settings_push = threading.Event()
+# ---------------------------------------------------------------------------
+# runtime sync (settings -> hook state/data)
+# ---------------------------------------------------------------------------
 
 
-def live_hook_settings(source: Setting | None = None) -> dict[str, str]:
+def apply_hook_settings(ctl: HookControl, source: Setting | None = None) -> None:
+    """Map user settings onto the Python-owned hook state (no C knowledge)."""
     current = source if source is not None else setting
     hook_settings = current.hook
 
-    return {
-        "proxy_host": current.proxy_server,
-        "proxy_port": str(current.proxy_port),
-        "start_delay_ms": str(hook_settings.start_delay_ms),
-        "log_level": str(hook_settings.log_level),
-        "allow_any_module": str(int(hook_settings.allow_any_module)),
-        "stream_game_logs": str(int(hook_settings.stream_game_logs)),
-        "low_power": str(int(hook_settings.low_power)),
-        "low_power_fps": str(hook_settings.low_power_fps),
-        "low_power_skip_draws": str(int(hook_settings.low_power_skip_draws)),
-    }
+    response = registry.get("net/response")
+    response.set_data(programs.response_data(current.proxy_server, current.proxy_port))
 
+    frame = registry.get("render/frame")
+    frame.set_state(0, int(hook_settings.low_power_fps))
+    frame.set_enabled(bool(hook_settings.low_power))
 
-def apply_hook_settings(ctl: HookControl, values: dict[str, str] | None = None) -> None:
-    for key, value in (values if values is not None else live_hook_settings()).items():
-        if not ctl.set(key, value):
-            logger.warning(f"hook rejected setting {key}={value}")
+    submit = registry.get("render/submit")
+    submit.set_state(0, 1 if hook_settings.low_power_skip_draws else 0)
+    submit.set_enabled(bool(hook_settings.low_power and hook_settings.low_power_skip_draws))
 
-
-def _on_setting_changed(_channel: str, event: SettingChanged) -> None:
-    forwarded = [name for name, _, _ in event.changes if name in _SETTING_FIELDS_FORWARDED]
-    if not forwarded:
-        return
-
-    logger.info("setting change (%s) queued for the hook", ", ".join(forwarded))
-    _pending_settings_push.set()
-
-
-def _push_pending_settings(ctl: HookControl) -> None:
-    if not _pending_settings_push.is_set() or not ctl.connected:
-        return
-
-    _pending_settings_push.clear()
+    for key in ("log/printf", "log/raw"):
+        registry.get(key).set_enabled(bool(hook_settings.stream_game_logs))
 
     try:
-        apply_hook_settings(ctl, live_hook_settings())
-    except (PipeError, OSError):
-        _pending_settings_push.set()
-        logger.exception("failed to push reloaded settings to the hook, retrying after reconnect")
-    else:
-        logger.info("pushed reloaded setting to the hook")
+        ctl.log_level(int(hook_settings.log_level))
+    except PipeError:
+        logger.debug("could not push the agent log level", exc_info=True)
 
 
-def publish_hook_state(fields: dict[str, str]) -> None:
+def forward_hook_state(fields: dict[str, str]) -> None:
+    """Publish a captured client/server state to the proxy event bus."""
     version = fields.get("client_version", "")
     protocol = fields.get("client_protocol", "")
     server = fields.get("real_server", "")
@@ -471,6 +518,30 @@ def publish_hook_state(fields: dict[str, str]) -> None:
                 UpdateServerData(server=server, port=port_number).send()
 
 
+def _on_setting_changed(_channel: str, event: SettingChanged) -> None:
+    forwarded = [name for name, _, _ in event.changes if name in _SETTING_FIELDS_FORWARDED]
+    if not forwarded:
+        return
+
+    logger.info("setting change (%s) queued for the hook", ", ".join(forwarded))
+    _pending_settings_push.set()
+
+
+def _push_pending_settings(ctl: HookControl) -> None:
+    if not _pending_settings_push.is_set() or not ctl.connected:
+        return
+
+    _pending_settings_push.clear()
+
+    try:
+        apply_hook_settings(ctl)
+    except (PipeError, OSError):
+        _pending_settings_push.set()
+        logger.exception("failed to push reloaded settings to the hook, retrying after reconnect")
+    else:
+        logger.info("pushed reloaded setting to the hook")
+
+
 def _reattach_hook(stop: threading.Event) -> HookControl | None:
     while not stop.is_set():
         fresh = ensure_hook(wait_forever=False)
@@ -490,6 +561,11 @@ def _reattach_hook(stop: threading.Event) -> HookControl | None:
 def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
     current = ctl
     unsubscribe = subscribe(SettingChanged, _on_setting_changed)
+    sink = HookEventSink(
+        on_state=forward_hook_state,
+        stream_game_logs=bool(setting.hook.stream_game_logs),
+    )
+    registry.set_control(current)
 
     try:
         while not stop.is_set():
@@ -501,12 +577,14 @@ def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
 
             try:
                 event = current.wait_event(timeout=0.5)
+                sink.process(event)
             except Exception:
                 logger.debug("failed to read a hook event", exc_info=True)
                 continue
 
             if not current.connected:
                 logger.warning("the hook control pipe was closed, waiting for the hook to return")
+                registry.set_control(None)
                 current.close()
 
                 fresh = _reattach_hook(stop)
@@ -514,30 +592,24 @@ def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
                     return
 
                 current = fresh
+                registry.set_control(current)
                 try:
                     apply_hook_settings(current)
-                    publish_hook_state(current.status())
                 except PipeError:
                     logger.exception("hook setup failed after reconnect")
                     continue
 
                 continue
-
-            if event is None:
-                continue
-
-            if event.name == "state":
-                publish_hook_state(event.fields)
-            elif event.name == "log":
-                logger.info("[game] %s", event.payload)
     finally:
         unsubscribe()
         _pending_settings_push.clear()
+        registry.set_control(None)
 
 
 def inject_main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     status_path = Path(argv[0]) if argv else HOOK_STATUS
+    build_payload_file()
     status = run_injector(status_path)
     print(
         f"[hook injector] elevated={status['elevated']} debug={status['debug_privilege']} rc={status['rc']}: {status['error']}",

@@ -156,13 +156,19 @@ def check_hosts() -> None:
 def run_proxy() -> None:
     proxy = Proxy()
 
-    hook_ctl = hook.ensure_hook()
+    try:
+        hook.build_payload_file()
+    except Exception:
+        logger.exception("failed to write the hook payload, the hook stays disabled")
+        hook_ctl = None
+    else:
+        hook_ctl = hook.ensure_hook()
+
     hook_listener_stop = threading.Event()
 
     if hook_ctl is not None:
         try:
             hook.apply_hook_settings(hook_ctl)
-            hook.publish_hook_state(hook_ctl.status())
         except PipeError:
             logger.exception("hook control pipe disappeared during setup")
 
