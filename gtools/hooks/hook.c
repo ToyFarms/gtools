@@ -198,10 +198,15 @@ static void HookFileLog(const char *format, ...)
     if ((size_t)written >= sizeof(text))
         text[sizeof(text) - 1] = 0;
 
+    /* the first write of this process truncates the log: every game run
+     * starts a fresh file, so the analysis sees exactly one run */
+    static volatile LONG firstWrite = 0;
+    DWORD disposition = InterlockedCompareExchange(&firstWrite, 1, 0) ? FILE_APPEND_DATA : CREATE_ALWAYS;
+
     HookDebugPath();
     EnterCriticalSection(&g_fileLock);
-    HANDLE file = CreateFileA(g_debugPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE file = CreateFileA(g_debugPath, FILE_APPEND_DATA | FILE_WRITE_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                              disposition, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file != INVALID_HANDLE_VALUE)
     {
         char line[1104];
