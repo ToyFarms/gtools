@@ -9,6 +9,7 @@ class FakeControl:
     def __init__(self):
         self.calls: list[tuple] = []
         self.fail_keys: set[str] = set()
+        self.last_reply = ""
 
     def enable(self, key: str, on: bool) -> bool:
         self.calls.append(("ENABLE", key, on))
