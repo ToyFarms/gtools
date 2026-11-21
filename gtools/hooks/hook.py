@@ -471,23 +471,40 @@ def inject_hook() -> bool:
 
 
 def apply_hook_settings(ctl: HookControl, source: Setting | None = None) -> None:
-    """Map user settings onto the Python-owned hook state (no C knowledge)."""
+    """Map user settings onto the Python-owned hook state (no C knowledge).
+
+    Binds ``ctl`` as the registry's live control first: this runs before the
+    listener thread on startup, and the runtime methods (``set_data`` etc.)
+    push through that connection.
+    """
+    registry.set_control(ctl)
     current = source if source is not None else setting
     hook_settings = current.hook
 
+    def push(action, description: str) -> None:
+        try:
+            ok = action()
+        except (PipeError, OSError):
+            raise  # the caller handles a dropped pipe
+        if not ok:
+            logger.warning("the hook rejected %s", description)
+
     response = registry.get("net/response")
-    response.set_data(programs.response_data(current.proxy_server, current.proxy_port))
+    push(lambda: response.set_data(programs.response_data(current.proxy_server, current.proxy_port)),
+         "net/response proxy data")
 
     frame = registry.get("render/frame")
-    frame.set_state(0, int(hook_settings.low_power_fps))
-    frame.set_enabled(bool(hook_settings.low_power))
+    push(lambda: frame.set_state(0, int(hook_settings.low_power_fps)), "render/frame fps")
+    push(lambda: frame.set_enabled(bool(hook_settings.low_power)), "render/frame enable")
 
     submit = registry.get("render/submit")
-    submit.set_state(0, 1 if hook_settings.low_power_skip_draws else 0)
-    submit.set_enabled(bool(hook_settings.low_power and hook_settings.low_power_skip_draws))
+    push(lambda: submit.set_state(0, 1 if hook_settings.low_power_skip_draws else 0), "render/submit skip")
+    push(lambda: submit.set_enabled(bool(hook_settings.low_power and hook_settings.low_power_skip_draws)),
+         "render/submit enable")
 
     for key in ("log/printf", "log/raw"):
-        registry.get(key).set_enabled(bool(hook_settings.stream_game_logs))
+        push(lambda key=key: registry.get(key).set_enabled(bool(hook_settings.stream_game_logs)),
+             f"{key} enable")
 
     try:
         ctl.log_level(int(hook_settings.log_level))
