@@ -658,27 +658,46 @@ Branch `refactor/hooks-framework`. Plan: `/root/.opencode/plan/hooks-framework-r
 C becomes feature-blind (inject/lifecycle/scan/patch/stub/ISA interpreter/events);
 patterns, programs, enable/state/data all move to Python. DLLs rebuilt with mingw.
 
-### T20.1: ISA core (portable) | status: in_progress
-- [ ] S20.1.1: `gtools/hooks/isa_core.h` — portable interpreter + verifier + host callbacks
-- [ ] S20.1.2: `gtools/hooks/isa.py` — opcodes, Program builder, assemble/disassemble/validate
-- [ ] S20.1.3: `tests/hook_isa_host.c` + `tests/test_hook_isa.py` — ctypes tests green on Linux
+### T20.1: ISA core (portable) | status: completed
+- [x] S20.1.1: `gtools/hooks/isa_core.h` — portable interpreter + verifier + host callbacks (19 ctypes tests)
+- [x] S20.1.2: `gtools/hooks/isa.py` — opcodes, Program builder, assemble/disassemble/validate
+- [x] S20.1.3: `tests/hook_isa_host.c` + `tests/test_hook_isa.py` — ctypes tests green on Linux
 
-### T20.2: ABI v4 + payload | status: pending
-- [ ] S20.2.1: `hook_protocol.h` v4 (self-contained, no windows.h) + static asserts
-- [ ] S20.2.2: `gtools/hooks/payload.py` serializer + `tests/test_hook_abi.py` (C offsets vs Python)
-- [ ] S20.2.3: `tests/test_hook_payload.py` round-trip + caps
+### T20.2: ABI v4 + payload | status: completed
+- [x] S20.2.1: `hook_protocol.h` v4 (self-contained, no windows.h) + static asserts
+- [x] S20.2.2: `gtools/hooks/payload.py` serializer + `tests/test_hook_abi.py` (C offsets vs Python)
+- [x] S20.2.3: `tests/test_hook_payload.py` round-trip + caps
 
-### T20.3: C runtime rewrite | status: pending
-- [ ] S20.3.1: `hook_stub_x64.h` (GNU asm stub + thunk emitter) + prologue length decoder
-- [ ] S20.3.2: `hook.c` rewrite — registry load, scan(+retry), trampoline, dispatch (fast+ISA), event ring
-- [ ] S20.3.3: `injector.c` — payload read/write, entry verify, patch
-- [ ] S20.3.4: `agent.c` — generic pipe (STATUS/HOOKS/ENABLE/STATE/DATA), event drain, auto-inject w/ payload
-- [ ] S20.3.5: build all three DLLs with mingw, commit
+### T20.3: C runtime rewrite | status: completed
+- [x] S20.3.1: `hook_stub_x64.h` (GNU asm stub + thunk emitter) + `hook_prologue.h` length decoder (52 tests)
+- [x] S20.3.2: `hook.c` rewrite — registry load, scan(+retry), trampoline, dispatch (fast+ISA), event ring
+- [x] S20.3.3: `injector.c` — payload read/write, entry verify, patch
+- [x] S20.3.4: `agent.c` — generic pipe (STATUS/HOOKS/ENABLE/STATE/DATA), event drain, auto-inject w/ payload
+- [x] S20.3.5: all three DLLs rebuilt with mingw and committed
 
-### T20.4: Python surface | status: pending
-- [ ] S20.4.1: `registry.py` (Hook/@hook), `programs.py` (built-ins as programs), `events.py`, `control.py`, `hook.py` lifecycle
-- [ ] S20.4.2: `main.py` + `setting.py` wiring; legacy settings map to hook state/data
-- [ ] S20.4.3: `tests/test_hook_programs.py` — response/post programs run on the fake host
+### T20.4: Python surface | status: completed
+- [x] S20.4.1: `registry.py` (Hook/@hook), `programs.py` (built-ins as programs), `events.py`, `control.py`, `hook.py` lifecycle
+- [x] S20.4.2: `main.py` + `setting.py` wiring; legacy settings map to hook state/data
+- [x] S20.4.3: `tests/test_hook_programs.py` — response/post programs run on the fake host (12 tests)
+
+### T20.5: verification on Windows | status: completed
+- [x] S20.5.2: `scripts/hook_smoke.py` + smoke target exe — SMOKE PASS (12/12):
+      agent auto-inject, stub->dispatch->ISA->state, enable/disable mid-run,
+      event ring -> agent -> pipe, varargs log detour, handshake.
+      Found + fixed: Win64 hidden-pointer struct-return ABI bug, stub shadow
+      space, two assembler offset bugs, the addi r0-temp footgun.
+- [x] S20.5.1: `scripts/pattern_probe.py` — in-memory scan of the live client:
+      log/printf, net/response, net/post, render/frame, render/submit unique;
+      log/raw MISSING (client update — patterns are data, fixed in Python only).
+      Growtopia.exe is packed (no .text on disk); only the unpacked image proves them.
+- [x] S20.5.3: live game run (non-elevated instance): 5/6 hooks resolved +
+      patched, trampolines + prologue decode (15/17B), runtime writes (ENABLE)
+      landed, process stable with hooks installed, shim diagnostics through the
+      ring. Live login rewrite + game log streaming still to be exercised
+      through the app (needs an elevated injector: UAC; `net/response` +
+      `net/post` are START_ENABLED so the login POST is caught).
+- [x] S20.5.4: `docs/hooks-framework.md` + AGENTS.md conventions; grep guard
+      clean (no feature names in C); 96 hook tests green on Linux.
 
 ### T20.5: verification on Windows | status: pending
 - [ ] S20.5.1: `scripts/pattern_probe.py` — in-memory pattern scan report for the live game
