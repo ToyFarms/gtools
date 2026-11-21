@@ -680,12 +680,20 @@ static void BuildStatusLine(struct TextBuffer *buffer)
     {
         if (!local[i].key[0])
             continue;
-        BufferAppendFormat(buffer, " hook_%s=%s", local[i].key, StatusText(local[i].status));
-        BufferAppendFormat(buffer, " target_%s=0x%llX", local[i].key, (unsigned long long)local[i].target);
-        BufferAppendFormat(buffer, " hits_%s=%llu", local[i].key, (unsigned long long)local[i].hits);
-        BufferAppendFormat(buffer, " faults_%s=%llu", local[i].key, (unsigned long long)local[i].faults);
-        BufferAppendFormat(buffer, " enabled_%s=%d", local[i].key, (int)local[i].enabled);
-        BufferAppendFormat(buffer, " state_%s_0=%llu", local[i].key, (unsigned long long)local[i].state[0]);
+        char flat[HOOK_KEY_MAX];
+        CopyText(flat, sizeof(flat), local[i].key);
+        ReplaceSpaces(flat);
+        for (char *cursor = flat; *cursor; cursor++)
+        {
+            if (*cursor == '/')
+                *cursor = '_';
+        }
+        BufferAppendFormat(buffer, " hook_%s=%s", flat, StatusText(local[i].status));
+        BufferAppendFormat(buffer, " target_%s=0x%llX", flat, (unsigned long long)local[i].target);
+        BufferAppendFormat(buffer, " hits_%s=%llu", flat, (unsigned long long)local[i].hits);
+        BufferAppendFormat(buffer, " faults_%s=%llu", flat, (unsigned long long)local[i].faults);
+        BufferAppendFormat(buffer, " enabled_%s=%d", flat, (int)local[i].enabled);
+        BufferAppendFormat(buffer, " state_%s_0=%llu", flat, (unsigned long long)local[i].state[0]);
     }
 }
 

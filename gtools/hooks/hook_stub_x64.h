@@ -47,6 +47,9 @@
 
 #define HOOK_STUB_SHADOW 32
 #define HOOK_STUB_FRAME (HOOK_CTX_FRAME_SIZE + HOOK_STUB_SHADOW)
+/* distance from the entry rsp back to the ctx base, parenthesized because the
+ * expression is stringified into the assembler source */
+#define HOOK_STUB_CTX_OFFSET ((HOOK_STUB_FRAME) + 8 - (HOOK_STUB_SHADOW))
 #define HOOK_STUB_CALL_MARKER 0x1122334455667788ull
 
 #ifndef __ASSEMBLER__
@@ -96,13 +99,13 @@ __asm__(
     "  add rsp, " HOOK_STR(HOOK_STUB_FRAME) "\n"
     "  mov r10d, eax\n"                       /* 0 = pass, 1 = skip */
     "  pop rax\n"
-    "  lea r11, [rsp - " HOOK_STR(HOOK_STUB_FRAME + 8 - HOOK_STUB_SHADOW) "]\n" /* back to ctx */
+    "  lea r11, [rsp - " HOOK_STR(HOOK_STUB_CTX_OFFSET) "]\n" /* back to ctx */
     "  test r10d, r10d\n"
     "  jnz .Lhook_stub_skip\n"
-    "  mov r11, [r11 + 272]\n"                /* ctx.runtimePtr */
+    "  mov r11, [r11 + 240]\n"                /* ctx.runtimePtr (ctx-relative!) */
     "  jmp qword ptr [r11 + 72]\n"            /* runtime.trampoline */
     ".Lhook_stub_skip:\n"
-    "  mov rax, [r11 + 288]\n"                /* ctx.retValue */
+    "  mov rax, [r11 + 256]\n"                /* ctx.retValue (ctx-relative!) */
     "  ret\n"
     ".globl hook_stub_template_end\n"
     "hook_stub_template_end:\n"
