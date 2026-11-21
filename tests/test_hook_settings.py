@@ -86,21 +86,11 @@ def test_rejected_writes_are_reported_not_raised(monkeypatch):
     assert ("ENABLE", "render/frame", True) in ctl.calls  # attempted, reported via log
 
 
-def test_transient_rejections_are_retried(monkeypatch):
+def test_apply_reports_rejections_with_reason(monkeypatch):
     fake_setting(monkeypatch)
     ctl = FakeControl()
-    # the first two passes fail entirely (agent mid-swap), then succeed
-    attempts = {"n": 0}
+    ctl.last_reply = "unknown key"
+    ctl.fail_keys.add("net/response")
 
-    def flaky_enable(key, on):
-        attempts["n"] += 1
-        if attempts["n"] <= 4:  # 2 pushes per pass x 2 passes
-            ctl.calls.append(("ENABLE", key, on))
-            return False
-        ctl.calls.append(("ENABLE", key, on))
-        return True
-
-    ctl.enable = flaky_enable
-    hook.apply_hook_settings(ctl)
-    assert ("ENABLE", "render/frame", True) in ctl.calls
-    assert attempts["n"] > 4  # it retried
+    rejected = hook.apply_hook_settings(ctl)
+    assert ("net/response proxy data", "unknown key") in rejected

@@ -558,60 +558,47 @@ def inject_hook() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def apply_hook_settings(ctl: HookControl, source: Setting | None = None) -> None:
-    """Map user settings onto the Python-owned hook state (no C knowledge).
+def apply_hook_settings(ctl: HookControl, source: Setting | None = None) -> list[tuple[str, str]]:
+    """One attempt at mapping user settings onto the Python-owned hook state.
 
-    Binds ``ctl`` as the registry's live control first: this runs before the
-    listener thread on startup, and the runtime methods (``set_data`` etc.)
-    push through that connection.
+    Returns the rejected pushes as ``(description, agent reply)`` so the caller
+    can retry (the game relaunches itself elevated at startup, which can
+    outlive a bounded retry loop -- the listener keeps pushing until accepted).
     """
     registry.set_control(ctl)
     current = source if source is not None else setting
+    hook_settings = current.hook
+    rejected: list[tuple[str, str]] = []
 
-    def apply_once() -> list[str]:
-        """Push every setting; returns the descriptions that were rejected."""
-        rejected: list[str] = []
-        hook_settings = current.hook
-
-        def push(action, description: str) -> None:
-            try:
-                ok = action()
-            except (PipeError, OSError):
-                raise  # the caller handles a dropped pipe
-            if not ok:
-                detail = f": {ctl.last_reply}" if ctl.last_reply else ""
-                logger.warning("the hook rejected %s%s", description, detail)
-                rejected.append(description)
-
-        response = registry.get("net/response")
-        push(lambda: response.set_data(programs.response_data(current.proxy_server, current.proxy_port)),
-             "net/response proxy data")
-
-        frame = registry.get("render/frame")
-        push(lambda: frame.set_state(0, int(hook_settings.low_power_fps)), "render/frame fps")
-        push(lambda: frame.set_enabled(bool(hook_settings.low_power)), "render/frame enable")
-
-        submit = registry.get("render/submit")
-        push(lambda: submit.set_state(0, 1 if hook_settings.low_power_skip_draws else 0), "render/submit skip")
-        push(lambda: submit.set_enabled(bool(hook_settings.low_power and hook_settings.low_power_skip_draws)),
-             "render/submit enable")
-
+    def push(action, description: str) -> None:
         try:
-            ctl.log_level(int(hook_settings.log_level))
-        except PipeError:
-            logger.debug("could not push the agent log level", exc_info=True)
-        return rejected
+            ok = action()
+        except (PipeError, OSError):
+            raise  # the caller handles a dropped pipe
+        if not ok:
+            rejected.append((description, ctl.last_reply))
 
-    # the agent may still be swapping between hooked game instances at startup:
-    # an "unknown key" rejection is transient, retry the whole push
-    for attempt in range(10):
-        rejected = apply_once()
-        if not rejected:
-            if attempt:
-                logger.info("hook settings applied after %d retry(s)", attempt)
-            return
-        time.sleep(0.3)
-    logger.warning("hook settings still rejected after %d retries", 9)
+    response = registry.get("net/response")
+    push(lambda: response.set_data(programs.response_data(current.proxy_server, current.proxy_port)),
+         "net/response proxy data")
+
+    frame = registry.get("render/frame")
+    push(lambda: frame.set_state(0, int(hook_settings.low_power_fps)), "render/frame fps")
+    push(lambda: frame.set_enabled(bool(hook_settings.low_power)), "render/frame enable")
+
+    submit = registry.get("render/submit")
+    push(lambda: submit.set_state(0, 1 if hook_settings.low_power_skip_draws else 0), "render/submit skip")
+    push(lambda: submit.set_enabled(bool(hook_settings.low_power and hook_settings.low_power_skip_draws)),
+         "render/submit enable")
+
+    try:
+        ctl.log_level(int(hook_settings.log_level))
+    except PipeError:
+        logger.debug("could not push the agent log level", exc_info=True)
+
+    for description, reply in rejected:
+        logger.debug("hook push rejected: %s%s", description, f": {reply}" if reply else "")
+    return rejected
 
 
 def forward_hook_state(fields: dict[str, str]) -> None:
@@ -690,14 +677,41 @@ def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
     unsubscribe = subscribe(SettingChanged, _on_setting_changed)
     sink = HookEventSink(on_state=forward_hook_state)
     registry.set_control(current)
+    settings_accepted = False
+    settings_warned = False
 
     try:
         while not stop.is_set():
-            try:
-                _push_pending_settings(current)
-            except Exception:
-                logger.exception("failed to push reloaded settings to the hook")
-                _pending_settings_push.clear()
+            if not settings_accepted:
+                # the game relaunches itself elevated at startup, so the shim
+                # the app is pushing to can appear and disappear for a few
+                # seconds: retry until it sticks instead of giving up
+                try:
+                    rejected = apply_hook_settings(current)
+                except (PipeError, OSError):
+                    logger.warning("the hook control pipe was closed while pushing settings")
+                    current.close()
+                    fresh = _reattach_hook(stop)
+                    if fresh is None:
+                        return
+                    current = fresh
+                    registry.set_control(current)
+                    continue
+                if rejected:
+                    if not settings_warned:
+                        summary = "; ".join(f"{name}{': ' + reply if reply else ''}" for name, reply in rejected)
+                        logger.warning("hook settings pending, retrying until accepted (%s)", summary)
+                        settings_warned = True
+                else:
+                    settings_accepted = True
+                    logger.info("hook settings applied")
+
+            if settings_accepted:
+                try:
+                    _push_pending_settings(current)
+                except Exception:
+                    logger.exception("failed to push reloaded settings to the hook")
+                    _pending_settings_push.clear()
 
             try:
                 event = current.wait_event(timeout=0.5)
@@ -717,12 +731,8 @@ def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
 
                 current = fresh
                 registry.set_control(current)
-                try:
-                    apply_hook_settings(current)
-                except PipeError:
-                    logger.exception("hook setup failed after reconnect")
-                    continue
-
+                settings_accepted = False
+                settings_warned = False
                 continue
     finally:
         unsubscribe()

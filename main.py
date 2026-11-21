@@ -166,12 +166,6 @@ def run_proxy() -> None:
 
     hook_listener_stop = threading.Event()
 
-    if hook_ctl is not None:
-        try:
-            hook.apply_hook_settings(hook_ctl)
-        except PipeError:
-            logger.exception("hook control pipe disappeared during setup")
-
     hook_listener_thread = threading.Thread(
         target=hook.listen_hook_events,
         args=(hook_ctl if hook_ctl is not None else hook.HookControl(), hook_listener_stop),
