@@ -169,20 +169,6 @@ class App:
         if not imgui.begin_main_menu_bar():
             return
 
-        # right-aligned overlay controls beside the menus
-        bar_width = imgui.get_window_width()
-        dock_label = "Undock" if self.overlay.docked else "Dock"
-        dock_width = imgui.calc_text_size(dock_label).x + 24
-        hide_width = imgui.calc_text_size("Hide").x + 24
-        imgui.same_line()
-        imgui.set_cursor_pos_x(bar_width - dock_width - hide_width - 16)
-        if imgui.small_button(dock_label):
-            self._toggle_dock()
-        imgui.same_line()
-        imgui.set_cursor_pos_x(bar_width - hide_width - 8)
-        if imgui.small_button("Hide"):
-            self.overlay.toggle_hidden()
-
         if imgui.begin_menu("View"):
 
             if imgui.menu_item("Midi Workspace", "", False)[0]:
@@ -224,6 +210,21 @@ class App:
 
             imgui.end_menu()
 
+        # right-aligned overlay controls at the END of the bar (placing them
+        # before the menus pushed the View menu off-screen)
+        bar_width = imgui.get_window_width()
+        dock_label = "Undock" if self.overlay.docked else "Dock"
+        dock_width = imgui.calc_text_size(dock_label).x + 24
+        hide_width = imgui.calc_text_size("Hide").x + 24
+        imgui.same_line()
+        imgui.set_cursor_pos_x(bar_width - dock_width - hide_width - 16)
+        if imgui.small_button(dock_label):
+            self._toggle_dock()
+        imgui.same_line()
+        imgui.set_cursor_pos_x(bar_width - hide_width - 8)
+        if imgui.small_button("Hide"):
+            self.overlay.toggle_hidden()
+
         imgui.end_main_menu_bar()
 
     def _add_debug_world(self) -> None:
@@ -248,8 +249,15 @@ class App:
     def _toggle_dock(self) -> None:
         if self.overlay.docked:
             self.overlay.undock()
-        elif self.overlay.dock():
-            pass
+            return
+        game_pid = 0
+        for panel in self.panels:
+            if isinstance(panel, HookPanel) and panel._model.snapshot.connected:
+                game_pid = panel._model.snapshot.pid
+                break
+        if not self.overlay.dock(game_pid or None):
+            from gtools.gui.lib.toast import push_error
+            push_error("Overlay", "cannot find the Growtopia window", "launch the game first")
 
     def add_panel(self, panel: Panel) -> None:
         with self._panels_lock:

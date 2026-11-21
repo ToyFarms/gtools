@@ -40,6 +40,7 @@ class HookRow:
 class HookSnapshot:
     connected: bool = False
     target: str = ""
+    pid: int = 0
     uptime_ms: int = 0
     log_level: int = 1
     rows: tuple[HookRow, ...] = field(default=tuple())
@@ -199,6 +200,7 @@ class HookPanelModel:
         return HookSnapshot(
             connected=True,
             target=status.get("target", ""),
+            pid=int(status.get("pid", "0") or 0),
             uptime_ms=int(status.get("uptime_ms", "0") or 0),
             log_level=int(status.get("level", "1") or 1),
             rows=tuple(rows),
@@ -208,6 +210,7 @@ class HookPanelModel:
 class HookPanel(Panel):
     def __init__(self, dock_id: int = 0) -> None:
         super().__init__(dock_id)
+        self._is_docked = False
         self._model = HookPanelModel()
         self._model.start()
 
@@ -215,10 +218,14 @@ class HookPanel(Panel):
         self._model.stop()
 
     def render(self) -> None:
-        opened = imgui.begin("Hook", None, imgui.WindowFlags_.no_collapse)
-        if not opened[0]:
+        # docked-tab-inactive windows report not-open: that must NOT close the
+        # panel (the app removes panels whose is_open flips), so the window is
+        # not user-closable here
+        if not self._is_docked and self.dock_id:
+            imgui.set_next_window_dock_id(self.dock_id)
+        opened, _ = imgui.begin("Hook", None, imgui.WindowFlags_.no_collapse)
+        if not opened:
             imgui.end()
-            self._open = False
             return
 
         snapshot = self._model.snapshot

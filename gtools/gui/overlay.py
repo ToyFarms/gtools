@@ -136,25 +136,31 @@ def find_window_by_title(title: str) -> int:
 
 def find_game_window(pid: int, title: str = "Growtopia") -> int:
     """The game's main window: by pid first (from the hook runtime), then by
-    window title."""
+    a case-insensitive substring of the window title."""
     u32 = _user32()
     result = []
+    needle = title.lower()
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def on_window(hwnd, _lparam):
         owner = wintypes.DWORD()
         u32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        if owner.value == pid and u32.IsWindowVisible(hwnd):
-            length = u32.GetWindowTextLengthW(hwnd)
-            if length > 0:
+        if not u32.IsWindowVisible(hwnd):
+            return True
+        buffer = ctypes.create_unicode_buffer(256)
+        u32.GetWindowTextW(hwnd, buffer, 256)
+        window_title = buffer.value.lower()
+        if pid:
+            if owner.value == pid and window_title:
                 result.append(hwnd)
                 return False
+        elif needle in window_title:
+            result.append(hwnd)
+            return False
         return True
 
     u32.EnumWindows(on_window, 0)
-    if result:
-        return result[0]
-    return find_window_by_title(title)
+    return result[0] if result else 0
 
 
 def find_gui_window(title: str) -> int:
@@ -214,12 +220,11 @@ def set_owner(hwnd: int, owner: int) -> None:
 
 def move_window(hwnd: int, rect: Rect, activate: bool = False) -> None:
     u32 = _user32()
-    after = 0 if activate else 2  # HWND_NOTOPMOST when activating; keep z otherwise
-    flags = SWP_NOZORDER if not activate else 0
+    # HWND_TOP (0): above the owned game window, never topmost
     u32.SetWindowPos(
-        wintypes.HWND(hwnd), wintypes.HWND(after),
+        wintypes.HWND(hwnd), wintypes.HWND(0),
         rect.x, rect.y, rect.w, rect.h,
-        flags | (0 if activate else SWP_NOACTIVATE),
+        0 if activate else SWP_NOACTIVATE,
     )
 
 

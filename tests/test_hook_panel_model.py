@@ -13,7 +13,7 @@ class FakeControl:
         self.connected = True
         self.last_reply = ""
         self.status_pairs = {
-            "target": "Growtopia.exe", "uptime_ms": "1200", "level": "1",
+            "target": "Growtopia.exe", "pid": "4242", "uptime_ms": "1200", "level": "1",
             "hook_render/frame": "patched", "enabled_render/frame": "1",
             "hits_render/frame": "12", "faults_render/frame": "0", "state_render/frame_0": "30",
             "hook_net/response": "patched", "enabled_net/response": "1",
@@ -53,6 +53,7 @@ def test_snapshot_parses_status_into_rows(monkeypatch):
 
     assert model.snapshot.connected
     assert model.snapshot.target == "Growtopia.exe"
+    assert model.snapshot.pid == 4242
     frame = next(r for r in model.snapshot.rows if r.key == "render/frame")
     assert frame.status == "patched" and frame.enabled and frame.hits == 12 and frame.state0 == 30
 
