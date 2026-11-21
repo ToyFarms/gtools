@@ -26,3 +26,5 @@ opencode.json
 .opencode/
 .tmp_tex/
 gtools/core/growtopia/physics/recordings/
+gtools/hooks/hook_payload.bin
+gtools/hooks/hook_payload.tmp
