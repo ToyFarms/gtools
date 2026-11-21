@@ -128,6 +128,23 @@ RT_STRIDE = RUNTIME.size
 
 RT_STATE_OFFSET = lambda slot: RT_OFF_STATE + 8 * slot  # noqa: E731
 
+# --- HookCtx field offsets (programs read game registers via r15) -----------
+
+CTX_OFF_GPR = 0            # uint64 gpr[16]: rax rcx rdx rbx rsp rbp rsi rdi r8..r15
+CTX_OFF_XMM = 128          # uint64 xmm[12]: xmm0..xmm5, two u64 each
+CTX_OFF_ENTRY_RIP = 224
+CTX_OFF_ENTRY_RSP = 232
+CTX_OFF_RUNTIME_PTR = 240
+CTX_OFF_HOOK_INDEX = 248
+CTX_OFF_ACTION = 252
+CTX_OFF_RET_VALUE = 256
+CTX_OFF_VM = 264
+CTX_OFF_SCRATCH = 400
+CTX_FRAME_SIZE = 4496
+assert CTX_FRAME_SIZE % 16 == 0
+
+CTX_GPR = lambda reg: CTX_OFF_GPR + 8 * reg  # noqa: E731
+
 # --- events -----------------------------------------------------------------
 
 EVENT_LOG = 0  # shim/system diagnostics (text)

@@ -148,6 +148,28 @@ struct HookEventSlot
     uint8_t data[HOOK_EVENT_MAX];
 }; /* 792 bytes */
 
+/*
+ * Saved register context, built by the stub and consumed by ISA programs via
+ * r15. Programs read game registers at ctx+8*i; writes into the context are
+ * rejected by the memory guard up to (and excluding) the scratch area.
+ */
+struct HookCtx
+{
+    uint64_t gpr[16];      /* 0x000: rax rcx rdx rbx rsp rbp rsi rdi r8..r15 (entry values) */
+    uint64_t xmm[12];      /* 0x080: xmm0..xmm5 as two u64 each */
+    uint64_t entryRip;     /* 0x0E0: return address of the hooked call */
+    uint64_t entryRsp;     /* 0x0E8: rsp at entry ([entryRsp] = return address) */
+    uint64_t runtimePtr;   /* 0x0F0: &HookRuntime */
+    uint32_t hookIndex;    /* 0x0F8 */
+    uint32_t action;       /* 0x0FC: 0 = pass, 1 = skip */
+    uint64_t retValue;     /* 0x100: used when action == 1 */
+    uint64_t vm[16];       /* 0x108: ISA registers (r12..r15 preloaded by dispatch) */
+    uint64_t reserved;     /* 0x188 */
+    uint8_t scratch[4096]; /* 0x190 */
+}; /* 4496 bytes, 16-aligned */
+
+#define HOOK_CTX_FRAME_SIZE 4496u
+
 struct HookPayload
 {
     uint32_t magic;
@@ -211,6 +233,8 @@ struct ShimShared
 };
 
 /* pin the wire layout (also asserted from Python via test_hook_abi.py) */
+_Static_assert(sizeof(struct HookCtx) == HOOK_CTX_FRAME_SIZE, "HookCtx layout");
+_Static_assert(HOOK_CTX_FRAME_SIZE % 16 == 0, "HookCtx is 16-aligned for the stub");
 _Static_assert(sizeof(struct HookPattern) == 132, "HookPattern layout");
 _Static_assert(sizeof(struct HookDescriptor) == 688, "HookDescriptor layout");
 _Static_assert(sizeof(struct HookRuntime) == 1176, "HookRuntime layout");
