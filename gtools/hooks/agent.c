@@ -258,6 +258,45 @@ static void AgentEmit(const char *message, int keep)
     QueueEvent("log", message);
 }
 
+static void AgentDebugFile(const char *message)
+{
+    static char path[MAX_PATH];
+    static int pathReady = 0;
+    if (!pathReady)
+    {
+        char self[MAX_PATH];
+        HMODULE module = NULL;
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCWSTR)&AgentDebugFile, &module) &&
+            GetModuleFileNameA(module, self, (DWORD)sizeof(self)))
+        {
+            char *separator = strrchr(self, '\\');
+            if (separator)
+                *separator = 0;
+            snprintf(path, sizeof(path), "%s\\agent_debug.log", separator ? self : ".");
+        }
+        else
+        {
+            snprintf(path, sizeof(path), "agent_debug.log");
+        }
+        pathReady = 1;
+    }
+    HANDLE file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file != INVALID_HANDLE_VALUE)
+    {
+        char line[MAX_LOG_MESSAGE + 32];
+        ULONGLONG tick = GetTickCount64();
+        int n = snprintf(line, sizeof(line), "[%10llu.%03llu] %s\r\n", tick / 1000, tick % 1000, message);
+        if (n > 0)
+        {
+            DWORD written = 0;
+            WriteFile(file, line, (DWORD)n, &written, NULL);
+        }
+        CloseHandle(file);
+    }
+}
+
 static void AgentLog(const char *format, ...)
 {
     char message[MAX_LOG_MESSAGE];
@@ -271,6 +310,7 @@ static void AgentLog(const char *format, ...)
         message[sizeof(message) - 1] = 0;
 
     OutputDebugStringA(message);
+    AgentDebugFile(message);
     AgentEmit(message, 1);
 }
 

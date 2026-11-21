@@ -154,6 +154,134 @@ static void HookLog(int level, const char *format, ...)
 }
 
 /* ------------------------------------------------------------------ */
+/* file diagnostics (hook_debug.log beside the DLL; crash-safe append)  */
+
+static CRITICAL_SECTION g_fileLock;
+static volatile LONG g_fileLockReady = 0;
+static char g_debugPath[MAX_PATH];
+static volatile LONG g_debugPathReady = 0;
+static volatile LONG g_avLogged = 0;
+
+static void HookDebugPath(void)
+{
+    if (g_debugPathReady)
+        return;
+    HMODULE self = NULL;
+    char path[MAX_PATH];
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCWSTR)&HookDispatchShim, &self) &&
+        GetModuleFileNameA(self, path, (DWORD)sizeof(path)))
+    {
+        char *separator = strrchr(path, '\\');
+        if (separator)
+            *separator = 0;
+        snprintf(g_debugPath, sizeof(g_debugPath), "%s\\hook_debug.log", path);
+    }
+    else
+    {
+        snprintf(g_debugPath, sizeof(g_debugPath), "hook_debug.log");
+    }
+    g_debugPathReady = 1;
+}
+
+static void HookFileLog(const char *format, ...)
+{
+    if (!g_fileLockReady)
+        return;
+    char text[1024];
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(text, sizeof(text), format, args);
+    va_end(args);
+    if (written < 0)
+        return;
+    if ((size_t)written >= sizeof(text))
+        text[sizeof(text) - 1] = 0;
+
+    HookDebugPath();
+    EnterCriticalSection(&g_fileLock);
+    HANDLE file = CreateFileA(g_debugPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file != INVALID_HANDLE_VALUE)
+    {
+        char line[1104];
+        ULONGLONG tick = GetTickCount64();
+        int n = snprintf(line, sizeof(line), "[%10llu.%03llu] %s\r\n", tick / 1000, tick % 1000, text);
+        if (n > 0)
+        {
+            DWORD written = 0;
+            WriteFile(file, line, (DWORD)n, &written, NULL);
+        }
+        CloseHandle(file);
+    }
+    LeaveCriticalSection(&g_fileLock);
+}
+
+/* the last hook dispatches, dumped when the process takes a near-null fault */
+struct HookHitTrace
+{
+    ULONGLONG tick;
+    int32_t hookIndex;
+    uint32_t action;
+    uint64_t entryRip;
+    uint32_t kind;
+};
+
+static struct HookHitTrace g_hitTrace[32];
+static volatile LONG g_hitTracePos = 0;
+
+static void HookRecordHit(int32_t hookIndex, uint32_t action, uint64_t entryRip, uint32_t kind)
+{
+    ULONG position = (ULONG)InterlockedIncrement(&g_hitTracePos) - 1;
+    struct HookHitTrace *hit = &g_hitTrace[position % 32];
+    hit->tick = GetTickCount64();
+    hit->hookIndex = hookIndex;
+    hit->action = action;
+    hit->entryRip = entryRip;
+    hit->kind = kind;
+}
+
+static LONG CALLBACK HookVectoredHandler(EXCEPTION_POINTERS *info)
+{
+    EXCEPTION_RECORD *record = info->ExceptionRecord;
+    if (record->ExceptionCode != 0xC0000005)
+        return EXCEPTION_CONTINUE_SEARCH;
+    /* first-chance AVs happen inside the game's own SEH; only report the
+     * near-null variety (those are essentially always fatal) and cap the log */
+    ULONG64 address = record->ExceptionInformation[1];
+    if (address >= 0x100000 || InterlockedCompareExchange(&g_avLogged, 1, 64) >= 64)
+        return EXCEPTION_CONTINUE_SEARCH;
+    InterlockedIncrement(&g_avLogged);
+
+    char text[1536];
+    int n = snprintf(text, sizeof(text),
+                     "NEAR-NULL AV rip=%p op=%s addr=%p rsp=%p r11=%p (recent hook dispatches follow)",
+                     (void *)record->ExceptionAddress,
+                     record->ExceptionInformation[0] == 1 ? "write" : (record->ExceptionInformation[0] == 8 ? "exec" : "read"),
+                     (void *)(uintptr_t)address, (void *)info->ContextRecord->Rsp, (void *)info->ContextRecord->R11);
+    for (int i = 31; i >= 0 && n > 0 && n < (int)sizeof(text) - 96; i--)
+    {
+        struct HookHitTrace *hit = &g_hitTrace[i];
+        if (!hit->tick)
+            continue;
+        n += snprintf(text + n, sizeof(text) - n, "\r\n  [%10llu.%03llu] hook=%d action=%u kind=%u rip=%p",
+                      hit->tick / 1000, hit->tick % 1000, (int)hit->hookIndex, hit->action, hit->kind,
+                      (void *)(uintptr_t)hit->entryRip);
+    }
+    n += snprintf(text + n, sizeof(text) - n, "\r\n");
+    HookDebugPath();
+    HANDLE file = CreateFileA(g_debugPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file != INVALID_HANDLE_VALUE)
+    {
+        DWORD written = 0;
+        WriteFile(file, text, (DWORD)n, &written, NULL);
+        CloseHandle(file);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+/* ------------------------------------------------------------------ */
 /* pattern scanning                                                    */
 
 struct PatternBytes
@@ -369,6 +497,11 @@ static void HookVarargsEmit(int index, const char *line)
     struct HookRuntime *rt = &g_self.runtime[index];
     if (!rt->enabled || rt->status != HOOK_STATUS_PATCHED)
         return;
+    static volatile LONG emitCounters[HOOK_VARARGS_VARIANTS];
+    LONG count = (LONG)InterlockedIncrement(&emitCounters[index]);
+    if (count <= 20 || count % 500 == 0)
+        HookFileLog("varargs key=%s idx=%d #%ld %.96s", rt->key, (int)index, (long)count, line);
+    HookRecordHit(index, 0, 0, g_descs[index].eventKind);
     HookPublishEvent((uint32_t)index, g_descs[index].eventKind, (const uint8_t *)line, (uint32_t)strlen(line));
 }
 
@@ -453,6 +586,18 @@ static int HookMemWrite(void *raw, uint64_t address, uint32_t length, const void
         return 1;
     if (length > ISA_MEMCPY_MAX)
         return 0;
+    /* game-memory writes (the rewrite write-back) are the interesting ones */
+    if (length >= 16)
+    {
+        char hex[3 * 96 + 8];
+        const uint8_t *bytes = (const uint8_t *)in;
+        uint32_t shown = length > 96 ? 96 : length;
+        for (uint32_t i = 0; i < shown; i++)
+            snprintf(hex + i * 3, 4, "%02x ", bytes[i]);
+        hex[shown * 3] = 0;
+        HookFileLog("memwrite %s idx=%d dst=%llx len=%u %s", env->rt->key, (int)env->rt->selfIndex,
+                    (unsigned long long)address, length, hex);
+    }
     /* the context's metadata (registers, rsp, action) is read-only for programs */
     if (address < scratch && address + length > base)
         return 0;
@@ -486,6 +631,14 @@ static int HookEmit(void *raw, uint32_t kind, uint64_t address, uint32_t length)
         return 0;
     if (length && !HookMemRead(raw, address, length, buffer))
         return 0;
+    {
+        char hex[3 * 64 + 8];
+        uint32_t shown = length > 64 ? 64 : length;
+        for (uint32_t i = 0; i < shown; i++)
+            snprintf(hex + i * 3, 4, "%02x ", buffer[i]);
+        hex[shown * 3] = 0;
+        HookFileLog("emit %s idx=%d kind=%u len=%u %s", env->rt->key, (int)env->rt->selfIndex, kind, length, hex);
+    }
     HookPublishEvent((uint32_t)env->rt->selfIndex, kind, buffer, length);
     return 1;
 }
@@ -526,6 +679,7 @@ static const uint8_t *HookProgramBytes(const struct HookDescriptor *desc, int in
 static void HookReportFault(struct HookRuntime *rt, enum IsaRunResult result)
 {
     InterlockedIncrement64((volatile LONG64 *)&rt->faults);
+    HookFileLog("ISA FAULT key=%s idx=%d result=%d", rt->key, (int)rt->selfIndex, (int)result);
     ULONGLONG now = GetTickCount64();
     int index = rt->selfIndex;
     if (index < 0 || index >= HOOK_MAX)
@@ -656,6 +810,14 @@ __attribute__((noinline)) uint64_t HookDispatchShim(struct HookCtx *ctx)
         HookPass(ctx);
         return 0;
     }
+
+    static volatile LONG dispatchCounters[HOOK_MAX];
+    ULONG dispatchNumber = (ULONG)InterlockedIncrement(&dispatchCounters[rt->selfIndex]);
+    if (dispatchNumber <= 5 || dispatchNumber % 500 == 0)
+        HookFileLog("dispatch key=%s idx=%d kind=%u hit #%lu rip=%llx", rt->key, (int)rt->selfIndex,
+                    g_descs[rt->selfIndex].kind, (unsigned long)dispatchNumber,
+                    (unsigned long long)ctx->entryRip);
+    HookRecordHit(rt->selfIndex, 0, ctx->entryRip, g_descs[rt->selfIndex].kind);
 
     const struct HookDescriptor *desc = &g_descs[rt->selfIndex];
     switch (desc->kind)
@@ -839,10 +1001,12 @@ static DWORD WINAPI ShimWorker(LPVOID unused)
     if (!HookPayloadValid())
     {
         HookLog(HOOK_LOG_ERROR, "[hook] the install payload is invalid, the shim stays idle");
+        HookFileLog("PAYLOAD INVALID crc got=%08x want=%08x rev=%d", crc32_of(g_self.payload, sizeof(struct HookPayload)),
+                    (unsigned)g_self.payloadCrc, (int)g_self.payloadRevision);
         return 0;
     }
-
     struct HookPayload *payload = (struct HookPayload *)g_self.payload;
+    HookFileLog("payload accepted: %u descriptors, startDelay=%u", payload->descriptorCount, payload->startDelayMs);
     g_descCount = (int)payload->descriptorCount;
     g_payloadStartDelay = payload->startDelayMs;
     g_payloadAllowAnyModule = payload->allowAnyModule;
@@ -930,6 +1094,10 @@ static DWORD WINAPI ShimWorker(LPVOID unused)
         HookLog(HOOK_LOG_ERROR, "[hook] %d/%d hooks resolved after the scan window", resolved, g_descCount);
     else
         HookLog(HOOK_LOG_INFO, "[hook] %d/%d hooks resolved", resolved, g_descCount);
+    for (int i = 0; i < g_descCount; i++)
+        HookFileLog("resolved key=%s status=%d target=%llx stolen=%d", g_descs[i].key,
+                    (int)g_self.runtime[i].status, (unsigned long long)g_self.runtime[i].target,
+                    (int)g_self.runtime[i].stolenBytes);
 
     g_self.processId = (uint64_t)GetCurrentProcessId();
     g_self.imageBase = (uint64_t)(uintptr_t)image;
@@ -949,6 +1117,10 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
     if (reason == DLL_PROCESS_ATTACH)
     {
         DisableThreadLibraryCalls(module);
+        InitializeCriticalSectionAndSpinCount(&g_fileLock, 0x400);
+        g_fileLockReady = 1;
+        AddVectoredExceptionHandler(0, HookVectoredHandler);
+        HookFileLog("shim loaded pid=%lu", GetCurrentProcessId());
         if (!CreateThread(NULL, 0, ShimWorker, NULL, 0, NULL))
             OutputDebugStringA("[hook] cannot start the shim worker\n");
     }
