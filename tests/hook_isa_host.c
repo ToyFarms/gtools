@@ -42,7 +42,8 @@ struct Host
 static int HostRead(void *ctx, uint64_t addr, uint32_t len, void *out)
 {
     struct Host *host = (struct Host *)ctx;
-    if (len > 8)
+    (void)host;
+    if (len == 0 || len > ISA_MEMCPY_MAX)
         return 0;
     if (addr < HOST_MEM_BASE || addr + len > HOST_MEM_BASE + HOST_MEM_SIZE)
         return 0;
@@ -53,7 +54,7 @@ static int HostRead(void *ctx, uint64_t addr, uint32_t len, void *out)
 static int HostWrite(void *ctx, uint64_t addr, uint32_t len, const void *in)
 {
     struct Host *host = (struct Host *)ctx;
-    if (len > 8)
+    if (len == 0 || len > ISA_MEMCPY_MAX)
         return 0;
     if (addr < HOST_MEM_BASE || addr + len > HOST_MEM_BASE + HOST_MEM_SIZE)
         return 0;

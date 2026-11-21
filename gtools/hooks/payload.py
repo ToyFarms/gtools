@@ -289,10 +289,10 @@ class Payload:
         blobs = bytearray()
         descriptors = bytearray()
         for descriptor in self.descriptors:
-            offset = len(blobs)
+            # each hook owns one fixed-size blob slot; the program starts at 0
             blobs += descriptor.program.ljust(PROGRAM_MAX, b"\0")
             blobs += descriptor.data.ljust(DATA_MAX, b"\0")
-            descriptors += descriptor.pack(offset)
+            descriptors += descriptor.pack(0)
         descriptors += bytes(DESCRIPTOR_SIZE * (HOOK_MAX - len(self.descriptors)))
         blobs += bytes(BLOB_SIZE * (HOOK_MAX - len(self.descriptors)))
 

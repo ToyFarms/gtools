@@ -195,9 +195,27 @@ class Program:
         self._emit(Op.CMP, dst=dst, src=src)
 
     def addi(self, dst: int, imm: int) -> None:
-        """dst += imm using a scratch-free sequence."""
-        self._emit(Op.MOVI, dst=R11, imm=imm)
-        self._emit(Op.ADD, dst=dst, src=R11)
+        """dst += imm (r0 is the temp: nothing may be live in r0 across this)."""
+        self._emit(Op.MOVI, dst=R0, imm=imm)
+        self._emit(Op.ADD, dst=dst, src=R0)
+
+    def cmpi(self, dst: int, imm: int) -> None:
+        """compare dst with an immediate (uses r0 as the temp: never
+        ``cmpi(r0, ...)``)."""
+        self._emit(Op.MOVI, dst=R0, imm=imm)
+        self._emit(Op.CMP, dst=dst, src=R0)
+
+    def cmpz(self, dst: int, temp: int) -> None:
+        """compare dst against zero; ``temp`` is clobbered and must differ
+        from ``dst`` (never ``cmpz(r0, ...)``, r0 is the cmpi temp too)."""
+        self._emit(Op.MOVI, dst=temp, imm=0)
+        self._emit(Op.CMP, dst=dst, src=temp)
+
+    def jz(self, label: str) -> None:
+        self.jeq(label)
+
+    def jnz(self, label: str) -> None:
+        self.jne(label)
 
     # -- control flow ------------------------------------------------------
 
@@ -247,12 +265,35 @@ class Program:
     # -- helpers / actions -------------------------------------------------
 
     def callh(self, helper_id: int, *, a1: int | None = None, a2: int | None = None, a3: int | None = None, a4: int | None = None) -> None:
-        """Call a helper. Arguments land in r1..r4; the result lands in r0."""
+        """Call a helper. Arguments land in r1..r4; the result lands in r0.
+
+        The argument moves are ordered (and cycled through r0 when needed) so
+        that a source living in r1..r4 is read before that register is
+        overwritten by another argument move.
+        """
         if not 0 <= helper_id < HELPER_COUNT:
             raise ValueError(f"unknown helper id {helper_id}")
-        for slot, value in ((1, a1), (2, a2), (3, a3), (4, a4)):
-            if value is not None:
-                self.mov(slot, value)
+        moves = [(slot, value) for slot, value in ((1, a1), (2, a2), (3, a3), (4, a4)) if value is not None]
+        pending = list(enumerate(moves))
+        while pending:
+            progressed = False
+            for item in list(pending):
+                index, (slot, src) = item
+                # safe to emit when no other pending move still READS this dst
+                if any(other_src == slot for other_index, (_, other_src) in pending if other_index != index):
+                    continue
+                self.mov(slot, src)
+                pending.remove(item)
+                progressed = True
+                break
+            if not pending:
+                break
+            if not progressed:
+                # register cycle: break one edge through r0 (r0 is free before
+                # a call -- the helper result lands there anyway)
+                _, (slot, src) = pending.pop(0)
+                self.mov(0, src)
+                self.mov(slot, 0)
         self._emit(Op.CALLH, aux=helper_id)
 
     def action(self, skip: bool) -> None:
