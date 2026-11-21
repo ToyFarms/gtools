@@ -238,9 +238,11 @@ def _run(e: type[Extension], *args) -> None:
 if __name__ == "__main__":
     global_parent = argparse.ArgumentParser(add_help=False)
     global_parent.add_argument("-v", "--verbose", default=argparse.SUPPRESS, action="store_true", help="verbose logging")
+    global_parent.add_argument("-q", "--quiet", default=argparse.SUPPRESS, action="store_true", help="quiet logging")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose logging")
+    parser.add_argument("-q", "--quiet", action="store_true", help="quiet logging")
     subparsers = parser.add_subparsers(dest="cmd", help="sub-command to run")
 
     for name, help_txt in [
@@ -326,7 +328,7 @@ if __name__ == "__main__":
         def destroy(self) -> None:
             pass
 
-    level = logging.DEBUG if args.verbose else logging.INFO
+    level = logging.DEBUG if args.verbose else logging.ERROR if args.quiet else logging.INFO
     setup_logger(log_dir=setting.appdir / "logs", level=level)
 
     if args.cmd == "test":
