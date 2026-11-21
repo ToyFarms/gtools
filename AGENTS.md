@@ -22,6 +22,7 @@ player, and **tests are the contract**.
 | `gtools/core/growtopia/world.py` | `World`, `Tile`, `TileFlags`, `TileExtra` subclasses (`LockTile`, `VipEntranceTile`, `FriendsEntranceTile`, `StormyCloudTile`, ...) |
 | `gtools/core/growtopia/items_dat.py` | `ItemInfoType`, `ItemInfoCollisionType`, `item_database` |
 | `gtools/core/growtopia/packet.py`, `player.py` | tank packets, `CharacterState`/`CharacterFlags`, `Clothing` |
+| `gtools/hooks/` | the injected hook: feature-blind C runtime + Python-authored hooks (see `docs/hooks-framework.md`) |
 | `gtools/baked/items.py` | generated item-id constants |
 | `tests/test_physics_*.py` | pytest suites for physics (collision / vertical / hazards) |
 | `docs/netavatar-physics.md` | the full reverse-engineering reference — ~95 % accurate, **not gospel** |
@@ -318,6 +319,28 @@ Implemented in `gtools/core/growtopia/blaster.py` (`Blast`, `BlastParticle`,
 and drawn by `gtools/gui/lib/blaster_renderer.py` (`shaders/blaster*.vert`), owned
 by the world renderer; the demo's *Blaster* menu fakes the server ADD. Tests:
 `tests/test_blaster_{data,sim,renderer}.py`.
+
+### Hook framework (v4)
+
+The injected hook (`gtools/hooks/`) is feature-blind: C owns mechanism
+(injection, scan/validate/trampoline/patch, register-preserving stub, ISA
+interpreter, event ring, pipe), Python owns every decision (patterns, handler
+programs, enable/state/data, log filtering). Reference:
+`docs/hooks-framework.md`.
+
+- Hook definitions live in `gtools/hooks/programs.py` (built-ins) and any user
+  module via `@hook("key", patterns=[...], stolen=N)` / `Hook(..., fast=...)`.
+- The client is packed (`Growtopia.exe` has no .text on disk): verify
+  signatures against the running image with `scripts/pattern_probe.py`.
+  A client update is fixed in Python only — never recompile the DLLs.
+- `hook_payload.bin` (beside the DLLs) is generated; never edit by hand.
+- Runtime control: `Hook.set_enabled/set_state/set_data` over the agent pipe;
+  disabling never unpatches.
+- DLLs are built with `x86_64-w64-mingw32-gcc` (see `docs/hooks-framework.md`)
+  and committed. MSVC is unsupported (the stub is GNU asm).
+- Windows-only verification: `scripts/hook_smoke.py` (no game needed),
+  `scripts/hook_game_check.py --pid N` (needs a non-elevated game; Growtopia
+  self-elevates a few seconds after launch, so inject fast).
 
 ### Known POIs
 
