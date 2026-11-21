@@ -46,8 +46,7 @@ int g_hook_windows_only;
 
 #define EXPORT __attribute__((visibility("default")))
 
-struct HookDispatchResult;
-static struct HookDispatchResult HookDispatchShim(struct HookCtx *ctx);
+static uint64_t HookDispatchShim(struct HookCtx *ctx); /* 0 = pass, 1 = skip */
 
 #define HOOK_LOG_LINE 512
 #define HOOK_THUNK_SIZE 32
@@ -543,22 +542,19 @@ static void HookReportFault(struct HookRuntime *rt, enum IsaRunResult result)
 /* ------------------------------------------------------------------ */
 /* dispatch (called from the stub on the game's thread)                */
 
-struct HookDispatchResult
-{
-    uint64_t target; /* trampoline to jump to, 0 = skip the call */
-    uint64_t value;  /* return value when skipping */
-};
+/* dispatch returns 0 = pass to the trampoline, 1 = skip the call; the skip
+ * return value travels through ctx->retValue (a 16-byte struct return would
+ * take the hidden-pointer slot in rcx and break the ctx argument) */
 
-static struct HookDispatchResult HookPass(struct HookRuntime *rt)
+static void HookPass(struct HookCtx *ctx)
 {
-    struct HookDispatchResult result = {rt->trampoline, 0};
-    return result;
+    ctx->action = 0;
 }
 
-static struct HookDispatchResult HookSkip(uint64_t value)
+static void HookSkip(struct HookCtx *ctx, uint64_t value)
 {
-    struct HookDispatchResult result = {0, value};
-    return result;
+    ctx->action = 1;
+    ctx->retValue = value;
 }
 
 static void HookPaceFrame(int fps)
@@ -591,18 +587,24 @@ static void HookPaceFrame(int fps)
         Sleep(milliseconds);
 }
 
-static struct HookDispatchResult HookFastDispatch(struct HookRuntime *rt, const struct HookDescriptor *desc)
+static void HookFastDispatch(struct HookRuntime *rt, const struct HookDescriptor *desc, struct HookCtx *ctx)
 {
     uint64_t value = rt->state[desc->fastSlot % HOOK_STATE_SLOTS];
     switch (desc->fastOp)
     {
     case HOOK_FAST_DROP:
         if (value)
-            return HookSkip(0);
+        {
+            HookSkip(ctx, 0);
+            return;
+        }
         break;
     case HOOK_FAST_RETURN:
         if (value)
-            return HookSkip(value);
+        {
+            HookSkip(ctx, value);
+            return;
+        }
         break;
     case HOOK_FAST_PACE:
         if (value)
@@ -611,11 +613,10 @@ static struct HookDispatchResult HookFastDispatch(struct HookRuntime *rt, const 
     default:
         break;
     }
-    return HookPass(rt);
+    HookPass(ctx);
 }
 
-static struct HookDispatchResult HookIsaDispatch(struct HookRuntime *rt, const struct HookDescriptor *desc,
-                                                 struct HookCtx *ctx)
+static void HookIsaDispatch(struct HookRuntime *rt, const struct HookDescriptor *desc, struct HookCtx *ctx)
 {
     struct IsaEnv env = {ctx, rt};
     struct IsaHost host = {&env, HookMemRead,  HookMemWrite, HookEmit, HookNow,
@@ -629,34 +630,47 @@ static struct HookDispatchResult HookIsaDispatch(struct HookRuntime *rt, const s
     enum IsaRunResult result =
         isa_run(&host, HookProgramBytes(desc, rt->selfIndex), desc->programLength, ctx->vm, ISA_MAX_STEPS);
     if (result == ISA_RUN_SKIP)
-        return HookSkip(ctx->vm[0]);
+    {
+        HookSkip(ctx, ctx->vm[0]);
+        return;
+    }
     if (result != ISA_RUN_PASS)
         HookReportFault(rt, result);
-    return HookPass(rt);
+    HookPass(ctx);
 }
 
-__attribute__((noinline)) struct HookDispatchResult HookDispatchShim(struct HookCtx *ctx)
+__attribute__((noinline)) uint64_t HookDispatchShim(struct HookCtx *ctx)
 {
     struct HookRuntime *rt = (struct HookRuntime *)(uintptr_t)ctx->runtimePtr;
     if (!rt || rt->selfIndex < 0 || rt->selfIndex >= HOOK_MAX)
-        return HookSkip(0);
+    {
+        HookSkip(ctx, 0);
+        return 1;
+    }
 
     ctx->hookIndex = (uint32_t)rt->selfIndex;
     InterlockedIncrement64((volatile LONG64 *)&rt->hits);
 
     if (!rt->enabled || rt->status != HOOK_STATUS_PATCHED)
-        return HookPass(rt);
+    {
+        HookPass(ctx);
+        return 0;
+    }
 
     const struct HookDescriptor *desc = &g_descs[rt->selfIndex];
     switch (desc->kind)
     {
     case HOOK_KIND_FAST:
-        return HookFastDispatch(rt, desc);
+        HookFastDispatch(rt, desc, ctx);
+        break;
     case HOOK_KIND_ISA:
-        return HookIsaDispatch(rt, desc, ctx);
+        HookIsaDispatch(rt, desc, ctx);
+        break;
     default:
-        return HookPass(rt);
+        HookPass(ctx);
+        break;
     }
+    return ctx->action ? 1 : 0;
 }
 
 /* ------------------------------------------------------------------ */
