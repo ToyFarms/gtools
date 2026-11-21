@@ -46,6 +46,8 @@ from gtools.gui.opengl import ShaderProgram
 from gtools.gui.texture import GLTexManager
 from gtools.gui.panels.panel import DockspacePanel, Panel
 from gtools.gui.panels.proxy_panel import ProxyPanel
+from gtools.gui.panels.hook_panel import HookPanel
+from gtools.gui.overlay import HotkeyThread, OverlayController
 from gtools.gui.panels.world_panel import WorldPanel
 from gtools.gui.panels.perf_overlay_panel import PerfOverlayPanel
 from gtools.gui.lib.perf_stats import PerfStats
@@ -74,8 +76,14 @@ class App:
         self.panels: list[Panel] = [
             self.dockspace,
             ProxyPanel(self.dockspace.node_id),
+            HookPanel(self.dockspace.node_id),
             PerfOverlayPanel(self.perf_stats),
         ]
+
+        self.overlay = OverlayController(gui_title="gtools gui (ctrl+p command palette)")
+        self.overlay.set_glfw_window(self.window)
+        self.hotkeys = HotkeyThread(show_hide_vk=0x78, dock_vk=0x79)  # F9 / F10
+        self.hotkeys.start()
 
         self._panels_lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -161,6 +169,20 @@ class App:
         if not imgui.begin_main_menu_bar():
             return
 
+        # right-aligned overlay controls beside the menus
+        bar_width = imgui.get_window_width()
+        dock_label = "Undock" if self.overlay.docked else "Dock"
+        dock_width = imgui.calc_text_size(dock_label).x + 24
+        hide_width = imgui.calc_text_size("Hide").x + 24
+        imgui.same_line()
+        imgui.set_cursor_pos_x(bar_width - dock_width - hide_width - 16)
+        if imgui.small_button(dock_label):
+            self._toggle_dock()
+        imgui.same_line()
+        imgui.set_cursor_pos_x(bar_width - hide_width - 8)
+        if imgui.small_button("Hide"):
+            self.overlay.toggle_hidden()
+
         if imgui.begin_menu("View"):
 
             if imgui.menu_item("Midi Workspace", "", False)[0]:
@@ -168,6 +190,9 @@ class App:
 
             if imgui.menu_item("Proxy", "", False)[0]:
                 self.add_panel(ProxyPanel(self.dockspace.node_id))
+
+            if imgui.menu_item("Hook", "", False)[0]:
+                self.add_panel(HookPanel(self.dockspace.node_id))
 
             imgui.separator()
 
@@ -220,6 +245,12 @@ class App:
         w.fix()
         self.add_panel(WorldPanel(w, self.dockspace.node_id))
 
+    def _toggle_dock(self) -> None:
+        if self.overlay.docked:
+            self.overlay.undock()
+        elif self.overlay.dock():
+            pass
+
     def add_panel(self, panel: Panel) -> None:
         with self._panels_lock:
             if panel.dock_id == 0:
@@ -244,6 +275,14 @@ class App:
                     panel = Panel.panels_to_add.pop()
                     self.add_panel(panel(self.dockspace.node_id))
                     any_dirty = True
+
+            if self.hotkeys.show_hide_requested.is_set():
+                self.hotkeys.show_hide_requested.clear()
+                self.overlay.toggle_hidden()
+            if self.hotkeys.dock_requested.is_set():
+                self.hotkeys.dock_requested.clear()
+                self._toggle_dock()
+            self.overlay.follow()
 
             if any_dirty:
                 self.last_dirty_time = time.perf_counter()

@@ -1,0 +1,449 @@
+"""Overlay mode: dock the gui window onto the Growtopia window.
+
+The gui window becomes *owned by* the game window (``GWLP_HWNDPARENT``), sits
+inside its client area, follows it around, and snaps to anchors when dragged.
+It stays a normal window: natively resizable, focused like any window -- click
+the gui and inputs go there, click the game and the game is focused.
+
+The game's HWND is found by pid (from the hook runtime) or by window title;
+the gui's own HWND is found by its unique window title (the bundled glfw
+bindings do not expose native handles).
+"""
+
+from __future__ import annotations
+
+import ctypes
+import logging
+import threading
+from ctypes import wintypes
+from dataclasses import dataclass
+
+import glfw
+
+logger = logging.getLogger("gui-overlay")
+
+GWL_STYLE = -16
+GWL_EXSTYLE = -20
+GWLP_HWNDPARENT = -8
+SWP_NOACTIVATE = 0x0010
+SWP_NOZORDER = 0x0004
+SWP_FRAMECHANGED = 0x0020
+GWL_WNDPROC = -4
+
+WS_OVERLAPPEDWINDOW = 0x00CF0000
+WS_POPUP = 0x80000000
+WS_VISIBLE = 0x10000000
+
+ERROR_WINDOW_UNIQUE = 1400
+
+
+user32 = None
+kernel32 = None
+
+
+def _user32():
+    global user32, kernel32
+    if user32 is None:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    return user32
+
+
+# ---------------------------------------------------------------------------
+# pure geometry: the snap anchors (pytest-covered)
+
+
+@dataclass(frozen=True)
+class Rect:
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+def anchor_rects(area: Rect) -> dict[str, Rect]:
+    """The snap targets inside the game's client area: the four edge strips
+    and the four corners."""
+    half_w, half_h = area.w // 2, area.h // 2
+    return {
+        "left": Rect(area.x, area.y, half_w, area.h),
+        "right": Rect(area.x + half_w, area.y, area.w - half_w, area.h),
+        "top": Rect(area.x, area.y, area.w, half_h),
+        "bottom": Rect(area.x, area.y + half_h, area.w, area.h - half_h),
+        "top_left": Rect(area.x, area.y, half_w, half_h),
+        "top_right": Rect(area.x + half_w, area.y, area.w - half_w, half_h),
+        "bottom_left": Rect(area.x, area.y + half_h, half_w, area.h - half_h),
+        "bottom_right": Rect(area.x + half_w, area.y + half_h, area.w - half_w, area.h - half_h),
+    }
+
+
+def snap_anchor(window: Rect, area: Rect, margin: int = 24) -> tuple[str, Rect]:
+    """Magnet-snap a dragged window to an anchor of the game's client area.
+
+    Edge strips trigger when the window's edge is within ``margin`` of the
+    area's edge (the snapped rect fills that edge); corners trigger when both
+    axes are within margin (the snapped rect keeps the window's size). Corners
+    win over strips. Returns ``(name, snapped_rect)``; a window near no anchor
+    keeps its rect (free-floating, ``""`` name)."""
+    window_right = window.x + window.w
+    window_bottom = window.y + window.h
+    area_right = area.x + area.w
+    area_bottom = area.y + area.h
+
+    near_left = abs(window.x - area.x) <= margin
+    near_right = abs(window_right - area_right) <= margin
+    near_top = abs(window.y - area.y) <= margin
+    near_bottom = abs(window_bottom - area_bottom) <= margin
+
+    anchors = anchor_rects(area)
+    half_w, half_h = area.w // 2, area.h // 2
+
+    if near_left and near_top:
+        return "top_left", Rect(area.x, area.y, window.w, window.h)
+    if near_right and near_top:
+        return "top_right", Rect(area_right - window.w, area.y, window.w, window.h)
+    if near_left and near_bottom:
+        return "bottom_left", Rect(area.x, area_bottom - window.h, window.w, window.h)
+    if near_right and near_bottom:
+        return "bottom_right", Rect(area_right - window.w, area_bottom - window.h, window.w, window.h)
+    if near_left:
+        return "left", Rect(area.x, area.y, half_w, area.h)
+    if near_right:
+        return "right", Rect(area.x + half_w, area.y, area_right - area.x - half_w, area.h)
+    if near_top:
+        return "top", Rect(area.x, area.y, area.w, half_h)
+    if near_bottom:
+        return "bottom", Rect(area.x, area.y + half_h, area.w, area_bottom - area.y - half_h)
+    return "", window
+
+
+def apply_snap(window: Rect, area: Rect, margin: int = 24) -> Rect:
+    _, snapped = snap_anchor(window, area, margin)
+    return snapped
+
+
+# ---------------------------------------------------------------------------
+# win32 helpers
+
+
+def find_window_by_title(title: str) -> int:
+    u32 = _user32()
+    u32.FindWindowW.restype = wintypes.HWND
+    u32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    handle = u32.FindWindowW(None, title)
+    return handle or 0
+
+
+def find_game_window(pid: int, title: str = "Growtopia") -> int:
+    """The game's main window: by pid first (from the hook runtime), then by
+    window title."""
+    u32 = _user32()
+    result = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def on_window(hwnd, _lparam):
+        owner = wintypes.DWORD()
+        u32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and u32.IsWindowVisible(hwnd):
+            length = u32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                result.append(hwnd)
+                return False
+        return True
+
+    u32.EnumWindows(on_window, 0)
+    if result:
+        return result[0]
+    return find_window_by_title(title)
+
+
+def find_gui_window(title: str) -> int:
+    u32 = _user32()
+    current = wintypes.DWORD(kernel32.GetCurrentProcessId() if (kernel32 := ctypes.WinDLL("kernel32")) else 0)
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def on_window(hwnd, _lparam):
+        owner = wintypes.DWORD()
+        u32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == current.value:
+            buffer = ctypes.create_unicode_buffer(256)
+            u32.GetWindowTextW(hwnd, buffer, 256)
+            if buffer.value == title:
+                found.append(hwnd)
+                return False
+        return True
+
+    u32.EnumWindows(on_window, 0)
+    return found[0] if found else 0
+
+
+def window_rect(hwnd: int) -> Rect | None:
+    u32 = _user32()
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                    ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    rect = RECT()
+    if not u32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
+        return None
+    return Rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+
+
+def client_rect(hwnd: int) -> Rect | None:
+    u32 = _user32()
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                    ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    rect = RECT()
+    if not u32.GetClientRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
+        return None
+
+    point = wintypes.POINT(0, 0)
+    u32.ClientToScreen(wintypes.HWND(hwnd), ctypes.byref(point))
+    return Rect(point.x, point.y, rect.right, rect.bottom)
+
+
+def set_owner(hwnd: int, owner: int) -> None:
+    u32 = _user32()
+    u32.SetWindowLongPtrW(wintypes.HWND(hwnd), GWLP_HWNDPARENT, wintypes.HWND(owner))
+
+
+def move_window(hwnd: int, rect: Rect, activate: bool = False) -> None:
+    u32 = _user32()
+    after = 0 if activate else 2  # HWND_NOTOPMOST when activating; keep z otherwise
+    flags = SWP_NOZORDER if not activate else 0
+    u32.SetWindowPos(
+        wintypes.HWND(hwnd), wintypes.HWND(after),
+        rect.x, rect.y, rect.w, rect.h,
+        flags | (0 if activate else SWP_NOACTIVATE),
+    )
+
+
+def set_above(hwnd: int, owner: int) -> None:
+    """Keep the gui window directly above its owner in the z order."""
+    u32 = _user32()
+    u32.SetWindowPos(wintypes.HWND(hwnd), wintypes.HWND(owner), 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+
+
+# ---------------------------------------------------------------------------
+# the controller
+
+
+@dataclass
+class OverlayState:
+    docked: bool = False
+    hidden: bool = False
+    game_hwnd: int = 0
+    gui_hwnd: int = 0
+    anchor: str = ""
+    saved_placement: tuple[int, int, int, int] | None = None
+
+
+class OverlayController:
+    """Docks the gui window onto the game window and follows it per frame."""
+
+    def __init__(self, gui_title: str, game_title: str = "Growtopia") -> None:
+        self.gui_title = gui_title
+        self.game_title = game_title
+        self.state = OverlayState()
+        self._glfw_window = None
+        self._last_game_rect: Rect | None = None
+        self._last_drag_rect: Rect | None = None
+        self._drag_still_ms = 0
+
+    @property
+    def docked(self) -> bool:
+        return self.state.docked
+
+    def gui_hwnd(self) -> int:
+        if not self.state.gui_hwnd:
+            self.state.gui_hwnd = find_gui_window(self.gui_title)
+        return self.state.gui_hwnd
+
+    def game_hwnd(self) -> int:
+        return self.state.game_hwnd
+
+    def find_game(self, pid: int | None = None) -> int:
+        self.state.game_hwnd = find_game_window(pid or 0, self.game_title)
+        return self.state.game_hwnd
+
+    def dock(self, game_pid: int | None = None) -> bool:
+        u32 = _user32()
+        gui = self.gui_hwnd()
+        if not gui:
+            logger.warning("cannot find the gui window")
+            return False
+        game = self.find_game(game_pid)
+        if not game:
+            logger.warning("cannot find the growtopia window")
+            return False
+
+        game_area = client_rect(game)
+        if game_area is None or game_area.w < 100 or game_area.h < 100:
+            logger.warning("the growtopia window is too small to dock onto")
+            return False
+
+        gui_rect = window_rect(gui)
+        if gui_rect is None:
+            return False
+        self.state.saved_placement = (gui_rect.x, gui_rect.y, gui_rect.w, gui_rect.h)
+
+        # own the window: above the game, minimized with it, no taskbar entry
+        set_owner(gui, game)
+
+        # default anchor: the top-left corner, shrunk to fit
+        rect = Rect(game_area.x + 8, game_area.y + 8,
+                    min(gui_rect.w, game_area.w - 16), min(gui_rect.h, game_area.h - 16))
+        move_window(gui, rect, activate=False)
+        set_above(gui, game)
+
+        self.state.docked = True
+        self.state.hidden = False
+        self._last_game_rect = game_area
+        logger.info("docked to the growtopia window (anchor %s)", "top_left")
+        return True
+
+    def undock(self) -> None:
+        if not self.state.docked:
+            return
+        gui = self.gui_hwnd()
+        if gui and self.state.saved_placement:
+            x, y, w, h = self.state.saved_placement
+            set_owner(gui, 0)
+            move_window(gui, Rect(x, y, w, h), activate=True)
+        self.state.docked = False
+        self.state.anchor = ""
+        self._last_game_rect = None
+        logger.info("undocked from the growtopia window")
+
+    def hide(self) -> None:
+        """Hide via glfw; the caller supplies its window through
+        ``set_glfw_window`` at startup."""
+        if self._glfw_window is not None:
+            glfw.hide_window(self._glfw_window)
+        self.state.hidden = True
+
+    def show(self) -> None:
+        if self._glfw_window is not None:
+            glfw.show_window(self._glfw_window)
+        self.state.hidden = False
+
+    def toggle_hidden(self) -> None:
+        if self.state.hidden:
+            self.show()
+        else:
+            self.hide()
+
+    def set_glfw_window(self, window) -> None:
+        self._glfw_window = window
+
+    def follow(self, game_pid: int | None = None) -> None:
+        """Per-frame: keep the docked window inside the game's client area,
+        detect drag-end for snapping, and hold the z order above the game."""
+        if not self.state.docked:
+            return
+        gui = self.gui_hwnd()
+        if not gui:
+            return
+
+        game = self.state.game_hwnd or self.find_game(game_pid)
+        if not game or not _user32().IsWindow(wintypes.HWND(game)):
+            self.undock()
+            return
+
+        game_area = client_rect(game)
+        if game_area is None:
+            return
+
+        if self._last_game_rect != game_area:
+            self._last_game_rect = game_area
+            gui_rect = window_rect(gui)
+            if gui_rect is not None:
+                clamped = Rect(
+                    max(game_area.x, min(gui_rect.x, game_area.x + game_area.w - min(120, gui_rect.w))),
+                    max(game_area.y, min(gui_rect.y, game_area.y + game_area.h - min(80, gui_rect.h))),
+                    gui_rect.w, gui_rect.h,
+                )
+                if clamped != gui_rect:
+                    move_window(gui, clamped)
+            set_above(gui, game)
+
+        # snap: the OS move loop is modal (our frame loop pauses during a
+        # drag), so detect a drag that just ended -- the rect froze after
+        # moving -- and magnet it to the nearest anchor
+        gui_rect = window_rect(gui)
+        if gui_rect is None:
+            return
+        if self._last_drag_rect != gui_rect:
+            self._last_drag_rect = gui_rect
+            self._drag_still_ms = 0
+        else:
+            self._drag_still_ms += 16  # one frame at ~60 fps
+            if self._drag_still_ms >= 150 and self._last_drag_rect is not None:
+                name, snapped = snap_anchor(gui_rect, game_area)
+                if name and snapped != gui_rect:
+                    move_window(gui, snapped)
+                    self.state.anchor = name
+                    self._last_drag_rect = snapped
+                self._drag_still_ms = -10**9  # once per drag
+
+
+def _raise_no_window():
+    raise RuntimeError("no glfw window is current")
+
+
+class HotkeyThread:
+    """Global hotkeys via RegisterHotKey: they fire even while the game has
+    focus. WM_HOTKEY sets thread-safe flags the frame loop consumes."""
+
+    HOTKEY_SHOW_HIDE = 1
+    HOTKEY_DOCK_UNDOCK = 2
+    MOD_CONTROL = 0x0002
+
+    def __init__(self, show_hide_vk: int, dock_vk: int, mods: int = MOD_CONTROL) -> None:
+        self.show_hide_vk = show_hide_vk
+        self.dock_vk = dock_vk
+        self.mods = mods
+        self.show_hide_requested = threading.Event()
+        self.dock_requested = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, name="overlay-hotkeys", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        u32 = _user32()
+        u32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
+        u32.RegisterHotKey.restype = wintypes.BOOL
+        u32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
+        u32.GetMessageW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.UINT]
+
+        ok1 = u32.RegisterHotKey(None, self.HOTKEY_SHOW_HIDE, self.mods, self.show_hide_vk)
+        ok2 = u32.RegisterHotKey(None, self.HOTKEY_DOCK_UNDOCK, self.mods, self.dock_vk)
+        if not (ok1 and ok2):
+            logger.warning("global hotkeys unavailable (show=%s dock=%s, err=%ld)", ok1, ok2,
+                           u32.GetLastError() if hasattr(u32, "GetLastError") else -1)
+
+        class MSG(ctypes.Structure):
+            _fields_ = [("hwnd", wintypes.HWND), ("message", wintypes.UINT),
+                        ("wParam", wintypes.WPARAM), ("lParam", wintypes.LPARAM),
+                        ("time", wintypes.DWORD), ("pt", wintypes.POINT)]
+
+        msg = MSG()
+        while u32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            if msg.message == 0x0312:  # WM_HOTKEY
+                if msg.wParam == self.HOTKEY_SHOW_HIDE:
+                    self.show_hide_requested.set()
+                elif msg.wParam == self.HOTKEY_DOCK_UNDOCK:
+                    self.dock_requested.set()
+
+        u32.UnregisterHotKey(None, self.HOTKEY_SHOW_HIDE)
+        u32.UnregisterHotKey(None, self.HOTKEY_DOCK_UNDOCK)

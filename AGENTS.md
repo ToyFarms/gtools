@@ -335,7 +335,8 @@ programs, enable/state/data, log filtering). Reference:
   A client update is fixed in Python only — never recompile the DLLs.
 - `hook_payload.bin` (beside the DLLs) is generated; never edit by hand.
 - Runtime control: `Hook.set_enabled/set_state/set_data` over the agent pipe;
-  disabling never unpatches.
+  disabling never unpatches. The hook's persistent state lives in
+  `gtools/hooks/state.py` (`~/.gtools/hook_state.json`) -- not in settings.
 - DLLs are built with `x86_64-w64-mingw32-gcc` (see `docs/hooks-framework.md`)
   and committed. MSVC is unsupported (the stub is GNU asm).
 - Windows-only verification: `scripts/hook_smoke.py` (no game needed),

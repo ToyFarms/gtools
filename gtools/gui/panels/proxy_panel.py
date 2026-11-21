@@ -141,6 +141,18 @@ class ProxyPanel(Panel):
             push_error("Proxy", "failed starting proxy", f"{e}")
             print_exc()
 
+        # the hook lifecycle rides along with the gui-run proxy
+        def notice(message: str) -> None:
+            push_error("Hook", message, "")
+
+        try:
+            from gtools.hooks import hook
+            hook.build_payload_file()
+            hook.start_hook_manager(on_notice=notice)
+        except Exception as e:
+            push_error("Hook", "failed starting the hook manager", f"{e}")
+            print_exc()
+
     def delete_proxy(self) -> None:
         if self.proxy:
             self.proxy.stop()

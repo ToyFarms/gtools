@@ -20,7 +20,7 @@ from gtools.core.eventbus import subscribe
 from gtools.core.pipe import PipeError
 from gtools.core.privilege import elevate_ex, is_elevated, windowless_executable
 from gtools.core.wsl import is_running_wsl
-from gtools.hooks import programs, registry
+from gtools.hooks import programs, registry, state as hook_state
 from gtools.hooks.control import HookControl
 from gtools.hooks.events import HookEventSink
 from gtools.hooks.payload import Payload
@@ -40,7 +40,7 @@ TARGET = b"Growtopia.exe"
 
 AGENT_MUTEX = r"Global\gtools_hook_agent"
 
-_SETTING_FIELDS_FORWARDED = frozenset({"hook", "proxy_server", "proxy_port"})
+_SETTING_FIELDS_FORWARDED = frozenset({"proxy_server", "proxy_port"})
 _pending_settings_push = threading.Event()
 
 
@@ -58,15 +58,14 @@ def payload_target() -> bytes:
         return TARGET
 
 
-def build_payload_file(source: Setting | None = None) -> Payload:
+def build_payload_file() -> Payload:
     """Serialize the registry (programs.py) into the install payload file."""
-    current = source if source is not None else setting
-    target = Path(current.gt_path).name or "Growtopia.exe"
+    target = Path(setting.gt_path).name or "Growtopia.exe"
     if not target.lower().endswith(".exe"):
         target += ".exe"  # gt_path may point at the install directory
     payload = registry.build_payload(
         start_delay_ms=0,  # the scan retry window handles unpacking; no boot delay
-        allow_any_module=current.hook.allow_any_module,
+        allow_any_module=hook_state.load().allow_any_module,
         target_process=target,
     )
     blob = payload.pack()
@@ -558,16 +557,15 @@ def inject_hook() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def apply_hook_settings(ctl: HookControl, source: Setting | None = None) -> list[tuple[str, str]]:
-    """One attempt at mapping user settings onto the Python-owned hook state.
+def apply_hook_state(ctl: HookControl) -> list[tuple[str, str]]:
+    """One attempt at pushing the hook's persisted state onto the runtime.
 
     Returns the rejected pushes as ``(description, agent reply)`` so the caller
     can retry (the game relaunches itself elevated at startup, which can
     outlive a bounded retry loop -- the listener keeps pushing until accepted).
     """
     registry.set_control(ctl)
-    current = source if source is not None else setting
-    hook_settings = current.hook
+    state = hook_state.load()
     rejected: list[tuple[str, str]] = []
 
     def push(action, description: str) -> None:
@@ -578,26 +576,44 @@ def apply_hook_settings(ctl: HookControl, source: Setting | None = None) -> list
         if not ok:
             rejected.append((description, ctl.last_reply))
 
-    response = registry.get("net/response")
-    push(lambda: response.set_data(programs.response_data(current.proxy_server, current.proxy_port)),
-         "net/response proxy data")
-
     frame = registry.get("render/frame")
-    push(lambda: frame.set_state(0, int(hook_settings.low_power_fps)), "render/frame fps")
-    push(lambda: frame.set_enabled(bool(hook_settings.low_power)), "render/frame enable")
+    push(lambda: frame.set_state(0, int(state.low_power_fps)), "render/frame fps")
+    push(lambda: frame.set_enabled(bool(state.low_power)), "render/frame enable")
 
     submit = registry.get("render/submit")
-    push(lambda: submit.set_state(0, 1 if hook_settings.low_power_skip_draws else 0), "render/submit skip")
-    push(lambda: submit.set_enabled(bool(hook_settings.low_power and hook_settings.low_power_skip_draws)),
+    push(lambda: submit.set_state(0, 1 if state.low_power_skip_draws else 0), "render/submit skip")
+    push(lambda: submit.set_enabled(bool(state.low_power and state.low_power_skip_draws)),
          "render/submit enable")
 
     try:
-        ctl.log_level(int(hook_settings.log_level))
+        ctl.log_level(int(state.log_level))
     except PipeError:
         logger.debug("could not push the agent log level", exc_info=True)
 
     for description, reply in rejected:
         logger.debug("hook push rejected: %s%s", description, f": {reply}" if reply else "")
+    return rejected
+
+
+def apply_proxy_data(ctl: HookControl, host: str, port: int) -> list[tuple[str, str]]:
+    """Push the net/response rewrite table toward the current proxy.
+
+    This is proxy configuration (not hook state): the listener re-pushes it
+    when the proxy settings change.
+    """
+    registry.set_control(ctl)
+    rejected: list[tuple[str, str]] = []
+
+    def push(action, description: str) -> None:
+        try:
+            ok = action()
+        except (PipeError, OSError):
+            raise
+        if not ok:
+            rejected.append((description, ctl.last_reply))
+
+    push(lambda: registry.get("net/response").set_data(programs.response_data(host, port)),
+         "net/response proxy data")
     return rejected
 
 
@@ -640,12 +656,12 @@ def _push_pending_settings(ctl: HookControl) -> None:
     _pending_settings_push.clear()
 
     try:
-        apply_hook_settings(ctl)
+        apply_proxy_data(ctl, setting.proxy_server, setting.proxy_port)
     except (PipeError, OSError):
         _pending_settings_push.set()
-        logger.exception("failed to push reloaded settings to the hook, retrying after reconnect")
+        logger.exception("failed to push the proxy data to the hook, retrying after reconnect")
     else:
-        logger.info("pushed reloaded setting to the hook")
+        logger.info("pushed the proxy data to the hook")
 
 
 def _reattach_hook(stop: threading.Event) -> HookControl | None:
@@ -672,6 +688,51 @@ def _reattach_hook(stop: threading.Event) -> HookControl | None:
     return
 
 
+_manager_thread: threading.Thread | None = None
+_manager_stop: threading.Event | None = None
+_manager_lock = threading.Lock()
+
+
+def start_hook_manager(on_notice=None) -> threading.Thread | None:
+    """Run the hook lifecycle (payload, inject, listener) in a background
+    thread. Used by both the headless proxy and the gui; a second call while
+    the manager is alive is a no-op."""
+    global _manager_thread, _manager_stop
+    with _manager_lock:
+        if _manager_thread and _manager_thread.is_alive():
+            return _manager_thread
+        _manager_stop = threading.Event()
+        stop = _manager_stop
+
+        def run() -> None:
+            try:
+                ctl = ensure_hook(wait_forever=True)
+            except UacDeclined:
+                logger.warning("elevation declined, the hook stays off")
+                if on_notice:
+                    on_notice("elevation declined, the hook stays off")
+                return
+            if ctl is None:
+                logger.info("the hook is unavailable on this platform")
+                if on_notice:
+                    on_notice("the hook is unavailable on this platform")
+                return
+            try:
+                listen_hook_events(ctl, stop)
+            except Exception:
+                logger.exception("the hook listener crashed")
+
+        _manager_thread = threading.Thread(target=run, name="hook-manager", daemon=True)
+        _manager_thread.start()
+        return _manager_thread
+
+
+def stop_hook_manager() -> None:
+    with _manager_lock:
+        if _manager_stop:
+            _manager_stop.set()
+
+
 def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
     current = ctl
     unsubscribe = subscribe(SettingChanged, _on_setting_changed)
@@ -687,7 +748,9 @@ def listen_hook_events(ctl: HookControl, stop: threading.Event) -> None:
                 # the app is pushing to can appear and disappear for a few
                 # seconds: retry until it sticks instead of giving up
                 try:
-                    rejected = apply_hook_settings(current)
+                    rejected = apply_hook_state(current) + apply_proxy_data(
+                        current, setting.proxy_server, setting.proxy_port
+                    )
                 except (PipeError, OSError):
                     logger.warning("the hook control pipe was closed while pushing settings")
                     current.close()

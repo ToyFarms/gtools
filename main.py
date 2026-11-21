@@ -160,18 +160,8 @@ def run_proxy() -> None:
         hook.build_payload_file()
     except Exception:
         logger.exception("failed to write the hook payload, the hook stays disabled")
-        hook_ctl = None
     else:
-        hook_ctl = hook.ensure_hook()
-
-    hook_listener_stop = threading.Event()
-
-    hook_listener_thread = threading.Thread(
-        target=hook.listen_hook_events,
-        args=(hook_ctl if hook_ctl is not None else hook.HookControl(), hook_listener_stop),
-        daemon=True,
-    )
-    hook_listener_thread.start()
+        hook.start_hook_manager()
 
     server = setup_http_proxy()
     t = threading.Thread(target=server.serve_forever, daemon=True)
@@ -183,12 +173,7 @@ def run_proxy() -> None:
         server.shutdown()
         server.server_close()
         t.join()
-        if hook_listener_stop is not None:
-            hook_listener_stop.set()
-        if hook_listener_thread is not None:
-            hook_listener_thread.join(timeout=3)
-        if hook_ctl is not None:
-            hook_ctl.close()
+        hook.stop_hook_manager()
 
 
 def run_server() -> None:

@@ -108,8 +108,8 @@ class Hook:
             raise RuntimeError(f"no live hook control connection for {self.key!r}")
         return _control
 
-    def set_enabled(self, on: bool) -> None:
-        self._require_control().enable(self.key, bool(on))
+    def set_enabled(self, on: bool) -> bool:
+        return self._require_control().enable(self.key, bool(on))
 
     @property
     def enabled(self) -> bool | None:
@@ -118,10 +118,10 @@ class Hook:
         status = _control.status()
         return status.get(f"enabled_{self.key}") == "1"
 
-    def set_state(self, slot: int, value: int) -> None:
+    def set_state(self, slot: int, value: int) -> bool:
         if not 0 <= slot < payload.STATE_SLOTS:
             raise ValueError(f"state slot {slot} out of range")
-        self._require_control().state(self.key, slot, int(value))
+        return self._require_control().state(self.key, slot, int(value))
 
     def state(self, slot: int = 0) -> int:
         if not 0 <= slot < payload.STATE_SLOTS:
@@ -134,10 +134,10 @@ class Hook:
         except ValueError:
             return 0
 
-    def set_data(self, blob: bytes, offset: int = 0) -> None:
+    def set_data(self, blob: bytes, offset: int = 0) -> bool:
         if offset + len(blob) > payload.DATA_MAX:
             raise ValueError("data blob exceeds the per-hook data cap")
-        self._require_control().data(self.key, offset, blob)
+        return self._require_control().data(self.key, offset, blob)
 
     def __repr__(self) -> str:
         return f"Hook({self.key!r}, kind={self.kind()}, enabled={self.initial_enabled})"

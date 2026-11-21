@@ -43,15 +43,6 @@ class ServerSetting(JsonMixin):
 
 
 @dataclass
-class HookSetting(JsonMixin):
-    log_level: int = field(default=1)
-    allow_any_module: bool = field(default=False)
-    low_power: bool = field(default=False)
-    low_power_fps: int = field(default=0)
-    low_power_skip_draws: bool = field(default=False)
-
-
-@dataclass
 class Setting(JsonMixin):
     server_data_url: str = field(default="www.growtopia1.com")
     proxy_server: str = field(default="127.0.0.1")
@@ -80,7 +71,6 @@ class Setting(JsonMixin):
     opengl_error_checking: bool = field(default=False)
 
     server: ServerSetting = field(default_factory=ServerSetting)
-    hook: HookSetting = field(default_factory=HookSetting)
 
     def __getattribute__(self, name):
         with _setting_lock:

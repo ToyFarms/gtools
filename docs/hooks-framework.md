@@ -41,7 +41,8 @@ events: EVENT hook <key> <kind> <hex> <─────────────�
 | `gtools/hooks/programs.py` | the built-in hooks (all Python: log, net/response, net/post, fast frame/submit) |
 | `gtools/hooks/events.py` | event decode + capture state + proxy event bridge |
 | `gtools/hooks/control.py` | pipe client (STATUS/HOOKS/HANDSHAKE/ENABLE/STATE/DATA/LOGLEVEL) |
-| `gtools/hooks/hook.py` | lifecycle: payload file, elevate+inject, attach, settings mapping |
+| `gtools/hooks/state.py` | the hook's own persistent state (`~/.gtools/hook_state.json`); no gtools.setting involvement |
+| `gtools/hooks/hook.py` | lifecycle: payload file, elevate+inject, attach, state push, the hook manager thread |
 
 ## Hook kinds
 
