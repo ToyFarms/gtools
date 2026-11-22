@@ -46,16 +46,6 @@ UNFOCUSED_ALPHA = 170
 
 ERROR_WINDOW_UNIQUE = 1400
 
-# dock style A/B modes (F11 cycles) -- diagnostics for the displaced-content
-# bug: the raw style swap and WS_EX_LAYERED on an OpenGL window are the two
-# suspects for the presented pixels landing offset from the client rect.
-DOCK_STYLE_MODES = (
-    "native popup + layered",  # 0: current behaviour
-    "native popup",            # 1: no WS_EX_LAYERED
-    "glfw borderless",         # 2: glfw.set_window_attrib(DECORATED, False)
-    "glfw borderless + layered",
-)
-
 
 user32 = None
 kernel32 = None
@@ -230,17 +220,6 @@ class OverlayController:
         self.state = OverlayState()
         self._glfw_window = None
         self._last_game_rect: Rect | None = None
-        self.dock_style_mode = 0
-        self._used_glfw_decorated = False
-        self._layered = False
-
-    def set_dock_style_mode(self, mode: int) -> None:
-        """Cycle the dock style A/B mode; re-docks when already docked."""
-        self.dock_style_mode = mode % len(DOCK_STYLE_MODES)
-        self._last_pid = getattr(self, "_last_pid", 0)
-        if self.state.docked:
-            self.undock()
-            self.dock(self._last_pid or None)
 
     @property
     def docked(self) -> bool:
@@ -268,7 +247,6 @@ class OverlayController:
         if not game:
             logger.warning("cannot find the growtopia window")
             return False
-        self._last_pid = game_pid or 0
 
         game_area = client_rect(game)
         if game_area is None or game_area.w < 100 or game_area.h < 100:
@@ -284,7 +262,19 @@ class OverlayController:
 
         # own the window: above the game, minimized with it, no taskbar entry
         set_owner(gui, game)
-        self._apply_dock_style(gui)
+
+        # borderless: the frame is gone, the toolbar's Undock button restores.
+        # the frame recalc is its own transition: applying the style and the
+        # new geometry in one SetWindowPos leaves DWM presenting a stale
+        # surface (displaced/blurry content) until the next frame change
+        u32.SetWindowLongW(wintypes.HWND(gui), GWL_STYLE, WS_POPUP | WS_VISIBLE)
+        u32.SetWindowPos(wintypes.HWND(gui), None, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)
+
+        # layered: the docked window is translucent (more so when unfocused)
+        exstyle = u32.GetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE) | WS_EX_LAYERED
+        u32.SetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE, exstyle)
+        u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, FOCUSED_ALPHA, LWA_ALPHA)
 
         rect = docked_rect(game_area, gui_rect)
         u32.SetWindowPos(wintypes.HWND(gui), wintypes.HWND(game), rect.x, rect.y, rect.w, rect.h, SWP_FRAMECHANGED)
@@ -295,40 +285,15 @@ class OverlayController:
         logger.info("docked to the growtopia window (top-left)")
         return True
 
-    def _apply_dock_style(self, gui: int) -> None:
-        """Borderless + translucency, per the A/B dock style mode."""
-        u32 = _user32()
-        mode = self.dock_style_mode
-        if mode in (2, 3) and self._glfw_window is not None:
-            # let glfw own the style change so its wndproc and the present
-            # path stay consistent with the geometry it reports
-            glfw.set_window_attrib(self._glfw_window, glfw.DECORATED, False)
-            self._used_glfw_decorated = True
-        else:
-            # borderless: the frame is gone, the toolbar's Undock button restores
-            u32.SetWindowLongW(wintypes.HWND(gui), GWL_STYLE, WS_POPUP | WS_VISIBLE)
-            # frame recalc as its own transition: applying the style and the
-            # new geometry in one SetWindowPos leaves DWM presenting a stale
-            # surface (displaced/blurry content) until the next frame change
-            u32.SetWindowPos(wintypes.HWND(gui), None, 0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)
-            self._used_glfw_decorated = False
-
-        self._layered = mode in (0, 3)
-        if self._layered:
-            exstyle = u32.GetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE) | WS_EX_LAYERED
-            u32.SetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE, exstyle)
-            u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, FOCUSED_ALPHA, LWA_ALPHA)
-
     def _refresh_gl_surface(self) -> None:
         """Force the presentation to re-sync with the final geometry.
 
-        Measured (F3 report, docked): after the style swap + native
-        SetWindowPos the DWM/GL surface can stay stale -- content displaced
-        by tens of px or stretched (blurry, smaller, top clipped) -- until
-        another style/geometry transition happens. A 1px resize cycle sends
-        a real WM_SIZE, which re-creates the swapchain against the final
-        client rect; no manual re-toggle needed."""
+        Measured (docked): after the style swap + native SetWindowPos the
+        DWM/GL surface can stay stale -- content displaced by tens of px or
+        stretched (blurry, smaller, top clipped) -- until another
+        style/geometry transition happens. A 1px resize cycle sends a real
+        WM_SIZE, which re-creates the swapchain against the final client
+        rect; no manual re-toggle needed."""
         if self._glfw_window is None:
             return
         hwnd = self.state.gui_hwnd
@@ -349,9 +314,6 @@ class OverlayController:
         u32 = _user32()
         gui = self.gui_hwnd()
         if gui:
-            if self._used_glfw_decorated and self._glfw_window is not None:
-                glfw.set_window_attrib(self._glfw_window, glfw.DECORATED, True)
-                self._used_glfw_decorated = False
             if self.state.saved_style is not None:
                 u32.SetWindowLongW(wintypes.HWND(gui), GWL_STYLE, self.state.saved_style)
             exstyle = u32.GetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE) & ~WS_EX_LAYERED
@@ -420,12 +382,11 @@ class OverlayController:
             set_above(gui, game)
 
         # translucency: dimmer while the game has the focus
-        if self._layered:
-            focused = int(u32.GetForegroundWindow() or 0) == int(gui)
-            target_alpha = FOCUSED_ALPHA if focused else UNFOCUSED_ALPHA
-            if self.state.alpha != target_alpha:
-                u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, target_alpha, LWA_ALPHA)
-                self.state.alpha = target_alpha
+        focused = int(u32.GetForegroundWindow() or 0) == int(gui)
+        target_alpha = FOCUSED_ALPHA if focused else UNFOCUSED_ALPHA
+        if self.state.alpha != target_alpha:
+            u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, target_alpha, LWA_ALPHA)
+            self.state.alpha = target_alpha
 
 
 def _raise_no_window():

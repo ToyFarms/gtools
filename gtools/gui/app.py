@@ -42,10 +42,9 @@ from gtools.core.growtopia.world import SignTile, Tile, TileFlags, World
 from gtools.core.highres_sleep import nanosleep
 from gtools.core.log import setup_logger
 from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent
-from gtools.gui.input_debug import InputDebugRecorder
 from gtools.gui.opengl import ShaderProgram
 from gtools.gui.texture import GLTexManager
-from gtools.gui.overlay import DOCK_STYLE_MODES, HotkeyThread, OverlayController
+from gtools.gui.overlay import HotkeyThread, OverlayController
 from gtools.gui.panels.panel import DockspacePanel, Panel
 from gtools.gui.panels.proxy_panel import ProxyPanel
 from gtools.gui.panels.hook_panel import HookPanel
@@ -85,16 +84,6 @@ class App:
         self.overlay.set_glfw_window(self.window)
         self.hotkeys = HotkeyThread(show_hide_vk=0x78, dock_vk=0x79)  # F9 / F10
         self.hotkeys.start()
-
-        # F3 diagnostics: samples the whole mouse-position chain while the
-        # debug overlay is on; report at setting.appdir/input_debug_report.jsonl
-        self.input_debug = InputDebugRecorder(
-            window=lambda: self.window,
-            overlay=self.overlay,
-            last_cursor=lambda: self.event_router.last_cursor_pos,
-            last_button=lambda: self.event_router.last_button,
-            report_path=setting.appdir / "input_debug_report.jsonl",
-        )
 
         self._panels_lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -371,10 +360,6 @@ class App:
             self._cmd.render()
             self.toast_mgr.render()
 
-            if perf_stats.SHOW_DEBUG_OVERLAY:
-                row = self.input_debug.sample_and_record()
-                self.input_debug.render(row)
-
             if Panel.dev_mode:
                 drawlist = imgui.get_foreground_draw_list()
                 drawlist.add_text(ImVec2(0, 0), imgui.get_color_u32(ImVec4(0.8, 0.8, 0.1, 1.0)), "DEV MODE")
@@ -414,14 +399,6 @@ class App:
                     self._cmd.open(self._cmd_builder.build())
                 elif e.key == glfw.KEY_F3:
                     perf_stats.SHOW_DEBUG_OVERLAY = not perf_stats.SHOW_DEBUG_OVERLAY
-                    self.input_debug.mark(f"F3 {'on' if perf_stats.SHOW_DEBUG_OVERLAY else 'off'}")
-                elif e.key == glfw.KEY_F11:
-                    # dock style A/B: cycle the presentation variants while
-                    # hunting the displaced-content bug
-                    mode = (self.overlay.dock_style_mode + 1) % len(DOCK_STYLE_MODES)
-                    self.overlay.set_dock_style_mode(mode)
-                    push_debug("Overlay", f"dock style mode {mode}", DOCK_STYLE_MODES[mode])
-                    self.input_debug.mark(f"dock style mode {mode} ({DOCK_STYLE_MODES[mode]})")
 
             if Panel.dev_mode and e.key == glfw.KEY_F12:
                 push_debug("TEST", "SUBTITLE", "DESCRIPTION")
@@ -463,7 +440,6 @@ class App:
         logger.info("shutting down App")
         self._stop_event.set()
         self._update_thread.join(timeout=2.0)
-        self.input_debug.close()
 
         self.event_router.delete()
         with self._panels_lock:

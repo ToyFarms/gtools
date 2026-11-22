@@ -4,7 +4,6 @@ import math
 from typing import Union
 import queue
 import logging
-import time
 
 import glfw
 
@@ -174,10 +173,6 @@ class EventRouter:
         self._window = window
         self._touch = TouchManager(window)
 
-        # diagnostics: the last coordinates delivered by glfw callbacks
-        self.last_cursor_pos: tuple[float, float] | None = None
-        self.last_button: dict | None = None
-
         self._prev_resize = glfw.set_framebuffer_size_callback(window, self._on_resize)
         self._prev_scroll = glfw.set_scroll_callback(window, self._on_scroll)
         self._prev_mouse_btn = glfw.set_mouse_button_callback(window, self._on_mouse_btn)
@@ -209,18 +204,11 @@ class EventRouter:
         if self._prev_mouse_btn:
             self._prev_mouse_btn(win, button, action, mods)
         sx, sy = glfw.get_cursor_pos(win)
-        self.last_button = {
-            "button": int(button),
-            "action": "press" if action == glfw.PRESS else "release",
-            "pos": [sx, sy],
-            "t": round(time.time(), 3),
-        }
         self._queue.put(MouseButtonEvent(button, action, mods, sx, sy))
 
     def _on_cursor(self, win, xpos, ypos):
         if self._prev_cursor:
             self._prev_cursor(win, xpos, ypos)
-        self.last_cursor_pos = (xpos, ypos)
         self._queue.put(CursorMoveEvent(xpos, ypos))
 
     def _on_key(self, win, key, scancode, action, mods):
