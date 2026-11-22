@@ -288,6 +288,7 @@ class OverlayController:
 
         rect = docked_rect(game_area, gui_rect)
         u32.SetWindowPos(wintypes.HWND(gui), wintypes.HWND(game), rect.x, rect.y, rect.w, rect.h, SWP_FRAMECHANGED)
+        self._refresh_gl_surface()
         self.state.docked = True
         self.state.hidden = False
         self._last_game_rect = game_area
@@ -306,6 +307,11 @@ class OverlayController:
         else:
             # borderless: the frame is gone, the toolbar's Undock button restores
             u32.SetWindowLongW(wintypes.HWND(gui), GWL_STYLE, WS_POPUP | WS_VISIBLE)
+            # frame recalc as its own transition: applying the style and the
+            # new geometry in one SetWindowPos leaves DWM presenting a stale
+            # surface (displaced/blurry content) until the next frame change
+            u32.SetWindowPos(wintypes.HWND(gui), None, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)
             self._used_glfw_decorated = False
 
         self._layered = mode in (0, 3)
@@ -313,6 +319,29 @@ class OverlayController:
             exstyle = u32.GetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE) | WS_EX_LAYERED
             u32.SetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE, exstyle)
             u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, FOCUSED_ALPHA, LWA_ALPHA)
+
+    def _refresh_gl_surface(self) -> None:
+        """Force the presentation to re-sync with the final geometry.
+
+        Measured (F3 report, docked): after the style swap + native
+        SetWindowPos the DWM/GL surface can stay stale -- content displaced
+        by tens of px or stretched (blurry, smaller, top clipped) -- until
+        another style/geometry transition happens. A 1px resize cycle sends
+        a real WM_SIZE, which re-creates the swapchain against the final
+        client rect; no manual re-toggle needed."""
+        if self._glfw_window is None:
+            return
+        hwnd = self.state.gui_hwnd
+        if not hwnd:
+            return
+        try:
+            w, h = glfw.get_window_size(self._glfw_window)
+        except Exception:
+            return
+        u32 = _user32()
+        flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+        u32.SetWindowPos(wintypes.HWND(hwnd), None, 0, 0, w + 1, h, flags)
+        u32.SetWindowPos(wintypes.HWND(hwnd), None, 0, 0, w, h, flags)
 
     def undock(self) -> None:
         if not self.state.docked:
@@ -334,6 +363,7 @@ class OverlayController:
                 move_window(gui, Rect(x, y, w, h), activate=True)
             else:
                 set_owner(gui, 0)
+            self._refresh_gl_surface()
         self.state.docked = False
         self._last_game_rect = None
         logger.info("undocked from the growtopia window")
