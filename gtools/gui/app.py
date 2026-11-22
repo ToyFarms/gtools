@@ -45,10 +45,10 @@ from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent
 from gtools.gui.input_debug import InputDebugRecorder
 from gtools.gui.opengl import ShaderProgram
 from gtools.gui.texture import GLTexManager
+from gtools.gui.overlay import DOCK_STYLE_MODES, HotkeyThread, OverlayController
 from gtools.gui.panels.panel import DockspacePanel, Panel
 from gtools.gui.panels.proxy_panel import ProxyPanel
 from gtools.gui.panels.hook_panel import HookPanel
-from gtools.gui.overlay import HotkeyThread, OverlayController
 from gtools.gui.panels.world_panel import WorldPanel
 from gtools.gui.panels.perf_overlay_panel import PerfOverlayPanel
 from gtools.gui.lib.perf_stats import PerfStats
@@ -415,6 +415,13 @@ class App:
                 elif e.key == glfw.KEY_F3:
                     perf_stats.SHOW_DEBUG_OVERLAY = not perf_stats.SHOW_DEBUG_OVERLAY
                     self.input_debug.mark(f"F3 {'on' if perf_stats.SHOW_DEBUG_OVERLAY else 'off'}")
+                elif e.key == glfw.KEY_F11:
+                    # dock style A/B: cycle the presentation variants while
+                    # hunting the displaced-content bug
+                    mode = (self.overlay.dock_style_mode + 1) % len(DOCK_STYLE_MODES)
+                    self.overlay.set_dock_style_mode(mode)
+                    push_debug("Overlay", f"dock style mode {mode}", DOCK_STYLE_MODES[mode])
+                    self.input_debug.mark(f"dock style mode {mode} ({DOCK_STYLE_MODES[mode]})")
 
             if Panel.dev_mode and e.key == glfw.KEY_F12:
                 push_debug("TEST", "SUBTITLE", "DESCRIPTION")

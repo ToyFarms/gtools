@@ -68,7 +68,41 @@ def make_recorder(tmp_path, overlay, **providers) -> InputDebugRecorder:
         last_cursor=providers.get("last_cursor", lambda: None),
         last_button=providers.get("last_button", lambda: None),
         report_path=tmp_path / "report.jsonl",
+        capture_region=providers.get("capture_region"),
+        measure_interval=providers.get("measure_interval", 0.0),
     )
+
+
+WIN32_FAKE = {
+    "gui_hwnd": 0x1234,
+    "cursor_screen": [466.0, 241.0],
+    "cursor_client": [10.0, 5.0],
+    "client_rect": [456, 236, 816, 639],
+}
+
+
+def paint(buf, w, x, y, bgra):
+    o = (y * w + x) * 4
+    buf[o : o + 4] = bytes(bgra)
+
+
+def capture_with_blobs(w, h, *blobs):
+    """Fake GDI capture: a BGRA buffer with (color, x, y) blobs painted in."""
+
+    def capture(rx, ry, rw, rh):
+        assert (rw, rh) == (w, h)
+        buf = bytearray(w * h * 4)
+        for (b, g, r, _a), x, y in blobs:
+            for dx in range(4):
+                for dy in range(4):
+                    paint(buf, w, x + dx, y + dy, (b, g, r, 255))
+        return bytes(buf)
+
+    return capture
+
+
+MAGENTA = (232, 48, 232, 255)  # b, g, r
+GREEN = (46, 232, 46, 255)
 
 
 def read_lines(tmp_path) -> list[dict]:
@@ -148,13 +182,88 @@ def test_render_smoke(ui, fake_glfw, tmp_path, monkeypatch):
     """The crosshairs + text block draw without a GL context (draw-call
     signatures are only checked at runtime)."""
     rec = make_recorder(tmp_path, FakeOverlay())
-    monkeypatch.setattr(
-        rec,
-        "_gather_win32",
-        lambda: {"gui_hwnd": 0x1234, "cursor_screen": [110.0, 55.0], "cursor_client": [10.0, 5.0]},
-    )
+    monkeypatch.setattr(rec, "_gather_win32", lambda: dict(WIN32_FAKE))
     ui.mouse_pos = (400.0, 300.0)
     imgui.new_frame()
     row = rec.sample_and_record()
     rec.render(row)  # must not raise
+    rec.close()
+
+
+def test_visual_measures_displacement(ui, fake_glfw, tmp_path, monkeypatch):
+    """The screenshot probe locates the crosshair marker and reports its
+    displacement from the predicted position (client origin + io.MousePos)."""
+    # predicted = client origin + io.MousePos = (456+100, 236+50) = (556, 286)
+    ui.mouse_pos = (100.0, 50.0)
+    # region = predicted -+200 -> origin (356, 86); blob at local (205, 105)
+    # -> measured at screen (561, 191) => displacement (+5, -95)
+    capture = capture_with_blobs(400, 400, (MAGENTA, 205, 105))
+    rec = make_recorder(tmp_path, FakeOverlay(), capture_region=capture)
+    monkeypatch.setattr(rec, "_gather_win32", lambda: dict(WIN32_FAKE))
+    row = rec.sample_and_record()
+    rec.close()
+    visual = row["visual"]
+    assert visual["predicted"] == [556.0, 286.0]
+    # 4x4 blob painted at local (205, 105): centroid at (206.5, 106.5)
+    assert visual["magenta"] == [562.5, 192.5]
+    assert visual["disp_magenta"] == [6.5, -93.5]
+    assert visual["green"] is None
+
+
+def test_visual_green_fallback(ui, fake_glfw, tmp_path, monkeypatch):
+    ui.mouse_pos = (100.0, 50.0)
+    capture = capture_with_blobs(400, 400, (GREEN, 207, 102))
+    rec = make_recorder(tmp_path, FakeOverlay(), capture_region=capture)
+    monkeypatch.setattr(rec, "_gather_win32", lambda: dict(WIN32_FAKE))
+    row = rec.sample_and_record()
+    rec.close()
+    visual = row["visual"]
+    assert visual["magenta"] is None
+    assert visual["green"] == [564.5, 189.5]  # blob at (207, 102) -> centroid (208.5, 103.5)
+    assert visual["disp_green"] == [8.5, -96.5]
+
+
+def test_visual_no_marker(ui, fake_glfw, tmp_path, monkeypatch):
+    ui.mouse_pos = (100.0, 50.0)
+    rec = make_recorder(tmp_path, FakeOverlay(), capture_region=lambda *a: bytes(400 * 400 * 4))
+    monkeypatch.setattr(rec, "_gather_win32", lambda: dict(WIN32_FAKE))
+    row = rec.sample_and_record()
+    rec.close()
+    visual = row["visual"]
+    assert visual["magenta"] is None and visual["green"] is None
+    assert "disp_magenta" not in visual
+
+
+def test_visual_throttled(ui, fake_glfw, tmp_path, monkeypatch):
+    """With the default interval, a sample right after the previous one does
+    not re-measure (no capture, no visual section)."""
+    calls = []
+    rec = make_recorder(
+        tmp_path,
+        FakeOverlay(),
+        capture_region=lambda *a: calls.append(a) or bytes(400 * 400 * 4),
+        measure_interval=100.0,
+    )
+    monkeypatch.setattr(rec, "_gather_win32", lambda: dict(WIN32_FAKE))
+    ui.mouse_pos = (100.0, 50.0)
+    row1 = rec.sample()
+    assert "visual" in row1 and len(calls) == 1
+    row2 = rec.sample()
+    assert "visual" not in row2 and len(calls) == 1
+    rec.close()
+
+
+def test_visual_without_win32_is_skipped(ui, fake_glfw, tmp_path):
+    rec = make_recorder(tmp_path, FakeOverlay(), capture_region=lambda *a: (_ for _ in ()).throw(AssertionError("must not capture")))
+    row = rec.sample()
+    assert "visual" not in row
+    rec.close()
+
+
+def test_dock_mode_in_rows(ui, fake_glfw, tmp_path):
+    overlay = FakeOverlay()
+    overlay.dock_style_mode = 2
+    rec = make_recorder(tmp_path, overlay)
+    row = rec.sample()
+    assert row["dock_mode"] == 2
     rec.close()
