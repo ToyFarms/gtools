@@ -41,7 +41,7 @@ from gtools.core.growtopia.items_dat import item_database
 from gtools.core.growtopia.world import SignTile, Tile, TileFlags, World
 from gtools.core.highres_sleep import nanosleep
 from gtools.core.log import setup_logger
-from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent
+from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent, feed_cursor_position, real_mouse_pos_callback
 from gtools.gui.opengl import ShaderProgram
 from gtools.gui.texture import GLTexManager
 from gtools.gui.panels.panel import DockspacePanel, Panel
@@ -69,6 +69,11 @@ class App:
         self.toast_mgr = ToastManager.get()
 
         self.imgui_renderer = GlfwRenderer(self.window)
+        # Docked, the game keeps the focus while the gui is hovered; the stock
+        # backend then feeds (-1, -1) as the mouse position, which ImGui
+        # accepts as a real position at the window's top-left. Install the fix
+        # before EventRouter, which chains to the current cursor callback.
+        glfw.set_cursor_pos_callback(self.window, real_mouse_pos_callback(self.imgui_renderer))
         self.event_router = EventRouter(self.window)
 
         self.dockspace = DockspacePanel()
@@ -313,6 +318,9 @@ class App:
             event_time_ms = (time.perf_counter() - event_start) * 1000.0
 
             self.imgui_renderer.process_inputs()
+            # dock()/follow() reposition the window natively, which fires no
+            # cursor callback: re-feed the position every frame.
+            feed_cursor_position(self.imgui_renderer.io, self.window)
             imgui.new_frame()
 
             io = imgui.get_io()
