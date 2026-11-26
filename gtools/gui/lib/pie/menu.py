@@ -4,6 +4,7 @@ from __future__ import annotations
 import ctypes
 import enum
 import math
+import os
 import time
 import traceback
 from contextlib import contextmanager
@@ -153,7 +154,7 @@ class PieMenu(MenuBuilder):
         imgui.style_colors_dark()
         ps = glfw.get_monitor_content_scale(glfw.get_primary_monitor())[0] * self.user_scale
         try:
-            if not font_path:
+            if not font_path or not os.path.exists(font_path):
                 raise FileNotFoundError
             io.fonts.add_font_from_file_ttf(font_path, self.theme.font_size * ps)
         except Exception:

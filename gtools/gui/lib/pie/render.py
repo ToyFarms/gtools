@@ -106,7 +106,7 @@ def draw_level(dl, P: Painter, lv, off, st, fade: float) -> None:
         ang = lv.angles[st.index]
         half = lv.sector * 0.5 * 0.92
         dl.path_arc_to(centre, R * op + th.item_radius * sc * 1.38, ang - half, ang + half, 24)
-        dl.path_stroke(u32(th.accent, 0.8 * hot * a), 3.0 * sc, 0)
+        dl.path_stroke(u32(th.accent, 0.8 * hot * a), thickness=3.0 * sc)
 
     # tether from hub toward the cursor direction
     if st is not None and st.distance > 4 * sc:
