@@ -1,20 +1,17 @@
 import OpenGL
 from gtools import setting
 from gtools.gui.lib import perf_stats
-from gtools.gui.lib.pie import Hold, PieMenu
-from gtools.gui.lib.toast import ToastManager, push_debug, push_error
+from gtools.gui.lib.toast import ToastManager, push_debug
 from gtools.gui.panels.midi_workspace import MidiWorkspace
 
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking
 
-from collections import deque
 import logging
 import math
 from pathlib import Path
 from sys import argv
 import threading
 import time
-from typing import Any, Callable
 
 import glfw
 from OpenGL.GL import (
@@ -47,7 +44,6 @@ from gtools.core.log import setup_logger
 from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent
 from gtools.gui.opengl import ShaderProgram
 from gtools.gui.texture import GLTexManager
-from gtools.gui.overlay import OverlayController
 from gtools.gui.panels.panel import DockspacePanel, Panel
 from gtools.gui.panels.proxy_panel import ProxyPanel
 from gtools.gui.panels.hook_panel import HookPanel
@@ -78,21 +74,14 @@ class App:
         self.perf_stats = PerfStats()
         self.panels: list[Panel] = [
             self.dockspace,
-            ProxyPanel(self.dockspace.node_id),
             HookPanel(self.dockspace.node_id),
+            ProxyPanel(self.dockspace.node_id),
             PerfOverlayPanel(self.perf_stats),
         ]
-
-        self.overlay = OverlayController(gui_title="gtools gui (ctrl+p command palette)")
-        self.overlay.set_glfw_window(self.window)
 
         self._panels_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._last_update_ms: float = 0.0
-
-        self.pie = self._create_pie_menu()
-        self._pie_actions: deque[Callable[[], None]] = deque()
-        self._pie_trigger_down = False
 
         self._cmd = CommandPalette()
         self._cmd_builder = self._setup_cmd_palette()
@@ -129,12 +118,6 @@ class App:
 
             self.toast_mgr.update(dt)
 
-            trigger_down = self.pie is not None and self.pie.enabled and self.pie.trigger.is_down()
-            if trigger_down != self._pie_trigger_down:
-                glfw.post_empty_event()
-
-            self._pie_trigger_down = trigger_down
-
             elapsed = time.perf_counter() - loop_start
             self._last_update_ms = elapsed * 1000.0
 
@@ -149,16 +132,18 @@ class App:
 
         @root.cmd("Open World")
         def _() -> None:
-            self._open_world_dialog()
+            world = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
+            if isinstance(world, str):
+                self.add_panel(WorldPanel.load(Path(world), self.dockspace.node_id))
 
         @root.submenu("Search World")
         def _(sub: PaletteBuilder) -> None:
-            self.worlds = self._world_paths()
+            self.worlds = [x for x in (setting.appdir / "worlds").glob("*")]
             for world in self.worlds:
 
                 @sub.cmd(world.name)
                 def _(p=world) -> None:
-                    self._open_world(p)
+                    self.add_panel(WorldPanel.load(p, self.dockspace.node_id))
 
         @root.cmd("Debug World")
         def _() -> None:
@@ -168,124 +153,17 @@ class App:
         def _() -> None:
             self.add_panel(MidiWorkspace(self.dockspace.node_id))
 
-        @root.cmd("Pie Menu", keybind="hold Ctrl", description="radial command menu")
-        def _() -> None:
-            if self.pie is not None:
-                self.pie.open()
-
         @root.cmd(lambda: "Dev Mode: Turn Off" if Panel.dev_mode else "Dev Mode: Turn On")
         def _() -> None:
             Panel.dev_mode = not Panel.dev_mode
 
         return root
 
-    def _create_pie_menu(self) -> PieMenu:
-        menu = PieMenu(trigger=Hold("ctrl"), processes=["Growtopia.exe"], main_window=self.window)
-        self._build_pie_menu(menu)
-
-        return menu
-
-    def _pie_action(self, action: Callable[[], None]) -> None:
-        self._pie_actions.append(action)
-
-    def _flush_pie_actions(self) -> None:
-        while self._pie_actions:
-            action = self._pie_actions.popleft()
-            try:
-                action()
-            except Exception:
-                logger.exception("pie action failed")
-
-    def _build_pie_menu(self, menu: Any) -> None:
-        from gtools.gui.lib.pie import Panel as PiePanel
-
-        menu.button("Open World", lambda: self._pie_action(self._open_world_dialog), icon="O")
-
-        worlds = menu.submenu("Worlds", icon="W")
-        worlds.button("Open World...", lambda: self._pie_action(self._open_world_dialog), icon="+")
-
-        recent: list[str] | None = None
-
-        def refresh_worlds() -> None:
-            nonlocal recent
-            paths = self._world_paths()[:10]
-            names = [p.name for p in paths]
-            if names == recent:
-                return
-            recent = names
-            del worlds.children[1:]
-            for path in paths:
-                worlds.button(path.name, lambda p=path: self._pie_action(lambda: self._open_world(p)))
-            worlds.button("Debug World", lambda: self._pie_action(self._add_debug_world), icon="*")
-
-        worlds.on_hover = refresh_worlds
-        refresh_worlds()
-
-        search: dict[str, Any] = {"query": "", "panel": None}
-
-        def search_rows() -> list[str]:
-            q = search["query"].lower()
-            return [p.name for p in self._world_paths() if q in p.name.lower()][:14]
-
-        def on_search_change(text: str) -> None:
-            search["query"] = text
-            panel = search["panel"]
-            if text and (panel is None or not panel.open):
-                search["panel"] = menu.show_panel(
-                    PiePanel.list("Worlds", search_rows, on_pick=lambda name: self._pie_action(lambda: self._open_world_by_name(name)), size=(320, 320))
-                )
-            elif not text and panel is not None:
-                panel.close()
-
-        def on_search_submit(text: str) -> None:
-            rows = search_rows()
-            if rows:
-                name = rows[0]
-                self._pie_action(lambda: self._open_world_by_name(name))
-            if search["panel"] is not None:
-                search["panel"].close()
-
-        menu.text_input("Search", on_submit=on_search_submit, on_change=on_search_change, placeholder="Search worlds...")
-
-        panels = menu.submenu("Panels", icon="P")
-        panels.button("Proxy", lambda: self._pie_action(lambda: self.add_panel(ProxyPanel(self.dockspace.node_id))), icon="X")
-        panels.button("Hook", lambda: self._pie_action(lambda: self.add_panel(HookPanel(self.dockspace.node_id))), icon="K")
-        panels.button("Midi Workspace", lambda: self._pie_action(lambda: self.add_panel(MidiWorkspace(self.dockspace.node_id))), icon="M")
-
-        menu.button("Toggle Dev Mode", lambda: self._pie_action(self._toggle_dev_mode), icon="!")
-        menu.button("Dock Overlay", lambda: self._pie_action(self._toggle_dock), icon="D")
-        menu.button("Hide GUI", lambda: self._pie_action(self.overlay.toggle_hidden), icon="H")
-
-    def _world_paths(self) -> list[Path]:
-        try:
-            return sorted((p for p in (setting.appdir / "worlds").glob("*") if p.is_file()), key=lambda p: p.name.lower())
-        except OSError:
-            return []
-
-    def _open_world_dialog(self) -> None:
-        world = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
-        if isinstance(world, str):
-            self._open_world(Path(world))
-
-    def _open_world(self, path: Path) -> None:
-        self.add_panel(WorldPanel.load(path, self.dockspace.node_id))
-
-    def _open_world_by_name(self, name: str) -> None:
-        self._open_world(setting.appdir / "worlds" / name)
-
-    def _toggle_dev_mode(self) -> None:
-        Panel.dev_mode = not Panel.dev_mode
-
     def _render_menu_bar(self) -> None:
         if not imgui.begin_main_menu_bar():
             return
 
         if imgui.begin_menu("View"):
-
-            if self.pie is not None:
-                if imgui.menu_item("Pie Menu", "hold Ctrl", False)[0]:
-                    self.pie.open()
-                imgui.separator()
 
             if imgui.menu_item("Midi Workspace", "", False)[0]:
                 self.add_panel(MidiWorkspace(self.dockspace.node_id))
@@ -299,14 +177,16 @@ class App:
             imgui.separator()
 
             if imgui.menu_item("Open World", "", False)[0]:
-                self._open_world_dialog()
+                world = ndialog.open_file("Open World", history_path=setting.appdir / "ndialog.json")
+                if isinstance(world, str):
+                    self.add_panel(WorldPanel.load(Path(world), self.dockspace.node_id))
 
             if imgui.begin_menu("Open Recent World"):
-                self.worlds = self._world_paths()
+                self.worlds = [x for x in (setting.appdir / "worlds").glob("*")]
                 if self.worlds:
                     for p in self.worlds:
                         if imgui.menu_item(p.name, "", False)[0]:
-                            self._open_world(p)
+                            self.add_panel(WorldPanel.load(p, self.dockspace.node_id))
                 else:
                     imgui.begin_disabled()
                     imgui.menu_item("(none)", "", False)
@@ -320,7 +200,7 @@ class App:
 
             label = "Dev Mode: Turn Off" if Panel.dev_mode else "Dev Mode: Turn On"
             if imgui.menu_item(label, "", False)[0]:
-                self._toggle_dev_mode()
+                Panel.dev_mode = not Panel.dev_mode
 
             imgui.end_menu()
 
@@ -345,20 +225,6 @@ class App:
         w.fix()
         self.add_panel(WorldPanel(w, self.dockspace.node_id))
 
-    def _toggle_dock(self) -> None:
-        if self.overlay.docked:
-            self.overlay.undock()
-            return
-
-        game_pid = 0
-        for panel in self.panels:
-            if isinstance(panel, HookPanel) and panel._model.snapshot.connected:
-                game_pid = panel._model.snapshot.pid
-                break
-
-        if not self.overlay.dock(game_pid or None):
-            push_error("Overlay", "cannot find the Growtopia window", "launch the game first")
-
     def add_panel(self, panel: Panel) -> None:
         with self._panels_lock:
             if panel.dock_id == 0:
@@ -375,9 +241,8 @@ class App:
         while not glfw.window_should_close(self.window):
             frame_start = time.perf_counter()
 
-            pie_busy = self.pie is not None and self.pie.busy
             with self._panels_lock:
-                any_dirty = any(p.is_dirty for p in self.panels) or self._cmd.is_dirty() or self.toast_mgr.is_dirty() or pie_busy
+                any_dirty = any(p.is_dirty for p in self.panels) or self._cmd.is_dirty() or self.toast_mgr.is_dirty()
 
             if Panel.panels_to_add:
                 while Panel.panels_to_add:
@@ -459,10 +324,6 @@ class App:
 
             glfw.swap_buffers(self.window)
 
-            if self.pie is not None:
-                self.pie.update()
-                self._flush_pie_actions()
-
             elapsed = time.perf_counter() - frame_start
             frame_ms = elapsed * 1000.0
 
@@ -474,11 +335,9 @@ class App:
                 drawlist=drawlist_ms,
                 **panel_perf,
             )
+            self.perf_stats.idle = idle
 
-            pie_busy = self.pie is not None and self.pie.busy
-            self.perf_stats.idle = idle and not pie_busy
-
-            target_fps = self.idle_fps if idle and not pie_busy else self.fps
+            target_fps = self.idle_fps if idle else self.fps
             sleep_time = 1 / target_fps - elapsed - 0.002
             if sleep_time > 0:
                 nanosleep(sleep_time * 1e9)
@@ -538,13 +397,6 @@ class App:
         with self._panels_lock:
             for panel in self.panels:
                 panel.delete()
-
-        if self.pie is not None:
-            try:
-                self.pie.destroy()
-            except Exception:
-                logger.exception("failed to destroy the pie menu")
-            self.pie = None
 
         glfw.make_context_current(self.window)
         GLTexManager().delete_all()
