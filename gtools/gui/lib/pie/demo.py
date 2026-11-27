@@ -36,6 +36,7 @@ def main():
 
     # --- the pie menu: global trigger. Use processes=["myapp.exe", "blender.exe"]
     # --- to only react while one of those is the foreground application.
+    # Theme(backdrop=False) disables the dimming; CornerConfig(enabled=False) the corner cancel zones.
     menu = PieMenu(trigger=Hold("ctrl", delay=0), processes=None)
 
     menu.button("Copy", lambda: print("copy"), icon="C")

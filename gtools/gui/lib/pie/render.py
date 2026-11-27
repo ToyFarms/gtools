@@ -7,7 +7,7 @@ from typing import Tuple
 
 from imgui_bundle import imgui
 
-from .intent import clamp, lerp
+from .intent import clamp, lerp, smoothstep
 
 RGBA = Tuple[int, int, int, int]
 BACK = object()  # sentinel slot: "go back to the parent pie"
@@ -22,7 +22,9 @@ class Theme:
     text_dim: RGBA = (150, 158, 172, 255)
     ring: RGBA = (255, 255, 255, 46)
     shadow: RGBA = (0, 0, 0, 120)
-    backdrop_dim: float = 0.20     # 0..1 darkening of the whole monitor while open
+    backdrop: bool = True          # dim the whole monitor while the menu is open
+    backdrop_dim: float = 0.20     # 0..1 darkening used when `backdrop` is on
+    cancel: RGBA = (255, 96, 96, 255)  # colour of the screen-corner cancel zones
     ring_radius: float = 118.0     # px at scale 1.0
     item_radius: float = 36.0
     hub_radius: float = 7.0
@@ -77,7 +79,7 @@ class Painter:
 
 
 def draw_backdrop(dl, w: float, h: float, th: Theme, amount: float) -> None:
-    a = th.backdrop_dim * clamp(amount)
+    a = th.backdrop_dim * clamp(amount) if th.backdrop else 0.0
     if a > 0.004:
         dl.add_rect_filled(v2(0, 0), v2(w, h), u32((0, 0, 0, 255), a))
 
@@ -192,3 +194,38 @@ def draw_ghost(dl, P: Painter, lv, off, child_origin, amount: float, fade: float
         else:
             dl.add_circle_filled(pos, 4.5 * sc, u32(th.text_dim, 0.5 * a), 16)
     dl.add_circle_filled(centre, 4 * sc, u32(th.accent, 0.8 * a), 16)
+
+
+_CORNER_ARCS = ((0.0, math.pi / 2), (math.pi / 2, math.pi),
+                (math.pi, 1.5 * math.pi), (1.5 * math.pi, math.tau))   # TL, TR, BR, BL
+_CORNER_IN = ((1, 1), (-1, 1), (-1, -1), (1, -1))                    # unit step into the screen
+
+
+def draw_corners(dl, P: Painter, zones, off, fade: float) -> None:
+    """Quarter-disc cancel zones; each one only appears (and grows) as the cursor nears it."""
+    th, sc = P.theme, P.scale
+    if fade <= 0.01:
+        return
+    R = zones.cfg.radius * sc
+    for i, (px, py) in enumerate(zones.points):
+        e = smoothstep(zones.prox[i].x)
+        r = R * e
+        if r < 2.0:
+            continue
+        hot = clamp(zones.hot[i].x)
+        a = fade * e
+        c = v2(px - off[0], py - off[1])
+        a0, a1 = _CORNER_ARCS[i]
+        dl.path_line_to(c)
+        dl.path_arc_to(c, r, a0, a1, 32)
+        dl.path_fill_convex(u32(th.cancel, (0.10 + 0.32 * hot) * a))
+        dl.path_arc_to(c, r, a0, a1, 32)
+        dl.path_stroke(u32(th.cancel, (0.35 + 0.55 * hot) * a), thickness=2.0 * sc)
+        if r > 24 * sc:   # a small "x" inside the zone
+            sx, sy = _CORNER_IN[i]
+            d = r * 0.52 * 0.7071
+            mx, my = c.x + sx * d, c.y + sy * d
+            k = r * 0.13 * (0.8 + 0.4 * hot)
+            col = u32(th.cancel, (0.5 + 0.5 * hot) * a)
+            dl.add_line(v2(mx - k, my - k), v2(mx + k, my + k), col, 2.4 * sc)
+            dl.add_line(v2(mx - k, my + k), v2(mx + k, my - k), col, 2.4 * sc)

@@ -31,6 +31,10 @@ user32.GetWindowThreadProcessId.restype = _D
 user32.AttachThreadInput.argtypes = [_D, _D, _B]
 user32.AttachThreadInput.restype = _B
 user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.SetFocus.argtypes = [_H]
+user32.SetFocus.restype = _H
+user32.SetActiveWindow.argtypes = [_H]
+user32.SetActiveWindow.restype = _H
 user32.IsWindow.argtypes = [_H]
 user32.IsWindow.restype = _B
 user32.SetLayeredWindowAttributes.argtypes = [_H, wintypes.COLORREF, ctypes.c_ubyte, _D]
@@ -106,21 +110,30 @@ def window_alive(hwnd: int) -> bool:
     return bool(hwnd) and bool(user32.IsWindow(hwnd))
 
 
-def force_foreground(hwnd: int) -> bool:
+def force_foreground(hwnd: int, focus: bool = False) -> bool:
     """Bring `hwnd` to the foreground even if another process owns it.
 
     Windows normally refuses SetForegroundWindow from a background process;
     attaching to the foreground thread's input queue is the standard workaround.
+    focus=True also makes `hwnd` the active/keyboard-focus window (use it for our own
+    windows that need typing; never for restoring another app, whose focused child
+    control would otherwise be replaced by its top-level frame).
     """
     fg = foreground_hwnd()
     if fg == hwnd:
+        if focus:
+            user32.SetFocus(hwnd)
         return True
     cur = kernel32.GetCurrentThreadId()
     fg_tid = user32.GetWindowThreadProcessId(fg, None) if fg else 0
     attached = bool(fg_tid and fg_tid != cur and user32.AttachThreadInput(cur, fg_tid, True))
     try:
         user32.BringWindowToTop(hwnd)
-        return bool(user32.SetForegroundWindow(hwnd))
+        ok = bool(user32.SetForegroundWindow(hwnd))
+        if focus:  # must happen while the queues are still attached
+            user32.SetActiveWindow(hwnd)
+            user32.SetFocus(hwnd)
+        return ok and foreground_hwnd() == hwnd
     finally:
         if attached:
             user32.AttachThreadInput(cur, fg_tid, False)

@@ -19,9 +19,11 @@ except ImportError as e:  # pragma: no cover
     raise ImportError("piemenu needs PyOpenGL:  pip install PyOpenGL") from e
 
 from . import win32
+from .corners import CornerConfig, CornerZones
 from .intent import IntentConfig, IntentState, IntentTracker, Spring, ang_diff, clamp
 from .items import Activation, MenuBuilder, Panel, PieItem, SubMenu, TextInput
-from .render import (BACK, Painter, Theme, draw_backdrop, draw_ghost, draw_level, mix, u32)
+from .render import (BACK, Painter, Theme, draw_backdrop, draw_corners, draw_ghost, draw_level,
+                     mix, u32)
 from .triggers import Hold
 
 TAU = math.tau
@@ -69,7 +71,7 @@ class PieMenu(MenuBuilder):
     def __init__(self, *, trigger=None, processes=None, include_self: bool = True,
                  focus_predicate: Optional[Callable[[int, str], bool]] = None,
                  main_window=None, scale: float = 1.0, theme: Optional[Theme] = None,
-                 intent: Optional[IntentConfig] = None,
+                 intent: Optional[IntentConfig] = None, corners: Optional[CornerConfig] = None,
                  font_path: Optional[str] = r"C:\Windows\Fonts\segoeui.ttf",
                  glsl_version: str = "#version 330"):
         self._init_builder()
@@ -78,6 +80,7 @@ class PieMenu(MenuBuilder):
                                        predicate=focus_predicate)
         self.theme = theme or Theme()
         self.intent = intent or IntentConfig()
+        self._corners = CornerZones(corners)
         self.user_scale = scale
         self.enabled = True
         self.on_open: Optional[Callable[[], Any]] = None
@@ -91,6 +94,7 @@ class PieMenu(MenuBuilder):
         self._st: Optional[IntentState] = None
         self._latched = False
         self._blocked = False
+        self._repress = False   # trigger pressed again while the close animation still runs
         self._press_pos = (0, 0)
         self._press_t = 0.0
         self._close_t = 0.0
@@ -114,6 +118,8 @@ class PieMenu(MenuBuilder):
         self._input_item: Optional[TextInput] = None
         self._input_origin = (0, 0)
         self._input_focus = False
+        self._focus_age = 0.0
+        self._focus_try = 0.0
         self._create_overlay(main_window, font_path, glsl_version)
 
     # ================================================================ setup ==
@@ -253,7 +259,7 @@ class PieMenu(MenuBuilder):
 
     def open(self, at=None) -> None:
         """Open programmatically (latched: click to choose, Esc to cancel)."""
-        if self._state is State.IDLE:
+        if self._state in (State.IDLE, State.CLOSING):
             self._open(at or win32.cursor_pos(), latched=True)
 
     def close(self) -> None:
@@ -301,6 +307,24 @@ class PieMenu(MenuBuilder):
     def _poll_trigger(self, now: float) -> None:
         down = self.trigger.is_down()
         st = self._state
+        if st is State.CLOSING:
+            # Spamming the trigger: a fresh press takes over from the fade-out instead of
+            # waiting for it to finish (and no release/re-press is needed afterwards).
+            if not down:
+                self._blocked = self._repress = False
+            elif self._repress:
+                if self.trigger.interference():
+                    self._repress, self._blocked = False, True
+                elif now - self._press_t >= self.trigger.delay:
+                    self._repress = False
+                    if not self._open(self._press_pos):
+                        self._blocked = True
+            elif not self._blocked:
+                if not self.focus.allows():
+                    self._blocked = True
+                else:
+                    self._press_pos, self._press_t, self._repress = self._cursor, now, True
+            return
         if st is State.IDLE:
             if not down:
                 self._blocked = False
@@ -322,6 +346,7 @@ class PieMenu(MenuBuilder):
 
     def _emergency_reset(self) -> None:
         self._state, self._levels, self._input_item = State.IDLE, [], None
+        self._repress = False
         try:
             self._set_passthrough(True)
             self._hide_overlay()
@@ -380,11 +405,13 @@ class PieMenu(MenuBuilder):
         if not any(c.is_visible() for c in self.children):
             return False
         self._place_overlay(*pos)
+        self._corners.reset(pos, self._ui_scale)   # a corner the cursor is already in stays disarmed
         self._cursor = win32.cursor_pos()
         lv = self._make_level(self, pos)
         self._levels, self._latched, self._st = [lv], latched, None
-        self._state = State.ACTIVE
-        self._fade.snap(0.0)
+        self._state, self._repress = State.ACTIVE, False
+        if not self._visible:   # interrupting a fade-out: keep the current fade, don't pop
+            self._fade.snap(0.0)
         self._prev_btn, self._prev_esc = win32.mouse_buttons(), win32.key_down(win32.VK_ESCAPE)
         self._hover_key = None
         self._call(self.on_open)
@@ -416,19 +443,18 @@ class PieMenu(MenuBuilder):
                 self._cancel()
             return
         slot = lv.slots[st.index]
-        if slot is BACK:
-            self._pop()
+        if slot is BACK or slot.is_branch:
+            # Letting go on a non-actionable slot means "never mind": cancel, don't latch.
             if release:
-                self._latched = True
+                self._cancel()
+            elif slot is BACK:
+                self._pop()
+            elif slot.is_enabled():
+                self._push(slot)
             return
         if not slot.is_enabled():
             if release:
                 self._cancel()
-            return
-        if slot.is_branch:
-            self._push(slot)
-            if release:
-                self._latched = True
             return
         res = self._call(slot.activate, self)
         if self._state is State.INPUT:
@@ -461,6 +487,7 @@ class PieMenu(MenuBuilder):
             item.text = ""
         self._input_origin = self._levels[-1].origin
         self._input_focus = True
+        self._focus_age = self._focus_try = 0.0
         self._state = State.INPUT
         self._take_focus()
 
@@ -476,6 +503,21 @@ class PieMenu(MenuBuilder):
             if mx <= x < mx + mode.size.width and my <= y < my + mode.size.height:
                 return m
         return glfw.get_primary_monitor()
+
+    def _outer_corners(self, mx: int, my: int, w: int, h: int):
+        """Which monitor corners are real screen corners (the cursor can't travel past them)."""
+        rects = []
+        for m in glfw.get_monitors():
+            px, py = glfw.get_monitor_pos(m)
+            mode = glfw.get_video_mode(m)
+            rects.append((px, py, mode.size.width, mode.size.height))
+
+        def free(x, y):
+            return not any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in rects)
+
+        r, b = mx + w, my + h
+        return [free(mx - 1, my) and free(mx, my - 1), free(r, my) and free(r - 1, my - 1),
+                free(r, b - 1) and free(r - 1, b), free(mx - 1, b - 1) and free(mx, b)]
 
     def _place_overlay(self, x: int, y: int) -> None:
         m = self._monitor_at(x, y)
@@ -494,6 +536,7 @@ class PieMenu(MenuBuilder):
             # monitor gets "fullscreen-optimised" by Windows, which kills transparency.
             glfw.set_window_size(self._win, w, h - 1)
         self._ox, self._oy = mx, my
+        self._corners.set_monitor(mx, my, w, h, self._outer_corners(mx, my, w, h))
         self._work = tuple(glfw.get_monitor_workarea(m))
         self._ui_scale = glfw.get_monitor_content_scale(m)[0] * self.user_scale
         self._painter.scale = self._ui_scale
@@ -519,14 +562,28 @@ class PieMenu(MenuBuilder):
         self._passthrough = on
 
     def _take_focus(self) -> None:
-        """Give the overlay keyboard focus (needed for typing)."""
-        if self._has_focus:
+        """Give the overlay keyboard focus (needed for typing). Safe to call repeatedly."""
+        if not self._has_focus:
+            fg = win32.foreground_hwnd()
+            self._prev_fg = 0 if fg == self._hwnd else fg
+            win32.modify_exstyle(self._hwnd, remove=win32.WS_EX_NOACTIVATE)
+            self._has_focus = True
+        if win32.foreground_hwnd() != self._hwnd:
+            if not win32.force_foreground(self._hwnd, focus=True):
+                glfw.focus_window(self._win)
+
+    def _watch_focus(self, dt: float) -> None:
+        """While typing: keep asking for focus while it settles; if the user later moves
+        to another window, cancel instead of leaving a dead overlay that eats nothing."""
+        self._focus_age += dt
+        if win32.foreground_hwnd() == self._hwnd:
             return
-        fg = win32.foreground_hwnd()
-        self._prev_fg = 0 if fg == self._hwnd else fg
-        win32.modify_exstyle(self._hwnd, remove=win32.WS_EX_NOACTIVATE)
-        win32.force_foreground(self._hwnd)
-        self._has_focus = True
+        if self._focus_age < 1.0:
+            if self._focus_age - self._focus_try >= 0.05:
+                self._focus_try = self._focus_age
+                self._take_focus()
+        else:
+            self._cancel()
 
     def _release_focus(self) -> None:
         if not self._has_focus:
@@ -554,7 +611,7 @@ class PieMenu(MenuBuilder):
             imgui.backends.opengl3_render_draw_data(imgui.get_draw_data())
             glfw.swap_buffers(self._win)
             self._capture = bool(io.want_capture_mouse)
-        self._set_passthrough(not (self._state is State.ACTIVE or self._capture))
+        self._set_passthrough(not (self._state in (State.ACTIVE, State.INPUT) or self._capture))
 
     def _sample_input(self, io) -> None:
         self._btn = win32.mouse_buttons()
@@ -583,13 +640,18 @@ class PieMenu(MenuBuilder):
         if S is State.ACTIVE:
             self._tick_active(dt)
             S = self._state
-        elif S is State.INPUT and (self._esc_edge or (self._edge[0] and not self._capture)):
-            self._cancel()
+        elif S is State.INPUT:
+            if self._esc_edge or (self._edge[0] and not self._capture):
+                self._cancel()
+            else:
+                self._watch_focus(dt)
             S = self._state
 
         self._fade.step({State.ACTIVE: 1.0, State.INPUT: 0.6}.get(S, 0.0), dt)
         fade = clamp(self._fade.x)
         draw_backdrop(dl, W, H, th, fade)
+        if S is not State.INPUT:
+            draw_corners(dl, P, self._corners, off, fade)
 
         n = len(self._levels)
         for i, lv in enumerate(self._levels):
@@ -632,6 +694,7 @@ class PieMenu(MenuBuilder):
         sc = self._ui_scale
         st = lv.tracker.update(self._cursor, dt, lv.angles, lv.sector, sc)
         self._st = st
+        in_corner = self._corners.update(self._cursor, dt, sc) is not None
 
         key = (id(lv), st.index)
         if key != self._hover_key:
@@ -640,7 +703,7 @@ class PieMenu(MenuBuilder):
                 self._call(lv.slots[st.index].on_hover)
 
         # intent: push outward / dwell on a branch (or the back slot) to travel the tree
-        if st.index is not None:
+        if st.index is not None and not in_corner:
             slot = lv.slots[st.index]
             push = st.distance >= self.intent.push_ratio * lv.radius
             dwell = (st.dwell >= self.intent.dwell_time
@@ -653,7 +716,9 @@ class PieMenu(MenuBuilder):
                     self._push(slot)
                     return
 
-        if not self._latched and not trig_down:
+        if in_corner and (self._edge[0] or (not self._latched and not trig_down)):
+            self._cancel()   # released (or clicked) inside a screen-corner cancel zone
+        elif not self._latched and not trig_down:
             self._commit(st, release=True)
         elif self._edge[0]:
             self._commit(st, release=False)
@@ -701,8 +766,8 @@ class PieMenu(MenuBuilder):
         imgui.begin("##pie_input", None, fl)
         imgui.text_colored(_c4(th.text_dim), item.label)
         imgui.set_next_item_width(w)
-        if self._input_focus:
-            imgui.set_keyboard_focus_here()
+        if self._input_focus or not imgui.is_any_item_active():
+            imgui.set_keyboard_focus_here()   # also wins focus back from panels
             self._input_focus = False
         submitted, text = imgui.input_text_with_hint(
             "##q", item.placeholder, item.text, _v(imgui.InputTextFlags_.enter_returns_true))
@@ -744,6 +809,8 @@ class PieMenu(MenuBuilder):
             p._placed = True
         imgui.set_next_window_size(V2(p.size[0] * sc, p.size[1] * sc), _v(imgui.Cond_.once))
         fl = _v(imgui.WindowFlags_.no_saved_settings) | _v(imgui.WindowFlags_.no_collapse)
+        if self._state is State.INPUT:   # a result panel popping up must not steal the typing focus
+            fl |= _v(imgui.WindowFlags_.no_focus_on_appearing)
         sv = [(imgui.StyleVar_.alpha, clamp(a)), (imgui.StyleVar_.window_rounding, th.rounding * sc),
               (imgui.StyleVar_.window_border_size, 1.0),
               (imgui.StyleVar_.window_padding, V2(14 * sc, 12 * sc))]
