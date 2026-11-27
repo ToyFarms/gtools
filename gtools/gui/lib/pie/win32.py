@@ -38,6 +38,9 @@ user32.SetActiveWindow.restype = _H
 user32.IsWindow.argtypes = [_H]
 user32.IsWindow.restype = _B
 user32.SetLayeredWindowAttributes.argtypes = [_H, wintypes.COLORREF, ctypes.c_ubyte, _D]
+user32.GetLayeredWindowAttributes.argtypes = [
+    _H, ctypes.POINTER(wintypes.COLORREF), ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(_D)]
+user32.GetLayeredWindowAttributes.restype = _B
 try:
     _get_long = user32.GetWindowLongPtrW
     _set_long = user32.SetWindowLongPtrW
@@ -61,6 +64,7 @@ WS_EX_TRANSPARENT = 0x00000020
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
+LWA_ALPHA = 0x00000002
 VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_ESCAPE = 0x01, 0x02, 0x04, 0x1B
 
 
@@ -94,12 +98,32 @@ def modify_exstyle(hwnd: int, add: int = 0, remove: int = 0) -> None:
 
 
 def set_click_through(hwnd: int, enabled: bool) -> None:
-    """Fallback for GLFW < 3.4 (no GLFW_MOUSE_PASSTHROUGH)."""
+    """Mouse passthrough for GLFW < 3.4 (which lacks GLFW_MOUSE_PASSTHROUGH).
+
+    Mirrors GLFW 3.4's ``_glfwSetWindowMousePassthroughWin32`` exactly, including
+    preserving existing layered-window attributes, so a transparent-framebuffer
+    window keeps its DWM composition.
+    """
+    key = wintypes.COLORREF(0)
+    alpha = ctypes.c_ubyte(0)
+    flags = _D(0)
+    ex = _get_long(hwnd, GWL_EXSTYLE)
+
+    if ex & WS_EX_LAYERED:
+        user32.GetLayeredWindowAttributes(
+            hwnd, ctypes.byref(key), ctypes.byref(alpha), ctypes.byref(flags))
+
     if enabled:
-        modify_exstyle(hwnd, add=WS_EX_TRANSPARENT | WS_EX_LAYERED)
-        user32.SetLayeredWindowAttributes(hwnd, 0, 255, 0x2)  # LWA_ALPHA, opaque
+        ex |= WS_EX_TRANSPARENT | WS_EX_LAYERED
     else:
-        modify_exstyle(hwnd, remove=WS_EX_TRANSPARENT)
+        ex &= ~WS_EX_TRANSPARENT
+        # Opacity also needs WS_EX_LAYERED, so keep it if alpha blending is set.
+        if ex & WS_EX_LAYERED and not (flags.value & LWA_ALPHA):
+            ex &= ~WS_EX_LAYERED
+
+    _set_long(hwnd, GWL_EXSTYLE, ex)
+    if enabled:
+        user32.SetLayeredWindowAttributes(hwnd, key, alpha, flags)
 
 
 def foreground_hwnd() -> int:

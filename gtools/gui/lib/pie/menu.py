@@ -555,9 +555,15 @@ class PieMenu(MenuBuilder):
     def _set_passthrough(self, on: bool) -> None:
         if on == self._passthrough:
             return
-        try:
-            glfw.set_window_attrib(self._win, glfw.MOUSE_PASSTHROUGH, on)
-        except Exception:  # GLFW < 3.4
+        # GLFW_MOUSE_PASSTHROUGH only exists in GLFW 3.4+. With an older native
+        # library the Python binding still exposes the constant, but the call
+        # emits "Invalid window attribute" through GLFW's error callback
+        # (a warning, not an exception), so the except-fallback never ran.
+        # Check the runtime version instead and use the Win32 fallback.
+        passthrough = getattr(glfw, "MOUSE_PASSTHROUGH", None)
+        if passthrough is not None and tuple(glfw.get_version())[:2] >= (3, 4):
+            glfw.set_window_attrib(self._win, passthrough, on)
+        else:
             win32.set_click_through(self._hwnd, on)
         self._passthrough = on
 

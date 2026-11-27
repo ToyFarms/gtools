@@ -6,13 +6,14 @@ from gtools.gui.panels.midi_workspace import MidiWorkspace
 
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking
 
+from collections import deque
 import logging
 import math
 from pathlib import Path
 from sys import argv
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 import glfw
 from OpenGL.GL import (
@@ -90,6 +91,12 @@ class App:
         self._stop_event = threading.Event()
         self._last_update_ms: float = 0.0
 
+        # Pie callbacks run inside the overlay's GL context, so app actions that
+        # touch GL (opening a world, creating panels) are queued and run after
+        # pie.update() has restored the main context.
+        self._pie_actions: deque[Callable[[], None]] = deque()
+        self._pie_trigger_down = False
+
         # Radial menu on "hold Ctrl" (Windows only -- None when unavailable).
         self.pie = self._create_pie_menu()
 
@@ -127,6 +134,16 @@ class App:
                     panel.update(dt)
 
             self.toast_mgr.update(dt)
+
+            # The render loop drops to 10 Hz when idle, so the pie trigger would
+            # only be sampled every 100 ms. Poll it here (cheap Win32 key state)
+            # and post an empty GLFW event on the press edge to wake the loop.
+            pie = self.pie
+            trigger_down = pie is not None and pie.enabled and pie.trigger.is_down()
+            if trigger_down != self._pie_trigger_down:
+                # Both edges matter: the release clears the pie's focus-blocked latch.
+                glfw.post_empty_event()
+            self._pie_trigger_down = trigger_down
 
             elapsed = time.perf_counter() - loop_start
             self._last_update_ms = elapsed * 1000.0
@@ -184,7 +201,9 @@ class App:
 
         try:
             menu = PieMenu(
-                trigger=Hold("ctrl", delay=0.15),
+                # Short enough to feel instant, long enough that Ctrl+P (command
+                # palette) cancels the pending pie through the interference check.
+                trigger=Hold("ctrl", delay=0.08),
                 processes=["Growtopia.exe"],
                 main_window=self.window,
             )
@@ -203,13 +222,25 @@ class App:
             return None
         return menu
 
+    def _pie_action(self, action: Callable[[], None]) -> None:
+        """Queue an app action; pie callbacks run with the overlay context current."""
+        self._pie_actions.append(action)
+
+    def _flush_pie_actions(self) -> None:
+        while self._pie_actions:
+            action = self._pie_actions.popleft()
+            try:
+                action()
+            except Exception:
+                logger.exception("pie action failed")
+
     def _build_pie_menu(self, menu: Any) -> None:
         from gtools.gui.lib.pie import Panel as PiePanel
 
-        menu.button("Open World", self._open_world_dialog, icon="O")
+        menu.button("Open World", lambda: self._pie_action(self._open_world_dialog), icon="O")
 
         worlds = menu.submenu("Worlds", icon="W")
-        worlds.button("Open World...", self._open_world_dialog, icon="+")
+        worlds.button("Open World...", lambda: self._pie_action(self._open_world_dialog), icon="+")
 
         recent: list[str] | None = None
 
@@ -223,8 +254,8 @@ class App:
             recent = names
             del worlds.children[1:]  # keep "Open World..."
             for path in paths:
-                worlds.button(path.name, lambda p=path: self._open_world(p))
-            worlds.button("Debug World", self._add_debug_world, icon="*")
+                worlds.button(path.name, lambda p=path: self._pie_action(lambda: self._open_world(p)))
+            worlds.button("Debug World", lambda: self._pie_action(self._add_debug_world), icon="*")
 
         worlds.on_hover = refresh_worlds
         refresh_worlds()
@@ -241,7 +272,7 @@ class App:
             panel = search["panel"]
             if text and (panel is None or not panel.open):
                 search["panel"] = menu.show_panel(
-                    PiePanel.list("Worlds", search_rows, on_pick=self._open_world_by_name, size=(320, 320))
+                    PiePanel.list("Worlds", search_rows, on_pick=lambda name: self._pie_action(lambda: self._open_world_by_name(name)), size=(320, 320))
                 )
             elif not text and panel is not None:
                 panel.close()
@@ -249,20 +280,21 @@ class App:
         def on_search_submit(text: str) -> None:
             rows = search_rows()
             if rows:
-                self._open_world_by_name(rows[0])
+                name = rows[0]
+                self._pie_action(lambda: self._open_world_by_name(name))
             if search["panel"] is not None:
                 search["panel"].close()
 
         menu.text_input("Search", on_submit=on_search_submit, on_change=on_search_change, placeholder="Search worlds...")
 
         panels = menu.submenu("Panels", icon="P")
-        panels.button("Proxy", lambda: self.add_panel(ProxyPanel(self.dockspace.node_id)), icon="X")
-        panels.button("Hook", lambda: self.add_panel(HookPanel(self.dockspace.node_id)), icon="K")
-        panels.button("Midi Workspace", lambda: self.add_panel(MidiWorkspace(self.dockspace.node_id)), icon="M")
+        panels.button("Proxy", lambda: self._pie_action(lambda: self.add_panel(ProxyPanel(self.dockspace.node_id))), icon="X")
+        panels.button("Hook", lambda: self._pie_action(lambda: self.add_panel(HookPanel(self.dockspace.node_id))), icon="K")
+        panels.button("Midi Workspace", lambda: self._pie_action(lambda: self.add_panel(MidiWorkspace(self.dockspace.node_id))), icon="M")
 
-        menu.button("Toggle Dev Mode", self._toggle_dev_mode, icon="!")
-        menu.button("Dock Overlay", self._toggle_dock, icon="D")
-        menu.button("Hide GUI", self.overlay.toggle_hidden, icon="H")
+        menu.button("Toggle Dev Mode", lambda: self._pie_action(self._toggle_dev_mode), icon="!")
+        menu.button("Dock Overlay", lambda: self._pie_action(self._toggle_dock), icon="D")
+        menu.button("Hide GUI", lambda: self._pie_action(self.overlay.toggle_hidden), icon="H")
 
     def _world_paths(self) -> list[Path]:
         try:
@@ -499,6 +531,7 @@ class App:
             # ours before returning, so this is safe anywhere in the loop.
             if self.pie is not None:
                 self.pie.update()
+                self._flush_pie_actions()
 
             elapsed = time.perf_counter() - frame_start
             frame_ms = elapsed * 1000.0
@@ -511,9 +544,12 @@ class App:
                 drawlist=drawlist_ms,
                 **panel_perf,
             )
-            self.perf_stats.idle = idle
+            # pie.update() may have just started the open animation (PENDING);
+            # don't fall back to the 10 Hz idle sleep on that frame.
+            pie_busy = self.pie is not None and self.pie.busy
+            self.perf_stats.idle = idle and not pie_busy
 
-            target_fps = self.idle_fps if idle else self.fps
+            target_fps = self.idle_fps if idle and not pie_busy else self.fps
             sleep_time = 1 / target_fps - elapsed - 0.002
             if sleep_time > 0:
                 nanosleep(sleep_time * 1e9)
