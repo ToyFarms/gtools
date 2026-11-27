@@ -1,20 +1,5 @@
-"""Overlay mode: dock the gui window onto the Growtopia window.
-
-The gui window becomes *owned by* the game window (``GWLP_HWNDPARENT``), sits
-inside its client area, follows it around, and snaps to anchors when dragged.
-It stays a normal window: natively resizable, focused like any window -- click
-the gui and inputs go there, click the game and the game is focused.
-
-The game's HWND is found by pid (from the hook runtime) or by window title;
-the gui's own HWND is found by its unique window title (the bundled glfw
-bindings do not expose native handles).
-"""
-
-from __future__ import annotations
-
 import ctypes
 import logging
-import threading
 from ctypes import wintypes
 from dataclasses import dataclass
 
@@ -40,7 +25,6 @@ WS_VISIBLE = 0x10000000
 WS_EX_LAYERED = 0x00080000
 LWA_ALPHA = 0x00000002
 
-# docked look: translucent, dimmer while the game has the focus
 FOCUSED_ALPHA = 235
 UNFOCUSED_ALPHA = 170
 
@@ -59,10 +43,6 @@ def _user32():
     return user32
 
 
-# ---------------------------------------------------------------------------
-# pure geometry: the snap anchors (pytest-covered)
-
-
 @dataclass(frozen=True)
 class Rect:
     x: int
@@ -72,18 +52,12 @@ class Rect:
 
 
 def docked_rect(area: Rect, window: Rect, margin: int = 8) -> Rect:
-    """The docked placement: pinned to the top-left of the game's client
-    area, clamped so the window fits inside it."""
     return Rect(
         area.x + margin,
         area.y + margin,
         min(window.w, area.w - margin * 2),
         min(window.h, area.h - margin * 2),
     )
-
-
-# ---------------------------------------------------------------------------
-# win32 helpers
 
 
 def find_window_by_title(title: str) -> int:
@@ -95,8 +69,6 @@ def find_window_by_title(title: str) -> int:
 
 
 def find_game_window(pid: int, title: str = "Growtopia") -> int:
-    """The game's main window: by pid first (from the hook runtime), then by
-    a case-insensitive substring of the window title."""
     u32 = _user32()
     result = []
     needle = title.lower()
@@ -148,8 +120,7 @@ def window_rect(hwnd: int) -> Rect | None:
     u32 = _user32()
 
     class RECT(ctypes.Structure):
-        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
-                    ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
     rect = RECT()
     if not u32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
@@ -161,8 +132,7 @@ def client_rect(hwnd: int) -> Rect | None:
     u32 = _user32()
 
     class RECT(ctypes.Structure):
-        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
-                    ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
     rect = RECT()
     if not u32.GetClientRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
@@ -180,23 +150,20 @@ def set_owner(hwnd: int, owner: int) -> None:
 
 def move_window(hwnd: int, rect: Rect, activate: bool = False) -> None:
     u32 = _user32()
-    # HWND_TOP (0): above the owned game window, never topmost
     u32.SetWindowPos(
-        wintypes.HWND(hwnd), wintypes.HWND(0),
-        rect.x, rect.y, rect.w, rect.h,
+        wintypes.HWND(hwnd),
+        wintypes.HWND(0),
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
         0 if activate else SWP_NOACTIVATE,
     )
 
 
 def set_above(hwnd: int, owner: int) -> None:
-    """Keep the gui window directly above its owner in the z order."""
     u32 = _user32()
-    u32.SetWindowPos(wintypes.HWND(hwnd), wintypes.HWND(owner), 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
-
-
-# ---------------------------------------------------------------------------
-# the controller
+    u32.SetWindowPos(wintypes.HWND(hwnd), wintypes.HWND(owner), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
 
 
 @dataclass
@@ -212,8 +179,6 @@ class OverlayState:
 
 
 class OverlayController:
-    """Docks the gui window onto the game window and follows it per frame."""
-
     def __init__(self, gui_title: str, game_title: str = "Growtopia") -> None:
         self.gui_title = gui_title
         self.game_title = game_title
@@ -243,6 +208,7 @@ class OverlayController:
         if not gui:
             logger.warning("cannot find the gui window")
             return False
+
         game = self.find_game(game_pid)
         if not game:
             logger.warning("cannot find the growtopia window")
@@ -256,22 +222,16 @@ class OverlayController:
         gui_rect = window_rect(gui)
         if gui_rect is None:
             return False
+
         self.state.saved_placement = (gui_rect.x, gui_rect.y, gui_rect.w, gui_rect.h)
         self.state.saved_style = u32.GetWindowLongW(wintypes.HWND(gui), GWL_STYLE)
         self.state.saved_exstyle = u32.GetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE)
 
-        # own the window: above the game, minimized with it, no taskbar entry
         set_owner(gui, game)
 
-        # borderless: the frame is gone, the toolbar's Undock button restores.
-        # the frame recalc is its own transition: applying the style and the
-        # new geometry in one SetWindowPos leaves DWM presenting a stale
-        # surface (displaced/blurry content) until the next frame change
         u32.SetWindowLongW(wintypes.HWND(gui), GWL_STYLE, WS_POPUP | WS_VISIBLE)
-        u32.SetWindowPos(wintypes.HWND(gui), None, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)
+        u32.SetWindowPos(wintypes.HWND(gui), None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)
 
-        # layered: the docked window is translucent (more so when unfocused)
         exstyle = u32.GetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE) | WS_EX_LAYERED
         u32.SetWindowLongW(wintypes.HWND(gui), GWL_EXSTYLE, exstyle)
         u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, FOCUSED_ALPHA, LWA_ALPHA)
@@ -283,26 +243,22 @@ class OverlayController:
         self.state.hidden = False
         self._last_game_rect = game_area
         logger.info("docked to the growtopia window (top-left)")
+
         return True
 
     def _refresh_gl_surface(self) -> None:
-        """Force the presentation to re-sync with the final geometry.
-
-        Measured (docked): after the style swap + native SetWindowPos the
-        DWM/GL surface can stay stale -- content displaced by tens of px or
-        stretched (blurry, smaller, top clipped) -- until another
-        style/geometry transition happens. A 1px resize cycle sends a real
-        WM_SIZE, which re-creates the swapchain against the final client
-        rect; no manual re-toggle needed."""
         if self._glfw_window is None:
             return
+
         hwnd = self.state.gui_hwnd
         if not hwnd:
             return
+
         try:
             w, h = glfw.get_window_size(self._glfw_window)
         except Exception:
             return
+
         u32 = _user32()
         flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
         u32.SetWindowPos(wintypes.HWND(hwnd), None, 0, 0, w + 1, h, flags)
@@ -331,10 +287,9 @@ class OverlayController:
         logger.info("undocked from the growtopia window")
 
     def hide(self) -> None:
-        """Hide via glfw; the caller supplies its window through
-        ``set_glfw_window`` at startup."""
         if self._glfw_window is not None:
             glfw.hide_window(self._glfw_window)
+
         self.state.hidden = True
 
     def show(self) -> None:
@@ -352,10 +307,9 @@ class OverlayController:
         self._glfw_window = window
 
     def follow(self, game_pid: int | None = None) -> None:
-        """Per-frame: keep the docked window inside the game's client area,
-        hold the z order above the game, and drive the focus translucency."""
         if not self.state.docked:
             return
+
         u32 = _user32()
         gui = self.gui_hwnd()
         if not gui:
@@ -374,76 +328,14 @@ class OverlayController:
             self._last_game_rect = game_area
             gui_rect = window_rect(gui)
             if gui_rect is not None:
-                # docked = pinned to the game's top-left: re-derive the
-                # placement for the new rect, whatever direction it moved
                 target = docked_rect(game_area, gui_rect)
                 if target != gui_rect:
                     move_window(gui, target)
+
             set_above(gui, game)
 
-        # translucency: dimmer while the game has the focus
         focused = int(u32.GetForegroundWindow() or 0) == int(gui)
         target_alpha = FOCUSED_ALPHA if focused else UNFOCUSED_ALPHA
         if self.state.alpha != target_alpha:
             u32.SetLayeredWindowAttributes(wintypes.HWND(gui), 0, target_alpha, LWA_ALPHA)
             self.state.alpha = target_alpha
-
-
-def _raise_no_window():
-    raise RuntimeError("no glfw window is current")
-
-
-class HotkeyThread:
-    """Global hotkeys via RegisterHotKey: they fire even while the game has
-    focus. WM_HOTKEY sets thread-safe flags the frame loop consumes."""
-
-    HOTKEY_SHOW_HIDE = 1
-    HOTKEY_DOCK_UNDOCK = 2
-
-    def __init__(self, show_hide_vk: int, dock_vk: int, mods: int = 0) -> None:
-        self.show_hide_vk = show_hide_vk
-        self.dock_vk = dock_vk
-        self.mods = mods
-        self.show_hide_requested = threading.Event()
-        self.dock_requested = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._thread = threading.Thread(target=self._run, name="overlay-hotkeys", daemon=True)
-        self._thread.start()
-
-    def _run(self) -> None:
-        u32 = _user32()
-        u32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
-        u32.RegisterHotKey.restype = wintypes.BOOL
-        u32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
-        u32.GetMessageW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.UINT]
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        ok1 = u32.RegisterHotKey(None, self.HOTKEY_SHOW_HIDE, self.mods, self.show_hide_vk)
-        err1 = kernel32.GetLastError()
-        ok2 = u32.RegisterHotKey(None, self.HOTKEY_DOCK_UNDOCK, self.mods, self.dock_vk)
-        err2 = kernel32.GetLastError()
-        if not (ok1 and ok2):
-            logger.warning(
-                "global hotkeys unavailable: show=%s (err=%ld) dock=%s (err=%ld)",
-                ok1, err1, ok2, err2,
-            )
-
-        class MSG(ctypes.Structure):
-            _fields_ = [("hwnd", wintypes.HWND), ("message", wintypes.UINT),
-                        ("wParam", wintypes.WPARAM), ("lParam", wintypes.LPARAM),
-                        ("time", wintypes.DWORD), ("pt", wintypes.POINT)]
-
-        msg = MSG()
-        while u32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-            if msg.message == 0x0312:  # WM_HOTKEY
-                if msg.wParam == self.HOTKEY_SHOW_HIDE:
-                    self.show_hide_requested.set()
-                elif msg.wParam == self.HOTKEY_DOCK_UNDOCK:
-                    self.dock_requested.set()
-
-        u32.UnregisterHotKey(None, self.HOTKEY_SHOW_HIDE)
-        u32.UnregisterHotKey(None, self.HOTKEY_DOCK_UNDOCK)

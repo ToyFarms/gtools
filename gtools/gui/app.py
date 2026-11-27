@@ -1,7 +1,8 @@
 import OpenGL
 from gtools import setting
 from gtools.gui.lib import perf_stats
-from gtools.gui.lib.toast import ToastManager, push_debug
+from gtools.gui.lib.pie import Hold, PieMenu
+from gtools.gui.lib.toast import ToastManager, push_debug, push_error
 from gtools.gui.panels.midi_workspace import MidiWorkspace
 
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking
@@ -46,7 +47,7 @@ from gtools.core.log import setup_logger
 from gtools.gui.event import Event, EventRouter, KeyEvent, ResizeEvent
 from gtools.gui.opengl import ShaderProgram
 from gtools.gui.texture import GLTexManager
-from gtools.gui.overlay import HotkeyThread, OverlayController
+from gtools.gui.overlay import OverlayController
 from gtools.gui.panels.panel import DockspacePanel, Panel
 from gtools.gui.panels.proxy_panel import ProxyPanel
 from gtools.gui.panels.hook_panel import HookPanel
@@ -84,21 +85,14 @@ class App:
 
         self.overlay = OverlayController(gui_title="gtools gui (ctrl+p command palette)")
         self.overlay.set_glfw_window(self.window)
-        self.hotkeys = HotkeyThread(show_hide_vk=0x78, dock_vk=0x79)  # F9 / F10
-        self.hotkeys.start()
 
         self._panels_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._last_update_ms: float = 0.0
 
-        # Pie callbacks run inside the overlay's GL context, so app actions that
-        # touch GL (opening a world, creating panels) are queued and run after
-        # pie.update() has restored the main context.
+        self.pie = self._create_pie_menu()
         self._pie_actions: deque[Callable[[], None]] = deque()
         self._pie_trigger_down = False
-
-        # Radial menu on "hold Ctrl" (Windows only -- None when unavailable).
-        self.pie = self._create_pie_menu()
 
         self._cmd = CommandPalette()
         self._cmd_builder = self._setup_cmd_palette()
@@ -135,14 +129,10 @@ class App:
 
             self.toast_mgr.update(dt)
 
-            # The render loop drops to 10 Hz when idle, so the pie trigger would
-            # only be sampled every 100 ms. Poll it here (cheap Win32 key state)
-            # and post an empty GLFW event on the press edge to wake the loop.
-            pie = self.pie
-            trigger_down = pie is not None and pie.enabled and pie.trigger.is_down()
+            trigger_down = self.pie is not None and self.pie.enabled and self.pie.trigger.is_down()
             if trigger_down != self._pie_trigger_down:
-                # Both edges matter: the release clears the pie's focus-blocked latch.
                 glfw.post_empty_event()
+
             self._pie_trigger_down = trigger_down
 
             elapsed = time.perf_counter() - loop_start
@@ -189,41 +179,13 @@ class App:
 
         return root
 
-    # ------------------------------------------------------------ pie menu --
-    def _create_pie_menu(self) -> Any:
-        """Build the radial menu (hold Ctrl). The pie overlay is Windows-only, so a
-        missing platform simply disables it instead of breaking the GUI."""
-        try:
-            from gtools.gui.lib.pie import Hold, PieMenu
-        except ImportError as exc:
-            logger.info(f"pie menu unavailable: {exc}")
-            return None
+    def _create_pie_menu(self) -> PieMenu:
+        menu = PieMenu(trigger=Hold("ctrl"), processes=["Growtopia.exe"], main_window=self.window)
+        self._build_pie_menu(menu)
 
-        try:
-            menu = PieMenu(
-                # Short enough to feel instant, long enough that Ctrl+P (command
-                # palette) cancels the pending pie through the interference check.
-                trigger=Hold("ctrl", delay=0.08),
-                processes=["Growtopia.exe"],
-                main_window=self.window,
-            )
-        except Exception:
-            logger.exception("failed to create the pie menu")
-            return None
-
-        try:
-            self._build_pie_menu(menu)
-        except Exception:
-            logger.exception("failed to build the pie menu")
-            try:
-                menu.destroy()
-            except Exception:
-                logger.exception("failed to destroy the incomplete pie menu")
-            return None
         return menu
 
     def _pie_action(self, action: Callable[[], None]) -> None:
-        """Queue an app action; pie callbacks run with the overlay context current."""
         self._pie_actions.append(action)
 
     def _flush_pie_actions(self) -> None:
@@ -245,14 +207,13 @@ class App:
         recent: list[str] | None = None
 
         def refresh_worlds() -> None:
-            """Rebuild the recent-worlds list lazily; called when the slot is hovered."""
             nonlocal recent
             paths = self._world_paths()[:10]
             names = [p.name for p in paths]
             if names == recent:
                 return
             recent = names
-            del worlds.children[1:]  # keep "Open World..."
+            del worlds.children[1:]
             for path in paths:
                 worlds.button(path.name, lambda p=path: self._pie_action(lambda: self._open_world(p)))
             worlds.button("Debug World", lambda: self._pie_action(self._add_debug_world), icon="*")
@@ -260,7 +221,6 @@ class App:
         worlds.on_hover = refresh_worlds
         refresh_worlds()
 
-        # Live world search: typing opens a results panel next to the pie.
         search: dict[str, Any] = {"query": "", "panel": None}
 
         def search_rows() -> list[str]:
@@ -366,8 +326,6 @@ class App:
 
         imgui.end_main_menu_bar()
 
-        self._render_overlay_toolbar()
-
     def _add_debug_world(self) -> None:
         size = math.ceil(math.sqrt(item_database.item_count))
         w = World(name=b"Debug World", width=size, height=size)
@@ -387,36 +345,18 @@ class App:
         w.fix()
         self.add_panel(WorldPanel(w, self.dockspace.node_id))
 
-    def _render_overlay_toolbar(self) -> None:
-        """The dock/hide controls as a tiny frameless toolbar pinned to the
-        top-right corner -- inside the menu bar they collided with the menus."""
-        menu_h = imgui.get_frame_height()
-        width = 190.0
-        imgui.set_next_window_pos((imgui.get_io().display_size.x - width - 8, menu_h + 4))
-        imgui.set_next_window_size((width, 0))
-        flags = (imgui.WindowFlags_.no_decoration | imgui.WindowFlags_.no_docking
-                 | imgui.WindowFlags_.no_move | imgui.WindowFlags_.no_saved_settings
-                 | imgui.WindowFlags_.always_auto_resize)
-        if imgui.begin("##overlay_toolbar", None, flags):
-            dock_label = "Undock (F10)" if self.overlay.docked else "Dock (F10)"
-            if imgui.small_button(dock_label):
-                self._toggle_dock()
-            imgui.same_line()
-            if imgui.small_button("Hide (F9)"):
-                self.overlay.toggle_hidden()
-        imgui.end()
-
     def _toggle_dock(self) -> None:
         if self.overlay.docked:
             self.overlay.undock()
             return
+
         game_pid = 0
         for panel in self.panels:
             if isinstance(panel, HookPanel) and panel._model.snapshot.connected:
                 game_pid = panel._model.snapshot.pid
                 break
+
         if not self.overlay.dock(game_pid or None):
-            from gtools.gui.lib.toast import push_error
             push_error("Overlay", "cannot find the Growtopia window", "launch the game first")
 
     def add_panel(self, panel: Panel) -> None:
@@ -444,14 +384,6 @@ class App:
                     panel = Panel.panels_to_add.pop()
                     self.add_panel(panel(self.dockspace.node_id))
                     any_dirty = True
-
-            if self.hotkeys.show_hide_requested.is_set():
-                self.hotkeys.show_hide_requested.clear()
-                self.overlay.toggle_hidden()
-            if self.hotkeys.dock_requested.is_set():
-                self.hotkeys.dock_requested.clear()
-                self._toggle_dock()
-            self.overlay.follow()
 
             if any_dirty:
                 self.last_dirty_time = time.perf_counter()
@@ -527,8 +459,6 @@ class App:
 
             glfw.swap_buffers(self.window)
 
-            # The pie owns a separate transparent overlay window/context; it restores
-            # ours before returning, so this is safe anywhere in the loop.
             if self.pie is not None:
                 self.pie.update()
                 self._flush_pie_actions()
@@ -544,8 +474,7 @@ class App:
                 drawlist=drawlist_ms,
                 **panel_perf,
             )
-            # pie.update() may have just started the open animation (PENDING);
-            # don't fall back to the 10 Hz idle sleep on that frame.
+
             pie_busy = self.pie is not None and self.pie.busy
             self.perf_stats.idle = idle and not pie_busy
 

@@ -1,6 +1,3 @@
-"""PieMenu: overlay window, state machine, and the glue between all modules."""
-from __future__ import annotations
-
 import ctypes
 import enum
 import math
@@ -8,31 +5,18 @@ import os
 import time
 import traceback
 from contextlib import contextmanager
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable
 
 import glfw
 from imgui_bundle import imgui
+from OpenGL import GL as gl
 
-try:
-    from OpenGL import GL as gl
-except ImportError as e:  # pragma: no cover
-    raise ImportError("piemenu needs PyOpenGL:  pip install PyOpenGL") from e
-
-from . import win32
-from .corners import CornerConfig, CornerZones
-from .intent import IntentConfig, IntentState, IntentTracker, Spring, ang_diff, clamp
-from .items import Activation, MenuBuilder, Panel, PieItem, SubMenu, TextInput
-from .render import (BACK, Painter, Theme, draw_backdrop, draw_corners, draw_ghost, draw_level,
-                     mix, u32)
-from .triggers import Hold
-
-TAU = math.tau
-V2 = imgui.ImVec2
-
-
-def _v(x) -> int:
-    """imgui_bundle enum member -> int (safe for flag arithmetic)."""
-    return int(getattr(x, "value", x))
+from gtools.gui.lib.pie import win32
+from gtools.gui.lib.pie.corners import CornerConfig, CornerZones
+from gtools.gui.lib.pie.intent import IntentConfig, IntentState, IntentTracker, Spring, ang_diff, clamp
+from gtools.gui.lib.pie.items import Activation, MenuBuilder, Panel, SubMenu, TextInput
+from gtools.gui.lib.pie.render import BACK, Painter, Theme, draw_backdrop, draw_corners, draw_ghost, draw_level, mix
+from gtools.gui.lib.pie.triggers import Hold
 
 
 def _c4(c, a: float = 1.0):
@@ -40,15 +24,15 @@ def _c4(c, a: float = 1.0):
 
 
 class State(enum.Enum):
-    IDLE = 0      # nothing happening (overlay hidden unless panels are open)
-    PENDING = 1   # trigger is down, waiting out `delay`
-    ACTIVE = 2    # pie visible
-    INPUT = 3     # a TextInput took over
-    CLOSING = 4   # fade-out animation
+    IDLE = 0  # nothing happening (overlay hidden unless panels are open)
+    PENDING = 1  # trigger is down, waiting out `delay`
+    ACTIVE = 2  # pie visible
+    INPUT = 3  # a TextInput took over
+    CLOSING = 4  # fade-out animation
 
 
 class _Level:
-    def __init__(self, node, origin, slots, angles, sector, radius, cfg):
+    def __init__(self, node, origin, slots, angles, sector, radius, cfg) -> None:
         self.node, self.origin = node, origin
         self.slots, self.angles, self.sector, self.radius = slots, angles, sector, radius
         self.open = Spring(0.0, f=6.5, z=0.62)
@@ -56,45 +40,46 @@ class _Level:
         self.scales = [Spring(1.0, f=10.0, z=0.7) for _ in slots]
         self.hot = [Spring(0.0, f=12.0, z=1.0) for _ in slots]
         self.tracker = IntentTracker(cfg)
-        self.entered: Optional[int] = None   # slot we descended through
-        self.chosen: Optional[int] = None    # slot committed (flash while closing)
+        self.entered: int | None = None
+        self.chosen: int | None = None
 
 
 class PieMenu(MenuBuilder):
-    """Pie-menu controller. Build the tree with .button/.submenu/.text_input/.panel,
-    then call `menu.update()` once per frame from your main loop.
-
-    processes=None            global trigger (works over any app)
-    processes=["a.exe", ...]  only while one of these is the foreground process
-    """
-
-    def __init__(self, *, trigger=None, processes=None, include_self: bool = True,
-                 focus_predicate: Optional[Callable[[int, str], bool]] = None,
-                 main_window=None, scale: float = 1.0, theme: Optional[Theme] = None,
-                 intent: Optional[IntentConfig] = None, corners: Optional[CornerConfig] = None,
-                 font_path: Optional[str] = r"C:\Windows\Fonts\segoeui.ttf",
-                 glsl_version: str = "#version 330"):
+    def __init__(
+        self,
+        *,
+        trigger=None,
+        processes=None,
+        include_self: bool = True,
+        focus_predicate: Callable[[int, str], bool] | None = None,
+        main_window=None,
+        scale: float = 1.0,
+        theme: Theme | None = None,
+        intent: IntentConfig | None = None,
+        corners: CornerConfig | None = None,
+        font_path: str | None = r"C:\Windows\Fonts\segoeui.ttf",
+        glsl_version: str = "#version 330",
+    ) -> None:
         self._init_builder()
         self.trigger = trigger or Hold("ctrl")
-        self.focus = win32.FocusFilter(processes, include_self=include_self,
-                                       predicate=focus_predicate)
+        self.focus = win32.FocusFilter(processes, include_self=include_self, predicate=focus_predicate)
         self.theme = theme or Theme()
         self.intent = intent or IntentConfig()
         self._corners = CornerZones(corners)
         self.user_scale = scale
         self.enabled = True
-        self.on_open: Optional[Callable[[], Any]] = None
-        self.on_close: Optional[Callable[[bool], Any]] = None  # arg: cancelled?
+        self.on_open: Callable[[], Any] | None = None
+        self.on_close: Callable[[bool], Any] | None = None
 
         self._painter = Painter(self.theme)
         self._state = State.IDLE
-        self._levels: List[_Level] = []
-        self._panels: List[Panel] = []
+        self._levels: list[_Level] = []
+        self._panels: list[Panel] = []
         self._fade = Spring(0.0, f=8.0, z=1.0)
-        self._st: Optional[IntentState] = None
+        self._st: IntentState | None = None
         self._latched = False
         self._blocked = False
-        self._repress = False   # trigger pressed again while the close animation still runs
+        self._repress = False  # trigger pressed again while the close animation still runs
         self._press_pos = (0, 0)
         self._press_t = 0.0
         self._close_t = 0.0
@@ -104,7 +89,7 @@ class PieMenu(MenuBuilder):
         self._esc_edge = False
         self._prev_esc = False
         self._capture = False
-        self._passthrough: Optional[bool] = None
+        self._passthrough: bool | None = None
         self._visible = False
         self._has_focus = False
         self._prev_fg = 0
@@ -115,32 +100,39 @@ class PieMenu(MenuBuilder):
         self._last_origin = (0, 0)
         self._last_radius = 120.0
         self._hover_key = None
-        self._input_item: Optional[TextInput] = None
+        self._input_item: TextInput | None = None
         self._input_origin = (0, 0)
         self._input_focus = False
         self._focus_age = 0.0
         self._focus_try = 0.0
         self._create_overlay(main_window, font_path, glsl_version)
 
-    # ================================================================ setup ==
     def _create_overlay(self, main_window, font_path, glsl_version) -> None:
         main = main_window or glfw.get_current_context()
         if not main:
-            raise RuntimeError("PieMenu needs your main GLFW window: pass main_window=... "
-                               "or make its context current before constructing.")
-        hints = [(glfw.VISIBLE, False, True), (glfw.DECORATED, False, True),
-                 (glfw.FLOATING, True, False), (glfw.TRANSPARENT_FRAMEBUFFER, True, False),
-                 (glfw.FOCUS_ON_SHOW, False, True), (glfw.RESIZABLE, False, True),
-                 (glfw.AUTO_ICONIFY, False, True)]
+            raise RuntimeError("PieMenu needs your main GLFW window: pass main_window=... or make its context current before constructing.")
+
+        hints = [
+            (glfw.VISIBLE, False, True),
+            (glfw.DECORATED, False, True),
+            (glfw.FLOATING, True, False),
+            (glfw.TRANSPARENT_FRAMEBUFFER, True, False),
+            (glfw.FOCUS_ON_SHOW, False, True),
+            (glfw.RESIZABLE, False, True),
+            (glfw.AUTO_ICONIFY, False, True),
+        ]
         for h, v, _ in hints:
             glfw.window_hint(h, v)
+
         try:
             win = glfw.create_window(640, 480, "PieMenu overlay", None, main)
-        finally:  # leave the app's hint state the way we found it
+        finally:
             for h, _, d in hints:
                 glfw.window_hint(h, d)
+
         if not win:
             raise RuntimeError("Could not create the overlay window")
+
         self._win = win
         self._hwnd = int(glfw.get_win32_window(win))
         win32.modify_exstyle(self._hwnd, add=win32.WS_EX_NOACTIVATE | win32.WS_EX_TOOLWINDOW)
@@ -151,7 +143,7 @@ class PieMenu(MenuBuilder):
 
         prev_win, prev_ctx = glfw.get_current_context(), imgui.get_current_context()
         glfw.make_context_current(win)
-        glfw.swap_interval(0)  # the app's loop paces us; don't stall it on a 2nd vsync
+        glfw.swap_interval(0)
         self._ctx = imgui.create_context()
         imgui.set_current_context(self._ctx)
         io = self._io = imgui.get_io()
@@ -159,41 +151,63 @@ class PieMenu(MenuBuilder):
         io.set_log_filename("")
         imgui.style_colors_dark()
         ps = glfw.get_monitor_content_scale(glfw.get_primary_monitor())[0] * self.user_scale
+
         try:
             if not font_path or not os.path.exists(font_path):
                 raise FileNotFoundError
             io.fonts.add_font_from_file_ttf(font_path, self.theme.font_size * ps)
         except Exception:
             io.fonts.add_font_default()
+
         st = imgui.get_style()
         st.scale_all_sizes(ps)
         st.window_rounding = self.theme.rounding * ps
         st.frame_rounding = 8.0 * ps
-        imgui.backends.glfw_init_for_opengl(ctypes.cast(win, ctypes.c_void_p).value, False)
+        imgui.backends.glfw_init_for_opengl(ctypes.cast(win, ctypes.c_void_p).value, False)  # pyright: ignore[reportArgumentType]
         imgui.backends.opengl3_init(glsl_version)
         glfw.make_context_current(prev_win)
         if prev_ctx is not None:
             imgui.set_current_context(prev_ctx)
 
     @staticmethod
-    def _build_key_map():
-        names = {"KEY_ENTER": "enter", "KEY_KP_ENTER": "keypad_enter", "KEY_ESCAPE": "escape",
-                 "KEY_BACKSPACE": "backspace", "KEY_DELETE": "delete", "KEY_INSERT": "insert",
-                 "KEY_LEFT": "left_arrow", "KEY_RIGHT": "right_arrow", "KEY_UP": "up_arrow",
-                 "KEY_DOWN": "down_arrow", "KEY_HOME": "home", "KEY_END": "end",
-                 "KEY_PAGE_UP": "page_up", "KEY_PAGE_DOWN": "page_down", "KEY_TAB": "tab",
-                 "KEY_A": "a", "KEY_C": "c", "KEY_V": "v", "KEY_X": "x", "KEY_Y": "y",
-                 "KEY_Z": "z", "KEY_LEFT_CONTROL": "left_ctrl", "KEY_RIGHT_CONTROL": "right_ctrl",
-                 "KEY_LEFT_SHIFT": "left_shift", "KEY_RIGHT_SHIFT": "right_shift",
-                 "KEY_LEFT_ALT": "left_alt", "KEY_RIGHT_ALT": "right_alt"}
+    def _build_key_map() -> dict[str, imgui.Key]:
+        names = {
+            "KEY_ENTER": "enter",
+            "KEY_KP_ENTER": "keypad_enter",
+            "KEY_ESCAPE": "escape",
+            "KEY_BACKSPACE": "backspace",
+            "KEY_DELETE": "delete",
+            "KEY_INSERT": "insert",
+            "KEY_LEFT": "left_arrow",
+            "KEY_RIGHT": "right_arrow",
+            "KEY_UP": "up_arrow",
+            "KEY_DOWN": "down_arrow",
+            "KEY_HOME": "home",
+            "KEY_END": "end",
+            "KEY_PAGE_UP": "page_up",
+            "KEY_PAGE_DOWN": "page_down",
+            "KEY_TAB": "tab",
+            "KEY_A": "a",
+            "KEY_C": "c",
+            "KEY_V": "v",
+            "KEY_X": "x",
+            "KEY_Y": "y",
+            "KEY_Z": "z",
+            "KEY_LEFT_CONTROL": "left_ctrl",
+            "KEY_RIGHT_CONTROL": "right_ctrl",
+            "KEY_LEFT_SHIFT": "left_shift",
+            "KEY_RIGHT_SHIFT": "right_shift",
+            "KEY_LEFT_ALT": "left_alt",
+            "KEY_RIGHT_ALT": "right_alt",
+        }
         out = {}
         for gname, iname in names.items():
             g, i = getattr(glfw, gname, None), getattr(imgui.Key, iname, None)
             if g is not None and i is not None:
                 out[g] = i
+
         return out
 
-    # GLFW delivers these during the app's poll_events(); route them to *our* context.
     @contextmanager
     def _imgui_ctx(self):
         prev = imgui.get_current_context()
@@ -204,23 +218,22 @@ class PieMenu(MenuBuilder):
             if prev is not None:
                 imgui.set_current_context(prev)
 
-    def _on_key(self, win, key, scancode, action, mods):
+    def _on_key(self, win, key, scancode, action, mods) -> None:
         k = self._key_map.get(key)
         if k is not None:
             with self._imgui_ctx():
                 self._io.add_key_event(k, action != glfw.RELEASE)
 
-    def _on_char(self, win, cp):
+    def _on_char(self, win, cp) -> None:
         with self._imgui_ctx():
             self._io.add_input_character(cp)
 
-    def _on_scroll(self, win, dx, dy):
+    def _on_scroll(self, win, dx, dy) -> None:
         with self._imgui_ctx():
             self._io.add_mouse_wheel_event(dx, dy)
 
     @contextmanager
     def _overlay(self):
-        """Make the overlay's GL + ImGui contexts current, then restore the app's."""
         prev_win, prev_ctx = glfw.get_current_context(), imgui.get_current_context()
         glfw.make_context_current(self._win)
         imgui.set_current_context(self._ctx)
@@ -238,7 +251,6 @@ class PieMenu(MenuBuilder):
             imgui.destroy_context(self._ctx)
         glfw.destroy_window(self._win)
 
-    # ============================================================ public API ==
     @property
     def processes(self):
         return self.focus.processes
@@ -249,18 +261,15 @@ class PieMenu(MenuBuilder):
 
     @property
     def active(self) -> bool:
-        """True while a pie, text field or panel is on screen."""
         return self._state in (State.ACTIVE, State.INPUT, State.CLOSING) or bool(self._panels)
 
     @property
     def busy(self) -> bool:
-        """True when the menu wants per-frame updates (don't block in wait_events)."""
         return self._state is not State.IDLE or bool(self._panels)
 
-    def open(self, at=None) -> None:
-        """Open programmatically (latched: click to choose, Esc to cancel)."""
+    def open(self) -> None:
         if self._state in (State.IDLE, State.CLOSING):
-            self._open(at or win32.cursor_pos(), latched=True)
+            self._open(win32.cursor_pos(), latched=True)
 
     def close(self) -> None:
         if self._state in (State.ACTIVE, State.INPUT):
@@ -271,21 +280,20 @@ class PieMenu(MenuBuilder):
         if self._state in (State.IDLE, State.PENDING):
             self._last_origin, self._last_radius = win32.cursor_pos(), 0.0
         self._panels.append(panel)
+
         return panel
 
     def close_panel(self, panel: Panel) -> None:
         panel.close()
 
     def update(self) -> None:
-        """Call once per frame, anywhere in your loop (after swap_buffers is fine).
-
-        Leaves your current GLFW/GL/ImGui contexts exactly as it found them.
-        """
         if not self.enabled and self._state is State.IDLE and not self._panels:
             return
+
         now = time.perf_counter()
         dt = min(now - self._t_last, 0.05) if self._t_last else 1 / 60
         self._t_last = now
+
         try:
             self._cursor = win32.cursor_pos()
             if self.enabled:
@@ -303,13 +311,10 @@ class PieMenu(MenuBuilder):
             self._emergency_reset()
             raise
 
-    # ========================================================== state logic ==
     def _poll_trigger(self, now: float) -> None:
         down = self.trigger.is_down()
         st = self._state
         if st is State.CLOSING:
-            # Spamming the trigger: a fresh press takes over from the fade-out instead of
-            # waiting for it to finish (and no release/re-press is needed afterwards).
             if not down:
                 self._blocked = self._repress = False
             elif self._repress:
@@ -354,29 +359,28 @@ class PieMenu(MenuBuilder):
             pass
 
     def _call(self, fn, *args) -> Any:
-        """Run user code; a buggy callback must never wedge a fullscreen overlay."""
         if fn is None:
-            return None
+            return
+
         try:
             return fn(*args)
         except Exception:
             traceback.print_exc()
-            return None
+            return
 
-    # ---- level construction -------------------------------------------------
     def _recenter(self, desired, R: float, cursor):
-        """Clamp the pie inside the monitor's work area; warp the cursor by the same shift."""
         th, sc = self.theme, self._ui_scale
         x, y, w, h = self._work
         m = R + th.item_radius * sc * (1 + th.max_grow) + 8 * sc
         cx = clamp(desired[0], x + m, x + w - m) if x + m < x + w - m else x + w / 2
         cy = clamp(desired[1], y + m, y + h - m) if y + m < y + h - m else y + h / 2
-        cx, cy = round(cx), round(cy)  # keep origin and (integer) cursor exactly aligned
+        cx, cy = round(cx), round(cy)
         dx, dy = cx - desired[0], cy - desired[1]
         if abs(dx) >= 1 or abs(dy) >= 1:
             cursor = (cursor[0] + int(round(dx)), cursor[1] + int(round(dy)))
             win32.set_cursor_pos(*cursor)
         self._cursor = cursor
+
         return (cx, cy)
 
     def _make_level(self, node, desired, parent_origin=None) -> _Level:
@@ -384,37 +388,43 @@ class PieMenu(MenuBuilder):
         items = [c for c in node.children if c.is_visible()]
         n = len(items)
         m = n if parent_origin is None else n + 1
-        need = max(m, 1) * (2 * th.item_radius * 1.18 + 6) / TAU
-        R = max(th.ring_radius, need) * sc
-        origin = self._recenter(desired, R, self._cursor)
+        need = max(m, 1) * (2 * th.item_radius * 1.18 + 6) / math.tau
+        ring_radius = max(th.ring_radius, need) * sc
+        origin = self._recenter(desired, ring_radius, self._cursor)
+
         if parent_origin is None:
-            angles = [-math.pi / 2 + TAU * i / max(m, 1) for i in range(n)]
+            angles = [-math.pi / 2 + math.tau * i / max(m, 1) for i in range(n)]
             slots: list = list(items)
         else:
             back = math.atan2(parent_origin[1] - origin[1], parent_origin[0] - origin[0])
-            angles = [-math.pi / 2 + TAU * i / m for i in range(m)]
+            angles = [-math.pi / 2 + math.tau * i / m for i in range(m)]
             back_slot = min(range(m), key=lambda i: ang_diff(angles[i], back))
             it = iter(items)
             slots = [BACK if i == back_slot else next(it) for i in range(m)]
-        lv = _Level(node, origin, slots, angles, TAU / max(m, 2), R, self.intent)
+
+        lv = _Level(node, origin, slots, angles, math.tau / max(m, 2), ring_radius, self.intent)
         lv.tracker.reset(origin, self._cursor, grace=0.0 if parent_origin is None else 0.18)
-        self._last_origin, self._last_radius = origin, R
+        self._last_origin, self._last_radius = origin, ring_radius
+
         return lv
 
-    def _open(self, pos, latched: bool = False) -> bool:
+    def _open(self, pos: tuple[int, int], latched: bool = False) -> bool:
         if not any(c.is_visible() for c in self.children):
             return False
-        self._place_overlay(*pos)
-        self._corners.reset(pos, self._ui_scale)   # a corner the cursor is already in stays disarmed
+
+        self._place_overlay(pos[0], pos[1])
+        self._corners.reset(pos, self._ui_scale)
         self._cursor = win32.cursor_pos()
         lv = self._make_level(self, pos)
         self._levels, self._latched, self._st = [lv], latched, None
         self._state, self._repress = State.ACTIVE, False
-        if not self._visible:   # interrupting a fade-out: keep the current fade, don't pop
+        if not self._visible:
             self._fade.snap(0.0)
+
         self._prev_btn, self._prev_esc = win32.mouse_buttons(), win32.key_down(win32.VK_ESCAPE)
         self._hover_key = None
         self._call(self.on_open)
+
         return True
 
     def _push(self, item: SubMenu) -> None:
@@ -428,6 +438,7 @@ class PieMenu(MenuBuilder):
     def _pop(self) -> None:
         if len(self._levels) <= 1:
             return
+
         self._levels.pop()
         lv = self._levels[-1]
         lv.entered = None
@@ -441,27 +452,34 @@ class PieMenu(MenuBuilder):
         if st.index is None:
             if release or self._latched:
                 self._cancel()
+
             return
+
         slot = lv.slots[st.index]
         if slot is BACK or slot.is_branch:
-            # Letting go on a non-actionable slot means "never mind": cancel, don't latch.
             if release:
                 self._cancel()
             elif slot is BACK:
                 self._pop()
             elif slot.is_enabled():
                 self._push(slot)
+
             return
+
         if not slot.is_enabled():
             if release:
                 self._cancel()
+
             return
+
         res = self._call(slot.activate, self)
         if self._state is State.INPUT:
             return
+
         if res is Activation.KEEP:
             self._latched = True
             return
+
         self._begin_close(st.index, cancelled=False)
 
     def _cancel(self) -> None:
@@ -471,20 +489,22 @@ class PieMenu(MenuBuilder):
         else:
             self._begin_close(None, cancelled=True)
 
-    def _begin_close(self, chosen: Optional[int], cancelled: bool) -> None:
+    def _begin_close(self, chosen: int | None, cancelled: bool) -> None:
         for l in self._levels:
-            l.open.z = 1.0  # critically damped: no bounce on the way out
+            l.open.z = 1.0
+
         if self._levels:
             self._levels[-1].chosen = chosen
+
         self._state, self._close_t, self._blocked = State.CLOSING, 0.0, True
         self._release_focus()
         self._call(self.on_close, cancelled)
 
-    # ---- text input ---------------------------------------------------------
     def _begin_input(self, item: TextInput) -> None:
         self._input_item = item
         if not item.keep_text:
             item.text = ""
+
         self._input_origin = self._levels[-1].origin
         self._input_focus = True
         self._focus_age = self._focus_try = 0.0
@@ -495,17 +515,16 @@ class PieMenu(MenuBuilder):
         self._input_item = None
         self._begin_close(None, cancelled=False)
 
-    # ============================================================ overlay win ==
     def _monitor_at(self, x: int, y: int):
         for m in glfw.get_monitors():
             mx, my = glfw.get_monitor_pos(m)
             mode = glfw.get_video_mode(m)
             if mx <= x < mx + mode.size.width and my <= y < my + mode.size.height:
                 return m
+
         return glfw.get_primary_monitor()
 
     def _outer_corners(self, mx: int, my: int, w: int, h: int):
-        """Which monitor corners are real screen corners (the cursor can't travel past them)."""
         rects = []
         for m in glfw.get_monitors():
             px, py = glfw.get_monitor_pos(m)
@@ -516,8 +535,7 @@ class PieMenu(MenuBuilder):
             return not any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in rects)
 
         r, b = mx + w, my + h
-        return [free(mx - 1, my) and free(mx, my - 1), free(r, my) and free(r - 1, my - 1),
-                free(r, b - 1) and free(r - 1, b), free(mx - 1, b - 1) and free(mx, b)]
+        return [free(mx - 1, my) and free(mx, my - 1), free(r, my) and free(r - 1, my - 1), free(r, b - 1) and free(r - 1, b), free(mx - 1, b - 1) and free(mx, b)]
 
     def _place_overlay(self, x: int, y: int) -> None:
         m = self._monitor_at(x, y)
@@ -526,15 +544,16 @@ class PieMenu(MenuBuilder):
         w, h = mode.size.width, mode.size.height
         key = (mx, my, w, h)
         if key != self._mon_key:
-            if self._panels and self._mon_key is not None:  # panels live on one monitor
+            if self._panels and self._mon_key is not None:
                 for p in self._panels:
                     self._call(p.on_close)
+
                 self._panels.clear()
+
             self._mon_key = key
             glfw.set_window_pos(self._win, mx, my)
-            # 1px short of full height: a borderless window that exactly covers the
-            # monitor gets "fullscreen-optimised" by Windows, which kills transparency.
             glfw.set_window_size(self._win, w, h - 1)
+
         self._ox, self._oy = mx, my
         self._corners.set_monitor(mx, my, w, h, self._outer_corners(mx, my, w, h))
         self._work = tuple(glfw.get_monitor_workarea(m))
@@ -542,7 +561,7 @@ class PieMenu(MenuBuilder):
         self._painter.scale = self._ui_scale
 
     def _show_overlay(self) -> None:
-        self._frame(0.0)  # prime the transparent back buffer so the first present is clear
+        self._frame(0.0)
         glfw.show_window(self._win)
         self._visible = True
 
@@ -555,11 +574,7 @@ class PieMenu(MenuBuilder):
     def _set_passthrough(self, on: bool) -> None:
         if on == self._passthrough:
             return
-        # GLFW_MOUSE_PASSTHROUGH only exists in GLFW 3.4+. With an older native
-        # library the Python binding still exposes the constant, but the call
-        # emits "Invalid window attribute" through GLFW's error callback
-        # (a warning, not an exception), so the except-fallback never ran.
-        # Check the runtime version instead and use the Win32 fallback.
+
         passthrough = getattr(glfw, "MOUSE_PASSTHROUGH", None)
         if passthrough is not None and tuple(glfw.get_version())[:2] >= (3, 4):
             glfw.set_window_attrib(self._win, passthrough, on)
@@ -568,22 +583,21 @@ class PieMenu(MenuBuilder):
         self._passthrough = on
 
     def _take_focus(self) -> None:
-        """Give the overlay keyboard focus (needed for typing). Safe to call repeatedly."""
         if not self._has_focus:
             fg = win32.foreground_hwnd()
             self._prev_fg = 0 if fg == self._hwnd else fg
             win32.modify_exstyle(self._hwnd, remove=win32.WS_EX_NOACTIVATE)
             self._has_focus = True
+
         if win32.foreground_hwnd() != self._hwnd:
             if not win32.force_foreground(self._hwnd, focus=True):
                 glfw.focus_window(self._win)
 
     def _watch_focus(self, dt: float) -> None:
-        """While typing: keep asking for focus while it settles; if the user later moves
-        to another window, cancel instead of leaving a dead overlay that eats nothing."""
         self._focus_age += dt
         if win32.foreground_hwnd() == self._hwnd:
             return
+
         if self._focus_age < 1.0:
             if self._focus_age - self._focus_try >= 0.05:
                 self._focus_try = self._focus_age
@@ -594,13 +608,13 @@ class PieMenu(MenuBuilder):
     def _release_focus(self) -> None:
         if not self._has_focus:
             return
+
         self._has_focus = False
         win32.modify_exstyle(self._hwnd, add=win32.WS_EX_NOACTIVATE)
         if win32.foreground_hwnd() == self._hwnd:
             win32.restore_foreground(self._prev_fg)
         self._prev_fg = 0
 
-    # =============================================================== frame ====
     def _frame(self, dt: float) -> None:
         with self._overlay():
             io = self._io
@@ -625,7 +639,7 @@ class PieMenu(MenuBuilder):
         self._prev_btn = self._btn
         esc = win32.key_down(win32.VK_ESCAPE)
         self._esc_edge, self._prev_esc = esc and not self._prev_esc, esc
-        if self._state is State.ACTIVE:   # the pie owns the mouse; panels get nothing
+        if self._state is State.ACTIVE:
             io.add_mouse_pos_event(-1e9, -1e9)
             for b in range(3):
                 io.add_mouse_button_event(b, False)
@@ -634,7 +648,7 @@ class PieMenu(MenuBuilder):
             for b in range(3):
                 io.add_mouse_button_event(b, self._btn[b])
             if self._edge[0] and self._capture and not self._has_focus:
-                self._take_focus()  # clicked a panel: it may contain a text field
+                self._take_focus()
 
     def _draw_ui(self, dt: float, io) -> None:
         th, P = self.theme, self._painter
@@ -667,11 +681,9 @@ class PieMenu(MenuBuilder):
             if top:
                 self._step_springs(lv, self._st if S is State.ACTIVE else None, dt)
         for i, lv in enumerate(self._levels[:-1]):
-            draw_ghost(dl, P, lv, off, self._levels[i + 1].origin, lv.ghost.x,
-                       fade if S is State.ACTIVE else 0.0)
+            draw_ghost(dl, P, lv, off, self._levels[i + 1].origin, lv.ghost.x, fade if S is State.ACTIVE else 0.0)
         if self._levels:
-            draw_level(dl, P, self._levels[-1], off,
-                       self._st if S is State.ACTIVE else None, fade if S is not State.INPUT else 0.0)
+            draw_level(dl, P, self._levels[-1], off, self._st if S is State.ACTIVE else None, fade if S is not State.INPUT else 0.0)
             if S is State.ACTIVE and self._latched:
                 self._draw_hint(dl, W, H)
 
@@ -687,10 +699,8 @@ class PieMenu(MenuBuilder):
 
     def _draw_hint(self, dl, W, H) -> None:
         P, th = self._painter, self.theme
-        P.text(dl, W / 2, H - 46 * self._ui_scale, "Click to choose  -  Esc to cancel",
-               th.font_size * 0.9 * self._ui_scale, th.text_dim, 0.8 * clamp(self._fade.x))
+        P.text(dl, W / 2, H - 46 * self._ui_scale, "Click to choose  -  Esc to cancel", th.font_size * 0.9 * self._ui_scale, th.text_dim, 0.8 * clamp(self._fade.x))
 
-    # ---- active pie ---------------------------------------------------------
     def _tick_active(self, dt: float) -> None:
         trig_down = self.trigger.is_down()
         if self._esc_edge or self._edge[1]:
@@ -708,12 +718,10 @@ class PieMenu(MenuBuilder):
             if st.index is not None and lv.slots[st.index] is not BACK:
                 self._call(lv.slots[st.index].on_hover)
 
-        # intent: push outward / dwell on a branch (or the back slot) to travel the tree
         if st.index is not None and not in_corner:
             slot = lv.slots[st.index]
             push = st.distance >= self.intent.push_ratio * lv.radius
-            dwell = (st.dwell >= self.intent.dwell_time
-                     and st.distance >= self.intent.dead_zone * 1.6 * sc)
+            dwell = st.dwell >= self.intent.dwell_time and st.distance >= self.intent.dead_zone * 1.6 * sc
             if push or dwell:
                 if slot is BACK:
                     self._pop()
@@ -723,13 +731,13 @@ class PieMenu(MenuBuilder):
                     return
 
         if in_corner and (self._edge[0] or (not self._latched and not trig_down)):
-            self._cancel()   # released (or clicked) inside a screen-corner cancel zone
+            self._cancel()
         elif not self._latched and not trig_down:
             self._commit(st, release=True)
         elif self._edge[0]:
             self._commit(st, release=False)
 
-    def _step_springs(self, lv: _Level, st: Optional[IntentState], dt: float) -> None:
+    def _step_springs(self, lv: _Level, st: IntentState | None, dt: float) -> None:
         th = self.theme
         for i in range(len(lv.slots)):
             if st is not None:
@@ -746,49 +754,58 @@ class PieMenu(MenuBuilder):
             lv.scales[i].step(tgt, dt)
             lv.hot[i].step(hot, dt)
 
-    # ---- text field ---------------------------------------------------------
-    def _draw_input(self, io, W: float, H: float) -> None:
+    def _draw_input(self, io: imgui.IO, W: float, H: float) -> None:
         item, th, sc = self._input_item, self.theme, self._ui_scale
         if item is None:
             return
+
         w = item.width * sc
         ox = clamp(self._input_origin[0] - self._ox, w / 2 + 24 * sc, W - w / 2 - 24 * sc)
         oy = clamp(self._input_origin[1] - self._oy, 60 * sc, H - 60 * sc)
-        imgui.set_next_window_pos(V2(ox, oy), _v(imgui.Cond_.always), V2(0.5, 0.5))
-        fl = (_v(imgui.WindowFlags_.no_title_bar) | _v(imgui.WindowFlags_.no_resize)
-              | _v(imgui.WindowFlags_.no_move) | _v(imgui.WindowFlags_.no_saved_settings)
-              | _v(imgui.WindowFlags_.always_auto_resize) | _v(imgui.WindowFlags_.no_scrollbar))
-        sv = [(imgui.StyleVar_.alpha, clamp(self._fade.x / 0.6)),
-              (imgui.StyleVar_.window_rounding, 22 * sc), (imgui.StyleVar_.frame_rounding, 16 * sc),
-              (imgui.StyleVar_.window_border_size, 1.0),
-              (imgui.StyleVar_.window_padding, V2(18 * sc, 14 * sc)),
-              (imgui.StyleVar_.frame_padding, V2(14 * sc, 10 * sc))]
-        sc_ = [(imgui.Col_.window_bg, _c4(th.panel_bg)), (imgui.Col_.border, _c4(th.accent, 0.6)),
-               (imgui.Col_.frame_bg, _c4(th.bubble_hot)), (imgui.Col_.text, _c4(th.text))]
+        imgui.set_next_window_pos(imgui.ImVec2(ox, oy), (imgui.Cond_.always), imgui.ImVec2(0.5, 0.5))
+        fl = (
+            (imgui.WindowFlags_.no_title_bar)
+            | (imgui.WindowFlags_.no_resize)
+            | (imgui.WindowFlags_.no_move)
+            | (imgui.WindowFlags_.no_saved_settings)
+            | (imgui.WindowFlags_.always_auto_resize)
+            | (imgui.WindowFlags_.no_scrollbar)
+        )
+        sv = [
+            (imgui.StyleVar_.alpha, clamp(self._fade.x / 0.6)),
+            (imgui.StyleVar_.window_rounding, 22 * sc),
+            (imgui.StyleVar_.frame_rounding, 16 * sc),
+            (imgui.StyleVar_.window_border_size, 1.0),
+            (imgui.StyleVar_.window_padding, imgui.ImVec2(18 * sc, 14 * sc)),
+            (imgui.StyleVar_.frame_padding, imgui.ImVec2(14 * sc, 10 * sc)),
+        ]
+        sc_ = [(imgui.Col_.window_bg, _c4(th.panel_bg)), (imgui.Col_.border, _c4(th.accent, 0.6)), (imgui.Col_.frame_bg, _c4(th.bubble_hot)), (imgui.Col_.text, _c4(th.text))]
         for k, val in sv:
-            imgui.push_style_var(_v(k), val)
+            imgui.push_style_var((k), val)
         for k, val in sc_:
-            imgui.push_style_color(_v(k), val)
+            imgui.push_style_color((k), val)
         imgui.begin("##pie_input", None, fl)
         imgui.text_colored(_c4(th.text_dim), item.label)
         imgui.set_next_item_width(w)
         if self._input_focus or not imgui.is_any_item_active():
-            imgui.set_keyboard_focus_here()   # also wins focus back from panels
+            imgui.set_keyboard_focus_here()
             self._input_focus = False
-        submitted, text = imgui.input_text_with_hint(
-            "##q", item.placeholder, item.text, _v(imgui.InputTextFlags_.enter_returns_true))
+
+        submitted, text = imgui.input_text_with_hint("##q", item.placeholder, item.text, (imgui.InputTextFlags_.enter_returns_true))
+
         imgui.end()
         imgui.pop_style_color(len(sc_))
         imgui.pop_style_var(len(sv))
+
         if text != item.text:
             item.text = text
             self._call(item.on_change, text)
+
         if submitted:
             self._call(item.on_submit, item.text)
             if item.close_on_submit:
                 self._finish_input()
 
-    # ---- panels -------------------------------------------------------------
     def _panel_pos(self, p: Panel, W: float, H: float):
         sc, th = self._ui_scale, self.theme
         w, h = p.size[0] * sc, p.size[1] * sc
@@ -804,43 +821,57 @@ class PieMenu(MenuBuilder):
             x, y = bx + gap, by - h / 2
             if x + w > W - 12:
                 x = bx - gap - w
+
         return clamp(x, 12, max(12, W - w - 12)), clamp(y, 12, max(12, H - h - 12))
 
     def _draw_panel(self, p: Panel, dt: float, W: float, H: float) -> None:
         th, sc = self.theme, self._ui_scale
-        a = p._fade.step(1.0 if p.open else 0.0, dt)
+        a = p._fade.step(1.0 if p.open else 0.0, dt) if p._fade else 0
         if not p._placed:
             x, y = self._panel_pos(p, W, H)
-            imgui.set_next_window_pos(V2(x, y), _v(imgui.Cond_.always))
+            imgui.set_next_window_pos(imgui.ImVec2(x, y), (imgui.Cond_.always))
             p._placed = True
-        imgui.set_next_window_size(V2(p.size[0] * sc, p.size[1] * sc), _v(imgui.Cond_.once))
-        fl = _v(imgui.WindowFlags_.no_saved_settings) | _v(imgui.WindowFlags_.no_collapse)
-        if self._state is State.INPUT:   # a result panel popping up must not steal the typing focus
-            fl |= _v(imgui.WindowFlags_.no_focus_on_appearing)
-        sv = [(imgui.StyleVar_.alpha, clamp(a)), (imgui.StyleVar_.window_rounding, th.rounding * sc),
-              (imgui.StyleVar_.window_border_size, 1.0),
-              (imgui.StyleVar_.window_padding, V2(14 * sc, 12 * sc))]
-        cs = [(imgui.Col_.window_bg, _c4(th.panel_bg)), (imgui.Col_.title_bg, _c4(th.panel_bg)),
-              (imgui.Col_.title_bg_active, _c4(mix(th.panel_bg, th.accent, 0.18))),
-              (imgui.Col_.border, _c4(th.ring)), (imgui.Col_.header_hovered, _c4(th.accent, 0.35)),
-              (imgui.Col_.header_active, _c4(th.accent, 0.5))]
+
+        imgui.set_next_window_size(imgui.ImVec2(p.size[0] * sc, p.size[1] * sc), (imgui.Cond_.once))
+
+        fl = (imgui.WindowFlags_.no_saved_settings) | (imgui.WindowFlags_.no_collapse)
+        if self._state is State.INPUT:
+            fl |= imgui.WindowFlags_.no_focus_on_appearing
+
+        sv = [
+            (imgui.StyleVar_.alpha, clamp(a)),
+            (imgui.StyleVar_.window_rounding, th.rounding * sc),
+            (imgui.StyleVar_.window_border_size, 1.0),
+            (imgui.StyleVar_.window_padding, imgui.ImVec2(14 * sc, 12 * sc)),
+        ]
+        cs = [
+            (imgui.Col_.window_bg, _c4(th.panel_bg)),
+            (imgui.Col_.title_bg, _c4(th.panel_bg)),
+            (imgui.Col_.title_bg_active, _c4(mix(th.panel_bg, th.accent, 0.18))),
+            (imgui.Col_.border, _c4(th.ring)),
+            (imgui.Col_.header_hovered, _c4(th.accent, 0.35)),
+            (imgui.Col_.header_active, _c4(th.accent, 0.5)),
+        ]
         for k, val in sv:
-            imgui.push_style_var(_v(k), val)
+            imgui.push_style_var((k), val)
         for k, val in cs:
-            imgui.push_style_color(_v(k), val)
-        expanded, opened = imgui.begin(f"{p.title}###pie_panel_{p.id}",
-                                       True if p.closable else None, fl)
+            imgui.push_style_color((k), val)
+
+        expanded, opened = imgui.begin(f"{p.title}###pie_panel_{p.id}", True if p.closable else None, fl)
         if expanded and p.draw:
             try:
                 p.draw(p)
             except Exception:
                 traceback.print_exc()
                 p.open = False
+
         imgui.end()
         imgui.pop_style_color(len(cs))
         imgui.pop_style_var(len(sv))
+
         if p.closable and opened is False:
             p.open = False
+
         if not p.open and a < 0.03:
             self._panels.remove(p)
             self._call(p.on_close)
