@@ -1,7 +1,7 @@
 import OpenGL
 from gtools import setting
 from gtools.gui.lib import perf_stats
-from gtools.gui.lib.toast import ToastManager, push_debug
+from gtools.gui.widgets.toast import ToastManager, push_debug
 from gtools.gui.panels.midi_workspace import MidiWorkspace
 
 OpenGL.ERROR_CHECKING = setting.opengl_error_checking

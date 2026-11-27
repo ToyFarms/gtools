@@ -11,12 +11,12 @@ import glfw
 from imgui_bundle import imgui
 from OpenGL import GL as gl
 
-from gtools.gui.lib.pie import win32
-from gtools.gui.lib.pie.corners import CornerConfig, CornerZones
-from gtools.gui.lib.pie.intent import IntentConfig, IntentState, IntentTracker, Spring, ang_diff, clamp
-from gtools.gui.lib.pie.items import Activation, MenuBuilder, Panel, SubMenu, TextInput
-from gtools.gui.lib.pie.render import BACK, Painter, Theme, draw_backdrop, draw_corners, draw_ghost, draw_level, mix
-from gtools.gui.lib.pie.triggers import Hold
+from gtools.gui.widgets.pie import win32
+from gtools.gui.widgets.pie.corners import CornerConfig, CornerZones
+from gtools.gui.widgets.pie.intent import IntentConfig, IntentState, IntentTracker, Spring, ang_diff, clamp
+from gtools.gui.widgets.pie.items import Activation, MenuBuilder, Panel, SubMenu, TextInput
+from gtools.gui.widgets.pie.render import BACK, Painter, Theme, draw_backdrop, draw_corners, draw_ghost, draw_level, mix
+from gtools.gui.widgets.pie.triggers import Hold
 
 
 def _c4(c, a: float = 1.0):

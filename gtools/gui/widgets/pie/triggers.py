@@ -1,7 +1,7 @@
 import string
 from typing import Set
 
-from gtools.gui.lib.pie import win32
+from gtools.gui.widgets.pie import win32
 
 _NAMED = {
     "ctrl": 0x11,

@@ -3,7 +3,7 @@ from typing import Any, Callable, Sequence
 
 from imgui_bundle import imgui
 
-from gtools.gui.lib.pie.intent import Spring
+from gtools.gui.widgets.pie.intent import Spring
 
 RGBA = tuple[int, int, int, int]
 Flag = bool | Callable[[], bool]

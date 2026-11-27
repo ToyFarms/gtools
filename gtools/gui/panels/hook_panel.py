@@ -1,14 +1,3 @@
-"""The hook control panel: enable/disable hooks and edit their runtime state.
-
-The panel talks to the hook agent through its own pipe connection; a
-background model thread polls the runtime into an immutable snapshot (so the
-pipe can never stall the render loop) and executes edit commands from a
-queue. Value edits go through the hook's own persistent state
-(``gtools/hooks/state.py``) -- mutate, save, push -- never through settings.
-"""
-
-from __future__ import annotations
-
 import logging
 import queue
 import threading
@@ -18,7 +7,7 @@ from imgui_bundle import imgui
 from imgui_bundle import imgui_toggle  # pyright: ignore[reportMissingModuleSource]
 
 from gtools.core.pipe import PipeError, PipeUnavailable
-from gtools.gui.lib.toast import push_error
+from gtools.gui.widgets.toast import push_error
 from gtools.gui.panels.panel import Panel
 from gtools.hooks import hook, state as hook_state
 from gtools.hooks.control import HookControl
@@ -73,8 +62,6 @@ HookCommand = EnableCommand | StateCommand | LogLevelCommand | InjectCommand
 
 
 class HookPanelModel:
-    """Background pipe client: polls the runtime, executes edit commands."""
-
     def __init__(self, poll_interval: float = 0.5) -> None:
         self.poll_interval = poll_interval
         self.snapshot = HookSnapshot()
@@ -152,7 +139,6 @@ class HookPanelModel:
                 logger.exception("the hook panel command failed: %r", command)
 
     def _inject(self) -> str:
-        """Run the injection flow in the gui process; returns an error string."""
         try:
             hook.build_payload_file()
         except Exception as e:
@@ -168,35 +154,35 @@ class HookPanelModel:
 
     def _poll(self, ctl: HookControl) -> HookSnapshot:
         pairs = ctl.status()
-        status = {key: value for key, value in pairs.items() if not key.startswith(("hook_", "target_", "hits_",
-                                                                                          "faults_", "enabled_",
-                                                                                          "state_"))}
+        status = {key: value for key, value in pairs.items() if not key.startswith(("hook_", "target_", "hits_", "faults_", "enabled_", "state_"))}
         hooks: dict[str, dict[str, str]] = {}
         for key, value in pairs.items():
             if key.startswith("hook_"):
-                name = key[len("hook_"):]
+                name = key[len("hook_") :]
                 hooks.setdefault(name, {})["status"] = value
             elif key.startswith("enabled_"):
-                hooks.setdefault(key[len("enabled_"):], {})["enabled"] = value
+                hooks.setdefault(key[len("enabled_") :], {})["enabled"] = value
             elif key.startswith("hits_"):
-                hooks.setdefault(key[len("hits_"):], {})["hits"] = value
+                hooks.setdefault(key[len("hits_") :], {})["hits"] = value
             elif key.startswith("faults_"):
-                hooks.setdefault(key[len("faults_"):], {})["faults"] = value
+                hooks.setdefault(key[len("faults_") :], {})["faults"] = value
             elif key.startswith("state_"):
-                parts = key[len("state_"):].rsplit("_", 1)
+                parts = key[len("state_") :].rsplit("_", 1)
                 if len(parts) == 2:
                     hooks.setdefault(parts[0], {})[f"state{parts[1]}"] = value
 
         rows = []
         for name, fields in sorted(hooks.items()):
-            rows.append(HookRow(
-                key=name,
-                status=fields.get("status", "missing"),
-                enabled=fields.get("enabled") == "1",
-                hits=int(fields.get("hits", "0") or 0),
-                faults=int(fields.get("faults", "0") or 0),
-                state0=int(fields.get("state0", "0") or 0),
-            ))
+            rows.append(
+                HookRow(
+                    key=name,
+                    status=fields.get("status", "missing"),
+                    enabled=fields.get("enabled") == "1",
+                    hits=int(fields.get("hits", "0") or 0),
+                    faults=int(fields.get("faults", "0") or 0),
+                    state0=int(fields.get("state0", "0") or 0),
+                )
+            )
         return HookSnapshot(
             connected=True,
             target=status.get("target", ""),
@@ -218,11 +204,9 @@ class HookPanel(Panel):
         self._model.stop()
 
     def render(self) -> None:
-        # docked-tab-inactive windows report not-open: that must NOT close the
-        # panel (the app removes panels whose is_open flips), so the window is
-        # not user-closable here
         if not self._is_docked and self.dock_id:
             imgui.set_next_window_dock_id(self.dock_id)
+
         opened, _ = imgui.begin("Hook", None, imgui.WindowFlags_.no_collapse)
         if not opened:
             imgui.end()
@@ -244,8 +228,7 @@ class HookPanel(Panel):
                 imgui.table_next_column()
                 imgui.text(row.key)
                 imgui.table_next_column()
-                color = (0.4, 0.9, 0.4, 1.0) if row.status == "patched" else (
-                    0.95, 0.8, 0.3, 1.0) if row.status == "ready" else (0.6, 0.6, 0.6, 1.0)
+                color = (0.4, 0.9, 0.4, 1.0) if row.status == "patched" else (0.95, 0.8, 0.3, 1.0) if row.status == "ready" else (0.6, 0.6, 0.6, 1.0)
                 imgui.text_colored(color, row.status)
                 imgui.table_next_column()
                 changed, _ = imgui_toggle.toggle("##enable_" + row.key, row.enabled)
@@ -277,7 +260,6 @@ class HookPanel(Panel):
         imgui.separator()
 
     def _render_state_editor(self) -> None:
-        """The persisted hook state: edits go through the hook's own store."""
         current = hook_state.load()
         changed_any = False
 

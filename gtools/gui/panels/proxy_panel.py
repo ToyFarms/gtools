@@ -6,7 +6,7 @@ from imgui_bundle import imgui
 from imgui_bundle import imgui_toggle  # pyright: ignore[reportMissingModuleSource]
 from gtools.core.format import format_timespan
 from gtools.gui.event import Event
-from gtools.gui.lib.toast import push_error
+from gtools.gui.widgets.toast import push_error
 from gtools.gui.panels.panel import Panel
 from gtools.gui.lib.world_renderer import WorldRenderer
 from gtools.protogen.extension_pb2 import INTEREST_STATE_UPDATE, Interest

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from imgui_bundle import imgui
 
-from gtools.gui.lib.pie.intent import clamp, lerp, smoothstep
+from gtools.gui.widgets.pie.intent import clamp, lerp, smoothstep
 
 RGBA = tuple[int, int, int, int]
 BACK = object()

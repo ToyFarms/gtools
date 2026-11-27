@@ -2,7 +2,7 @@ import math
 from dataclasses import dataclass
 from typing import Sequence
 
-from gtools.gui.lib.pie.intent import Spring, clamp
+from gtools.gui.widgets.pie.intent import Spring, clamp
 
 
 @dataclass
